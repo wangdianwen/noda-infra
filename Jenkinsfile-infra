@@ -1,0 +1,93 @@
+pipeline {
+    agent any
+
+    environment {
+        SOPS_AGE_KEY_FILE = credentials('sops-age-key')
+        PROJECT_ROOT = "${env.WORKSPACE}"
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh 'echo "✅ 代码检出完成"'
+            }
+        }
+
+        stage('Verify Environment') {
+            steps {
+                sh '''
+                    echo "🔍 验证环境配置..."
+                    bash ${PROJECT_ROOT}/scripts/utils/check-env.sh
+                '''
+            }
+        }
+
+        stage('Decrypt Secrets') {
+            steps {
+                sh '''
+                    echo "🔓 解密密钥..."
+                    bash ${PROJECT_ROOT}/scripts/utils/decrypt-secrets.sh infra /tmp/jenkins-secrets
+                '''
+            }
+        }
+
+        stage('Deploy Infrastructure') {
+            steps {
+                sh '''
+                    echo "🚀 部署基础设施服务..."
+                    bash ${PROJECT_ROOT}/scripts/deploy/deploy-infrastructure-prod.sh
+                '''
+            }
+        }
+
+        stage('Verify Services') {
+            steps {
+                sh '''
+                    echo "✅ 验证服务状态..."
+                    bash ${PROJECT_ROOT}/scripts/verify/verify-infrastructure.sh
+                    bash ${PROJECT_ROOT}/scripts/verify/verify-services.sh
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh '''
+                    echo "🏥 健康检查..."
+                    # PostgreSQL
+                    docker-compose -f ${PROJECT_ROOT}/docker/docker-compose.yml exec -T postgres \
+                        pg_isready -U postgres || exit 1
+
+                    # Keycloak
+                    curl -f http://localhost:8080/health/ready || exit 1
+
+                    # Nginx
+                    curl -f http://localhost/ || exit 1
+
+                    echo "✅ 所有服务健康检查通过"
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            sh '''
+                echo "🧹 清理临时文件..."
+                bash ${PROJECT_ROOT}/scripts/utils/decrypt-secrets.sh infra /tmp/jenkins-secrets --cleanup || true
+            '''
+        }
+        success {
+            sh 'echo "✅ 基础设施部署成功！"'
+        }
+        failure {
+            sh 'echo "❌ 基础设施部署失败！请检查日志。"'
+        }
+    }
+}
