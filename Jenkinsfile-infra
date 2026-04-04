@@ -78,16 +78,14 @@ pipeline {
 
     post {
         always {
-            sh '''
-                echo "🧹 清理临时文件..."
-                bash ${PROJECT_ROOT}/scripts/utils/decrypt-secrets.sh infra /tmp/jenkins-secrets --cleanup || true
-            '''
+            echo "🧹 清理临时文件..."
+            // bash ${PROJECT_ROOT}/scripts/utils/decrypt-secrets.sh infra /tmp/jenkins-secrets --cleanup || true
         }
         success {
-            sh 'echo "✅ 基础设施部署成功！"'
+            echo "✅ 基础设施部署成功！"
         }
         failure {
-            sh 'echo "❌ 基础设施部署失败！请检查日志。"'
+            echo "❌ 基础设施部署失败！请检查日志。"
         }
     }
 }
