@@ -16,7 +16,6 @@ pipeline {
             steps {
                 checkout scm
                 sh 'echo "✅ 代码检出完成"'
-                sh "ls -la ${env.PROJECT_ROOT}"
             }
         }
 
@@ -27,6 +26,7 @@ pipeline {
                     echo "工作空间: ${PROJECT_ROOT}"
                     echo "密钥文件: ${SOPS_AGE_KEY_FILE}"
                     ls -la ${SOPS_AGE_KEY_FILE} || exit 1
+                    which docker && docker --version
                 '''
             }
         }
@@ -35,16 +35,12 @@ pipeline {
             steps {
                 sh '''
                     echo "🔐 解密密钥文件..."
-                    # 检查 sops 是否可用
-                    which sops || echo "⚠️  sops 未安装，跳过解密"
-
-                    # 如果有加密的文件，解密它们
                     if [ -f "secrets/.env.production.enc" ]; then
-                        echo "找到生产环境密钥，正在解密..."
                         sops --decrypt --age-keyfile ${SOPS_AGE_KEY_FILE} \
-                            secrets/.env.production.enc > .env.production || echo "⚠️  解密失败"
+                            secrets/.env.production.enc > .env.production
+                        echo "✅ 密钥解密成功"
                     else
-                        echo "ℹ️  没有找到加密的密钥文件"
+                        echo "ℹ️  没有找到加密的密钥文件，使用默认配置"
                     fi
                 '''
             }
@@ -54,14 +50,19 @@ pipeline {
             steps {
                 sh '''
                     echo "🚀 部署基础设施..."
-                    echo "项目根目录: ${PROJECT_ROOT}"
+                    cd ${PROJECT_ROOT}/docker
 
                     # 检查 docker-compose 文件
-                    if [ -f "${PROJECT_ROOT}/docker/docker-compose.yml" ]; then
+                    if [ -f "docker-compose.yml" ]; then
                         echo "✅ 找到 docker-compose.yml"
-                        ls -la ${PROJECT_ROOT}/docker/
+
+                        # 启动生产环境服务
+                        docker compose -p noda-prod -f docker-compose.yml up -d
+
+                        echo "✅ 服务已启动"
                     else
-                        echo "⚠️  docker-compose.yml 不存在"
+                        echo "❌ docker-compose.yml 不存在"
+                        exit 1
                     fi
                 '''
             }
@@ -71,7 +72,7 @@ pipeline {
             steps {
                 sh '''
                     echo "✅ 验证服务状态..."
-                    # 列出运行中的容器
+                    sleep 5
                     docker ps --format "table {{.Names}}\t{{.Status}}"
                 '''
             }
