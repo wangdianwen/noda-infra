@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: noda-jenkins
+    ports:
+      - "8081:8080"
+      - "50001:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.claude/team-keys:/var/jenkins_home/keys:ro
+    environment:
+      - JAVA_OPTS=-Dhudson.slaves.NodeProvisioner.MARGIN=50-Dhudson.slaves.NodeProvisioner.MARGIN0=0.85
+      - SOPS_AGE_KEY_FILE=/var/jenkins_home/keys/team-keys.txt
+    networks:
+      - noda-network
+    restart: unless-stopped
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/login"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  jenkins_home:
+    driver: local
+
+networks:
+  noda-network:
+    external: true

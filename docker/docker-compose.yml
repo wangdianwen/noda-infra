@@ -1,0 +1,156 @@
+# ============================================
+# Noda Monorepo - Docker Compose 基础配置
+# ============================================
+# 此文件定义所有共享的服务配置
+# 环境特定配置在 docker-compose.dev.yml 和 docker-compose.prod.yml 中覆盖
+
+name: noda-prod
+
+services:
+  # ----------------------------------------
+  # PostgreSQL 数据库
+  # ----------------------------------------
+  postgres:
+    image: postgres:17.9
+    container_name: noda-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./services/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - noda-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------
+  # Nginx 反向代理
+  # ----------------------------------------
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: noda-nginx
+    restart: unless-stopped
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/conf.d:/etc/nginx/conf.d:ro
+    networks:
+      - noda-network
+    depends_on:
+      - postgres
+
+  # ----------------------------------------
+  # Cloudflare Tunnel (生产环境)
+  # ----------------------------------------
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: noda-cloudflared
+    restart: unless-stopped
+    # 使用 Token 认证运行 Named Tunnel
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    environment:
+      CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    env_file:
+      - ../../.env.production
+    networks:
+      - noda-network
+
+  # ----------------------------------------
+  # Findclass 前端（Nginx 静态文件）
+  # ----------------------------------------
+  findclass:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.findclass
+    image: noda-app-findclass-web:latest
+    container_name: noda-app-findclass-web
+    restart: unless-stopped
+    networks:
+      - noda-network
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------
+  # Express API 服务器
+  # ----------------------------------------
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    image: noda-app-findclass-api:latest
+    container_name: noda-app-findclass-api
+    restart: unless-stopped
+    env_file:
+      - ../../.env.production
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-postgres:5432/findclass_db
+      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-postgres:5432/findclass_db
+      KEYCLOAK_URL: http://noda-keycloak:8080
+      KEYCLOAK_REALM: noda
+      KEYCLOAK_CLIENT_ID: noda-frontend
+    networks:
+      - noda-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+
+  # ----------------------------------------
+  # Keycloak 认证服务（基础配置）
+  # ----------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2.3
+    container_name: noda-keycloak
+    ports:
+      - "8080:8080"  # HTTP 端口
+      - "9000:9000"  # 管理端口（健康检查）
+    # 数据库配置（独立数据库架构）
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://noda-postgres:5432/keycloak_db
+      KC_DB_USERNAME: keycloak_user
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      # 启用 HTTP 模式（开发/内部网络）
+      KC_HTTP_ENABLED: "true"
+      # Hostname 配置（默认值，会在环境特定配置中覆盖）
+      KC_HOSTNAME: ""
+      KC_HOSTNAME_STRICT: "false"
+      # 管理员账号
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+    command: start
+    volumes:
+      - ./services/keycloak/themes:/opt/keycloak/themes/oneteam:ro  # 可选：未来自定义主题
+    networks:
+      - noda-network
+    restart: unless-stopped
+    depends_on:
+      - postgres
+
+# ============================================
+# Volumes（数据持久化）
+# ============================================
+volumes:
+  postgres_data:
+    driver: local
+
+# ============================================
+# Networks（网络隔离）
+# ============================================
+networks:
+  noda-network:
+    external: true
+    name: noda-network

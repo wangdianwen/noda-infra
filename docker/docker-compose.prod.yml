@@ -1,0 +1,159 @@
+# ============================================
+# Noda Monorepo - Docker Compose 生产环境配置
+# ============================================
+# 此文件覆盖生产环境特定的配置
+# 使用方法：docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+name: noda-prod
+
+services:
+  # ----------------------------------------
+  # PostgreSQL 生产环境配置
+  # ----------------------------------------
+  postgres:
+    # 生产环境不暴露端口（仅容器内部访问）
+    environment:
+      POSTGRES_DB: ${PROD_POSTGRES_DB:-oneteam_prod}
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    volumes:
+      - ./services/postgres/backup:/var/lib/postgresql/backup  # 备份目录
+      - ./services/postgres/backup/wal-archive:/var/lib/postgresql/wal_archive  # WAL 归档目录
+      - ./services/postgres/conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro  # PostgreSQL 配置文件
+
+  # ----------------------------------------
+  # Nginx 生产环境配置（暂时禁用 - 服务未在基础文件中定义）
+  # ----------------------------------------
+  # nginx:
+  #   # 生产环境不暴露端口（通过 Cloudflare Tunnel 访问）
+  #   volumes:
+  #     - ./infra/docker/nginx/ssl:/etc/nginx/ssl:ro  # SSL 证书（未来）
+  #     - ./apps/oneteam/frontend/dist:/usr/share/nginx/html:ro
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '1'
+  #         memory: 512M
+  #       reservations:
+  #         cpus: '0.25'
+  #         memory: 128M
+
+  # ----------------------------------------
+  # Keycloak 认证服务（生产环境）
+  # ----------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2.3
+    container_name: noda-keycloak
+    ports:
+      - "8080:8080"  # HTTP 端口
+      - "8443:8443"  # HTTPS 端口
+      - "9000:9000"  # 管理端口（健康检查）
+    environment:
+      # 数据库配置（独立数据库架构）
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://noda-postgres:5432/keycloak_db
+      KC_DB_USERNAME: keycloak_user
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      # 主机名配置
+      KC_HOSTNAME: keycloak.noda.co.nz
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HOSTNAME_PORT: "443"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: "xforwarded"
+      KC_PROXY: edge
+      # 启用健康检查
+      KC_HEALTH_ENABLED: "true"
+      # 管理员账号
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      # SMTP 配置（密码重置邮件）
+      KC_MAIL_HOST: ${SMTP_HOST}
+      KC_MAIL_PORT: ${SMTP_PORT}
+      KC_MAIL_FROM: ${SMTP_FROM}
+      KC_MAIL_FROM_DISPLAY_NAME: OneTeam
+      KC_SMTP_AUTH: "true"
+      KC_SMTP_USER: ${SMTP_USER}
+      KC_SMTP_PASSWORD: ${SMTP_PASSWORD}
+      KC_SMTP_SSL: "false"
+      KC_SMTP_STARTTLS: "true"
+    command: start
+    volumes:
+      - ./services/keycloak/themes:/opt/keycloak/themes/oneteam:ro  # 可选：未来自定义主题
+    networks:
+      - noda-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/9000 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ----------------------------------------
+  # Cloudflare Tunnel（生产环境启用 - 暂时禁用）
+  # ----------------------------------------
+  # cloudflared:
+  #   restart: always  # 确保自动重启
+  #   environment:
+  #     TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+  #   healthcheck:
+  #     test: ["CMD", "cloudflared", "--version"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
+  # ----------------------------------------
+  # Findclass 前端（生产环境）
+  # ----------------------------------------
+  findclass:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  # ----------------------------------------
+  # Express API（生产环境）
+  # ----------------------------------------
+  api:
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-postgres:5432/findclass_db
+      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-postgres:5432/findclass_db
+      KEYCLOAK_URL: http://noda-keycloak:8080
+      KEYCLOAK_REALM: noda
+      KEYCLOAK_CLIENT_ID: noda-frontend
+      RESEND_API_KEY: ${RESEND_API_KEY}
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+# ============================================
+# 网络定义
+# ============================================
+networks:
+  noda-network:
+    external: true
+    name: noda-network
