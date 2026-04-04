@@ -11,7 +11,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 if [ ! -f "$PROJECT_ROOT/package.json" ]; then
     PROJECT_ROOT="$(cd "$PROJECT_ROOT/.." && pwd)"
 fi
-COMPOSE_FILE="$PROJECT_ROOT/infra/docker/docker-compose.jenkins.yml"
+COMPOSE_FILE="$PROJECT_ROOT/docker/docker-compose.jenkins.yml"
 
 # 颜色定义
 RED='\033[0;31m'

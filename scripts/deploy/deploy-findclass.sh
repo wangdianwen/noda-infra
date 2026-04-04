@@ -20,14 +20,14 @@ fi
 
 # 1. 构建镜像
 echo "[1/4] 构建前端镜像..."
-docker build -f infra/docker/Dockerfile.findclass -t noda-findclass:latest .
+docker build -f docker/Dockerfile.findclass -t noda-findclass:latest .
 
 echo "[2/4] 构建 API 镜像..."
-docker build -f infra/docker/Dockerfile.api -t noda-api:latest .
+docker build -f docker/Dockerfile.api -t noda-api:latest .
 
 # 2. 启动服务
 echo "[3/4] 启动服务..."
-cd infra/docker
+cd docker
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-recreate findclass api
 
 # 3. 等待容器启动

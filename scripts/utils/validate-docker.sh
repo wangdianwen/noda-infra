@@ -25,8 +25,8 @@ echo -e "${GREEN}✓${NC} Docker Compose 版本: $(docker compose version)"
 
 # 验证基础配置
 echo -e "\n📋 验证 docker-compose.yml..."
-if [[ -f "infra/docker/docker-compose.yml" ]]; then
-  if docker compose -f infra/docker/docker-compose.yml config &> /dev/null; then
+if [[ -f "docker/docker-compose.yml" ]]; then
+  if docker compose -f docker/docker-compose.yml config &> /dev/null; then
     echo -e "${GREEN}✓${NC} 基础配置语法正确"
   else
     echo -e "${RED}✗${NC} 基础配置语法错误"
@@ -39,8 +39,8 @@ fi
 
 # 验证开发环境配置
 echo -e "\n📋 验证 docker-compose.dev.yml..."
-if [[ -f "infra/docker/docker-compose.dev.yml" ]]; then
-  if docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.dev.yml config &> /dev/null; then
+if [[ -f "docker/docker-compose.dev.yml" ]]; then
+  if docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml config &> /dev/null; then
     echo -e "${GREEN}✓${NC} 开发环境配置语法正确"
   else
     echo -e "${RED}✗${NC} 开发环境配置语法错误"
@@ -53,8 +53,8 @@ fi
 
 # 验证生产环境配置
 echo -e "\n📋 验证 docker-compose.prod.yml..."
-if [[ -f "infra/docker/docker-compose.prod.yml" ]]; then
-  if docker compose -f infra/docker/docker-compose.yml -f infra/docker/docker-compose.prod.yml config &> /dev/null; then
+if [[ -f "docker/docker-compose.prod.yml" ]]; then
+  if docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml config &> /dev/null; then
     echo -e "${GREEN}✓${NC} 生产环境配置语法正确"
   else
     echo -e "${RED}✗${NC} 生产环境配置语法错误"

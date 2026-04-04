@@ -107,7 +107,7 @@ build_images() {
     log_info "构建前端镜像 ($FINDCLASS_IMAGE)..."
     if ! docker build \
         -t "$FINDCLASS_IMAGE:latest" \
-        -f "$PROJECT_ROOT/infra/docker/Dockerfile.findclass" \
+        -f "$PROJECT_ROOT/docker/Dockerfile.findclass" \
         "$PROJECT_ROOT"; then
         error_exit "前端镜像构建失败"
     fi
@@ -115,11 +115,11 @@ build_images() {
     log_info "前端镜像构建成功"
 
     # 构建或拉取 API 镜像（如果存在 Dockerfile）
-    if [[ -f "$PROJECT_ROOT/infra/docker/Dockerfile.api" ]]; then
+    if [[ -f "$PROJECT_ROOT/docker/Dockerfile.api" ]]; then
         log_info "构建 API 镜像 ($API_IMAGE)..."
         if ! docker build \
             -t "$API_IMAGE:latest" \
-            -f "$PROJECT_ROOT/infra/docker/Dockerfile.api" \
+            -f "$PROJECT_ROOT/docker/Dockerfile.api" \
             "$PROJECT_ROOT"; then
             error_exit "API 镜像构建失败"
         fi
@@ -133,7 +133,7 @@ build_images() {
 stop_old_containers() {
     log_info "停止旧容器..."
 
-    cd "$PROJECT_ROOT/infra/docker"
+    cd "$PROJECT_ROOT/docker"
 
     if ! docker-compose \
         -f docker-compose.yml \
@@ -149,7 +149,7 @@ stop_old_containers() {
 start_new_containers() {
     log_info "启动新容器..."
 
-    cd "$PROJECT_ROOT/infra/docker"
+    cd "$PROJECT_ROOT/docker"
 
     # 启动服务
     if ! docker-compose \
@@ -216,7 +216,7 @@ rollback_deployment() {
     log_error "部署失败，开始回滚..."
 
     # 停止当前容器
-    cd "$PROJECT_ROOT/infra/docker"
+    cd "$PROJECT_ROOT/docker"
     docker-compose \
         -f docker-compose.yml \
         -f docker-compose.prod.yml \
@@ -230,7 +230,7 @@ rollback_deployment() {
 show_deployment_status() {
     log_info "部署状态:"
 
-    cd "$PROJECT_ROOT/infra/docker"
+    cd "$PROJECT_ROOT/docker"
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

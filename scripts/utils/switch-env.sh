@@ -94,10 +94,10 @@ echo ""
 # 4. 选择 Docker Compose 文件
 echo -e "${BLUE}4️⃣  选择 Docker Compose 配置...${NC}"
 if [[ "$ENV" == "dev" ]]; then
-  COMPOSE_FILES="-f $PROJECT_ROOT/infra/docker/docker-compose.yml -f $PROJECT_ROOT/infra/docker/docker-compose.dev.yml"
+  COMPOSE_FILES="-f $PROJECT_ROOT/docker/docker-compose.yml -f $PROJECT_ROOT/docker/docker-compose.dev.yml"
   ACCESS_URL="http://localhost:8080"
 else
-  COMPOSE_FILES="-f $PROJECT_ROOT/infra/docker/docker-compose.yml -f $PROJECT_ROOT/infra/docker/docker-compose.prod.yml"
+  COMPOSE_FILES="-f $PROJECT_ROOT/docker/docker-compose.yml -f $PROJECT_ROOT/docker/docker-compose.prod.yml"
   ACCESS_URL="https://oneteam.noda.co.nz"
 fi
 echo -e "${GREEN}✓${NC} 配置文件已选择"
