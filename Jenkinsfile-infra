@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        SOPS_AGE_KEY_FILE = credentials('sops-age-key')
+        SOPS_AGE_KEY_FILE = '/var/jenkins_home/keys/age-key-dianwenwang.txt'
         PROJECT_ROOT = "${env.WORKSPACE}"
     }
 
