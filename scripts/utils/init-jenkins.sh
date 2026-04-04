@@ -51,7 +51,7 @@ fi
 # 使用 Jenkins CLI 安装插件
 for plugin in "${PLUGINS[@]}"; do
     echo "   安装 $plugin..."
-    java -jar "$JENKINS_CLI" -s "$JENKINS_URL" -auth admin:\$(cat /var/jenkins_home/secrets/initialAdminPassword) install-plugin "$plugin" || true
+    java -jar "$JENKINS_CLI" -s "$JENKINS_URL" -auth "admin:$(cat /var/jenkins_home/secrets/initialAdminPassword)" install-plugin "$plugin" || true
 done
 
 echo "✅ 插件安装完成"

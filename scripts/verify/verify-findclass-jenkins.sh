@@ -59,14 +59,16 @@ check_http_endpoint() {
 
     echo -e "${GREEN}[INFO]${NC} 检查 ${description}: ${url}"
 
-    for ((i=1; i<=retries; i++)); do
+    i=1
+    while [ $i -le $retries ]; do
         if curl -f -s -o /dev/null "$url"; then
             echo -e "${GREEN}[OK]${NC} ${description} 响应正常"
             return 0
         else
             echo -e "${YELLOW}[RETRY]${NC} ${description} 无响应，重试 ${i}/${retries}..."
             sleep $RETRY_INTERVAL
-        done
+        fi
+        i=$((i + 1))
     done
 
     echo -e "${RED}[ERROR]${NC} ${description} 无响应"
