@@ -29,6 +29,12 @@ readonly DEFAULT_TIMEOUT_SECONDS="3600"
 readonly DEFAULT_COMPRESSION_LEVEL="-1"
 readonly DEFAULT_PARALLEL_BACKUP="false"
 
+# Backblaze B2 配置（Phase 2）
+readonly DEFAULT_B2_ACCOUNT_ID=""
+readonly DEFAULT_B2_APPLICATION_KEY=""
+readonly DEFAULT_B2_BUCKET_NAME="noda-backups"
+readonly DEFAULT_B2_PATH="backups/postgres/"
+
 # ============================================
 # 全局配置变量（可被外部修改）
 # ============================================
@@ -43,6 +49,12 @@ TIMEOUT_SECONDS="${DEFAULT_TIMEOUT_SECONDS}"
 COMPRESSION_LEVEL="${DEFAULT_COMPRESSION_LEVEL}"
 PARALLEL_BACKUP="${DEFAULT_PARALLEL_BACKUP}"
 
+# Backblaze B2 配置变量
+B2_ACCOUNT_ID="${DEFAULT_B2_ACCOUNT_ID}"
+B2_APPLICATION_KEY="${DEFAULT_B2_APPLICATION_KEY}"
+B2_BUCKET_NAME="${DEFAULT_B2_BUCKET_NAME}"
+B2_PATH="${DEFAULT_B2_PATH}"
+
 # ============================================
 # 配置加载函数
 # ============================================
@@ -52,7 +64,11 @@ PARALLEL_BACKUP="${DEFAULT_PARALLEL_BACKUP}"
 # 返回：0=成功，非0=失败
 load_config() {
   local script_dir
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  else
+    script_dir="$(cd "$(dirname "${0}")/.." && pwd)"
+  fi
   local config_file="${script_dir}/.env.backup"
 
   # 1. 加载默认值（已在全局变量中设置）
@@ -102,6 +118,18 @@ load_config() {
             ;;
           PARALLEL_BACKUP)
             PARALLEL_BACKUP="$value"
+            ;;
+          B2_ACCOUNT_ID)
+            B2_ACCOUNT_ID="$value"
+            ;;
+          B2_APPLICATION_KEY)
+            B2_APPLICATION_KEY="$value"
+            ;;
+          B2_BUCKET_NAME)
+            B2_BUCKET_NAME="$value"
+            ;;
+          B2_PATH)
+            B2_PATH="$value"
             ;;
         esac
       fi
@@ -236,6 +264,71 @@ get_postgres_user() {
 # 返回：超时时间（秒）
 get_timeout_seconds() {
   echo "$TIMEOUT_SECONDS"
+}
+
+# ============================================
+# B2 配置访问函数（Phase 2）
+# ============================================
+
+# get_b2_account_id - 返回 B2 Account ID
+# 参数：无
+# 返回：B2 Account ID（字符串）
+get_b2_account_id() {
+  echo "$B2_ACCOUNT_ID"
+}
+
+# get_b2_application_key - 返回 B2 Application Key
+# 参数：无
+# 返回：B2 Application Key（字符串）
+get_b2_application_key() {
+  echo "$B2_APPLICATION_KEY"
+}
+
+# get_b2_bucket_name - 返回 B2 Bucket 名称
+# 参数：无
+# 返回：B2 Bucket 名称（字符串）
+get_b2_bucket_name() {
+  echo "$B2_BUCKET_NAME"
+}
+
+# get_b2_path - 返回 B2 路径前缀
+# 参数：无
+# 返回：B2 路径前缀（字符串）
+get_b2_path() {
+  echo "$B2_PATH"
+}
+
+# validate_b2_credentials - 验证 B2 凭证配置
+# 参数：无
+# 返回：0=验证成功，1=验证失败
+validate_b2_credentials() {
+  local b2_account_id
+  local b2_application_key
+  local b2_bucket_name
+
+  b2_account_id=$(get_b2_account_id)
+  b2_application_key=$(get_b2_application_key)
+  b2_bucket_name=$(get_b2_bucket_name)
+
+  if [[ -z "$b2_account_id" ]]; then
+    echo "❌ 错误: B2_ACCOUNT_ID 未设置"
+    echo "  请在 .env.backup 中设置: B2_ACCOUNT_ID=your_account_id"
+    return 1
+  fi
+
+  if [[ -z "$b2_application_key" ]]; then
+    echo "❌ 错误: B2_APPLICATION_KEY 未设置"
+    echo "  请在 .env.backup 中设置: B2_APPLICATION_KEY=your_application_key"
+    return 1
+  fi
+
+  if [[ -z "$b2_bucket_name" ]]; then
+    echo "❌ 错误: B2_BUCKET_NAME 未设置"
+    echo "  请在 .env.backup 中设置: B2_BUCKET_NAME=noda-backups"
+    return 1
+  fi
+
+  return 0
 }
 
 # ============================================
