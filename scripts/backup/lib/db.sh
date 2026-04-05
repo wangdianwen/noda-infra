@@ -9,10 +9,10 @@
 set -euo pipefail
 
 # 加载依赖库
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/constants.sh"
-source "$SCRIPT_DIR/log.sh"
-source "$SCRIPT_DIR/util.sh"
+_DB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_DB_LIB_DIR/constants.sh"
+source "$_DB_LIB_DIR/log.sh"
+source "$_DB_LIB_DIR/util.sh"
 
 # ============================================
 # 全局变量
