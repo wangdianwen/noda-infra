@@ -86,9 +86,9 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-postgres:5432/findclass_db
-      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-postgres:5432/findclass_db
-      KEYCLOAK_URL: http://noda-keycloak:8080
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/findclass_db
+      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/findclass_db
+      KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_REALM: noda
       KEYCLOAK_CLIENT_ID: noda-frontend
     networks:

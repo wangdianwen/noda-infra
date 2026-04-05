@@ -65,37 +65,34 @@ pipeline {
             steps {
                 sh '''
                     echo "🚀 部署基础设施..."
-                    cd ${PROJECT_ROOT}/docker
 
-                    # 检查 Docker socket 权限
-                    echo "🔧 检查 Docker socket 权限..."
-                    ls -la /var/run/docker.sock || true
+                    # 使用宿主机路径（通过 /host-project 挂载）
+                    cd /host-project/noda-infra/docker
 
-                    # 检查 docker-compose 文件
+                    echo "📁 当前目录: $(pwd)"
+                    echo "📁 文件列表:"
+                    ls -la || true
+
+                    # 设置环境变量并启动服务
+                    export POSTGRES_USER=postgres
+                    export POSTGRES_PASSWORD=postgres_password_change_me
+                    export POSTGRES_DB=oneteam_prod
+                    export KEYCLOAK_ADMIN_USER=admin
+                    export KEYCLOAK_ADMIN_PASSWORD=admin_password_change_me
+                    export KEYCLOAK_DB_PASSWORD=keycloak_password_change_me
+                    export CLOUDFLARE_TUNNEL_TOKEN=
+
+                    # 检查文件是否存在
                     if [ -f "docker-compose.yml" ]; then
                         echo "✅ 找到 docker-compose.yml"
 
-                        # 复制配置文件到可访问的位置
-                        echo "📁 准备配置文件..."
-                        mkdir -p /jenkins-cache/noda-infra-config/nginx
-                        cp -r ${PROJECT_ROOT}/config/nginx/* /jenkins-cache/noda-infra-config/nginx/
-
-                        # 设置环境变量并启动服务
-                        export POSTGRES_USER=postgres
-                        export POSTGRES_PASSWORD=postgres_password_change_me
-                        export POSTGRES_DB=oneteam_prod
-                        export KEYCLOAK_ADMIN_USER=admin
-                        export KEYCLOAK_ADMIN_PASSWORD=admin_password_change_me
-                        export KEYCLOAK_DB_PASSWORD=keycloak_password_change_me
-                        export CLOUDFLARE_TUNNEL_TOKEN=
-
-                        # 使用覆盖文件启动服务（修复路径映射问题）
-                        docker compose -p noda-prod -f docker-compose.yml \
-                            -f docker-compose.jenkins-override.yml up -d
+                        # 启动服务
+                        docker compose -p noda-prod -f docker-compose.yml up -d
 
                         echo "✅ 服务已启动"
                     else
                         echo "❌ docker-compose.yml 不存在"
+                        ls -la /host-project/noda-infra/ || true
                         exit 1
                     fi
                 '''
