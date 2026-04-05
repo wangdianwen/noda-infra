@@ -11,5 +11,5 @@ services:
   nginx:
     volumes:
       # 覆盖原有的相对路径，使用 Jenkins 可访问的绝对路径
-      - /host-project/noda-infra-config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - /host-project/noda-infra-config/nginx/conf.d:/etc/nginx/conf.d:ro
+      - /jenkins-cache/noda-infra-config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /jenkins-cache/noda-infra-config/nginx/conf.d:/etc/nginx/conf.d:ro

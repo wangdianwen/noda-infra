@@ -58,8 +58,8 @@ pipeline {
 
                         # 复制配置文件到可访问的位置
                         echo "📁 准备配置文件..."
-                        mkdir -p /host-project/noda-infra-config/nginx
-                        cp -r ${PROJECT_ROOT}/config/nginx/* /host-project/noda-infra-config/nginx/
+                        mkdir -p /jenkins-cache/noda-infra-config/nginx
+                        cp -r ${PROJECT_ROOT}/config/nginx/* /jenkins-cache/noda-infra-config/nginx/
 
                         # 设置环境变量并启动服务
                         export POSTGRES_USER=postgres
