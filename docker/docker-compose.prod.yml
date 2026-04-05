@@ -56,9 +56,9 @@ services:
     environment:
       # 数据库配置（独立数据库架构）
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://noda-postgres:5432/keycloak_db
-      KC_DB_USERNAME: keycloak_user
-      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
       # 主机名配置
       KC_HOSTNAME: keycloak.noda.co.nz
       KC_HOSTNAME_STRICT: "false"
@@ -134,9 +134,9 @@ services:
   # ----------------------------------------
   api:
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-postgres:5432/findclass_db
-      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-postgres:5432/findclass_db
-      KEYCLOAK_URL: http://noda-keycloak:8080
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/findclass_db
+      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/findclass_db
+      KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_REALM: noda
       KEYCLOAK_CLIENT_ID: noda-frontend
       RESEND_API_KEY: ${RESEND_API_KEY}

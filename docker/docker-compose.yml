@@ -4,7 +4,7 @@
 # 此文件定义所有共享的服务配置
 # 环境特定配置在 docker-compose.dev.yml 和 docker-compose.prod.yml 中覆盖
 
-name: noda-prod
+name: noda-infra
 
 services:
   # ----------------------------------------
@@ -110,9 +110,9 @@ services:
     # 数据库配置（独立数据库架构）
     environment:
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://noda-postgres:5432/keycloak_db
-      KC_DB_USERNAME: keycloak_user
-      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
       # 启用 HTTP 模式（开发/内部网络）
       KC_HTTP_ENABLED: "true"
       # Hostname 配置（默认值，会在环境特定配置中覆盖）

@@ -1,0 +1,94 @@
+# ============================================
+# Noda 基础设施 - 简化版（只包含不需要构建的服务）
+# ============================================
+
+name: noda-infra
+
+services:
+  # ----------------------------------------
+  # PostgreSQL 数据库
+  # ----------------------------------------
+  postgres:
+    image: postgres:17.9
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password_change_me
+      POSTGRES_DB: oneteam_prod
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - noda-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------
+  # Nginx 反向代理
+  # ----------------------------------------
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: noda-infra-nginx
+    restart: unless-stopped
+    volumes:
+      - ../config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../config/nginx/conf.d:/etc/nginx/conf.d:ro
+    ports:
+      - "80:80"
+    networks:
+      noda-network:
+        aliases:
+          - noda-infra-nginx
+    depends_on:
+      - postgres
+      - keycloak
+
+  # ----------------------------------------
+  # Keycloak 认证服务
+  # ----------------------------------------
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2.3
+    ports:
+      - "8080:8080"
+      - "9000:9000"
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/oneteam_prod
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres_password_change_me
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: ""
+      KC_HOSTNAME_STRICT: "false"
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin_password_change_me
+    command: start
+    networks:
+      - noda-network
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ----------------------------------------
+  # Cloudflare Tunnel (生产环境)
+  # ----------------------------------------
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    environment:
+      CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - noda-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  noda-network:
+    external: true
+    name: noda-network

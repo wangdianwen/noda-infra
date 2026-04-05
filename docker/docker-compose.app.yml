@@ -1,0 +1,62 @@
+# ============================================
+# Noda 应用服务配置
+# ============================================
+
+name: noda-app
+
+services:
+  # ----------------------------------------
+  # Findclass 前端（Nginx 静态文件）
+  # ----------------------------------------
+  web:
+    build:
+      context: ../../oneteam
+      dockerfile: infra/docker/Dockerfile.findclass
+      args:
+        VITE_KEYCLOAK_URL: "https://auth.noda.co.nz"
+        VITE_KEYCLOAK_REALM: noda
+        VITE_KEYCLOAK_CLIENT_ID: noda-frontend
+    image: findclass-web:latest
+    container_name: findclass-web
+    restart: unless-stopped
+    networks:
+      - noda-network
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ----------------------------------------
+  # Express API 服务器
+  # ----------------------------------------
+  api:
+    build:
+      context: ../../oneteam
+      dockerfile: infra/docker/Dockerfile.api
+    image: findclass-api:latest
+    container_name: findclass-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres_password_change_me@noda-infra-postgres-1:5432/oneteam_prod
+      DIRECT_URL: postgresql://postgres:postgres_password_change_me@noda-infra-postgres-1:5432/oneteam_prod
+      KEYCLOAK_URL: http://noda-infra-keycloak-1:8080
+      KEYCLOAK_REALM: noda
+      KEYCLOAK_CLIENT_ID: noda-frontend
+    networks:
+      - noda-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  noda-network:
+    external: true
+    name: noda-network
