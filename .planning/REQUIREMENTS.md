@@ -9,11 +9,11 @@
 
 ### Backup — 备份执行
 
-- [ ] **BACKUP-01**: 系统可以备份多个数据库（keycloak_db、findclass_db）及其全局对象
-- [ ] **BACKUP-02**: 备份文件使用时间戳和数据库名命名（格式：`{db_name}_{YYYYMMDD_HHmmss}.dump`）
-- [ ] **BACKUP-03**: 备份使用 pg_dump -Fc 自定义压缩格式（自带 zlib 压缩）
-- [ ] **BACKUP-04**: 备份前执行 PostgreSQL 健康检查（pg_isready）
-- [ ] **BACKUP-05**: 备份前检查磁盘空间是否充足
+- [x] **BACKUP-01**: 系统可以备份多个数据库（keycloak_db、findclass_db）及其全局对象
+- [x] **BACKUP-02**: 备份文件使用时间戳和数据库名命名（格式：`{db_name}_{YYYYMMDD_HHmmss}.dump`）
+- [x] **BACKUP-03**: 备份使用 pg_dump -Fc 自定义压缩格式（自带 zlib 压缩）
+- [x] **BACKUP-04**: 备份前执行 PostgreSQL 健康检查（pg_isready）
+- [x] **BACKUP-05**: 备份前检查磁盘空间是否充足
 
 ### Upload — 云存储上传
 
@@ -32,7 +32,7 @@
 
 ### Verify — 验证测试
 
-- [ ] **VERIFY-01**: 备份后立即验证完整性（pg_restore --list）
+- [x] **VERIFY-01**: 备份后立即验证完整性（pg_restore --list）
 - [ ] **VERIFY-02**: 每周自动执行恢复测试，验证备份可用性
 
 ### Monitor — 监控告警
@@ -40,7 +40,7 @@
 - [ ] **MONITOR-01**: 备份脚本输出结构化日志（时间戳、数据库名、文件大小、耗时、状态、错误详情）
 - [ ] **MONITOR-02**: 备份失败时发送 Webhook 告警通知
 - [ ] **MONITOR-03**: 追踪备份持续时间，偏差超过 50% 时输出警告
-- [ ] **MONITOR-04**: 备份前检查 Docker volume 可用磁盘空间
+- [x] **MONITOR-04**: 备份前检查 Docker volume 可用磁盘空间
 - [ ] **MONITOR-05**: 脚本使用标准退出码（0=成功、1=连接失败、2=备份失败、3=上传失败、4=清理失败、5=验证失败）
 
 ### Security — 安全管理
@@ -85,13 +85,13 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BACKUP-01 | Phase 1 | Pending |
-| BACKUP-02 | Phase 1 | Pending |
-| BACKUP-03 | Phase 1 | Pending |
-| BACKUP-04 | Phase 1 | Pending |
-| BACKUP-05 | Phase 1 | Pending |
-| VERIFY-01 | Phase 1 | Pending |
-| MONITOR-04 | Phase 1 | Pending |
+| BACKUP-01 | Phase 1 | Complete |
+| BACKUP-02 | Phase 1 | Complete |
+| BACKUP-03 | Phase 1 | Complete |
+| BACKUP-04 | Phase 1 | Complete |
+| BACKUP-05 | Phase 1 | Complete |
+| VERIFY-01 | Phase 1 | Complete |
+| MONITOR-04 | Phase 1 | Complete |
 | UPLOAD-01 | Phase 2 | Pending |
 | UPLOAD-02 | Phase 2 | Pending |
 | UPLOAD-03 | Phase 2 | Pending |
