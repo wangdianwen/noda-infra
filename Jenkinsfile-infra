@@ -66,8 +66,8 @@ pipeline {
                 sh '''
                     echo "🚀 部署基础设施..."
 
-                    # 使用宿主机路径（通过 /host-project 挂载）
-                    cd /host-project/noda-infra/docker
+                    # 使用宿主机路径（通过 /host-project-noda-infra 挂载）
+                    cd /host-project-noda-infra/docker
 
                     echo "📁 当前目录: $(pwd)"
                     echo "📁 文件列表:"
