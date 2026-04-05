@@ -53,8 +53,6 @@ services:
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
     environment:
       CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
-    env_file:
-      - ../.env.production
     networks:
       - noda-network
 
@@ -86,8 +84,6 @@ services:
       dockerfile: infra/docker/Dockerfile.api
     image: noda-app-findclass-api:latest
     restart: unless-stopped
-    env_file:
-      - ../.env.production
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-postgres:5432/findclass_db
