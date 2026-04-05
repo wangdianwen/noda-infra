@@ -26,15 +26,17 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Requirements**: BACKUP-01, BACKUP-02, BACKUP-03, BACKUP-04, BACKUP-05, VERIFY-01, MONITOR-04
 **Success Criteria** (what must be TRUE):
   1. 执行备份脚本后，keycloak_db 和 findclass_db 都生成了 .dump 格式的备份文件，文件名包含时间戳和数据库名
-  2. 全局对象（角色和表空间定义）也被单独备份
-  3. 备份前自动检查 PostgreSQL 连接状态和磁盘空间，不满足条件时脚本提前退出并给出明确错误信息
-  4. 每个备份文件生成后，pg_restore --list 可以成功列出其内容（验证备份可读性）
-**Plans**: 3 plans
+  2. 每个备份文件可以通过 `pg_restore --list` 验证可读性，备份目录包含 SHA-256 校验和文件
+  3. 备份文件存储在 Docker volume 映射的宿主机目录，权限为 600（仅所有者可读写）
+  4. 备份前自动检查磁盘空间（数据库大小 × 2），空间不足时拒绝执行并返回明确错误
+  5. 提供 `--test` 模式，可以创建测试数据库并验证完整备份和恢复流程（D-43）
+**Plans**: 4 plans (Wave 0 + 3 execution waves)
 
 Plans:
-- [ ] 01-01: 建立备份脚本基础架构（健康检查 + 配置管理）
-- [ ] 01-02: 实现数据库备份核心功能（发现、备份、日志、工具）
-- [ ] 01-03: 实现备份验证和主脚本集成
+- [ ] 01-00: 创建测试基础设施（Wave 0，Nyquist 规则合规）
+- [ ] 01-01: 实现健康检查和配置管理（Wave 1）
+- [ ] 01-02: 实现数据库备份核心功能（发现、备份、日志、工具）（Wave 2）
+- [ ] 01-03: 实现备份验证和主脚本集成（含完整 D-43 测试模式）（Wave 3）
 
 ### Phase 2: 云存储集成
 **Goal**: 备份文件自动上传到 Backblaze B2 云存储，上传后验证校验和，旧备份自动清理，凭证通过环境变量安全管理
@@ -58,9 +60,9 @@ Plans:
 **Requirements**: RESTORE-01, RESTORE-02, RESTORE-03, RESTORE-04
 **Success Criteria** (what must be TRUE):
   1. 执行恢复脚本可以列出 B2 上所有可用的备份文件，按时间排序
-  2. 可以指定数据库名和时间戳，从云存储下载对应备份并恢复到生产数据库
-  3. 恢复指定数据库时，其他运行中的数据库不受影响
-  4. 可以恢复到不同的数据库名（如 _test 后缀），用于安全验证而不影响生产环境
+  2. 可以指定备份文件恢复到目标数据库，支持恢复到不同数据库名（用于测试）
+  3. 恢复前自动验证备份文件完整性（校验和），恢复后验证表数量和关键记录
+  4. 恢复失败时提供明确的错误信息和解决建议
 **Plans**: TBD
 
 Plans:
@@ -99,7 +101,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 本地备份核心 | 0/3 | Planning | - |
+| 1. 本地备份核心 | 0/4 | Planning（Wave 0 已添加） | - |
 | 2. 云存储集成 | 0/? | Not started | - |
 | 3. 恢复脚本 | 0/? | Not started | - |
 | 4. 自动化验证测试 | 0/? | Not started | - |
