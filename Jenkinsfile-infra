@@ -12,6 +12,21 @@ pipeline {
     }
 
     stages {
+        stage('Setup Docker Permissions') {
+            steps {
+                sh '''
+                    echo "🔧 配置 Docker 权限..."
+                    # 尝试修复 Docker socket 权限
+                    if [ -w /var/run/docker.sock ]; then
+                        echo "✅ Docker socket 已可写"
+                    else
+                        echo "⚠️  Docker socket 不可写，尝试修复..."
+                        ls -la /var/run/docker.sock || true
+                    fi
+                '''
+            }
+        }
+
         stage('Checkout') {
             steps {
                 checkout scm
@@ -52,9 +67,9 @@ pipeline {
                     echo "🚀 部署基础设施..."
                     cd ${PROJECT_ROOT}/docker
 
-                    # 修复 Docker socket 权限
-                    echo "🔧 修复 Docker 权限..."
-                    sudo chmod 666 /var/run/docker.sock || echo "权限已设置"
+                    # 检查 Docker socket 权限
+                    echo "🔧 检查 Docker socket 权限..."
+                    ls -la /var/run/docker.sock || true
 
                     # 检查 docker-compose 文件
                     if [ -f "docker-compose.yml" ]; then
