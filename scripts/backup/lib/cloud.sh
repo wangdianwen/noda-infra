@@ -34,17 +34,22 @@ setup_rclone_config() {
   rclone_config=$(mktemp)
   chmod 600 "$rclone_config"
 
-  # 配置 rclone
-  if rclone config create b2remote backblazeb2 \
-    --b2-account-id "$b2_account_id" \
-    --b2-account-key "$b2_application_key" \
-    --config "$rclone_config" >/dev/null 2>&1; then
-    echo "$rclone_config"
-  else
-    log_error "rclone 配置创建失败"
+  # 直接写入配置文件
+  cat > "$rclone_config" <<EOF
+[b2remote]
+type = b2
+account = $b2_account_id
+key = $b2_application_key
+EOF
+
+  # 验证配置
+  if ! rclone listremotes --config "$rclone_config" | grep -q "b2remote:"; then
+    log_error "rclone 配置验证失败"
     rm -f "$rclone_config"
     return 1
   fi
+
+  echo "$rclone_config"
 }
 
 # cleanup_rclone_config - 清理 rclone 配置文件
