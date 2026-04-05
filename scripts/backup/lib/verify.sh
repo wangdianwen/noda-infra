@@ -13,9 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/log.sh"
 source "$SCRIPT_DIR/util.sh"
 
-# 退出码常量
-EXIT_SUCCESS=0
-EXIT_VERIFICATION_FAILED=5
+source "$(dirname "${BASH_SOURCE[0]}")/constants.sh"
+
 
 # ============================================
 # 函数：verify_backup_readable
