@@ -86,7 +86,6 @@ services:
       KC_HOSTNAME: "auth.noda.co.nz"
       KC_HOSTNAME_STRICT: "false"
       KC_HOSTNAME_PORT: "443"
-      KC_HTTP_ENABLED: "true"
       KC_PROXY: "edge"
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin_password_change_me
