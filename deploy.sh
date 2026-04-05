@@ -144,6 +144,15 @@ fi
 # 检查并创建 noda-frontend client
 if docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh get realms/noda/clients | jq -e '.[] | select(.clientId=="noda-frontend")' > /dev/null 2>&1; then
   echo -e "${YELLOW}⚠️  Client 'noda-frontend' 已存在${NC}"
+
+  # 更新现有 client 的 redirect URIs
+  CLIENT_ID=$(docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh get realms/noda/clients | jq -r '.[] | select(.clientId=="noda-frontend") | .id')
+
+  docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh update realms/noda/clients/$CLIENT_ID \
+    -s 'redirectUris=["https://class.noda.co.nz/*", "http://localhost/*", "http://localhost:3000/*"]' \
+    -s 'webOrigins=["https://class.noda.co.nz", "http://localhost", "http://localhost:3000"]' > /dev/null 2>&1
+
+  echo -e "${GREEN}✅ Client 'noda-frontend' 已更新${NC}"
 else
   echo -e "${YELLOW}🔧 创建 'noda-frontend' client...${NC}"
 
@@ -153,8 +162,8 @@ else
     -s name=noda-frontend \
     -s enabled=true \
     -s publicClient=true \
-    -s 'redirectUris=["+"]' \
-    -s 'webOrigins=["+"]' > /dev/null 2>&1
+    -s 'redirectUris=["https://class.noda.co.nz/*", "http://localhost/*", "http://localhost:3000/*"]' \
+    -s 'webOrigins=["https://class.noda.co.nz", "http://localhost", "http://localhost:3000"]' > /dev/null 2>&1
 
   echo -e "${GREEN}✅ Client 'noda-frontend' 创建成功${NC}"
 fi
