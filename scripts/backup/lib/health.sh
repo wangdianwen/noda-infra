@@ -10,13 +10,10 @@
 
 set -euo pipefail
 
-# ============================================
-# 退出码常量（遵循 MONITOR-05）
-# ============================================
-
-readonly EXIT_SUCCESS=0
-readonly EXIT_CONNECTION_FAILED=1
-readonly EXIT_DISK_SPACE_INSUFFICIENT=2
+# 加载依赖库
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/constants.sh"
+source "$SCRIPT_DIR/config.sh"
 
 # ============================================
 # PostgreSQL 连接检查
