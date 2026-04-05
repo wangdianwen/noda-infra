@@ -154,7 +154,7 @@ verify_upload_checksum() {
 
   log_info "验证校验和..."
 
-  if rclone check "$local_dir" "b2remote:$remote_path" \
+  if rclone check "$local_dir" "$remote_path" \
     --config "$rclone_config" \
     --one-way \
     --combined /dev/null \
