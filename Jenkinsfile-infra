@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         SOPS_AGE_KEY_FILE = '/var/jenkins_home/keys/age-key-dianwenwang.txt'
-        PROJECT_ROOT = "/host-project-noda-infra"  // 直接使用挂载目录
+        PROJECT_ROOT = "/Users/dianwenwang/project/noda-infra"  // 宿主机绝对路径
     }
 
     options {
