@@ -56,6 +56,15 @@ pipeline {
                     if [ -f "docker-compose.yml" ]; then
                         echo "✅ 找到 docker-compose.yml"
 
+                        # 设置环境变量并启动服务
+                        export POSTGRES_USER=postgres
+                        export POSTGRES_PASSWORD=postgres_password_change_me
+                        export POSTGRES_DB=oneteam_prod
+                        export KEYCLOAK_ADMIN_USER=admin
+                        export KEYCLOAK_ADMIN_PASSWORD=admin_password_change_me
+                        export KEYCLOAK_DB_PASSWORD=keycloak_password_change_me
+                        export CLOUDFLARE_TUNNEL_TOKEN=
+
                         # 启动生产环境服务
                         docker compose -p noda-prod -f docker-compose.yml up -d
 
