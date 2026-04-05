@@ -3,7 +3,6 @@ pipeline {
 
     environment {
         SOPS_AGE_KEY_FILE = '/var/jenkins_home/keys/age-key-dianwenwang.txt'
-        PROJECT_ROOT = "/Users/dianwenwang/project/noda-infra"  // 宿主机绝对路径
     }
 
     options {
@@ -12,45 +11,16 @@ pipeline {
     }
 
     stages {
-        stage('Setup Docker Permissions') {
-            steps {
-                sh '''
-                    echo "🔧 配置 Docker 权限..."
-                    # 尝试修复 Docker socket 权限
-                    if [ -w /var/run/docker.sock ]; then
-                        echo "✅ Docker socket 已可写"
-                    else
-                        echo "⚠️  Docker socket 不可写，尝试修复..."
-                        ls -la /var/run/docker.sock || true
-                    fi
-                '''
-            }
-        }
-
         stage('Verify Project') {
             steps {
                 sh '''
                     echo "🔍 验证项目配置..."
-                    echo "项目根目录: ${PROJECT_ROOT}"
+                    cd /host-project-noda-infra
+                    echo "项目根目录: /host-project-noda-infra"
                     echo "密钥文件: ${SOPS_AGE_KEY_FILE}"
-                    ls -la ${PROJECT_ROOT}/ || exit 1
+                    ls -la /host-project-noda-infra/ || exit 1
                     ls -la ${SOPS_AGE_KEY_FILE} || exit 1
                     which docker && docker --version
-                '''
-            }
-        }
-
-        stage('Decrypt Secrets') {
-            steps {
-                sh '''
-                    echo "🔐 解密密钥文件..."
-                    if [ -f "secrets/.env.production.enc" ]; then
-                        sops --decrypt --age-keyfile ${SOPS_AGE_KEY_FILE} \
-                            secrets/.env.production.enc > .env.production
-                        echo "✅ 密钥解密成功"
-                    else
-                        echo "ℹ️  没有找到加密的密钥文件，使用默认配置"
-                    fi
                 '''
             }
         }
@@ -59,12 +29,9 @@ pipeline {
             steps {
                 sh '''
                     echo "🚀 部署基础设施..."
-
-                    # 使用宿主机路径（通过 /host-project-noda-infra 挂载）
                     cd /host-project-noda-infra/docker
 
                     echo "📁 当前目录: $(pwd)"
-                    echo "📁 文件列表:"
                     ls -la || true
 
                     # 设置环境变量并启动服务
@@ -76,19 +43,10 @@ pipeline {
                     export KEYCLOAK_DB_PASSWORD=keycloak_password_change_me
                     export CLOUDFLARE_TUNNEL_TOKEN=
 
-                    # 检查文件是否存在
-                    if [ -f "docker-compose.yml" ]; then
-                        echo "✅ 找到 docker-compose.yml"
+                    # 启动服务
+                    docker compose -p noda-prod -f docker-compose.yml up -d
 
-                        # 启动服务
-                        docker compose -p noda-prod -f docker-compose.yml up -d
-
-                        echo "✅ 服务已启动"
-                    else
-                        echo "❌ docker-compose.yml 不存在"
-                        ls -la /host-project/noda-infra/ || true
-                        exit 1
-                    fi
+                    echo "✅ 服务已启动"
                 '''
             }
         }
@@ -106,14 +64,13 @@ pipeline {
 
     post {
         always {
-            echo "🧹 清理临时文件..."
-            sh 'rm -f .env.production || true'
+            echo "🧹 清理完成"
         }
         success {
             echo "✅ 基础设施部署成功！"
         }
         failure {
-            echo "❌ 基础设施部署失败！请检查日志。"
+            echo "❌ 基础设施部署失败！"
         }
     }
 }
