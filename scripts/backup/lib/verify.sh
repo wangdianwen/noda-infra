@@ -10,10 +10,9 @@ set -euo pipefail
 
 # 加载依赖库
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/constants.sh"
 source "$SCRIPT_DIR/log.sh"
 source "$SCRIPT_DIR/util.sh"
-
-source "$(dirname "${BASH_SOURCE[0]}")/constants.sh"
 
 
 # ============================================
