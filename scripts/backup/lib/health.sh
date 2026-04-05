@@ -13,7 +13,11 @@ set -euo pipefail
 # 加载依赖库
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/constants.sh"
-source "$SCRIPT_DIR/config.sh"
+
+# 加载配置函数（如果尚未加载）
+if ! type get_postgres_host &>/dev/null; then
+  source "$SCRIPT_DIR/config.sh"
+fi
 
 # ============================================
 # PostgreSQL 连接检查
