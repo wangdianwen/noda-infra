@@ -2,7 +2,6 @@
 # Tunnel ID: 9cab5df3-a546-48fb-9dc5-eacb48c56ff8
 
 tunnel: 9cab5df3-a546-48fb-9dc5-eacb48c56ff8
-credentials-file: /root/.cloudflared/9cab5df3-a546-48fb-9dc5-eacb48c56ff8.json
 
 # 配置文件版本
 version: 2
@@ -19,9 +18,9 @@ ingress:
   # 主域名 - 指向 Nginx (反向代理)
   - hostname: noda.co.nz
     service: http://noda-nginx:80
-  # 管理界面 - Keycloak
-  - hostname: keycloak.noda.co.nz
-    service: http://noda-keycloak:8080
+  # 认证服务 - Keycloak
+  - hostname: auth.noda.co.nz
+    service: http://keycloak:8080
   # 本地开发
   - hostname: localhost.noda.co.nz
     service: http://noda-nginx:80

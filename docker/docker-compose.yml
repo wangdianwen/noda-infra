@@ -61,8 +61,12 @@ services:
   # ----------------------------------------
   findclass:
     build:
-      context: ../..
+      context: ../../oneteam
       dockerfile: infra/docker/Dockerfile.findclass
+      args:
+        VITE_KEYCLOAK_URL: https://auth.noda.co.nz
+        VITE_KEYCLOAK_REALM: noda
+        VITE_KEYCLOAK_CLIENT_ID: noda-frontend
     image: noda-app-findclass-web:latest
     restart: unless-stopped
     networks:
@@ -115,9 +119,13 @@ services:
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
       # 启用 HTTP 模式（开发/内部网络）
       KC_HTTP_ENABLED: "true"
-      # Hostname 配置（默认值，会在环境特定配置中覆盖）
-      KC_HOSTNAME: ""
+      # Hostname 配置
+      KC_HOSTNAME: "auth.noda.co.nz"
+      KC_HOSTNAME_PORT: "443"
       KC_HOSTNAME_STRICT: "false"
+      # Proxy 配置（Cloudflare Tunnel）
+      KC_PROXY: "edge"
+      KC_PROXY_HEADERS: "xforwarded"
       # 管理员账号
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
