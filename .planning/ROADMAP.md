@@ -34,8 +34,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 - [x] 01-00: 创建测试基础设施（Wave 0，Nyquist 规则合规）
-- [ ] 01-01: 实现健康检查和配置管理（Wave 1）
-- [ ] 01-02: 实现数据库备份核心功能（发现、备份、日志、工具）（Wave 2）
+- [x] 01-01: 实现健康检查和配置管理（Wave 1）
+- [x] 01-02: 实现数据库备份核心功能（发现、备份、日志、工具）（Wave 2）
 - [ ] 01-03: 实现备份验证和主脚本集成（含完整 D-43 测试模式）（Wave 3）
 
 ### Phase 2: 云存储集成
