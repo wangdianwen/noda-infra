@@ -54,25 +54,29 @@ echo -e "${YELLOW}🔐 加载加密密钥...${NC}"
 if [ -f "$INFRA_DIR/config/secrets.sops.yaml" ]; then
     # 检查 sops 是否可用
     if command -v sops > /dev/null 2>&1; then
-        # 使用 sops 解密并读取密钥
-        SECRETS=$(sops --decrypt "$INFRA_DIR/config/secrets.sops.yaml")
+        # 使用 sops 解密并读取密钥（忽略解密错误）
+        SECRETS=$(sops --decrypt "$INFRA_DIR/config/secrets.sops.yaml" 2>/dev/null)
 
-        # 读取 Cloudflare Token
-        TOKEN=$(echo "$SECRETS" | grep "^cloudflare_tunnel_token:" | awk '{print $2}' | tr -d '"')
-        if [ -n "$TOKEN" ] && [ "$TOKEN" != "" ]; then
-            export CLOUDFLARE_TUNNEL_TOKEN="$TOKEN"
-            echo -e "${GREEN}✅ Cloudflare Token 已加载${NC}"
-        fi
+        if [ $? -eq 0 ] && [ -n "$SECRETS" ]; then
+            # 读取 Cloudflare Token
+            TOKEN=$(echo "$SECRETS" | grep "^cloudflare_tunnel_token:" | awk '{print $2}' | tr -d '"')
+            if [ -n "$TOKEN" ] && [ "$TOKEN" != "" ]; then
+                export CLOUDFLARE_TUNNEL_TOKEN="$TOKEN"
+                echo -e "${GREEN}✅ Cloudflare Token 已加载${NC}"
+            fi
 
-        # 读取 Google OAuth 凭据
-        GOOGLE_CLIENT_ID=$(echo "$SECRETS" | grep "^google_oauth_client_id:" | awk '{print $2}' | tr -d '"')
-        GOOGLE_CLIENT_SECRET=$(echo "$SECRETS" | grep "^google_oauth_client_secret:" | awk '{print $2}' | tr -d '"')
-        if [ -n "$GOOGLE_CLIENT_ID" ] && [ "$GOOGLE_CLIENT_SECRET" != "" ]; then
-            export GOOGLE_OAUTH_CLIENT_ID="$GOOGLE_CLIENT_ID"
-            export GOOGLE_OAUTH_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET"
-            echo -e "${GREEN}✅ Google OAuth 凭据已加载${NC}"
+            # 读取 Google OAuth 凭据
+            GOOGLE_CLIENT_ID=$(echo "$SECRETS" | grep "^google_oauth_client_id:" | awk '{print $2}' | tr -d '"')
+            GOOGLE_CLIENT_SECRET=$(echo "$SECRETS" | grep "^google_oauth_client_secret:" | awk '{print $2}' | tr -d '"')
+            if [ -n "$GOOGLE_CLIENT_ID" ] && [ "$GOOGLE_CLIENT_SECRET" != "" ]; then
+                export GOOGLE_OAUTH_CLIENT_ID="$GOOGLE_CLIENT_ID"
+                export GOOGLE_OAUTH_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET"
+                echo -e "${GREEN}✅ Google OAuth 凭据已加载${NC}"
+            else
+                echo -e "${YELLOW}⚠️  Google OAuth 凭据未配置${NC}"
+            fi
         else
-            echo -e "${YELLOW}⚠️  Google OAuth 凭据未配置${NC}"
+            echo -e "${YELLOW}⚠️  无法解密密钥文件（可能需要 AGE 密钥）${NC}"
         fi
     else
         echo -e "${RED}❌ sops 未安装，无法解密密钥文件${NC}"
