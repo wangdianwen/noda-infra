@@ -94,7 +94,7 @@ cd "$DOCKER_DIR"
 if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ] && [ "$CLOUDFLARE_TUNNEL_TOKEN" != "" ]; then
     docker compose -p noda-infra -f docker-compose.simple.yml up -d
 else
-    docker compose -p noda-infra -f docker-compose.simple.yml up -d postgres nginx keycloak
+    docker compose -p noda-infra -f docker-compose.simple.yml up -d postgres postgres-dev nginx keycloak
 fi
 
 echo ""
