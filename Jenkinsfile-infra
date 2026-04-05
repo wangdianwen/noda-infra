@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         SOPS_AGE_KEY_FILE = '/var/jenkins_home/keys/age-key-dianwenwang.txt'
-        PROJECT_ROOT = "${env.WORKSPACE}"
+        PROJECT_ROOT = "/host-project-noda-infra"  // 直接使用挂载目录
     }
 
     options {
@@ -27,19 +27,13 @@ pipeline {
             }
         }
 
-        stage('Checkout') {
-            steps {
-                checkout scm
-                sh 'echo "✅ 代码检出完成"'
-            }
-        }
-
-        stage('Verify Environment') {
+        stage('Verify Project') {
             steps {
                 sh '''
-                    echo "🔍 验证环境配置..."
-                    echo "工作空间: ${PROJECT_ROOT}"
+                    echo "🔍 验证项目配置..."
+                    echo "项目根目录: ${PROJECT_ROOT}"
                     echo "密钥文件: ${SOPS_AGE_KEY_FILE}"
+                    ls -la ${PROJECT_ROOT}/ || exit 1
                     ls -la ${SOPS_AGE_KEY_FILE} || exit 1
                     which docker && docker --version
                 '''
