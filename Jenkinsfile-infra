@@ -52,6 +52,10 @@ pipeline {
                     echo "🚀 部署基础设施..."
                     cd ${PROJECT_ROOT}/docker
 
+                    # 修复 Docker socket 权限
+                    echo "🔧 修复 Docker 权限..."
+                    sudo chmod 666 /var/run/docker.sock || echo "权限已设置"
+
                     # 检查 docker-compose 文件
                     if [ -f "docker-compose.yml" ]; then
                         echo "✅ 找到 docker-compose.yml"
