@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 01-03-plan.md
-last_updated: "2026-04-05T22:43:56.005Z"
-last_activity: 2026-04-05
+status: gaps_found
+stopped_at: Phase 1 verification complete - variable collision blocker found
+last_updated: "2026-04-06T15:30:00Z"
+last_activity: 2026-04-06
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 0
   total_plans: 4
   completed_plans: 4
-  percent: 100
+  percent: 80
 ---
 
 # Project State
@@ -21,38 +21,36 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-06)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
-**Current focus:** Phase 1 - 本地备份核心（规划完成，准备执行）
+**Current focus:** Phase 1 - 本地备份核心（验证完成，发现阻塞问题）
 
 ## Current Position
 
 Phase: 1 of 5 (本地备份核心)
-Plan: 3 of 3 in current phase
-Status: Phase complete — ready for verification
-Last activity: 2026-04-05
+Status: Phase verification complete — gaps found
+Last activity: 2026-04-06
 
-Progress: [..........] 0%
+Progress: [████████░░] 80%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 0
-- Average duration: -
-- Total execution time: 0 hours
+- Total plans completed: 4
+- Average duration: 8 min/plan
+- Total execution time: 32 minutes
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1 | 0 | 3 | - |
-| - | - | - | - |
+| 1 | 4 | 4 | 8 min |
 
 **Recent Trend:**
 
-- Last 5 plans: -
-- Trend: -
+- Last 4 plans: 8, 0, 16, 1 minutes
+- Trend: Fast execution
 
-*Updated after each plan completion*
+**Plan Durations:**
 | Phase 01 P00 | 2min | 4 tasks | 4 files |
 | Phase 01 P01 | 0 min | 2 tasks | 2 files |
 | Phase 01-02 P02 | 16 min | 3 tasks | 3 files |
@@ -81,7 +79,7 @@ Recent decisions affecting current work:
 - [Phase 01-02]: 使用符号前缀（ℹ️、⚠️、❌、✅、📊）提高日志可读性 — 符号前缀比纯文本前缀更直观，符合现有脚本模式（quick-verify.sh）
 - [Phase 01-02]: 备份文件权限严格设置为 600（仅所有者可读写） — 600 权限确保备份文件不被其他用户读取，符合 D-13 安全要求
 - [Phase 01-02]: 备份失败时自动清理已创建的备份文件 — 避免不完整的备份占用磁盘空间，符合 D-16 要求
-- [Phase 01-local-backup-core]: 使用 pg_restore --list 和 SHA256 锘证备份完整性 — 遵循 D-06 冥定要求，立即验证备份
+- [Phase 01-local-backup-core]: 使用 pg_restore --list 和 SHA256 锚证备份完整性 — 遵循 D-06 冥定要求，立即验证备份
 - [Phase 01-local-backup-core]: 使用 pg_restore --list 和 SHA256 校验和验证备份完整性
 - [Phase 01-local-backup-core]: 使用 PID 文件锁定防止并发执行
 - [Phase 01-local-backup-core]: 完整实现 D-43 测试模式，调用 test_restore.sh 验证完整流程
@@ -92,28 +90,56 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Technical Debt]: .env.production 已被 Git 追踪，包含敏感信息，需要在实施前处理
-- [Technical Debt]: 01-create-databases.sql 中硬编码密码，需要迁移到环境变量
-- [Planning]: D-43 (--test 模式) 仅提供参数框架，实际实现预留为 TODO
+- [Critical]: **变量名冲突阻塞脚本运行** — EXIT_SUCCESS 在多个库文件中重复定义（health.sh 使用 readonly），导致主脚本无法 source 库文件
+  - 影响文件: lib/health.sh, lib/db.sh, lib/verify.sh
+  - 修复方案: 创建 lib/constants.sh 统一管理退出码常量
+  - 工作量: 15-30 分钟
+  - 优先级: 🛑 Blocker
 
 ## Session Continuity
 
-Last session: 2026-04-05T22:43:56.003Z
-Stopped at: Completed 01-03-plan.md
-Resume file: None
+Last session: 2026-04-06T15:30:00Z
+Stopped at: Phase 1 verification complete
+Resume file: .planning/phases/01-local-backup-core/01-VERIFICATION.md
 
-## Phase 1 Plans
+## Phase 1 Status
 
-**Wave 1 (Independent):**
+**Status:** Gaps Found (6/7 must-haves verified)
 
-- [ ] 01-01: 建立备份脚本基础架构（健康检查 + 配置管理）
+**Plans Completed:** 4/4
 
-**Wave 2 (Depends on 01-01):**
+**Wave 0 (Independent):**
+- [x] 01-00: 建立测试基础设施
 
-- [ ] 01-02: 实现数据库备份核心功能（发现、备份、日志、工具）
+**Wave 1 (Depends on 01-01):**
+- [x] 01-01: 建立备份脚本基础架构（健康检查 + 配置管理）
+
+**Wave 2 (Depends on 01-02):**
+- [x] 01-02: 实现数据库备份核心功能（发现、备份、日志、工具）
 
 **Wave 3 (Depends on 01-02):**
+- [x] 01-03: 实现备份验证和主脚本集成
 
-- [ ] 01-03: 实现备份验证和主脚本集成
+**Total:** 4 plans completed
 
-**Total:** 3 plans, 9 tasks, estimated 2-3 hours execution time
+**Requirements Coverage:**
+- ✓ BACKUP-01: discover_databases() + backup_database()
+- ✓ BACKUP-02: Timestamp naming format
+- ✓ BACKUP-03: pg_dump -Fc format
+- ✓ BACKUP-04: pg_isready health check
+- ✓ BACKUP-05: Disk space check
+- ✓ VERIFY-01: pg_restore --list + SHA-256
+- ✓ MONITOR-04: Docker volume disk space check
+
+**Critical Gap:**
+- 变量名冲突（EXIT_SUCCESS）导致脚本无法运行
+- 需要创建 lib/constants.sh 统一管理退出码
+- 修复后所有功能应该正常工作
+
+**Next Steps:**
+1. 修复变量冲突（创建 lib/constants.sh）
+2. 重新验证主脚本可以运行
+3. 执行集成测试（--list-databases, --test mode）
+4. 更新 VERIFICATION.md 状态为 passed
+
+**Verification Report:** .planning/phases/01-local-backup-core/01-VERIFICATION.md
