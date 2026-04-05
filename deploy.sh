@@ -49,16 +49,34 @@ export KEYCLOAK_ADMIN_USER=admin
 export KEYCLOAK_ADMIN_PASSWORD=admin_password_change_me
 export KEYCLOAK_DB_PASSWORD=keycloak_password_change_me
 
-# 🔐 从配置文件读取 Cloudflare Token（明文存储）
-echo -e "${YELLOW}🔐 加载 Cloudflare Token...${NC}"
+# 🔐 从加密配置文件读取密钥
+echo -e "${YELLOW}🔐 加载加密密钥...${NC}"
 if [ -f "$INFRA_DIR/config/secrets.sops.yaml" ]; then
-    # 直接读取明文 token
-    TOKEN=$(grep "^cloudflare_tunnel_token:" "$INFRA_DIR/config/secrets.sops.yaml" | awk '{print $2}' | tr -d '"')
-    if [ -n "$TOKEN" ] && [ "$TOKEN" != "" ]; then
-        export CLOUDFLARE_TUNNEL_TOKEN="$TOKEN"
-        echo -e "${GREEN}✅ Token 已加载${NC}"
+    # 检查 sops 是否可用
+    if command -v sops > /dev/null 2>&1; then
+        # 使用 sops 解密并读取密钥
+        SECRETS=$(sops --decrypt "$INFRA_DIR/config/secrets.sops.yaml")
+
+        # 读取 Cloudflare Token
+        TOKEN=$(echo "$SECRETS" | grep "^cloudflare_tunnel_token:" | awk '{print $2}' | tr -d '"')
+        if [ -n "$TOKEN" ] && [ "$TOKEN" != "" ]; then
+            export CLOUDFLARE_TUNNEL_TOKEN="$TOKEN"
+            echo -e "${GREEN}✅ Cloudflare Token 已加载${NC}"
+        fi
+
+        # 读取 Google OAuth 凭据
+        GOOGLE_CLIENT_ID=$(echo "$SECRETS" | grep "^google_oauth_client_id:" | awk '{print $2}' | tr -d '"')
+        GOOGLE_CLIENT_SECRET=$(echo "$SECRETS" | grep "^google_oauth_client_secret:" | awk '{print $2}' | tr -d '"')
+        if [ -n "$GOOGLE_CLIENT_ID" ] && [ "$GOOGLE_CLIENT_SECRET" != "" ]; then
+            export GOOGLE_OAUTH_CLIENT_ID="$GOOGLE_CLIENT_ID"
+            export GOOGLE_OAUTH_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET"
+            echo -e "${GREEN}✅ Google OAuth 凭据已加载${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Google OAuth 凭据未配置${NC}"
+        fi
     else
-        echo -e "${YELLOW}⚠️  Token 未配置，跳过 cloudflared${NC}"
+        echo -e "${RED}❌ sops 未安装，无法解密密钥文件${NC}"
+        echo -e "${YELLOW}请安装 sops: brew install sops${NC}"
     fi
 else
     echo -e "${YELLOW}⚠️  密钥文件不存在${NC}"
