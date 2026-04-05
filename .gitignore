@@ -24,6 +24,9 @@ logs/
 backups/sql/*.sql
 backups/*.sql
 
+# 备份系统配置文件（包含敏感信息）
+scripts/backup/.env.backup
+
 # ===== 敏感文件 =====
 # 未加密的环境配置
 config/secrets.sops.yaml.bak
