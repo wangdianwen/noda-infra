@@ -76,15 +76,18 @@ docker-compose ps
 
 ---
 
-## 📚 部署指南
+## 📚 文档
+
+- **架构文档**: [docs/architecture.md](./docs/architecture.md) - 系统架构和安全原则
+- **部署指南**: [docs/deployment.md](./docs/deployment.md) - 部署方法和运维命令
 
 ### 生产环境部署
 
-详见 `docs/deployment-guide.md`（待创建）
+详见 [部署指南](./docs/deployment.md)
 
 ### 开发环境部署
 
-详见 `docs/development-guide.md`（待创建）
+详见 [部署指南](./docs/deployment.md)
 
 ---
 
