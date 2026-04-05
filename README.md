@@ -1,6 +1,6 @@
 # noda-infra
 
-> OneTeam 基础设施仓库 - 独立的基础设施配置和部署脚本
+> Noda 基础设施仓库 - 独立的基础设施配置和部署脚本
 
 **版本**: 1.0.0
 **最后更新**: 2026-04-05
@@ -10,7 +10,7 @@
 
 ## 📋 仓库概述
 
-noda-infra 包含 OneTeam 项目的所有基础设施配置，包括：
+noda-infra 包含 Noda 项目的所有基础设施配置，包括：
 
 - **PostgreSQL 17.9** - 数据库服务
 - **Keycloak 26.2.3** - 认证服务
@@ -18,7 +18,7 @@ noda-infra 包含 OneTeam 项目的所有基础设施配置，包括：
 - **Jenkins 2.x** - CI/CD 流水线
 - **Cloudflare Tunnel** - 内网穿透
 
-与应用仓库（oneteam）完全分离，实现独立部署。
+与 noda-app 完全分离，实现独立部署。
 
 ---
 

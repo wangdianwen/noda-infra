@@ -8,7 +8,7 @@ echo ""
 echo "1. 检查容器状态..."
 echo ""
 
-cd /Users/dianwenwang/Project/oneteam/docker
+cd /Users/dianwenwang/Project/noda-app/docker
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps findclass api --format "table {{.Name}}\t{{.Status}}"
 
 echo ""

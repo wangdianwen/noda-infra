@@ -12,7 +12,7 @@ services:
     ports:
       - "5433:5432"  # 暴露端口供本地连接
     environment:
-      POSTGRES_DB: ${DEV_POSTGRES_DB:-oneteam_dev}
+      POSTGRES_DB: ${DEV_POSTGRES_DB:-noda_dev}
     volumes:
       - ./services/postgres/init-dev:/docker-entrypoint-initdb.d:ro
 
@@ -24,7 +24,7 @@ services:
       - "8081:80"  # 本地开发端口（避免与 dozzle 冲突）
     volumes:
       # 开发环境：挂载前端构建产物（热更新）
-      - ./apps/oneteam/frontend/dist:/usr/share/nginx/html:ro
+      - ./apps/noda/frontend/dist:/usr/share/nginx/html:ro
 
   # ----------------------------------------
   # Cloudflare Tunnel（开发环境禁用）

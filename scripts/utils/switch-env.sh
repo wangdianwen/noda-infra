@@ -98,7 +98,7 @@ if [[ "$ENV" == "dev" ]]; then
   ACCESS_URL="http://localhost:8080"
 else
   COMPOSE_FILES="-f $PROJECT_ROOT/docker/docker-compose.yml -f $PROJECT_ROOT/docker/docker-compose.prod.yml"
-  ACCESS_URL="https://oneteam.noda.co.nz"
+  ACCESS_URL="https://class.noda.co.nz"
 fi
 echo -e "${GREEN}✓${NC} 配置文件已选择"
 echo ""

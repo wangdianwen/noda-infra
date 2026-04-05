@@ -4,7 +4,7 @@ echo "🔍 Noda 环境快速验证"
 echo ""
 
 echo "容器状态:"
-docker ps --filter "label=com.docker.compose.project.working_dir=/Users/dianwenwang/Project/oneteam" --format "  • {{.Names}} ({{.Status}})" 2>/dev/null || docker ps --format "  • {{.Names}} ({{.Status}})"
+docker ps --filter "label=com.docker.compose.project.working_dir=/Users/dianwenwang/Project/noda-app" --format "  • {{.Names}} ({{.Status}})" 2>/dev/null || docker ps --format "  • {{.Names}} ({{.Status}})"
 echo ""
 
 echo "数据统计:"

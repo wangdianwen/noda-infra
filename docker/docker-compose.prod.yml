@@ -11,9 +11,11 @@ services:
   # PostgreSQL 生产环境配置
   # ----------------------------------------
   postgres:
-    # 生产环境不暴露端口（仅容器内部访问）
+    # 开发环境临时暴露端口（后续移除）
+    ports:
+      - "5432:5432"
     environment:
-      POSTGRES_DB: ${PROD_POSTGRES_DB:-oneteam_prod}
+      POSTGRES_DB: ${PROD_POSTGRES_DB:-noda_prod}
     deploy:
       resources:
         limits:
@@ -34,7 +36,7 @@ services:
   #   # 生产环境不暴露端口（通过 Cloudflare Tunnel 访问）
   #   volumes:
   #     - ./infra/docker/nginx/ssl:/etc/nginx/ssl:ro  # SSL 证书（未来）
-  #     - ./apps/oneteam/frontend/dist:/usr/share/nginx/html:ro
+  #     - ./apps/noda/frontend/dist:/usr/share/nginx/html:ro
   #   deploy:
   #     resources:
   #       limits:
@@ -76,7 +78,7 @@ services:
       KC_MAIL_HOST: ${SMTP_HOST}
       KC_MAIL_PORT: ${SMTP_PORT}
       KC_MAIL_FROM: ${SMTP_FROM}
-      KC_MAIL_FROM_DISPLAY_NAME: OneTeam
+      KC_MAIL_FROM_DISPLAY_NAME: Noda
       KC_SMTP_AUTH: "true"
       KC_SMTP_USER: ${SMTP_USER}
       KC_SMTP_PASSWORD: ${SMTP_PASSWORD}
@@ -84,7 +86,7 @@ services:
       KC_SMTP_STARTTLS: "true"
     command: start
     volumes:
-      - ./services/keycloak/themes:/opt/keycloak/themes/oneteam:ro  # 可选：未来自定义主题
+      - ./services/keycloak/themes:/opt/keycloak/themes/noda:ro  # 可选：未来自定义主题
     networks:
       - noda-network
     restart: unless-stopped

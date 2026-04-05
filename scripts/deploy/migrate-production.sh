@@ -93,10 +93,10 @@ show_backup_reminder() {
     echo "     访问: https://supabase.com/dashboard/project/qxplheelnlqdapmprhui/database/backups"
     echo ""
     echo "  2. ✅ 已通知用户停机（预计 30 分钟）"
-    echo "     网站: https://oneteam.nz"
+    echo "     网站: https://noda.co.nz"
     echo ""
     echo "  3. ✅ 已准备好回滚方案"
-    echo "     回滚命令: docker exec -i noda-postgres psql -U oneteam_prod_user -d oneteam_prod < backup.sql"
+    echo "     回滚命令: docker exec -i noda-postgres psql -U noda_prod_user -d noda_prod < backup.sql"
     echo ""
     echo "  4. ✅ 已检查所有前置条件"
     echo "     Docker 容器运行中、环境变量已配置"
@@ -138,7 +138,7 @@ migrate_production() {
     local start_time=$(date +%s)
 
     # 执行迁移
-    bash /Users/dianwenwang/Project/oneteam/server/scripts/migration/migrate-auto.sh
+    bash /Users/dianwenwang/Project/noda-app/server/scripts/migration/migrate-auto.sh
     local exit_code=$?
 
     # 计算耗时
@@ -161,7 +161,7 @@ migrate_production() {
         log_info "   cat .planning/phases/51-数据库迁移/51-04-FINAL-REPORT.json | jq ."
         echo ""
         log_info "2. 验证网站功能:"
-        log_info "   打开 https://oneteam.nz 并测试关键功能"
+        log_info "   打开 https://noda.co.nz 并测试关键功能"
         echo ""
         log_info "3. 监控数据库性能:"
         log_info "   docker stats noda-postgres"
@@ -178,7 +178,7 @@ migrate_production() {
         log_error "   cat .planning/phases/51-数据库迁移/migration.log"
         echo ""
         log_error "2. 检查数据库状态:"
-        log_error "   docker exec -it noda-postgres psql -U oneteam_prod_user -d oneteam_prod -c \"SELECT COUNT(*) FROM courses;\""
+        log_error "   docker exec -it noda-postgres psql -U noda_prod_user -d noda_prod -c \"SELECT COUNT(*) FROM courses;\""
         echo ""
         log_error "3. 回滚到 Supabase（如果需要）:"
         log_error "   - 确认 Supabase 备份可用"

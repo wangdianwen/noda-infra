@@ -13,7 +13,7 @@ echo "================================"
 # 必需的目录
 REQUIRED_DIRS=(
   "apps"
-  "apps/oneteam"
+  "apps/noda"
   "infra"
   "docker"
   "infra/postgres"

@@ -11,7 +11,7 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up keycloak -d
 ### 2. 访问 Admin Console
 
 - **内网访问**（开发环境）: http://localhost:8080
-- **外网访问**（生产环境）: https://oneteam.noda.co.nz/auth/admin
+- **外网访问**（生产环境）: https://class.noda.co.nz/auth/admin
 
 ### 3. 登录 Admin Console
 
@@ -19,11 +19,11 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up keycloak -d
 - 用户名: `${KEYCLOAK_ADMIN_USER}`（默认：admin）
 - 密码: `${KEYCLOAK_ADMIN_PASSWORD}`
 
-### 4. 创建 oneteam Realm
+### 4. 创建 noda Realm
 
 1. 点击左上角 "Master" 下拉菜单
 2. 选择 "Create realm"
-3. Name: `oneteam`
+3. Name: `noda`
 4. 点击 "Create"
 
 ### 5. 配置 Realm 设置
@@ -55,13 +55,13 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up keycloak -d
 # 导出 realm 配置到容器临时目录
 docker exec -it noda-keycloak \
   /opt/keycloak/bin/kc.sh export \
-  --realm oneteam \
+  --realm noda \
   --users realm_file \
   --dir /tmp
 
 # 复制到本地
-docker cp noda-keycloak:/tmp/oneteam-realm.json \
-  infra/keycloak/realm/oneteam-realm.json
+docker cp noda-keycloak:/tmp/noda-realm.json \
+  infra/keycloak/realm/noda-realm.json
 ```
 
 ## Google Identity Provider 配置
@@ -72,7 +72,7 @@ docker cp noda-keycloak:/tmp/oneteam-realm.json \
 
 添加新的回调 URL：
 ```
-https://oneteam.noda.co.nz/realms/oneteam/broker/google/endpoint
+https://class.noda.co.nz/realms/noda/broker/google/endpoint
 ```
 
 ### 2. 在 Keycloak 中添加 Google Identity Provider
@@ -98,25 +98,25 @@ https://oneteam.noda.co.nz/realms/oneteam/broker/google/endpoint
 1. Clients → Create client
 2. 配置：
    - Client type: **OpenID Connect**
-   - Client ID: `oneteam-frontend`
+   - Client ID: `noda-frontend`
    - Client authentication: **OFF**（公共客户端）
 3. 点击 "Next"
 
 4. 配置登录设置：
    - Valid redirect URIs:
-     - `https://oneteam.noda.co.nz/*`
+     - `https://class.noda.co.nz/*`
      - `http://localhost:5173/*`（开发环境）
    - Web origins:
-     - `https://oneteam.noda.co.nz`
+     - `https://class.noda.co.nz`
      - `http://localhost:5173`（开发环境）
 5. 点击 "Save"
 
 ### 查看客户端配置
 
-1. 进入 Client: `oneteam-frontend`
+1. 进入 Client: `noda-frontend`
 2. 查看 "Credentials" tab
 3. 记录以下信息（用于前端配置）：
-   - Client ID: `oneteam-frontend`
+   - Client ID: `noda-frontend`
    - Client authenticator: （不需要客户端 Secret）
 
 ## SMTP 配置验证
@@ -126,7 +126,7 @@ https://oneteam.noda.co.nz/realms/oneteam/broker/google/endpoint
 1. Realm settings → Email
 2. 配置 SMTP（如果未在环境变量中配置）：
    - From: `${SMTP_FROM}`
-   - From display name: `OneTeam`
+   - From display name: `Noda`
    - Host: `${SMTP_HOST}`
    - Port: `${SMTP_PORT}`（587 for STARTTLS）
    - Auth: **ON**
@@ -154,11 +154,11 @@ docker-compose exec keycloak \
 ```bash
 # 验证 keycloak schema 存在
 docker exec -it noda-postgres \
-  psql -U oneteam_prod_user -d oneteam_prod -c "\dn keycloak"
+  psql -U noda_prod_user -d noda_prod -c "\dn keycloak"
 
 # 检查 Keycloak 表是否创建
 docker exec -it noda-postgres \
-  psql -U oneteam_prod_user -d oneteam_prod -c "\dt keycloak.*" | head -20
+  psql -U noda_prod_user -d noda_prod -c "\dt keycloak.*" | head -20
 ```
 
 ### SMTP 发送失败
@@ -185,7 +185,7 @@ docker exec -it noda-keycloak \
 # 导入 Realm 配置
 docker exec -it noda-keycloak \
   /opt/keycloak/bin/kcadm.sh create realms \
-  -f - < infra/keycloak/realm/oneteam-realm.json
+  -f - < infra/keycloak/realm/noda-realm.json
 ```
 
 ### 方法 2: Keycloak Operator（Kubernetes）

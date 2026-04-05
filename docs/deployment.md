@@ -1,4 +1,4 @@
-# OneTeam 基础设施自动部署
+# Noda 基础设施自动部署
 
 ## 部署方案：Shell 脚本 + Git Hook
 
@@ -85,7 +85,7 @@ docker compose -p noda-prod -f docker-compose.yml down -v
 - 端口: `5432`
 - 用户: `postgres`
 - 密码: `postgres_password_change_me`
-- 数据库: `oneteam_prod`
+- 数据库: `noda_prod`
 
 ---
 
@@ -109,7 +109,7 @@ docker compose -p noda-prod -f docker-compose.yml down -v
 ## 🔄 下一步
 
 ### 添加 API 服务
-1. 确保 `~/project/oneteam` 存在
+1. 确保 `~/project/noda-app` 存在
 2. 修改 `docker-compose.yml` 添加 API 服务配置
 3. 运行 `~/project/noda-infra/deploy-simple.sh`
 

@@ -33,11 +33,15 @@ services:
   # Nginx 反向代理
   # ----------------------------------------
   nginx:
+    container_name: noda-infra-nginx
     image: nginx:1.25-alpine
     restart: unless-stopped
+    ports:
+      - "80:80"
     volumes:
       - ../config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ../config/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ../config/nginx/snippets:/etc/nginx/snippets:ro
     networks:
       - noda-network
     depends_on:
@@ -70,7 +74,9 @@ services:
     image: noda-app-findclass-web:latest
     restart: unless-stopped
     networks:
-      - noda-network
+      noda-network:
+        aliases:
+          - findclass-web
     depends_on:
       - api
     healthcheck:
@@ -84,7 +90,7 @@ services:
   # ----------------------------------------
   api:
     build:
-      context: ../..
+      context: ../../oneteam
       dockerfile: infra/docker/Dockerfile.api
     image: noda-app-findclass-api:latest
     restart: unless-stopped
@@ -96,7 +102,9 @@ services:
       KEYCLOAK_REALM: noda
       KEYCLOAK_CLIENT_ID: noda-frontend
     networks:
-      - noda-network
+      noda-network:
+        aliases:
+          - findclass-api
     depends_on:
       postgres:
         condition: service_healthy
@@ -131,7 +139,7 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
     command: start
     volumes:
-      - ./services/keycloak/themes:/opt/keycloak/themes/oneteam:ro  # 可选：未来自定义主题
+      - ./services/keycloak/themes:/opt/keycloak/themes/noda:ro  # 可选：未来自定义主题
     networks:
       - noda-network
     restart: unless-stopped
