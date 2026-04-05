@@ -1,0 +1,200 @@
+#!/bin/bash
+# ============================================
+# Noda 数据库备份系统 - 数据库操作库
+# ============================================
+# 功能：数据库发现、备份、全局对象备份
+# 依赖：log.sh, util.sh
+# ============================================
+
+set -euo pipefail
+
+# 加载依赖库
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/log.sh"
+source "$SCRIPT_DIR/util.sh"
+
+# ============================================
+# 退出码常量
+# ============================================
+EXIT_SUCCESS=0
+EXIT_BACKUP_FAILED=2
+
+# ============================================
+# 全局变量
+# ============================================
+# 记录已创建的备份文件列表（用于失败时清理）
+CREATED_BACKUPS=()
+
+# ============================================
+# 数据库发现函数
+# ============================================
+
+# 发现所有用户数据库（排除模板数据库）
+# 返回：数据库名称列表（每行一个）
+discover_databases() {
+  docker exec noda-infra-postgres-1 psql -U postgres -d postgres -t -c \
+    "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"
+}
+
+# ============================================
+# 数据库备份函数
+# ============================================
+
+# 备份单个数据库
+# 参数：
+#   $1: 数据库名
+#   $2: 备份目录
+#   $3: 时间戳
+# 返回：备份文件路径（成功）或非0退出码（失败）
+backup_database() {
+  local db_name=$1
+  local backup_dir=$2
+  local timestamp=$3
+
+  local backup_file="${backup_dir}/${db_name}_${timestamp}.dump"
+  local container_backup_file="/var/lib/postgresql/backup/${db_name}_${timestamp}.dump"
+
+  log_info "开始备份数据库: $db_name"
+
+  # 使用 pg_dump -Fc 格式备份（D-03）
+  if docker exec noda-infra-postgres-1 pg_dump -U postgres -Fc -f "$container_backup_file" "$db_name"; then
+    # 设置文件权限为 600（D-13）
+    docker exec noda-infra-postgres-1 chmod 600 "$container_backup_file"
+
+    # 记录已创建的备份文件（用于失败时清理）
+    CREATED_BACKUPS+=("$backup_file")
+
+    log_success "数据库备份成功: $db_name"
+    echo "$backup_file"
+    return $EXIT_SUCCESS
+  else
+    log_error "数据库备份失败: $db_name"
+    return $EXIT_BACKUP_FAILED
+  fi
+}
+
+# ============================================
+# 全局对象备份函数
+# ============================================
+
+# 备份全局对象（角色和表空间）
+# 参数：
+#   $1: 备份目录
+#   $2: 时间戳
+# 返回：备份文件路径（成功）或非0退出码（失败）
+backup_globals() {
+  local backup_dir=$1
+  local timestamp=$2
+
+  local backup_file="${backup_dir}/globals_${timestamp}.sql"
+  local container_backup_file="/var/lib/postgresql/backup/globals_${timestamp}.sql"
+
+  log_info "开始备份全局对象（角色和表空间）"
+
+  # 使用 pg_dumpall -g 备份全局对象（D-32）
+  if docker exec noda-infra-postgres-1 pg_dumpall -g -U postgres -f "$container_backup_file"; then
+    # 设置文件权限为 600（D-13）
+    docker exec noda-infra-postgres-1 chmod 600 "$container_backup_file"
+
+    # 记录已创建的备份文件（用于失败时清理）
+    CREATED_BACKUPS+=("$backup_file")
+
+    log_success "全局对象备份成功"
+    echo "$backup_file"
+    return $EXIT_SUCCESS
+  else
+    log_error "全局对象备份失败"
+    return $EXIT_BACKUP_FAILED
+  fi
+}
+
+# ============================================
+# 批量备份函数
+# ============================================
+
+# 备份所有数据库和全局对象
+# 参数：
+#   $1: 备份目录
+#   $2: 时间戳
+# 返回：0（成功）或非0（失败）
+backup_all_databases() {
+  local backup_dir=$1
+  local timestamp=$2
+
+  log_info "开始备份所有数据库和全局对象"
+
+  # 发现所有用户数据库
+  local databases
+  databases=$(discover_databases)
+
+  # 转换为数组（去除空行和空格）
+  local db_array=()
+  while IFS= read -r line; do
+    local db_name
+    db_name=$(echo "$line" | xargs) # 去除前后空格
+    if [ -n "$db_name" ]; then
+      db_array+=("$db_name")
+    fi
+  done <<< "$databases"
+
+  local total_databases=${#db_array[@]}
+  log_info "发现 $total_databases 个用户数据库"
+
+  # 清空已创建的备份文件列表
+  CREATED_BACKUPS=()
+
+  # 首先备份全局对象（D-02）
+  local current=0
+  local total=$((total_databases + 1)) # 数据库数量 + 全局对象
+
+  current=$((current + 1))
+  log_progress "$current" "$total" "备份全局对象"
+
+  local globals_file
+  if ! globals_file=$(backup_globals "$backup_dir" "$timestamp"); then
+    log_error "全局对象备份失败，清理已创建的备份文件"
+    cleanup_created_backups
+    return $EXIT_BACKUP_FAILED
+  fi
+
+  # 串行备份每个数据库（D-04）
+  local db_name
+  for db_name in "${db_array[@]}"; do
+    current=$((current + 1))
+    log_progress "$current" "$total" "备份数据库: $db_name"
+
+    local backup_file
+    if ! backup_file=$(backup_database "$db_name" "$backup_dir" "$timestamp"); then
+      log_error "数据库 $db_name 备份失败，清理已创建的备份文件"
+      cleanup_created_backups
+      return $EXIT_BACKUP_FAILED
+    fi
+  done
+
+  log_success "所有数据库备份完成（共 $total_databases 个数据库 + 全局对象）"
+  return $EXIT_SUCCESS
+}
+
+# ============================================
+# 清理函数
+# ============================================
+
+# 清理已创建的备份文件（失败时调用）
+cleanup_created_backups() {
+  if [ ${#CREATED_BACKUPS[@]} -eq 0 ]; then
+    return
+  fi
+
+  log_warn "清理已创建的备份文件（共 ${#CREATED_BACKUPS[@]} 个）"
+
+  local file
+  for file in "${CREATED_BACKUPS[@]}"; do
+    if [ -f "$file" ]; then
+      rm -f "$file"
+      log_warn "已删除: $file"
+    fi
+  done
+
+  # 清空列表
+  CREATED_BACKUPS=()
+}
