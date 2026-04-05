@@ -81,7 +81,7 @@
 
 ## Traceability
 
-哪些阶段覆盖哪些需求。在路线图创建时更新。
+哪些阶段覆盖哪些需求。路线图创建时更新。
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
@@ -90,24 +90,24 @@
 | BACKUP-03 | Phase 1 | Pending |
 | BACKUP-04 | Phase 1 | Pending |
 | BACKUP-05 | Phase 1 | Pending |
+| VERIFY-01 | Phase 1 | Pending |
+| MONITOR-04 | Phase 1 | Pending |
 | UPLOAD-01 | Phase 2 | Pending |
 | UPLOAD-02 | Phase 2 | Pending |
 | UPLOAD-03 | Phase 2 | Pending |
 | UPLOAD-04 | Phase 2 | Pending |
 | UPLOAD-05 | Phase 2 | Pending |
-| RESTORE-01 | Phase 4 | Pending |
-| RESTORE-02 | Phase 4 | Pending |
-| RESTORE-03 | Phase 4 | Pending |
-| RESTORE-04 | Phase 4 | Pending |
-| VERIFY-01 | Phase 1 | Pending |
-| VERIFY-02 | Phase 4 | Pending |
-| MONITOR-01 | Phase 3 | Pending |
-| MONITOR-02 | Phase 5 | Pending |
-| MONITOR-03 | Phase 5 | Pending |
-| MONITOR-04 | Phase 1 | Pending |
-| MONITOR-05 | Phase 3 | Pending |
 | SECURITY-01 | Phase 2 | Pending |
 | SECURITY-02 | Phase 2 | Pending |
+| RESTORE-01 | Phase 3 | Pending |
+| RESTORE-02 | Phase 3 | Pending |
+| RESTORE-03 | Phase 3 | Pending |
+| RESTORE-04 | Phase 3 | Pending |
+| VERIFY-02 | Phase 4 | Pending |
+| MONITOR-01 | Phase 5 | Pending |
+| MONITOR-02 | Phase 5 | Pending |
+| MONITOR-03 | Phase 5 | Pending |
+| MONITOR-05 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 23 total
@@ -116,4 +116,4 @@
 
 ---
 *Requirements defined: 2026-04-06*
-*Last updated: 2026-04-06 after initial definition*
+*Last updated: 2026-04-06 after roadmap creation*
