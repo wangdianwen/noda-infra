@@ -35,3 +35,4 @@ config/keys/
 # 允许提交 SOPS 加密文件
 !config/secrets.sops.yaml
 config/secrets.local.yaml
+.env.backup

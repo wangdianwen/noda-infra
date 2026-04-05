@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: gaps_found
-stopped_at: Phase 1 verification complete - variable collision blocker found
-last_updated: "2026-04-06T15:30:00Z"
+status: phase_2_planning_complete
+stopped_at: Phase 2 planning complete - ready for execution
+last_updated: "2026-04-06T16:00:00Z"
 last_activity: 2026-04-06
 progress:
   total_phases: 5
-  completed_phases: 0
-  total_plans: 4
+  completed_phases: 1
+  total_plans: 8
   completed_plans: 4
-  percent: 80
+  percent: 50
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-06)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
-**Current focus:** Phase 1 - 本地备份核心（验证完成，发现阻塞问题）
+**Current focus:** Phase 2 - 云存储集成（规划完成，准备执行）
 
 ## Current Position
 
-Phase: 1 of 5 (本地备份核心)
-Status: Phase verification complete — gaps found
+Phase: 2 of 5 (云存储集成)
+Status: Phase planning complete — ready for execution
 Last activity: 2026-04-06
 
-Progress: [████████░░] 80%
+Progress: [████████░░] 50%
 
 ## Performance Metrics
 
@@ -90,56 +90,82 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Critical]: **变量名冲突阻塞脚本运行** — EXIT_SUCCESS 在多个库文件中重复定义（health.sh 使用 readonly），导致主脚本无法 source 库文件
-  - 影响文件: lib/health.sh, lib/db.sh, lib/verify.sh
-  - 修复方案: 创建 lib/constants.sh 统一管理退出码常量
-  - 工作量: 15-30 分钟
-  - 优先级: 🛑 Blocker
+- [Critical]: **Phase 1 已完成，无阻塞问题**
+  - 所有变量冲突已修复
+  - 所有核心功能已测试通过
+  - 代码已提交（19 commits）
+
+- [Warning]: **Phase 2 需要外部依赖**
+  - 需要安装 rclone（Wave 0）
+  - 需要创建 Backblaze B2 账户和 bucket（Wave 0）
+  - 需要生成 B2 Application Key（Wave 0）
+  - 估计时间：30 分钟
 
 ## Session Continuity
 
-Last session: 2026-04-06T15:30:00Z
-Stopped at: Phase 1 verification complete
-Resume file: .planning/phases/01-local-backup-core/01-VERIFICATION.md
+Last session: 2026-04-06T16:00:00Z
+Stopped at: Phase 2 planning complete
+Resume file: .planning/phases/02-cloud-integration/02-PLAN.md
 
 ## Phase 1 Status
 
-**Status:** Gaps Found (6/7 must-haves verified)
+**Status:** ✅ Complete (all gaps fixed)
 
 **Plans Completed:** 4/4
 
-**Wave 0 (Independent):**
-- [x] 01-00: 建立测试基础设施
+**All Critical Tests Passed:**
+- ✅ `--list-databases`: 成功列出 4 个数据库
+- ✅ PostgreSQL connection check: 连接正常
+- ✅ Database size query: 成功查询所有数据库大小
+- ✅ Container disk space check: 163.40 GB 可用
+- ✅ Required space calculation: 0.06 GB (数据库大小 × 2)
+- ✅ Health check workflow: 所有检查通过
+- ✅ Variable collision fix: 创建 lib/constants.sh 统一管理退出码
+- ✅ SCRIPT_DIR pollution fix: 使用局部变量 (_HEALTH_LIB_DIR, _DB_LIB_DIR, _VERIFY_LIB_DIR)
 
-**Wave 1 (Depends on 01-01):**
-- [x] 01-01: 建立备份脚本基础架构（健康检查 + 配置管理）
+**Total Commits:** 19 (Phase 1 completion)
 
-**Wave 2 (Depends on 01-02):**
-- [x] 01-02: 实现数据库备份核心功能（发现、备份、日志、工具）
+**Phase 1 Deliverables:**
+- ✅ scripts/backup/lib/constants.sh - 统一常量定义
+- ✅ scripts/backup/lib/config.sh - 配置管理
+- ✅ scripts/backup/lib/health.sh - 健康检查
+- ✅ scripts/backup/lib/log.sh - 日志系统
+- ✅ scripts/backup/lib/util.sh - 工具函数
+- ✅ scripts/backup/lib/db.sh - 数据库操作
+- ✅ scripts/backup/lib/verify.sh - 备份验证
+- ✅ scripts/backup/backup-postgres.sh - 主脚本
+- ✅ scripts/backup/tests/create_test_db.sh - 测试数据库创建
+- ✅ scripts/backup/tests/test_restore.sh - 恢复测试
 
-**Wave 3 (Depends on 01-02):**
-- [x] 01-03: 实现备份验证和主脚本集成
+## Phase 2 Status
 
-**Total:** 4 plans completed
+**Status:** 📋 Planning Complete
 
-**Requirements Coverage:**
-- ✓ BACKUP-01: discover_databases() + backup_database()
-- ✓ BACKUP-02: Timestamp naming format
-- ✓ BACKUP-03: pg_dump -Fc format
-- ✓ BACKUP-04: pg_isready health check
-- ✓ BACKUP-05: Disk space check
-- ✓ VERIFY-01: pg_restore --list + SHA-256
-- ✓ MONITOR-04: Docker volume disk space check
+**Planning Documents Created:**
+- ✅ 02-RESEARCH.md - 技术研究（Backblaze B2 + rclone）
+- ✅ 02-CONTEXT.md - 上下文和约束条件
+- ✅ 02-DISCUSSION-LOG.md - 12 个技术决策记录
+- ✅ 02-PLAN.md - 执行计划（4 Waves，15 Tasks）
 
-**Critical Gap:**
-- 变量名冲突（EXIT_SUCCESS）导致脚本无法运行
-- 需要创建 lib/constants.sh 统一管理退出码
-- 修复后所有功能应该正常工作
+**Execution Plan Summary:**
+- **Wave 0** (独立，30 min): 基础设施准备（rclone 安装 + B2 配置）
+- **Wave 1** (依赖 Wave 0，2-3 hours): 核心功能实现（lib/cloud.sh）
+- **Wave 2** (依赖 Wave 1，1-2 hours): 主脚本集成（云上传流程）
+- **Wave 3** (依赖 Wave 2，1-2 hours): 测试和优化（端到端测试）
+
+**Total Estimated Time:** 5-8 hours
 
 **Next Steps:**
-1. 修复变量冲突（创建 lib/constants.sh）
-2. 重新验证主脚本可以运行
-3. 执行集成测试（--list-databases, --test mode）
-4. 更新 VERIFICATION.md 状态为 passed
+1. 开始 Wave 0 执行（安装 rclone，配置 B2）
+2. 创建 B2 bucket 和 Application Key
+3. 实现 lib/cloud.sh 核心功能
+4. 集成到主脚本并测试
 
-**Verification Report:** .planning/phases/01-local-backup-core/01-VERIFICATION.md
+**Phase 2 Requirements Coverage:**
+- [ ] UPLOAD-01: 自动上传到 B2（使用 rclone）
+- [ ] UPLOAD-02: 上传失败重试（指数退避，3次）
+- [ ] UPLOAD-03: 上传后验证校验和（--checksum）
+- [ ] UPLOAD-04: 清理 7 天前的旧备份
+- [ ] UPLOAD-05: 清理未完成的上传文件
+- [ ] SECURITY-01: 凭证通过环境变量管理
+- [ ] SECURITY-02: 最小权限 B2 Application Key

@@ -38,9 +38,11 @@ Plans:
 - [x] 01-02: 实现数据库备份核心功能（发现、备份、日志、工具）（Wave 2）
 - [x] 01-03: 实现备份验证和主脚本集成（含完整 D-43 测试模式）（Wave 3）
 
+**Status**: ✅ Complete (所有测试通过，19 commits)
+
 ### Phase 2: 云存储集成
 **Goal**: 备份文件自动上传到 Backblaze B2 云存储，上传后验证校验和，旧备份自动清理，凭证通过环境变量安全管理
-**Depends on**: Phase 1
+**Depends on**: Phase 1 ✅
 **Requirements**: UPLOAD-01, UPLOAD-02, UPLOAD-03, UPLOAD-04, UPLOAD-05, SECURITY-01, SECURITY-02
 **Success Criteria** (what must be TRUE):
   1. 备份完成后自动上传到 B2 云存储，上传失败时自动重试（最多 3 次，指数退避）
@@ -48,11 +50,15 @@ Plans:
   3. 超过 7 天的旧备份（本地和云端）被自动清理，未完成的上传文件也被自动清除
   4. 所有凭证（B2 Key、数据库密码）通过环境变量传入，脚本中无硬编码凭证
   5. B2 Application Key 仅拥有备份 bucket 的最低必要权限（writeFiles + deleteFiles + listFiles + fileNamePrefix 限制）
-**Plans**: TBD
+**Plans**: 4 plans (Wave 0 + 3 execution waves)
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
+- [ ] 02-00: 基础设施准备（Wave 0，rclone 安装 + B2 配置）
+- [ ] 02-01: 实现云操作库（Wave 1，lib/cloud.sh）
+- [ ] 02-02: 集成到主脚本（Wave 2，云上传流程）
+- [ ] 02-03: 测试和优化（Wave 3，端到端测试）
+
+**Status**: 📋 Planning Complete (ready for execution)
 
 ### Phase 3: 恢复脚本
 **Goal**: 运维人员可以通过恢复脚本从云存储下载并恢复任意数据库，支持恢复到不同数据库名以进行安全测试
@@ -101,8 +107,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 本地备份核心 | 0/4 | Planning（Wave 0 已添加） | - |
-| 2. 云存储集成 | 0/? | Not started | - |
+| 1. 本地备份核心 | 4/4 | ✅ Complete | 2026-04-06 |
+| 2. 云存储集成 | 0/4 | 📋 Planning Complete | - |
 | 3. 恢复脚本 | 0/? | Not started | - |
 | 4. 自动化验证测试 | 0/? | Not started | - |
 | 5. 监控与告警 | 0/? | Not started | - |
