@@ -11,7 +11,11 @@
 set -euo pipefail
 
 # 加载依赖库
-_HEALTH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  _HEALTH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  _HEALTH_LIB_DIR="$(cd "$(dirname "${0}")" && pwd)"
+fi
 
 # 加载配置函数（如果尚未加载）
 if ! type get_postgres_host &>/dev/null; then
@@ -89,7 +93,7 @@ get_total_database_size() {
   postgres_host=$(get_postgres_host)
   postgres_user=$(get_postgres_user)
 
-  echo "ℹ️  查询所有用户数据库大小..."
+  echo "ℹ️  查询所有用户数据库大小..." >&2
 
   # 查询所有用户数据库（排除模板数据库和系统数据库）
   local databases
@@ -106,7 +110,7 @@ get_total_database_size() {
       # 转换为 GB 显示（保留 2 位小数）
       local db_size_gb
       db_size_gb=$(echo "scale=2; $db_size / 1024 / 1024 / 1024" | bc 2>/dev/null || echo "0")
-      echo "  - $db: ${db_size_gb} GB ($db_size 字节)"
+      echo "  - $db: ${db_size_gb} GB ($db_size 字节)" >&2
     fi
   done
 
