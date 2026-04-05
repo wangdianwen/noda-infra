@@ -194,26 +194,25 @@ fi
 if [ -n "$GOOGLE_OAUTH_CLIENT_ID" ] && [ -n "$GOOGLE_OAUTH_CLIENT_SECRET" ]; then
   echo -e "${YELLOW}🔗 配置 Google Identity Provider...${NC}"
 
-  if docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh get realms/noda/identity-provider/instances/google > /dev/null 2>&1; then
-    docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh update realms/noda/identity-provider/instances/google \
-      -s alias=google \
-      -s providerId=google \
-      -s displayName=Google \
-      -s enabled=true \
-      -s config.clientId="$GOOGLE_OAUTH_CLIENT_ID" \
-      -s config.clientSecret="$GOOGLE_OAUTH_CLIENT_SECRET" \
-      -s config.useJwksUrl=true > /dev/null 2>&1
-  else
-    docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh create identity-provider/instances \
-      -r noda \
-      -s alias=google \
-      -s providerId=google \
-      -s displayName=Google \
-      -s enabled=true \
-      -s config.clientId="$GOOGLE_OAUTH_CLIENT_ID" \
-      -s config.clientSecret="$GOOGLE_OAUTH_CLIENT_SECRET" \
-      -s config.useJwksUrl=true > /dev/null 2>&1
-  fi
+  # 删除旧的 Google IdP（如果存在）
+  docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh delete realms/noda/identity-provider/instances/google > /dev/null 2>&1
+
+  # 使用 JSON 文件创建 Google IdP
+  cat > /tmp/google-idp.json << EOF
+{
+  "alias": "google",
+  "providerId": "google",
+  "displayName": "Google",
+  "enabled": true,
+  "config": {
+    "clientId": "$GOOGLE_OAUTH_CLIENT_ID",
+    "clientSecret": "$GOOGLE_OAUTH_CLIENT_SECRET",
+    "useJwksUrl": "true"
+  }
+}
+EOF
+
+  docker exec -i noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh create realms/noda/identity-provider/instances -f - < /tmp/google-idp.json > /dev/null 2>&1
 
   echo -e "${GREEN}✅ Google Identity Provider 配置成功${NC}"
 else
