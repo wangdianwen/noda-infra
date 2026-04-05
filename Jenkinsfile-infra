@@ -56,6 +56,11 @@ pipeline {
                     if [ -f "docker-compose.yml" ]; then
                         echo "✅ 找到 docker-compose.yml"
 
+                        # 复制配置文件到可访问的位置
+                        echo "📁 准备配置文件..."
+                        mkdir -p /host-project/noda-infra-config/nginx
+                        cp -r ${PROJECT_ROOT}/config/nginx/* /host-project/noda-infra-config/nginx/
+
                         # 设置环境变量并启动服务
                         export POSTGRES_USER=postgres
                         export POSTGRES_PASSWORD=postgres_password_change_me
@@ -65,8 +70,9 @@ pipeline {
                         export KEYCLOAK_DB_PASSWORD=keycloak_password_change_me
                         export CLOUDFLARE_TUNNEL_TOKEN=
 
-                        # 启动生产环境服务
-                        docker compose -p noda-prod -f docker-compose.yml up -d
+                        # 使用覆盖文件启动服务（修复路径映射问题）
+                        docker compose -p noda-prod -f docker-compose.yml \
+                            -f docker-compose.jenkins-override.yml up -d
 
                         echo "✅ 服务已启动"
                     else
