@@ -15,25 +15,25 @@ set -euo pipefail
 # ============================================
 
 # PostgreSQL 连接配置
-readonly DEFAULT_POSTGRES_HOST="noda-infra-postgres-1"
-readonly DEFAULT_POSTGRES_PORT="5432"
-readonly DEFAULT_POSTGRES_USER="postgres"
+DEFAULT_POSTGRES_HOST="${DEFAULT_POSTGRES_HOST:-noda-infra-postgres-1}"
+DEFAULT_POSTGRES_PORT="${DEFAULT_POSTGRES_PORT:-5432}"
+DEFAULT_POSTGRES_USER="${DEFAULT_POSTGRES_USER:-postgres}"
 
 # 备份目录配置
-readonly DEFAULT_BACKUP_DIR="/var/lib/postgresql/backup"
-readonly DEFAULT_BACKUP_HOST_DIR="/var/lib/docker/volumes/noda-infra_postgres_data/_data/backup"
+DEFAULT_BACKUP_DIR="${DEFAULT_BACKUP_DIR:-/var/lib/postgresql/backup}"
+DEFAULT_BACKUP_HOST_DIR="${DEFAULT_BACKUP_HOST_DIR:-/var/lib/docker/volumes/noda-infra_postgres_data/_data/backup}"
 
 # 备份策略配置
-readonly DEFAULT_RETENTION_DAYS="7"
-readonly DEFAULT_TIMEOUT_SECONDS="3600"
-readonly DEFAULT_COMPRESSION_LEVEL="-1"
-readonly DEFAULT_PARALLEL_BACKUP="false"
+DEFAULT_RETENTION_DAYS="${DEFAULT_RETENTION_DAYS:-7}"
+DEFAULT_TIMEOUT_SECONDS="${DEFAULT_TIMEOUT_SECONDS:-3600}"
+DEFAULT_COMPRESSION_LEVEL="${DEFAULT_COMPRESSION_LEVEL:--1}"
+DEFAULT_PARALLEL_BACKUP="${DEFAULT_PARALLEL_BACKUP:-false}"
 
 # Backblaze B2 配置（Phase 2）
-readonly DEFAULT_B2_ACCOUNT_ID=""
-readonly DEFAULT_B2_APPLICATION_KEY=""
-readonly DEFAULT_B2_BUCKET_NAME="noda-backups"
-readonly DEFAULT_B2_PATH="backups/postgres/"
+DEFAULT_B2_ACCOUNT_ID="${DEFAULT_B2_ACCOUNT_ID:-}"
+DEFAULT_B2_APPLICATION_KEY="${DEFAULT_B2_APPLICATION_KEY:-}"
+DEFAULT_B2_BUCKET_NAME="${DEFAULT_B2_BUCKET_NAME:-noda-backups}"
+DEFAULT_B2_PATH="${DEFAULT_B2_PATH:-backups/postgres/}"
 
 # ============================================
 # 全局配置变量（可被外部修改）

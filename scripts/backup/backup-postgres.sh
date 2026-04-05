@@ -4,7 +4,7 @@ set -euo pipefail
 # ============================================
 # Noda 数据库备份系统 - 主脚本
 # ============================================
-# 功能：完整的备份流程（健康检查 → 备份 → 验证 → 清理）
+# 功能：完整的备份流程（健康检查 → 备份 → 验证 → 云上传 → 清理）
 # 用法：./backup-postgres.sh [选项]
 # 选项：
 #   --list-databases    列出所有可备份的数据库
@@ -26,6 +26,7 @@ source "$SCRIPT_DIR/lib/log.sh"
 source "$SCRIPT_DIR/lib/util.sh"
 source "$SCRIPT_DIR/lib/db.sh"
 source "$SCRIPT_DIR/lib/verify.sh"
+source "$SCRIPT_DIR/lib/cloud.sh"
 
 # 全局变量
 PID_FILE="/tmp/backup-postgres.pid"
@@ -212,12 +213,12 @@ main() {
   fi
 
   # 健康检查
-  log_info "步骤 1/5: 健康检查"
+  log_info "步骤 1/6: 健康检查"
   check_prerequisites
   log_success "健康检查通过"
 
   # 备份
-  log_info "步骤 2/5: 备份数据库"
+  log_info "步骤 2/6: 备份数据库"
   local timestamp=$(get_timestamp)
   local date_path=$(get_date_path)
   local backup_dir="$(get_backup_dir)/$date_path"
@@ -235,22 +236,34 @@ main() {
   log_success "数据库备份完成"
 
   # 验证
-  log_info "步骤 3/5: 验证备份"
+  log_info "步骤 3/6: 验证备份"
   local metadata_file="$backup_dir/metadata_$timestamp.json"
   verify_all_backups "$backup_dir" "$metadata_file"
   log_success "备份验证完成"
 
+  # 云上传（Phase 2）
+  log_info "步骤 4/6: 上传到云存储"
+  if ! upload_to_b2 "$backup_dir"; then
+    log_error "云上传失败，但本地备份已保留"
+    log_error "本地备份路径: $backup_dir"
+    release_lock
+    exit $EXIT_CLOUD_UPLOAD_FAILED
+  fi
+  log_success "云上传完成"
+
   # 清理旧备份
-  log_info "步骤 4/5: 清理旧备份"
+  log_info "步骤 5/6: 清理旧备份"
   cleanup_old_backups "$(get_backup_dir)"
+  cleanup_old_backups_b2 $(get_retention_days)
   log_success "旧备份清理完成"
 
   # 完成
-  log_info "步骤 5/5: 备份完成"
+  log_info "步骤 6/6: 备份完成"
   log_success "=========================================="
   log_success "备份成功完成！"
   log_success "备份目录: $backup_dir"
   log_success "元数据文件: $metadata_file"
+  log_success "云存储: 已上传到 B2"
   log_success "=========================================="
 
   release_lock
