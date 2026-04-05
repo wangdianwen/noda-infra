@@ -29,11 +29,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. 全局对象（角色和表空间定义）也被单独备份
   3. 备份前自动检查 PostgreSQL 连接状态和磁盘空间，不满足条件时脚本提前退出并给出明确错误信息
   4. 每个备份文件生成后，pg_restore --list 可以成功列出其内容（验证备份可读性）
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
+- [ ] 01-01: 建立备份脚本基础架构（健康检查 + 配置管理）
+- [ ] 01-02: 实现数据库备份核心功能（发现、备份、日志、工具）
+- [ ] 01-03: 实现备份验证和主脚本集成
 
 ### Phase 2: 云存储集成
 **Goal**: 备份文件自动上传到 Backblaze B2 云存储，上传后验证校验和，旧备份自动清理，凭证通过环境变量安全管理
@@ -98,7 +99,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 本地备份核心 | 0/? | Not started | - |
+| 1. 本地备份核心 | 0/3 | Planning | - |
 | 2. 云存储集成 | 0/? | Not started | - |
 | 3. 恢复脚本 | 0/? | Not started | - |
 | 4. 自动化验证测试 | 0/? | Not started | - |
