@@ -12,7 +12,6 @@ set -euo pipefail
 
 # 加载依赖库
 _HEALTH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$_HEALTH_LIB_DIR/constants.sh"
 
 # 加载配置函数（如果尚未加载）
 if ! type get_postgres_host &>/dev/null; then

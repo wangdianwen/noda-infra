@@ -16,6 +16,9 @@ set -euo pipefail
 # 脚本目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# 加载常量定义（必须最先加载，因为包含 readonly 变量）
+source "$SCRIPT_DIR/lib/constants.sh"
+
 # 加载库文件
 source "$SCRIPT_DIR/lib/config.sh"
 source "$SCRIPT_DIR/lib/health.sh"
