@@ -10,7 +10,6 @@ set -euo pipefail
 
 # 加载依赖库
 _DB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$_DB_LIB_DIR/constants.sh"
 source "$_DB_LIB_DIR/log.sh"
 source "$_DB_LIB_DIR/util.sh"
 
