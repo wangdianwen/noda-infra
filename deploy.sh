@@ -55,9 +55,9 @@ if [ -f "$INFRA_DIR/config/secrets.sops.yaml" ]; then
     # 检查 sops 是否可用
     if command -v sops > /dev/null 2>&1; then
         # 使用 sops 解密并读取密钥（忽略解密错误）
-        SECRETS=$(sops --decrypt "$INFRA_DIR/config/secrets.sops.yaml" 2>/dev/null)
+        SECRETS=$(sops --decrypt "$INFRA_DIR/config/secrets.sops.yaml" 2>/dev/null || echo "")
 
-        if [ $? -eq 0 ] && [ -n "$SECRETS" ]; then
+        if [ -n "$SECRETS" ]; then
             # 读取 Cloudflare Token
             TOKEN=$(echo "$SECRETS" | grep "^cloudflare_tunnel_token:" | awk '{print $2}' | tr -d '"')
             if [ -n "$TOKEN" ] && [ "$TOKEN" != "" ]; then
