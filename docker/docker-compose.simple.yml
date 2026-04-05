@@ -6,7 +6,7 @@ name: noda-infra
 
 services:
   # ----------------------------------------
-  # PostgreSQL 数据库
+  # PostgreSQL 生产数据库
   # ----------------------------------------
   postgres:
     image: postgres:17.9
@@ -14,10 +14,33 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres_password_change_me
-      POSTGRES_DB: oneteam_prod
-      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_DB: noda_prod
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      noda-network:
+        aliases:
+          - postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------
+  # PostgreSQL 开发数据库
+  # ----------------------------------------
+  postgres-dev:
+    image: postgres:17.9
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password_change_me
+      POSTGRES_DB: noda_dev
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
     networks:
       - noda-network
     healthcheck:
@@ -31,13 +54,13 @@ services:
   # ----------------------------------------
   nginx:
     image: nginx:1.25-alpine
-    container_name: noda-infra-nginx
     restart: unless-stopped
+    ports:
+      - "80:80"
     volumes:
       - ../config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ../config/nginx/conf.d:/etc/nginx/conf.d:ro
-    ports:
-      - "80:80"
+      - ../config/nginx/snippets:/etc/nginx/snippets:ro
     networks:
       noda-network:
         aliases:
@@ -56,24 +79,29 @@ services:
       - "9000:9000"
     environment:
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/oneteam_prod
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: postgres
       KC_DB_PASSWORD: postgres_password_change_me
       KC_HTTP_ENABLED: "true"
-      KC_HOSTNAME: ""
+      KC_HOSTNAME: "auth.noda.co.nz"
       KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_PORT: "443"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY: "edge"
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin_password_change_me
     command: start
     networks:
-      - noda-network
+      noda-network:
+        aliases:
+          - keycloak
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
 
   # ----------------------------------------
-  # Cloudflare Tunnel (生产环境)
+  # Cloudflare Tunnel（自动启用）
   # ----------------------------------------
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -86,6 +114,8 @@ services:
 
 volumes:
   postgres_data:
+    driver: local
+  postgres_dev_data:
     driver: local
 
 networks:
