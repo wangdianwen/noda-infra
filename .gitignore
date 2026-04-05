@@ -1,7 +1,4 @@
 # 环境变量
-.env
-.env.*.local
-.env.production
 
 # 日志文件
 *.log
@@ -16,7 +13,19 @@ logs/
 *~
 
 # Docker
-.env.jenkins-secrets
 
 # SOPS 解密后的文件
 *.decrypted
+
+# ===== 敏感文件 =====
+# 未加密的环境配置
+.env
+.env.*.local
+
+# SOPS 未加密文件（不要提交）
+config/secrets.sops.yaml.bak
+config/keys/
+
+# 允许提交 SOPS 加密文件
+!config/secrets.sops.yaml
+config/secrets.local.yaml
