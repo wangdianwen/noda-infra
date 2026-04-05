@@ -153,8 +153,8 @@ else
     -s name=noda-frontend \
     -s enabled=true \
     -s publicClient=true \
-    -s redirectUris=\"+\" \
-    -s webOrigins=\"+\" > /dev/null 2>&1
+    -s 'redirectUris=["+"]' \
+    -s 'webOrigins=["+"]' > /dev/null 2>&1
 
   echo -e "${GREEN}✅ Client 'noda-frontend' 创建成功${NC}"
 fi
