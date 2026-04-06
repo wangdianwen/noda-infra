@@ -35,7 +35,7 @@ echo "✓ 目录创建完成: $BACKUP_DIR"
 if [ -n "$B2_ACCOUNT_ID" ] && [ -n "$B2_APPLICATION_KEY" ]; then
   mkdir -p /root/.config/rclone
   cat > /root/.config/rclone/rclone.conf <<EOF
-[b2]
+[b2remote]
 type = b2
 account = $B2_ACCOUNT_ID
 key = $B2_APPLICATION_KEY
