@@ -27,6 +27,8 @@ source "$SCRIPT_DIR/lib/util.sh"
 source "$SCRIPT_DIR/lib/db.sh"
 source "$SCRIPT_DIR/lib/verify.sh"
 source "$SCRIPT_DIR/lib/cloud.sh"
+source "$SCRIPT_DIR/lib/alert.sh"
+source "$SCRIPT_DIR/lib/metrics.sh"
 
 # 全局变量
 PID_FILE="/tmp/backup-postgres.pid"
@@ -212,13 +214,21 @@ main() {
     exit $test_result
   fi
 
+  # 记录开始时间
+  local start_time
+  start_time=$(date +%s)
+
   # 健康检查
-  log_info "步骤 1/6: 健康检查"
-  check_prerequisites
+  log_info "步骤 1/7: 健康检查"
+  if ! check_prerequisites; then
+    send_alert "health_check_failed" "all" "健康检查失败"
+    release_lock
+    exit $EXIT_CONNECTION_FAILED
+  fi
   log_success "健康检查通过"
 
   # 备份
-  log_info "步骤 2/6: 备份数据库"
+  log_info "步骤 2/7: 备份数据库"
   local timestamp=$(get_timestamp)
   local date_path=$(get_date_path)
   local backup_dir="$(get_backup_dir)/$date_path"
@@ -232,38 +242,89 @@ main() {
     exit 0
   fi
 
-  backup_all_databases "$backup_dir" "$timestamp"
+  if ! backup_all_databases "$backup_dir" "$timestamp"; then
+    send_alert "backup_failed" "all" "备份失败"
+    release_lock
+    exit $EXIT_BACKUP_FAILED
+  fi
   log_success "数据库备份完成"
 
+  # 记录备份指标
+  local backup_end_time
+  backup_end_time=$(date +%s)
+  local backup_duration=$((backup_end_time - start_time))
+
   # 验证
-  log_info "步骤 3/6: 验证备份"
+  log_info "步骤 3/7: 验证备份"
   local metadata_file="$backup_dir/metadata_$timestamp.json"
-  verify_all_backups "$backup_dir" "$metadata_file"
+  if ! verify_all_backups "$backup_dir" "$metadata_file"; then
+    send_alert "verification_failed" "all" "备份验证失败"
+    release_lock
+    exit $EXIT_VERIFICATION_FAILED
+  fi
   log_success "备份验证完成"
 
   # 云上传（Phase 2）
-  log_info "步骤 4/6: 上传到云存储"
+  log_info "步骤 4/7: 上传到云存储"
+  local upload_start_time
+  upload_start_time=$(date +%s)
+
   if ! upload_to_b2 "$backup_dir"; then
-    log_error "云上传失败，但本地备份已保留"
+    send_alert "upload_failed" "all" "云上传失败，但本地备份已保留"
     log_error "本地备份路径: $backup_dir"
     release_lock
     exit $EXIT_CLOUD_UPLOAD_FAILED
   fi
+
+  local upload_end_time
+  upload_end_time=$(date +%s)
+  local upload_duration=$((upload_end_time - upload_start_time))
   log_success "云上传完成"
 
   # 清理旧备份
-  log_info "步骤 5/6: 清理旧备份"
+  log_info "步骤 5/7: 清理旧备份"
   cleanup_old_backups "$(get_backup_dir)"
   cleanup_old_backups_b2 $(get_retention_days)
   log_success "旧备份清理完成"
 
+  # 清理旧历史记录（Phase 5）
+  log_info "步骤 6/7: 清理旧历史记录"
+  cleanup_old_metrics
+  cleanup_old_alerts
+  log_success "旧历史记录清理完成"
+
+  # 记录指标并检查异常
+  log_info "步骤 7/7: 记录指标"
+  local databases=$(discover_databases)
+  for db in $databases; do
+    # 获取备份文件大小
+    local backup_file="$backup_dir/${db}_${timestamp}.dump"
+    local file_size=0
+    if [[ -f "$backup_file" ]]; then
+      file_size=$(stat -f%z "$backup_file" 2>/dev/null || stat -c%s "$backup_file" 2>/dev/null || echo "0")
+    fi
+
+    # 记录备份指标
+    record_metric "backup" "$db" "$backup_duration" "$file_size"
+
+    # 记录上传指标
+    record_metric "upload" "$db" "$upload_duration" "$file_size"
+
+    # 检查备份耗时异常
+    check_duration_anomaly "$db" "backup" "$backup_duration"
+
+    # 检查上传耗时异常
+    check_duration_anomaly "$db" "upload" "$upload_duration"
+  done
+  log_success "指标记录完成"
+
   # 完成
-  log_info "步骤 6/6: 备份完成"
   log_success "=========================================="
   log_success "备份成功完成！"
   log_success "备份目录: $backup_dir"
   log_success "元数据文件: $metadata_file"
   log_success "云存储: 已上传到 B2"
+  log_success "总耗时: ${backup_duration}s (备份) + ${upload_duration}s (上传)"
   log_success "=========================================="
 
   release_lock
