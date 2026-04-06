@@ -153,7 +153,7 @@ Plans:
 
 Plans:
 - [x] 08-01-PLAN.md — 修复 restore.sh 的 docker exec 兼容性 + 运行 test_restore_quick.sh 验证（Wave 1）
-- [ ] 08-02-PLAN.md — 创建 verify-restore.sh + 08-VERIFICATION.md + 端到端集成测试（Wave 2）
+- [x] 08-02-PLAN.md — 创建 verify-restore.sh + 08-VERIFICATION.md + 端到端集成测试（Wave 2）
 
 **Status**: 📋 Planned
 
