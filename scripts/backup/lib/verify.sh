@@ -28,13 +28,25 @@ verify_backup_readable() {
 
   log_info "验证备份文件可读性: $backup_file"
 
-  # 使用 pg_restore --list 验证备份文件
-  if docker exec noda-infra-postgres-1 pg_restore --list "$backup_file" > /dev/null 2>&1; then
-    log_success "备份文件可读性验证通过"
-    return 0
+  # 检查是否在容器内运行
+  if [[ -f /.dockerenv ]]; then
+    # 容器内：直接使用 pg_restore
+    if PGPASSWORD=$POSTGRES_PASSWORD pg_restore --list -h noda-infra-postgres-1 -U postgres "$backup_file" > /dev/null 2>&1; then
+      log_success "备份文件可读性验证通过"
+      return 0
+    else
+      log_error "备份文件可读性验证失败: pg_restore --list 执行失败"
+      return $EXIT_VERIFICATION_FAILED
+    fi
   else
-    log_error "备份文件可读性验证失败: pg_restore --list 执行失败"
-    return $EXIT_VERIFICATION_FAILED
+    # 宿主机：使用 docker exec
+    if docker exec noda-infra-postgres-1 pg_restore --list "$backup_file" > /dev/null 2>&1; then
+      log_success "备份文件可读性验证通过"
+      return 0
+    else
+      log_error "备份文件可读性验证失败: pg_restore --list 执行失败"
+      return $EXIT_VERIFICATION_FAILED
+    fi
   fi
 }
 

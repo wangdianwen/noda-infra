@@ -139,20 +139,51 @@ load_config() {
   fi
 
   # 3. 环境变量覆盖（优先级最高）
-  if [[ -n "${POSTGRES_HOST_ENV:-}" ]]; then
+  # 支持两种格式：BACKUP_DIR 和 BACKUP_DIR_ENV
+  if [[ -n "${POSTGRES_HOST:-}" ]]; then
+    POSTGRES_HOST="$POSTGRES_HOST"
+  elif [[ -n "${POSTGRES_HOST_ENV:-}" ]]; then
     POSTGRES_HOST="$POSTGRES_HOST_ENV"
   fi
-  if [[ -n "${POSTGRES_PORT_ENV:-}" ]]; then
+  if [[ -n "${POSTGRES_PORT:-}" ]]; then
+    POSTGRES_PORT="$POSTGRES_PORT"
+  elif [[ -n "${POSTGRES_PORT_ENV:-}" ]]; then
     POSTGRES_PORT="$POSTGRES_PORT_ENV"
   fi
-  if [[ -n "${POSTGRES_USER_ENV:-}" ]]; then
+  if [[ -n "${POSTGRES_USER:-}" ]]; then
+    POSTGRES_USER="$POSTGRES_USER"
+  elif [[ -n "${POSTGRES_USER_ENV:-}" ]]; then
     POSTGRES_USER="$POSTGRES_USER_ENV"
   fi
-  if [[ -n "${BACKUP_DIR_ENV:-}" ]]; then
+  if [[ -n "${BACKUP_DIR:-}" ]]; then
+    BACKUP_DIR="$BACKUP_DIR"
+  elif [[ -n "${BACKUP_DIR_ENV:-}" ]]; then
     BACKUP_DIR="$BACKUP_DIR_ENV"
   fi
-  if [[ -n "${RETENTION_DAYS_ENV:-}" ]]; then
+  if [[ -n "${RETENTION_DAYS:-}" ]]; then
+    RETENTION_DAYS="$RETENTION_DAYS"
+  elif [[ -n "${RETENTION_DAYS_ENV:-}" ]]; then
     RETENTION_DAYS="$RETENTION_DAYS_ENV"
+  fi
+  if [[ -n "${B2_ACCOUNT_ID:-}" ]]; then
+    B2_ACCOUNT_ID="$B2_ACCOUNT_ID"
+  elif [[ -n "${B2_ACCOUNT_ID_ENV:-}" ]]; then
+    B2_ACCOUNT_ID="$B2_ACCOUNT_ID_ENV"
+  fi
+  if [[ -n "${B2_APPLICATION_KEY:-}" ]]; then
+    B2_APPLICATION_KEY="$B2_APPLICATION_KEY"
+  elif [[ -n "${B2_APPLICATION_KEY_ENV:-}" ]]; then
+    B2_APPLICATION_KEY="$B2_APPLICATION_KEY_ENV"
+  fi
+  if [[ -n "${B2_BUCKET_NAME:-}" ]]; then
+    B2_BUCKET_NAME="$B2_BUCKET_NAME"
+  elif [[ -n "${B2_BUCKET_NAME_ENV:-}" ]]; then
+    B2_BUCKET_NAME="$B2_BUCKET_NAME_ENV"
+  fi
+  if [[ -n "${B2_PATH:-}" ]]; then
+    B2_PATH="$B2_PATH"
+  elif [[ -n "${B2_PATH_ENV:-}" ]]; then
+    B2_PATH="$B2_PATH_ENV"
   fi
 
   return 0

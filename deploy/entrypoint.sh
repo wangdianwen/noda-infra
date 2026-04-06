@@ -26,10 +26,15 @@ fi
 
 echo "✓ 环境变量验证通过"
 
+# 创建必需的目录
+mkdir -p "$BACKUP_DIR"
+mkdir -p /app/history
+echo "✓ 目录创建完成: $BACKUP_DIR"
+
 # 配置 rclone
 if [ -n "$B2_ACCOUNT_ID" ] && [ -n "$B2_APPLICATION_KEY" ]; then
-  mkdir -p /config/rclone
-  cat > /config/rclone/rclone.conf <<EOF
+  mkdir -p /root/.config/rclone
+  cat > /root/.config/rclone/rclone.conf <<EOF
 [b2]
 type = b2
 account = $B2_ACCOUNT_ID

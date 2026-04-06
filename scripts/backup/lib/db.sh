@@ -46,14 +46,13 @@ backup_database() {
   local timestamp=$3
 
   local backup_file="${backup_dir}/${db_name}_${timestamp}.dump"
-  local container_backup_file="/var/lib/postgresql/backup/${db_name}_${timestamp}.dump"
 
   log_info "开始备份数据库: $db_name"
 
   # 使用 pg_dump -Fc 格式备份（D-03）
-  if PGPASSWORD=$POSTGRES_PASSWORD pg_dump -h noda-infra-postgres-1 -U postgres -Fc -f "$container_backup_file" "$db_name"; then
+  if PGPASSWORD=$POSTGRES_PASSWORD pg_dump -h noda-infra-postgres-1 -U postgres -Fc -f "$backup_file" "$db_name"; then
     # 设置文件权限为 600（D-13）
-    chmod 600 "$container_backup_file"
+    chmod 600 "$backup_file"
 
     # 记录已创建的备份文件（用于失败时清理）
     CREATED_BACKUPS+=("$backup_file")
@@ -81,14 +80,13 @@ backup_globals() {
   local timestamp=$2
 
   local backup_file="${backup_dir}/globals_${timestamp}.sql"
-  local container_backup_file="/var/lib/postgresql/backup/globals_${timestamp}.sql"
 
   log_info "开始备份全局对象（角色和表空间）"
 
   # 使用 pg_dumpall -g 备份全局对象（D-32）
-  if PGPASSWORD=$POSTGRES_PASSWORD pg_dumpall -h noda-infra-postgres-1 -U postgres -g -U postgres -f "$container_backup_file"; then
+  if PGPASSWORD=$POSTGRES_PASSWORD pg_dumpall -h noda-infra-postgres-1 -U postgres -g -U postgres -f "$backup_file"; then
     # 设置文件权限为 600（D-13）
-    chmod 600 "$container_backup_file"
+    chmod 600 "$backup_file"
 
     # 记录已创建的备份文件（用于失败时清理）
     CREATED_BACKUPS+=("$backup_file")
