@@ -140,10 +140,10 @@ Plans:
 **Status**: 📋 Planned
 
 ### Phase 8: 执行恢复脚本
-**Goal**: 实现一键恢复脚本，支持列出备份、指定数据库恢复和安全测试
+**Goal**: 修复 restore.sh 的 docker exec 兼容性，验证恢复功能符合全部 4 个成功标准，创建自动化验证脚本和验证文档
 **Depends on**: Phase 7
 **Requirements**: RESTORE-01, RESTORE-02, RESTORE-03, RESTORE-04
-**Gap Closure**: 执行原始 Phase 3 计划（仅规划，未执行）
+**Gap Closure**: 修复 restore.sh 宿主机兼容性 + 验证恢复功能 + 补充文档
 **Success Criteria** (what must be TRUE):
   1. 执行恢复脚本可以列出 B2 上所有可用的备份文件，按时间排序
   2. 可以指定备份文件恢复到目标数据库，支持恢复到不同数据库名（用于测试）
@@ -152,10 +152,10 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 08-01: 实现恢复核心功能（列出、下载、恢复）
-- [ ] 08-02: 添加验证和安全测试功能
+- [ ] 08-01-PLAN.md — 修复 restore.sh 的 docker exec 兼容性 + 运行 test_restore_quick.sh 验证（Wave 1）
+- [ ] 08-02-PLAN.md — 创建 verify-restore.sh + 08-VERIFICATION.md + 端到端集成测试（Wave 2）
 
-**Status**: 📋 Gap Closure Phase
+**Status**: 📋 Planned
 
 ### Phase 9: 验证已实现功能
 **Goal**: 添加验证文档，执行端到端集成测试
