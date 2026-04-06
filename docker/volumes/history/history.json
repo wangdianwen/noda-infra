@@ -26,5 +26,117 @@
     "operation": "upload",
     "duration": 5,
     "file_size": 1080
+  },
+  {
+    "timestamp": "2026-04-06T00:38:56Z",
+    "database": "oneteam_prod",
+    "operation": "backup",
+    "duration": 0,
+    "file_size": 880
+  },
+  {
+    "timestamp": "2026-04-06T00:38:56Z",
+    "database": "oneteam_prod",
+    "operation": "upload",
+    "duration": 5,
+    "file_size": 880
+  },
+  {
+    "timestamp": "2026-04-06T00:38:56Z",
+    "database": "postgres",
+    "operation": "backup",
+    "duration": 0,
+    "file_size": 1080
+  },
+  {
+    "timestamp": "2026-04-06T00:38:56Z",
+    "database": "postgres",
+    "operation": "upload",
+    "duration": 5,
+    "file_size": 1080
+  },
+  {
+    "timestamp": "2026-04-06T00:39:29Z",
+    "database": "oneteam_prod",
+    "operation": "backup",
+    "duration": 1,
+    "file_size": 880
+  },
+  {
+    "timestamp": "2026-04-06T00:39:29Z",
+    "database": "oneteam_prod",
+    "operation": "upload",
+    "duration": 4,
+    "file_size": 880
+  },
+  {
+    "timestamp": "2026-04-06T00:39:29Z",
+    "database": "postgres",
+    "operation": "backup",
+    "duration": 1,
+    "file_size": 1080
+  },
+  {
+    "timestamp": "2026-04-06T00:39:29Z",
+    "database": "postgres",
+    "operation": "upload",
+    "duration": 4,
+    "file_size": 1080
+  },
+  {
+    "timestamp": "2026-04-06T00:40:22Z",
+    "database": "oneteam_prod",
+    "operation": "backup",
+    "duration": 0,
+    "file_size": 880
+  },
+  {
+    "timestamp": "2026-04-06T00:40:22Z",
+    "database": "oneteam_prod",
+    "operation": "upload",
+    "duration": 5,
+    "file_size": 880
+  },
+  {
+    "timestamp": "2026-04-06T00:40:22Z",
+    "database": "postgres",
+    "operation": "backup",
+    "duration": 0,
+    "file_size": 1080
+  },
+  {
+    "timestamp": "2026-04-06T00:40:22Z",
+    "database": "postgres",
+    "operation": "upload",
+    "duration": 5,
+    "file_size": 1080
+  },
+  {
+    "timestamp": "2026-04-06T03:00:08Z",
+    "database": "oneteam_prod",
+    "operation": "backup",
+    "duration": 0,
+    "file_size": 880
+  },
+  {
+    "timestamp": "2026-04-06T03:00:08Z",
+    "database": "oneteam_prod",
+    "operation": "upload",
+    "duration": 6,
+    "file_size": 880
+  },
+  {
+    "timestamp": "2026-04-06T03:00:08Z",
+    "database": "postgres",
+    "operation": "backup",
+    "duration": 0,
+    "file_size": 1080
+  },
+  {
+    "timestamp": "2026-04-06T03:00:08Z",
+    "database": "postgres",
+    "operation": "upload",
+    "duration": 6,
+    "file_size": 1080
   }
 ]

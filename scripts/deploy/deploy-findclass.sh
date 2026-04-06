@@ -18,24 +18,34 @@ if [[ -f "$PROJECT_ROOT/secrets/infra.env.prod.enc" ]]; then
   echo "环境变量已加载并清理"
 fi
 
-# 1. 构建镜像
-echo "[1/4] 构建前端镜像..."
+# 1. 构建前端镜像前先动态生成 sitemap（需要数据库连接）
+echo "[0/5] 生成 sitemap.xml..."
+cd "$PROJECT_ROOT/../../noda-apps"
+if command -v npx >/dev/null 2>&1; then
+  npx tsx scripts/generate-sitemap.ts && echo "✓ sitemap.xml 已生成"
+else
+  echo "⚠ npx 不可用，跳过 sitemap 生成（将使用现有静态 sitemap）"
+fi
+cd "$PROJECT_ROOT"
+
+# 2. 构建镜像
+echo "[1/5] 构建前端镜像..."
 docker build -f docker/Dockerfile.findclass -t noda-findclass:latest .
 
-echo "[2/4] 构建 API 镜像..."
+echo "[2/5] 构建 API 镜像..."
 docker build -f docker/Dockerfile.api -t noda-api:latest .
 
-# 2. 启动服务
-echo "[3/4] 启动服务..."
+# 3. 启动服务
+echo "[3/5] 启动服务..."
 cd docker
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-recreate findclass api
 
-# 3. 等待容器启动
-echo "[4/4] 等待容器就绪..."
+# 4. 等待容器启动
+echo "[4/5] 等待容器就绪..."
 sleep 10
 
-# 4. 验证
-echo "=== 验证 ==="
+# 5. 验证
+echo "[5/5] 验证部署..."
 
 echo "容器状态:"
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps findclass api

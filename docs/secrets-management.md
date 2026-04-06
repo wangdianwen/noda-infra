@@ -16,42 +16,47 @@
 
 ## 🚀 使用方法
 
-### 1. 添加 Cloudflare Tunnel Token
+### 1. 添加密钥到配置文件
 
 ```bash
-# 编辑未加密的密钥文件
-cd ~/project/noda-infra
-nano config/secrets.sops.yaml
+# 编辑加密的配置文件
+cd /Users/dianwenwang/Project/noda-infra
+sops config/secrets.sops.yaml
 ```
 
-在文件中添加您的 token：
+在文件中添加或修改密钥：
 ```yaml
 cloudflare_tunnel_token: "your_actual_token_here"
+google_oauth_client_id: "your_client_id"
+google_oauth_client_secret: "your_client_secret"
 ```
 
-### 2. 加密并保存
+### 2. 保存加密文件
 
 ```bash
-# 加密文件
-sops --age age1869smm93r878hzgarhv5uggkg58mttaz54l05wwc0s3zmp264e7qw7rc3w \
-    --encrypt --encrypted-regex '^(data|string)$' \
-    config/secrets.sops.yaml
-
-# 提交到 Git
+# SOPS 会自动加密保存，直接提交即可
 git add config/secrets.sops.yaml
-git commit -m "feat: add encrypted secrets"
+git commit -m "feat: update encrypted secrets"
 git push
 ```
 
-### 3. 部署时解密
+### 3. 部署时自动解密
+
+部署脚本会自动解密，无需手动操作：
 
 ```bash
-# 解密到环境变量
-eval $(sops --decrypt --extract '["cloudflare_tunnel_token"]' \
-    --output-format dotenv config/secrets.sops.yaml)
+# 一键部署（自动解密）
+bash scripts/deploy/deploy-infrastructure-prod.sh
+```
 
-# 部署
-./deploy.sh
+如果需要手动解密查看：
+
+```bash
+# 设置密钥文件路径
+export SOPS_AGE_KEY_FILE=/Users/dianwenwang/Project/noda-infra/config/keys/git-age-key.txt
+
+# 解密并查看
+sops --decrypt config/secrets.sops.yaml
 ```
 
 ---
@@ -78,16 +83,24 @@ eval $(sops --decrypt --extract '["cloudflare_tunnel_token"]' \
 ## 🛠️ 故障排除
 
 ### 解密失败
+
 ```bash
 # 检查私钥是否存在
-ls -la config/keys/git-age-key.txt
+ls -la /Users/dianwenwang/Project/noda-infra/config/keys/git-age-key.txt
 
-# 重新生成密钥（如果丢失）
-age-keygen -o config/keys/git-age-key.txt
+# 设置环境变量
+export SOPS_AGE_KEY_FILE=/Users/dianwenwang/Project/noda-infra/config/keys/git-age-key.txt
+
+# 测试解密
+sops --decrypt config/secrets.sops.yaml
 ```
 
 ### 查看加密内容
+
 ```bash
+# 设置密钥文件路径
+export SOPS_AGE_KEY_FILE=/Users/dianwenwang/Project/noda-infra/config/keys/git-age-key.txt
+
 # 解密并查看（不修改文件）
 sops --decrypt config/secrets.sops.yaml
 ```

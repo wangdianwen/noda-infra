@@ -54,3 +54,21 @@ readonly LOG_RETENTION_DAYS=7  # 日志保留 7 天
 # 指标配置
 readonly METRICS_WINDOW_SIZE=10  # 最近 10 次
 readonly METRICS_ANOMALY_THRESHOLD=50  # 50% 偏差
+
+# ============================================
+# Phase 6: 数据量校验配置
+# ============================================
+
+# 数据量校验开关
+readonly DATA_VOLUME_CHECK_ENABLED="${DATA_VOLUME_CHECK_ENABLED:-true}"
+
+# 数据量异常阈值（百分比）
+readonly DATA_VOLUME_ANOMALY_THRESHOLD=30  # 30% 变化视为异常
+
+# 数据量历史记录窗口（天数）
+readonly DATA_VOLUME_HISTORY_DAYS=7  # 使用最近 7 天的数据
+
+# 数据量校验严格模式
+# true: 异常时终止备份
+# false: 异常时仅告警，继续备份
+readonly DATA_VOLUME_STRICT_MODE="${DATA_VOLUME_STRICT_MODE:-false}"

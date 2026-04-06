@@ -134,6 +134,8 @@ services:
       # Proxy 配置（Cloudflare Tunnel）
       KC_PROXY: "edge"
       KC_PROXY_HEADERS: "xforwarded"
+      # Frontend URL（强制使用 HTTPS）
+      KC_FRONTEND_URL: "https://auth.noda.co.nz"
       # 管理员账号
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
