@@ -137,7 +137,7 @@ Plans:
 
 Plans:
 - [x] 07-01-PLAN.md — 修复 test_rclone.sh 的 3 个 BUG + cloud.sh util.sh 依赖 + 安全验证（Wave 1）
-- [ ] 07-02-PLAN.md — 运行完整测试套件验证 B2 云存储集成（Wave 2）
+- [x] 07-02-PLAN.md — 运行完整测试套件验证 B2 云存储集成（Wave 2）
 
 **Status**: 📋 Planned
 
