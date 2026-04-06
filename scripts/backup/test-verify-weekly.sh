@@ -315,7 +315,7 @@ main() {
   log_success "旧历史记录清理完成"
 
   # 输出总结
-  print_summary()
+  print_summary
 
   # 检查结果
   if [[ $failed_count -eq 0 ]]; then
