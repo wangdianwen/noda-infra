@@ -17,11 +17,11 @@
 
 ### Upload — 云存储上传
 
-- [ ] **UPLOAD-01**: 备份文件自动上传到 Backblaze B2 云存储（使用 rclone）
-- [ ] **UPLOAD-02**: 上传失败时自动重试（指数退避，最多 3 次）
-- [ ] **UPLOAD-03**: 上传后自动验证校验和（rclone --checksum）
-- [ ] **UPLOAD-04**: 应用层保留策略自动清理 7 天前的旧备份（本地和云端）
-- [ ] **UPLOAD-05**: 自动清理未完成的上传文件（B2 lifecycle + rclone）
+- [x] **UPLOAD-01**: 备份文件自动上传到 Backblaze B2 云存储（使用 rclone）
+- [x] **UPLOAD-02**: 上传失败时自动重试（指数退避，最多 3 次）
+- [x] **UPLOAD-03**: 上传后自动验证校验和（rclone --checksum）
+- [x] **UPLOAD-04**: 应用层保留策略自动清理 7 天前的旧备份（本地和云端）
+- [x] **UPLOAD-05**: 自动清理未完成的上传文件（B2 lifecycle + rclone）
 
 ### Restore — 恢复功能
 
@@ -45,8 +45,8 @@
 
 ### Security — 安全管理
 
-- [ ] **SECURITY-01**: 所有凭证（B2 Key、DB 密码）通过环境变量管理，绝不硬编码
-- [ ] **SECURITY-02**: 使用最低权限的 B2 Application Key（仅限备份 bucket + 必要权限 + 文件前缀限制）
+- [x] **SECURITY-01**: 所有凭证（B2 Key、DB 密码）通过环境变量管理，绝不硬编码
+- [x] **SECURITY-02**: 使用最低权限的 B2 Application Key（仅限备份 bucket + 必要权限 + 文件前缀限制）
 
 ## v2 Requirements
 
@@ -92,13 +92,13 @@
 | BACKUP-05 | Phase 1 | Complete |
 | VERIFY-01 | Phase 1 | Complete |
 | MONITOR-04 | Phase 1 | Complete |
-| UPLOAD-01 | Phase 7 | Pending |
-| UPLOAD-02 | Phase 7 | Pending |
-| UPLOAD-03 | Phase 7 | Pending |
-| UPLOAD-04 | Phase 7 | Pending |
-| UPLOAD-05 | Phase 7 | Pending |
-| SECURITY-01 | Phase 7 | Pending |
-| SECURITY-02 | Phase 7 | Pending |
+| UPLOAD-01 | Phase 7 | Complete |
+| UPLOAD-02 | Phase 7 | Complete |
+| UPLOAD-03 | Phase 7 | Complete |
+| UPLOAD-04 | Phase 7 | Complete |
+| UPLOAD-05 | Phase 7 | Complete |
+| SECURITY-01 | Phase 7 | Complete |
+| SECURITY-02 | Phase 7 | Complete |
 | RESTORE-01 | Phase 8 | Pending |
 | RESTORE-02 | Phase 8 | Pending |
 | RESTORE-03 | Phase 8 | Pending |
