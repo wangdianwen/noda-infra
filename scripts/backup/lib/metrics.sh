@@ -189,3 +189,21 @@ cleanup_old_alerts() {
 
   log_info "已清理 $LOG_RETENTION_DAYS 天前的告警记录"
 }
+
+# ============================================
+# 主函数（支持命令行调用）
+# ============================================
+
+# 如果脚本被直接执行（而不是被 source），则运行主函数
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  case "${1:-}" in
+    cleanup)
+      cleanup_old_metrics
+      cleanup_old_alerts
+      ;;
+    *)
+      echo "用法: $0 {cleanup}"
+      exit 1
+      ;;
+  esac
+fi
