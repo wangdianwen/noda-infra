@@ -13,10 +13,14 @@
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: 本地备份核心** - 建立可靠的多数据库本地备份流程，包含健康检查、压缩格式和即时验证 ✅
-- [x] **Phase 2: 云存储集成** - 备份自动上传到 Backblaze B2，包含重试、校验、清理和凭证安全 ✅
-- [x] **Phase 3: 恢复脚本** - 提供一键恢复脚本，支持列出备份、指定数据库恢复和恢复到测试库 ✅
-- [x] **Phase 4: 自动化验证测试** - 每周自动执行恢复测试，验证备份可用性 ✅
-- [x] **Phase 5: 监控与告警** - 结构化日志、Webhook 告警、耗时追踪和标准退出码 ✅
+- [x] **Phase 2: 云存储集成** - 备份自动上传到 Backblaze B2，包含重试、校验、清理和凭证安全 ⚠️ (规划完成，未执行)
+- [x] **Phase 3: 恢复脚本** - 提供一键恢复脚本，支持列出备份、指定数据库恢复和恢复到测试库 ⚠️ (规划完成，未执行)
+- [x] **Phase 4: 自动化验证测试** - 每周自动执行恢复测试，验证备份可用性 ⚠️ (已实现，未验证)
+- [x] **Phase 5: 监控与告警** - 结构化日志、Webhook 告警、耗时追踪和标准退出码 ⚠️ (已实现，未验证)
+- [ ] **Phase 6: 修复变量冲突** - 统一退出码管理，修复 Phase 1 主脚本运行问题 🔧
+- [ ] **Phase 7: 执行云存储集成** - 实现 B2 上传、重试、校验和凭证管理 📋
+- [ ] **Phase 8: 执行恢复脚本** - 实现一键恢复、列出备份和安全测试功能 📋
+- [ ] **Phase 9: 验证已实现功能** - 添加验证文档，执行端到端集成测试 ✅
 
 ## Phase Details
 
@@ -100,19 +104,98 @@ Plans:
 Plans:
 - [ ] 05-01: TBD
 
+### Phase 6: 修复变量冲突
+**Goal**: 统一退出码管理，修复 Phase 1 主脚本运行问题
+**Depends on**: Phase 1
+**Requirements**: (技术债务修复)
+**Gap Closure**: 修复 EXIT_SUCCESS 变量冲突，使主脚本可以运行
+**Success Criteria** (what must be TRUE):
+  1. 创建 `lib/constants.sh` 统一定义所有退出码常量
+  2. 移除 health.sh、db.sh、verify.sh 中的 EXIT_* 重复定义
+  3. 主脚本可以正常运行并执行备份流程
+  4. 所有库文件通过 source 加载共享常量
+**Plans**: 1 plan
+
+Plans:
+- [ ] 06-01: 创建统一常量文件并修复变量冲突
+
+**Status**: 📋 Gap Closure Phase
+
+### Phase 7: 执行云存储集成
+**Goal**: 实现 B2 云存储上传、重试、校验和凭证管理
+**Depends on**: Phase 6 (修复后的 Phase 1)
+**Requirements**: UPLOAD-01, UPLOAD-02, UPLOAD-03, UPLOAD-04, UPLOAD-05, SECURITY-01, SECURITY-02
+**Gap Closure**: 执行原始 Phase 2 计划（仅规划，未执行）
+**Success Criteria** (what must be TRUE):
+  1. 备份完成后自动上传到 B2 云存储，上传失败时自动重试（最多 3 次，指数退避）
+  2. 上传后通过 rclone --checksum 验证文件完整性，校验和不匹配时标记为失败
+  3. 超过 7 天的旧备份（本地和云端）被自动清理，未完成的上传文件也被自动清除
+  4. 所有凭证（B2 Key、数据库密码）通过环境变量传入，脚本中无硬编码凭证
+  5. B2 Application Key 仅拥有备份 bucket 的最低必要权限
+**Plans**: 4 plans (Wave 0 + 3 execution waves)
+
+Plans:
+- [ ] 07-00: 基础设施准备（Wave 0，rclone 安装 + B2 配置）
+- [ ] 07-01: 实现云操作库（Wave 1，lib/cloud.sh）
+- [ ] 07-02: 集成到主脚本（Wave 2，云上传流程）
+- [ ] 07-03: 测试和优化（Wave 3，端到端测试）
+
+**Status**: 📋 Gap Closure Phase
+
+### Phase 8: 执行恢复脚本
+**Goal**: 实现一键恢复脚本，支持列出备份、指定数据库恢复和安全测试
+**Depends on**: Phase 7
+**Requirements**: RESTORE-01, RESTORE-02, RESTORE-03, RESTORE-04
+**Gap Closure**: 执行原始 Phase 3 计划（仅规划，未执行）
+**Success Criteria** (what must be TRUE):
+  1. 执行恢复脚本可以列出 B2 上所有可用的备份文件，按时间排序
+  2. 可以指定备份文件恢复到目标数据库，支持恢复到不同数据库名（用于测试）
+  3. 恢复前自动验证备份文件完整性（校验和），恢复后验证表数量和关键记录
+  4. 恢复失败时提供明确的错误信息和解决建议
+**Plans**: 2 plans
+
+Plans:
+- [ ] 08-01: 实现恢复核心功能（列出、下载、恢复）
+- [ ] 08-02: 添加验证和安全测试功能
+
+**Status**: 📋 Gap Closure Phase
+
+### Phase 9: 验证已实现功能
+**Goal**: 添加验证文档，执行端到端集成测试
+**Depends on**: Phase 8
+**Requirements**: VERIFY-02, MONITOR-01, MONITOR-02, MONITOR-03, MONITOR-05
+**Gap Closure**: 为 Phase 4-5 创建 VERIFICATION.md，验证跨阶段集成
+**Success Criteria** (what must be TRUE):
+  1. Phase 4 和 5 拥有 VERIFICATION.md 文件
+  2. 端到端流程测试通过（备份 → 云上传 → 恢复 → 验证）
+  3. 自动化验证测试功能已验证
+  4. 监控告警功能已验证
+**Plans**: 2 plans
+
+Plans:
+- [ ] 09-01: 为 Phase 4-5 创建 VERIFICATION.md
+- [ ] 09-02: 执行端到端集成测试
+
+**Status**: 📋 Gap Closure Phase
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
+Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 
 **Milestone Status:**
-🎉 **Milestone v1.0 Complete** - All 5 phases finished (2026-04-06)
+⚠️ **Milestone v1.0 - Gap Closure Phases Added** - Audit found gaps, creating fix phases (2026-04-06)
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. 本地备份核心 | 4/4 | ✅ Complete | 2026-04-06 |
-| 2. 云存储集成 | 1/1 | ✅ Complete | 2026-04-06 |
-| 3. 恢复脚本 | 1/1 | ✅ Complete | 2026-04-06 |
-| 4. 自动化验证测试 | 1/1 | ✅ Complete | 2026-04-06 |
-| 5. 监控与告警 | 1/1 | ✅ Complete | 2026-04-06 |
-| **Total** | **8/8** | **✅ Complete** | **2026-04-06** |
+| 1. 本地备份核心 | 4/4 | ⚠️ Complete (有验证问题) | 2026-04-06 |
+| 2. 云存储集成 | 0/4 | ❌ Not Executed | - |
+| 3. 恢复脚本 | 0/2 | ❌ Not Executed | - |
+| 4. 自动化验证测试 | 1/1 | ⚠️ Complete (缺少验证) | 2026-04-06 |
+| 5. 监控与告警 | 1/1 | ⚠️ Complete (缺少验证) | 2026-04-06 |
+| 6. 修复变量冲突 | 0/1 | 📋 Gap Closure Phase | - |
+| 7. 执行云存储集成 | 0/4 | 📋 Gap Closure Phase | - |
+| 8. 执行恢复脚本 | 0/2 | 📋 Gap Closure Phase | - |
+| 9. 验证已实现功能 | 0/2 | 📋 Gap Closure Phase | - |
+| **Original Total** | **8/8** | **⚠️ Gaps Found** | **2026-04-06** |
+| **With Gap Closure** | **8/17** | **🚧 In Progress** | **-** |

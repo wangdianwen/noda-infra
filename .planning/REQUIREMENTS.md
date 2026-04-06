@@ -92,22 +92,22 @@
 | BACKUP-05 | Phase 1 | Complete |
 | VERIFY-01 | Phase 1 | Complete |
 | MONITOR-04 | Phase 1 | Complete |
-| UPLOAD-01 | Phase 2 | Pending |
-| UPLOAD-02 | Phase 2 | Pending |
-| UPLOAD-03 | Phase 2 | Pending |
-| UPLOAD-04 | Phase 2 | Pending |
-| UPLOAD-05 | Phase 2 | Pending |
-| SECURITY-01 | Phase 2 | Pending |
-| SECURITY-02 | Phase 2 | Pending |
-| RESTORE-01 | Phase 3 | Pending |
-| RESTORE-02 | Phase 3 | Pending |
-| RESTORE-03 | Phase 3 | Pending |
-| RESTORE-04 | Phase 3 | Pending |
-| VERIFY-02 | Phase 4 | Pending |
-| MONITOR-01 | Phase 5 | Pending |
-| MONITOR-02 | Phase 5 | Pending |
-| MONITOR-03 | Phase 5 | Pending |
-| MONITOR-05 | Phase 5 | Pending |
+| UPLOAD-01 | Phase 7 | Pending |
+| UPLOAD-02 | Phase 7 | Pending |
+| UPLOAD-03 | Phase 7 | Pending |
+| UPLOAD-04 | Phase 7 | Pending |
+| UPLOAD-05 | Phase 7 | Pending |
+| SECURITY-01 | Phase 7 | Pending |
+| SECURITY-02 | Phase 7 | Pending |
+| RESTORE-01 | Phase 8 | Pending |
+| RESTORE-02 | Phase 8 | Pending |
+| RESTORE-03 | Phase 8 | Pending |
+| RESTORE-04 | Phase 8 | Pending |
+| VERIFY-02 | Phase 9 | Pending |
+| MONITOR-01 | Phase 9 | Pending |
+| MONITOR-02 | Phase 9 | Pending |
+| MONITOR-03 | Phase 9 | Pending |
+| MONITOR-05 | Phase 9 | Pending |
 
 **Coverage:**
 - v1 requirements: 23 total
