@@ -159,6 +159,12 @@ restore_database() {
 
   log_info "开始恢复数据库..."
 
+  # 环境检测：宿主机 vs 容器
+  local is_host=false
+  if [[ ! -f /.dockerenv ]]; then
+    is_host=true
+  fi
+
   # 验证备份文件存在
   if [[ ! -f "$backup_file" ]]; then
     log_error "备份文件不存在: $backup_file"
@@ -211,15 +217,24 @@ restore_database() {
 
   # 删除旧数据库（如果存在）
   log_info "删除旧数据库（如果存在）..."
-  if psql $pg_params -d postgres -c "DROP DATABASE IF EXISTS $target_db" 2>/dev/null; then
-    log_info "已删除旧数据库"
+  if [[ "$is_host" == true ]]; then
+    docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c "DROP DATABASE IF EXISTS $target_db" 2>/dev/null && log_info "已删除旧数据库" || true
+  else
+    psql $pg_params -d postgres -c "DROP DATABASE IF EXISTS $target_db" 2>/dev/null && log_info "已删除旧数据库" || true
   fi
 
   # 创建新数据库
   log_info "创建新数据库..."
-  if ! psql $pg_params -d postgres -c "CREATE DATABASE $target_db" 2>/dev/null; then
-    log_error "创建数据库失败"
-    return 1
+  if [[ "$is_host" == true ]]; then
+    if ! docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c "CREATE DATABASE $target_db" 2>/dev/null; then
+      log_error "创建数据库失败"
+      return 1
+    fi
+  else
+    if ! psql $pg_params -d postgres -c "CREATE DATABASE $target_db" 2>/dev/null; then
+      log_error "创建数据库失败"
+      return 1
+    fi
   fi
   log_success "数据库创建成功"
 
@@ -227,26 +242,48 @@ restore_database() {
   log_info "开始恢复数据..."
   if [[ "$file_ext" == "dump" ]]; then
     # 使用 pg_restore 恢复 custom format
-    if pg_restore $pg_params -d "$target_db" -j 4 "$backup_file"; then
-      log_success "数据恢复成功"
+    if [[ "$is_host" == true ]]; then
+      if docker exec noda-infra-postgres-1 pg_restore -U postgres -d "$target_db" -j 4 "$backup_file"; then
+        log_success "数据恢复成功"
+      else
+        log_error "数据恢复失败"
+        return 1
+      fi
     else
-      log_error "数据恢复失败"
-      return 1
+      if pg_restore $pg_params -d "$target_db" -j 4 "$backup_file"; then
+        log_success "数据恢复成功"
+      else
+        log_error "数据恢复失败"
+        return 1
+      fi
     fi
   else
     # 使用 psql 恢复 plain SQL
-    if psql $pg_params -d "$target_db" -f "$backup_file"; then
-      log_success "数据恢复成功"
+    if [[ "$is_host" == true ]]; then
+      if docker exec -i noda-infra-postgres-1 psql -U postgres -d "$target_db" < "$backup_file"; then
+        log_success "数据恢复成功"
+      else
+        log_error "数据恢复失败"
+        return 1
+      fi
     else
-      log_error "数据恢复失败"
-      return 1
+      if psql $pg_params -d "$target_db" -f "$backup_file"; then
+        log_success "数据恢复成功"
+      else
+        log_error "数据恢复失败"
+        return 1
+      fi
     fi
   fi
 
   # 验证恢复结果
   log_info "验证恢复结果..."
   local table_count
-  table_count=$(psql $pg_params -d "$target_db" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null | xargs || echo "0")
+  if [[ "$is_host" == true ]]; then
+    table_count=$(docker exec noda-infra-postgres-1 psql -U postgres -d "$target_db" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null | xargs || echo "0")
+  else
+    table_count=$(psql $pg_params -d "$target_db" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null | xargs || echo "0")
+  fi
 
   if [[ "$table_count" -gt 0 ]]; then
     log_success "恢复完成（共 $table_count 个表）"
@@ -270,6 +307,12 @@ verify_backup_integrity() {
 
   log_info "验证备份文件完整性..."
 
+  # 环境检测：宿主机 vs 容器
+  local is_host=false
+  if [[ ! -f /.dockerenv ]]; then
+    is_host=true
+  fi
+
   # 检查文件存在
   if [[ ! -f "$backup_file" ]]; then
     log_error "备份文件不存在: $backup_file"
@@ -291,7 +334,13 @@ verify_backup_integrity() {
 
   if [[ "$file_ext" == "dump" ]]; then
     # 验证 pg_dump custom format
-    if ! pg_restore -l "$backup_file" >/dev/null 2>&1; then
+    local pg_restore_result=0
+    if [[ "$is_host" == true ]]; then
+      docker exec noda-infra-postgres-1 pg_restore -l "$backup_file" >/dev/null 2>&1 || pg_restore_result=$?
+    else
+      pg_restore -l "$backup_file" >/dev/null 2>&1 || pg_restore_result=$?
+    fi
+    if [[ $pg_restore_result -ne 0 ]]; then
       log_error "备份文件格式无效"
       return 1
     fi

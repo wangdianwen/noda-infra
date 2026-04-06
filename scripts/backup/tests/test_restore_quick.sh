@@ -32,7 +32,7 @@ docker exec noda-infra-postgres-1 psql -U postgres -d postgres \
   -c "CREATE DATABASE test_restore_quick;" >/dev/null 2>&1
 
 # 创建测试数据
-docker exec noda-infra-postgres-1 psql -U postgres -d test_restore_quick >/dev/null 2>&1 <<SQL
+docker exec -i noda-infra-postgres-1 psql -U postgres -d test_restore_quick >/dev/null 2>&1 <<SQL
 CREATE TABLE users (id SERIAL PRIMARY KEY, name VARCHAR(100));
 INSERT INTO users (name) VALUES ('Alice'), ('Bob'), ('Charlie');
 SQL
