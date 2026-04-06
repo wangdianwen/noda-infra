@@ -41,24 +41,43 @@ check_postgres_connection() {
 
   echo "ℹ️  检查 PostgreSQL 连接状态..."
 
-  # 使用 pg_isready 检查连接（D-05）
-  if docker exec "$postgres_host" pg_isready -U "$postgres_user" -h localhost -p "$postgres_port" > /dev/null 2>&1; then
-    echo "✅ PostgreSQL 连接正常"
-    return 0
+  # 检查是否在容器内运行
+  if [[ -f /.dockerenv ]]; then
+    # 在容器内运行，直接使用 pg_isready
+    if pg_isready -h "$postgres_host" -p "$postgres_port" -U "$postgres_user" > /dev/null 2>&1; then
+      echo "✅ PostgreSQL 连接正常"
+      return 0
+    else
+      echo "❌ 错误: PostgreSQL 连接失败"
+      echo ""
+      echo "可能的原因："
+      echo "  1. PostgreSQL 容器未运行（检查：docker ps）"
+      echo "  2. 网络连接问题（检查：docker network ls）"
+      echo "  3. 认证配置错误（检查：POSTGRES_PASSWORD）"
+      echo ""
+      echo "解决建议："
+      echo "  - 运行: docker ps -a | grep postgres"
+      echo "  - 检查: POSTGRES_HOST、POSTGRES_PORT、POSTGRES_USER、POSTGRES_PASSWORD"
+      return $EXIT_CONNECTION_FAILED
+    fi
   else
-    echo "❌ 错误: PostgreSQL 连接失败"
-    echo ""
-    echo "可能的原因："
-    echo "  1. PostgreSQL 容器未运行（检查：docker ps）"
-    echo "  2. PostgreSQL 服务未启动（检查：docker logs $postgres_host）"
-    echo "  3. 网络连接问题（检查：docker network ls）"
-    echo "  4. 认证配置错误（检查：.pgpass 文件）"
-    echo ""
-    echo "解决建议："
-    echo "  - 运行: docker ps -a | grep postgres"
-    echo "  - 运行: docker logs $postgres_host --tail 50"
-    echo "  - 检查: POSTGRES_HOST、POSTGRES_PORT、POSTGRES_USER 配置"
-    return $EXIT_CONNECTION_FAILED
+    # 在宿主机运行，使用 docker exec
+    if docker exec "$postgres_host" pg_isready -U "$postgres_user" -h localhost -p "$postgres_port" > /dev/null 2>&1; then
+      echo "✅ PostgreSQL 连接正常"
+      return 0
+    else
+      echo "❌ 错误: PostgreSQL 连接失败"
+      echo ""
+      echo "可能的原因："
+      echo "  1. PostgreSQL 容器未运行（检查：docker ps）"
+      echo "  2. PostgreSQL 服务未启动（检查：docker logs $postgres_host）"
+      echo "  3. 网络连接问题（检查：docker network ls）"
+      echo ""
+      echo "解决建议："
+      echo "  - 运行: docker ps -a | grep postgres"
+      echo "  - 运行: docker logs $postgres_host --tail 50"
+      return $EXIT_CONNECTION_FAILED
+    fi
   fi
 }
 
