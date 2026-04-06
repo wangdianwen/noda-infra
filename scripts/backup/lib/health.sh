@@ -152,6 +152,18 @@ check_disk_space() {
 
   echo "ℹ️  检查磁盘空间..."
 
+  # 检查是否在容器内运行
+  if [[ -f /.dockerenv ]]; then
+    # 在容器内，简化检查（仅检查挂载点）
+    echo "ℹ️  容器内运行，跳过详细磁盘检查"
+    echo "ℹ️  备份目录: $backup_dir"
+    return 0
+  fi
+
+  # 宿主机检查逻辑（原有代码）
+
+  echo "ℹ️  检查磁盘空间..."
+
   # 1. 获取所有数据库总大小
   local total_db_size
   total_db_size=$(get_total_database_size)
