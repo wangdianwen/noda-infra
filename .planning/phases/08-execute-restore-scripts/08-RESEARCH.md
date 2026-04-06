@@ -380,22 +380,25 @@ verify_backup_readable() {
 | A3 | restore.sh 在设计时没有考虑宿主机运行环境 | Pitfall 1 | 可能有其他未发现的环境假设 |
 | A4 | verify-restore.sh 应遵循 verify.sh 的宿主机检测模式 | Architecture | 需要另外设计 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **restore.sh 是否应该在宿主机上直接运行？**
    - What we know: 脚本在宿主机上运行，但调用了容器内才有的工具
    - What's unclear: 是否应该让脚本在容器内运行，还是修复宿主机兼容性
    - Recommendation: 添加 docker exec 封装（与 verify.sh 保持一致），这是最小改动方案
+   - RESOLVED: 采用 Recommendation 方案，Plan 08-01 Task 1 实现 docker exec 封装
 
 2. **B2 凭证是否仍然有效？**
    - What we know: .env.backup 中有凭证配置
    - What's unclear: 这些凭证是否已过期或被撤销
    - Recommendation: 验证计划第一步运行 `rclone listremotes` 或 `--list-backups` 验证连接性
+   - RESOLVED: Plan 08-02 Task 1 中 test_list_backups() 作为第一步验证 B2 连接性，失败时明确报告
 
 3. **restore.sh 中的 verify_backup_integrity 和 verify.sh 中的 verify_backup_readable 是否应该合并？**
    - What we know: 两个函数功能重叠但实现不同
    - What's unclear: 是否应该让 restore.sh 复用 verify.sh 的函数
    - Recommendation: 保持独立但让 restore.sh 的函数采用 verify.sh 的环境检测模式
+   - RESOLVED: 采用 Recommendation 方案，两个函数保持独立，restore.sh 的函数添加 verify.sh 的环境检测模式
 
 ## Sources
 
