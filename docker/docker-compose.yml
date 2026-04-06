@@ -146,6 +146,42 @@ services:
     depends_on:
       - postgres
 
+  # ----------------------------------------
+  # Noda 数据库备份系统（opdev）
+  # ----------------------------------------
+  opdev:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backup
+    image: noda-backup:latest
+    container_name: opdev
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: noda-infra-postgres-1
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      B2_ACCOUNT_ID: ${B2_ACCOUNT_ID}
+      B2_APPLICATION_KEY: ${B2_APPLICATION_KEY}
+      B2_BUCKET_NAME: ${B2_BUCKET_NAME:-noda-backups}
+      B2_PATH: ${B2_PATH:-backups/postgres/}
+      ALERT_EMAIL: ${ALERT_EMAIL:-}
+      BACKUP_DIR: /tmp/postgres_backups
+      HISTORY_DIR: /app/history
+    volumes:
+      - ./volumes/backup:/tmp/postgres_backups
+      - ./volumes/history:/app/history
+      - ./volumes/logs:/var/log/noda-backup
+    networks:
+      - noda-network
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h noda-infra-postgres-1 -U ${POSTGRES_USER:-postgres} || exit 1"]
+      interval: 1h
+      timeout: 10s
+      retries: 3
+
 # ============================================
 # Volumes（数据持久化）
 # ============================================

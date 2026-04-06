@@ -1,0 +1,30 @@
+[
+  {
+    "timestamp": "2026-04-06T00:36:28Z",
+    "database": "oneteam_prod",
+    "operation": "backup",
+    "duration": 0,
+    "file_size": 880
+  },
+  {
+    "timestamp": "2026-04-06T00:36:28Z",
+    "database": "oneteam_prod",
+    "operation": "upload",
+    "duration": 5,
+    "file_size": 880
+  },
+  {
+    "timestamp": "2026-04-06T00:36:28Z",
+    "database": "postgres",
+    "operation": "backup",
+    "duration": 0,
+    "file_size": 1080
+  },
+  {
+    "timestamp": "2026-04-06T00:36:28Z",
+    "database": "postgres",
+    "operation": "upload",
+    "duration": 5,
+    "file_size": 1080
+  }
+]
