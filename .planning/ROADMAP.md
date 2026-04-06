@@ -114,10 +114,11 @@ Plans:
   2. 移除 health.sh、db.sh、verify.sh 中的 EXIT_* 重复定义
   3. 主脚本可以正常运行并执行备份流程
   4. 所有库文件通过 source 加载共享常量
-**Plans**: 1 plan
+**Plans**: 2 plans
 
 Plans:
-- [ ] 06-01: 创建统一常量文件并修复变量冲突
+- [ ] 06-01: 创建验证脚本确认已有修复（纯验证，per D-01）
+- [ ] 06-02: 修复代码不一致性（防御性加载、LIB_DIR 命名、.bak 清理）
 
 **Status**: 📋 Gap Closure Phase
 
@@ -193,9 +194,9 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 3. 恢复脚本 | 0/2 | ❌ Not Executed | - |
 | 4. 自动化验证测试 | 1/1 | ⚠️ Complete (缺少验证) | 2026-04-06 |
 | 5. 监控与告警 | 1/1 | ⚠️ Complete (缺少验证) | 2026-04-06 |
-| 6. 修复变量冲突 | 0/1 | 📋 Gap Closure Phase | - |
+| 6. 修复变量冲突 | 0/2 | 📋 Gap Closure Phase | - |
 | 7. 执行云存储集成 | 0/4 | 📋 Gap Closure Phase | - |
 | 8. 执行恢复脚本 | 0/2 | 📋 Gap Closure Phase | - |
 | 9. 验证已实现功能 | 0/2 | 📋 Gap Closure Phase | - |
 | **Original Total** | **8/8** | **⚠️ Gaps Found** | **2026-04-06** |
-| **With Gap Closure** | **8/17** | **🚧 In Progress** | **-** |
+| **With Gap Closure** | **8/18** | **🚧 In Progress** | **-** |
