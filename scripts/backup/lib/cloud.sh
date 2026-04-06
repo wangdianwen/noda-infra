@@ -3,7 +3,7 @@
 # Noda 数据库备份系统 - 云操作库
 # ============================================
 # 功能：Backblaze B2 云存储操作
-# 依赖：log.sh, config.sh
+# 依赖：constants.sh, log.sh, config.sh
 # 作者：Noda 团队
 # 版本：1.0.0
 # ============================================
@@ -12,6 +12,12 @@ set -euo pipefail
 
 # 加载依赖库
 _CLOUD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 条件 source constants.sh（避免重复定义 readonly 变量）
+if [[ -z "${EXIT_SUCCESS+x}" ]]; then
+  source "$_CLOUD_LIB_DIR/constants.sh"
+fi
+
 source "$_CLOUD_LIB_DIR/log.sh"
 source "$_CLOUD_LIB_DIR/config.sh"
 

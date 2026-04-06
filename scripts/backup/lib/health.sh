@@ -3,7 +3,7 @@
 # Noda 数据库备份系统 - 健康检查库
 # ============================================
 # 功能：备份前前置检查（连接状态 + 磁盘空间）
-# 依赖：config.sh（加载配置）
+# 依赖：constants.sh, config.sh（加载配置）
 # 作者：Noda 团队
 # 版本：1.0.0
 # ============================================
@@ -15,6 +15,11 @@ if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
   _HEALTH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 else
   _HEALTH_LIB_DIR="$(cd "$(dirname "${0}")" && pwd)"
+fi
+
+# 条件 source constants.sh（避免重复定义 readonly 变量）
+if [[ -z "${EXIT_SUCCESS+x}" ]]; then
+  source "$_HEALTH_LIB_DIR/constants.sh"
 fi
 
 # 加载配置函数（如果尚未加载）

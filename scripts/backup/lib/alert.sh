@@ -9,18 +9,18 @@
 set -euo pipefail
 
 # 引入依赖
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_ALERT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # 条件 source constants.sh（避免重复定义 readonly 变量）
 if [[ -z "${EXIT_SUCCESS+x}" ]]; then
   # shellcheck source=lib/constants.sh
-  source "$LIB_DIR/constants.sh"
+  source "$_ALERT_LIB_DIR/constants.sh"
 fi
 
 # 条件 source log.sh
 if [[ "$(type -t log_info)" != "function" ]]; then
   # shellcheck source=lib/log.sh
-  source "$LIB_DIR/log.sh"
+  source "$_ALERT_LIB_DIR/log.sh"
 fi
 
 # ============================================

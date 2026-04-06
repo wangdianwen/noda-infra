@@ -5,11 +5,17 @@ set -euo pipefail
 # Noda 数据库备份系统 - 验证库
 # ============================================
 # 功能：备份验证（pg_restore --list、SHA-256 校验和）
-# 依赖：log.sh, util.sh
+# 依赖：constants.sh, log.sh, util.sh
 # ============================================
 
 # 加载依赖库
 _VERIFY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 条件 source constants.sh（避免重复定义 readonly 变量）
+if [[ -z "${EXIT_SUCCESS+x}" ]]; then
+  source "$_VERIFY_LIB_DIR/constants.sh"
+fi
+
 source "$_VERIFY_LIB_DIR/log.sh"
 source "$_VERIFY_LIB_DIR/util.sh"
 

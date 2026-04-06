@@ -3,7 +3,7 @@
 # Noda 数据库备份系统 - 验证测试库
 # ============================================
 # 功能：每周自动验证测试的核心库函数
-# 依赖：log.sh, config.sh, cloud.sh, restore.sh, verify.sh
+# 依赖：constants.sh, log.sh, config.sh, cloud.sh, restore.sh, verify.sh
 # 作者：Noda 团队
 # 版本：1.0.0
 # ============================================
@@ -12,6 +12,12 @@ set -euo pipefail
 
 # 加载依赖库
 _TEST_VERIFY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 条件 source constants.sh（避免重复定义 readonly 变量）
+if [[ -z "${EXIT_SUCCESS+x}" ]]; then
+  source "$_TEST_VERIFY_LIB_DIR/constants.sh"
+fi
+
 source "$_TEST_VERIFY_LIB_DIR/log.sh"
 source "$_TEST_VERIFY_LIB_DIR/config.sh"
 source "$_TEST_VERIFY_LIB_DIR/cloud.sh"
