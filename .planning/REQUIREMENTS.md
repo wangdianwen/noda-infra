@@ -25,10 +25,10 @@
 
 ### Restore — 恢复功能
 
-- [ ] **RESTORE-01**: 提供一键恢复脚本，可从云存储下载并恢复数据库
+- [x] **RESTORE-01**: 提供一键恢复脚本，可从云存储下载并恢复数据库
 - [ ] **RESTORE-02**: 支持列出所有可用的备份文件（按时间排序）
-- [ ] **RESTORE-03**: 支持恢复指定的数据库（不影响其他运行中的数据库）
-- [ ] **RESTORE-04**: 支持恢复到不同的数据库名（用于安全测试）
+- [x] **RESTORE-03**: 支持恢复指定的数据库（不影响其他运行中的数据库）
+- [x] **RESTORE-04**: 支持恢复到不同的数据库名（用于安全测试）
 
 ### Verify — 验证测试
 
@@ -99,10 +99,10 @@
 | UPLOAD-05 | Phase 7 | Complete |
 | SECURITY-01 | Phase 7 | Complete |
 | SECURITY-02 | Phase 7 | Complete |
-| RESTORE-01 | Phase 8 | Pending |
+| RESTORE-01 | Phase 8 | Complete |
 | RESTORE-02 | Phase 8 | Pending |
-| RESTORE-03 | Phase 8 | Pending |
-| RESTORE-04 | Phase 8 | Pending |
+| RESTORE-03 | Phase 8 | Complete |
+| RESTORE-04 | Phase 8 | Complete |
 | VERIFY-02 | Phase 9 | Pending |
 | MONITOR-01 | Phase 9 | Pending |
 | MONITOR-02 | Phase 9 | Pending |
