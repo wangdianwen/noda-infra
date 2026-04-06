@@ -26,7 +26,7 @@ CREATED_BACKUPS=()
 # 发现所有用户数据库（排除模板数据库）
 # 返回：数据库名称列表（每行一个）
 discover_databases() {
-  PGPASSWORD=$POSTGRES_PASSWORD psql -h noda-infra-postgres-1 -U postgres -d postgres -t -c \
+  psql -h noda-infra-postgres-1 -U postgres -d postgres -t -c \
     "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"
 }
 
@@ -51,9 +51,9 @@ backup_database() {
   log_info "开始备份数据库: $db_name"
 
   # 使用 pg_dump -Fc 格式备份（D-03）
-  if PGPASSWORD=$POSTGRES_PASSWORD pg_dump -h noda-infra-postgres-1 -U postgres -Fc -f "$container_backup_file" "$db_name"; then
+  if pg_dump -h noda-infra-postgres-1 -U postgres -Fc -f "$container_backup_file" "$db_name"; then
     # 设置文件权限为 600（D-13）
-    chmod 600 "$container_backup_file"
+    docker exec noda-infra-postgres-1 chmod 600 "$container_backup_file"
 
     # 记录已创建的备份文件（用于失败时清理）
     CREATED_BACKUPS+=("$backup_file")
@@ -86,9 +86,9 @@ backup_globals() {
   log_info "开始备份全局对象（角色和表空间）"
 
   # 使用 pg_dumpall -g 备份全局对象（D-32）
-  if PGPASSWORD=$POSTGRES_PASSWORD pg_dumpall -h noda-infra-postgres-1 -U postgres -g -U postgres -f "$container_backup_file"; then
+  if pg_dump -h noda-infra-postgres-1all -g -U postgres -f "$container_backup_file"; then
     # 设置文件权限为 600（D-13）
-    chmod 600 "$container_backup_file"
+    docker exec noda-infra-postgres-1 chmod 600 "$container_backup_file"
 
     # 记录已创建的备份文件（用于失败时清理）
     CREATED_BACKUPS+=("$backup_file")

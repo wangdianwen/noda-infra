@@ -51,7 +51,7 @@ backup_database() {
   log_info "开始备份数据库: $db_name"
 
   # 使用 pg_dump -Fc 格式备份（D-03）
-  if PGPASSWORD=$POSTGRES_PASSWORD pg_dump -h noda-infra-postgres-1 -U postgres -Fc -f "$container_backup_file" "$db_name"; then
+  if pg_dump -h noda-infra-postgres-1 -U postgres -Fc -f "$container_backup_file" "$db_name"; then
     # 设置文件权限为 600（D-13）
     chmod 600 "$container_backup_file"
 

@@ -49,6 +49,11 @@ start_container() {
 
   set -a
   source scripts/backup/.env.backup
+
+  # 如果配置文件中没有密码，尝试从环境变量读取
+  if [[ -z "${POSTGRES_PASSWORD:-}" ]]; then
+    export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
+  fi
   set +a
 
   docker run -d \
@@ -58,6 +63,7 @@ start_container() {
     -e POSTGRES_HOST="$POSTGRES_HOST" \
     -e POSTGRES_PORT="$POSTGRES_PORT" \
     -e POSTGRES_USER="$POSTGRES_USER" \
+    -e POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}" \
     -e B2_ACCOUNT_ID="$B2_ACCOUNT_ID" \
     -e B2_APPLICATION_KEY="$B2_APPLICATION_KEY" \
     -e B2_BUCKET_NAME="$B2_BUCKET_NAME" \

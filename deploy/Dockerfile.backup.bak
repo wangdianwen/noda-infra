@@ -6,7 +6,7 @@
 # 容器名: opdev
 # ============================================
 
-FROM postgres:17-alpine
+FROM postgres:15-alpine
 
 # 安装必要工具
 RUN apk add --no-cache \
