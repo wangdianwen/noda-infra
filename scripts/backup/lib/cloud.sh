@@ -3,7 +3,7 @@
 # Noda 数据库备份系统 - 云操作库
 # ============================================
 # 功能：Backblaze B2 云存储操作
-# 依赖：constants.sh, log.sh, config.sh
+# 依赖：constants.sh, log.sh, config.sh, util.sh
 # 作者：Noda 团队
 # 版本：1.0.0
 # ============================================
@@ -20,6 +20,11 @@ fi
 
 source "$_CLOUD_LIB_DIR/log.sh"
 source "$_CLOUD_LIB_DIR/config.sh"
+
+# 条件 source util.sh（提供 get_date_path 等工具函数）
+if ! declare -f get_date_path &>/dev/null; then
+  source "$_CLOUD_LIB_DIR/util.sh"
+fi
 
 # ============================================
 # rclone 配置管理
