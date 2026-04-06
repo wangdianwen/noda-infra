@@ -54,6 +54,7 @@ start_container() {
   docker run -d \
     --name "$CONTAINER_NAME" \
     --restart unless-stopped \
+    --network noda-network \
     -e POSTGRES_HOST="$POSTGRES_HOST" \
     -e POSTGRES_PORT="$POSTGRES_PORT" \
     -e POSTGRES_USER="$POSTGRES_USER" \
@@ -64,7 +65,6 @@ start_container() {
     -v "$BACKUP_DIR:/tmp/postgres_backups" \
     -v "$HISTORY_DIR:/app/history" \
     -v "$LOG_DIR:/var/log/noda-backup" \
-    --add-host host.docker.internal:host-gateway \
     "$IMAGE_NAME:latest"
 
   log_info "✓ 容器启动完成"
