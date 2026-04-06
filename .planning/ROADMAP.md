@@ -123,25 +123,23 @@ Plans:
 **Status**: 📋 Gap Closure Phase
 
 ### Phase 7: 执行云存储集成
-**Goal**: 实现 B2 云存储上传、重试、校验和凭证管理
+**Goal**: 修复 test_rclone.sh 的 3 个 BUG + cloud.sh 的 util.sh 依赖，运行完整测试套件验证 B2 云存储集成功能
 **Depends on**: Phase 6 (修复后的 Phase 1)
 **Requirements**: UPLOAD-01, UPLOAD-02, UPLOAD-03, UPLOAD-04, UPLOAD-05, SECURITY-01, SECURITY-02
-**Gap Closure**: 执行原始 Phase 2 计划（仅规划，未执行）
+**Gap Closure**: 验证和修复 Phase 2 已实现的云存储集成功能
 **Success Criteria** (what must be TRUE):
   1. 备份完成后自动上传到 B2 云存储，上传失败时自动重试（最多 3 次，指数退避）
   2. 上传后通过 rclone --checksum 验证文件完整性，校验和不匹配时标记为失败
   3. 超过 7 天的旧备份（本地和云端）被自动清理，未完成的上传文件也被自动清除
   4. 所有凭证（B2 Key、数据库密码）通过环境变量传入，脚本中无硬编码凭证
   5. B2 Application Key 仅拥有备份 bucket 的最低必要权限
-**Plans**: 4 plans (Wave 0 + 3 execution waves)
+**Plans**: 2 plans (2 waves)
 
 Plans:
-- [ ] 07-00: 基础设施准备（Wave 0，rclone 安装 + B2 配置）
-- [ ] 07-01: 实现云操作库（Wave 1，lib/cloud.sh）
-- [ ] 07-02: 集成到主脚本（Wave 2，云上传流程）
-- [ ] 07-03: 测试和优化（Wave 3，端到端测试）
+- [ ] 07-01-PLAN.md — 修复 test_rclone.sh 的 3 个 BUG + cloud.sh util.sh 依赖 + 安全验证（Wave 1）
+- [ ] 07-02-PLAN.md — 运行完整测试套件验证 B2 云存储集成（Wave 2）
 
-**Status**: 📋 Gap Closure Phase
+**Status**: 📋 Planned
 
 ### Phase 8: 执行恢复脚本
 **Goal**: 实现一键恢复脚本，支持列出备份、指定数据库恢复和安全测试
@@ -195,7 +193,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9
 | 4. 自动化验证测试 | 1/1 | ⚠️ Complete (缺少验证) | 2026-04-06 |
 | 5. 监控与告警 | 1/1 | ⚠️ Complete (缺少验证) | 2026-04-06 |
 | 6. 修复变量冲突 | 0/2 | 📋 Gap Closure Phase | - |
-| 7. 执行云存储集成 | 0/4 | 📋 Gap Closure Phase | - |
+| 7. 执行云存储集成 | 0/2 | 📋 Planned | - |
 | 8. 执行恢复脚本 | 0/2 | 📋 Gap Closure Phase | - |
 | 9. 验证已实现功能 | 0/2 | 📋 Gap Closure Phase | - |
 | **Original Total** | **8/8** | **⚠️ Gaps Found** | **2026-04-06** |
