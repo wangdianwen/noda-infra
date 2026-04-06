@@ -96,7 +96,8 @@ download_backup() {
   local backup_filename=$1
   local local_dir=${2:-$(mktemp -d)}
 
-  log_info "下载备份文件: $backup_filename"
+  # 注意：此函数通过 stdout 返回文件路径，所有日志输出重定向到 stderr
+  log_info "下载备份文件: $backup_filename" >&2
 
   # 验证文件名
   if [[ ! $backup_filename =~ ^[^_]+_[0-9]{8}_[0-9]{6}\.(sql|dump)$ ]]; then
@@ -115,21 +116,29 @@ download_backup() {
   rclone_config=$(setup_rclone_config)
 
   # 下载文件
-  log_info "从 B2 下载中..."
+  log_info "从 B2 下载中..." >&2
   if rclone copy "b2remote:${b2_bucket_name}/${b2_path}" \
     "$local_dir" \
     --config "$rclone_config" \
     --include "$backup_filename" \
-    --progress; then
+    --progress >&2; then
 
     cleanup_rclone_config "$rclone_config"
 
-    # 验证文件已下载
+    # 验证文件已下载（rclone copy 保留目录结构，文件可能在子目录中）
+    local downloaded_file=""
     if [[ -f "$local_dir/$backup_filename" ]]; then
-      local file_size
-      file_size=$(du -h "$local_dir/$backup_filename" | cut -f1)
-      log_success "下载成功（文件大小: $file_size）"
-      echo "$local_dir/$backup_filename"
+      downloaded_file="$local_dir/$backup_filename"
+    else
+      # 递归查找下载的文件
+      downloaded_file=$(find "$local_dir" -name "$backup_filename" -type f 2>/dev/null | head -1 || true)
+    fi
+
+    if [[ -n "$downloaded_file" && -f "$downloaded_file" ]]; then
+      local file_size=""
+      file_size=$(du -h "$downloaded_file" 2>/dev/null | cut -f1 || true)
+      log_success "下载成功（文件大小: ${file_size:-unknown}）" >&2
+      echo "$downloaded_file"
       return 0
     else
       log_error "文件下载失败"
@@ -243,9 +252,14 @@ restore_database() {
   if [[ "$file_ext" == "dump" ]]; then
     # 使用 pg_restore 恢复 custom format
     if [[ "$is_host" == true ]]; then
-      if docker exec noda-infra-postgres-1 pg_restore -U postgres -d "$target_db" -j 4 "$backup_file"; then
+      # 宿主机: 需要将文件复制到容器内，因为 pg_restore 在容器内运行
+      local container_backup_path="/tmp/restore_$(date +%s)_$(basename "$backup_file")"
+      docker cp "$backup_file" "noda-infra-postgres-1:$container_backup_path" 2>/dev/null
+      if docker exec noda-infra-postgres-1 pg_restore -U postgres -d "$target_db" -j 4 "$container_backup_path"; then
+        docker exec noda-infra-postgres-1 rm -f "$container_backup_path" 2>/dev/null || true
         log_success "数据恢复成功"
       else
+        docker exec noda-infra-postgres-1 rm -f "$container_backup_path" 2>/dev/null || true
         log_error "数据恢复失败"
         return 1
       fi
@@ -336,7 +350,11 @@ verify_backup_integrity() {
     # 验证 pg_dump custom format
     local pg_restore_result=0
     if [[ "$is_host" == true ]]; then
-      docker exec noda-infra-postgres-1 pg_restore -l "$backup_file" >/dev/null 2>&1 || pg_restore_result=$?
+      # 宿主机: 需要将文件复制到容器内，因为 pg_restore 在容器内运行
+      local container_verify_path="/tmp/verify_$(date +%s)_$(basename "$backup_file")"
+      docker cp "$backup_file" "noda-infra-postgres-1:$container_verify_path" 2>/dev/null
+      docker exec noda-infra-postgres-1 pg_restore -l "$container_verify_path" >/dev/null 2>&1 || pg_restore_result=$?
+      docker exec noda-infra-postgres-1 rm -f "$container_verify_path" 2>/dev/null || true
     else
       pg_restore -l "$backup_file" >/dev/null 2>&1 || pg_restore_result=$?
     fi
