@@ -118,7 +118,7 @@ Plans:
 
 Plans:
 - [x] 06-01: 创建验证脚本确认已有修复（纯验证，per D-01）
-- [ ] 06-02: 修复代码不一致性（防御性加载、LIB_DIR 命名、.bak 清理）
+- [x] 06-02: 修复代码不一致性（防御性加载、LIB_DIR 命名、.bak 清理）
 
 **Status**: 📋 Gap Closure Phase
 
