@@ -133,16 +133,15 @@ test_rclone_config() {
 
   log_info "创建临时 rclone 配置..."
 
-  if rclone config create b2remote backblazeb2 \
-    --b2-account-id "$b2_account_id" \
-    --b2-account-key "$b2_application_key" \
-    --config "$rclone_config" >/dev/null 2>&1; then
-    log_success "rclone 配置创建成功"
-  else
-    log_error "rclone 配置创建失败"
-    rm -f "$rclone_config"
-    return 1
-  fi
+  # 直接写入配置文件（与 cloud.sh setup_rclone_config() 一致）
+  cat > "$rclone_config" <<EOF
+[b2remote]
+type = b2
+account = $b2_account_id
+key = $b2_application_key
+EOF
+
+  log_success "rclone 配置写入成功"
 
   # 验证配置
   log_info "验证 rclone 配置..."
@@ -182,11 +181,13 @@ test_b2_connection() {
   b2_application_key=$(get_b2_application_key)
   b2_bucket_name=$(get_b2_bucket_name)
 
-  # 创建配置
-  rclone config create b2remote backblazeb2 \
-    --b2-account-id "$b2_account_id" \
-    --b2-account-key "$b2_application_key" \
-    --config "$rclone_config" >/dev/null 2>&1
+  # 直接写入配置文件（与 cloud.sh setup_rclone_config() 一致）
+  cat > "$rclone_config" <<EOF
+[b2remote]
+type = b2
+account = $b2_account_id
+key = $b2_application_key
+EOF
 
   # 测试连接
   log_info "测试 B2 bucket 连接..."
@@ -234,11 +235,13 @@ test_b2_operations() {
   b2_bucket_name=$(get_b2_bucket_name)
   b2_path=$(get_b2_path)
 
-  # 创建配置
-  rclone config create b2remote backblazeb2 \
-    --b2-account-id "$b2_account_id" \
-    --b2-account-key "$b2_application_key" \
-    --config "$rclone_config" >/dev/null 2>&1
+  # 直接写入配置文件（与 cloud.sh setup_rclone_config() 一致）
+  cat > "$rclone_config" <<EOF
+[b2remote]
+type = b2
+account = $b2_account_id
+key = $b2_application_key
+EOF
 
   # 创建测试文件
   local test_file
@@ -291,42 +294,42 @@ test_b2_operations() {
 # ============================================
 main() {
   echo "=========================================="
-  echo "rclone 配置测试 (Wave 0)"
+  echo "rclone 配置完整测试"
   echo "=========================================="
   echo ""
 
   local failed=0
 
-  # Wave 0: 只测试 rclone 安装和基本配置
-  # B2 相关测试需要在 Wave 1 完成后运行
-
   if ! test_rclone_installed; then
     ((failed++))
   fi
 
-  echo "=========================================="
-  echo "⚠️  B2 相关测试跳过"
-  echo "=========================================="
-  echo ""
-  echo "B2 函数（get_b2_account_id 等）将在 Wave 1 实现"
-  echo "完成 Wave 1 后，请重新运行此脚本进行完整测试"
-  echo ""
+  if ! test_b2_credentials; then
+    ((failed++))
+  fi
+
+  if ! test_rclone_config; then
+    ((failed++))
+  fi
+
+  if ! test_b2_connection; then
+    ((failed++))
+  fi
+
+  if ! test_b2_operations; then
+    ((failed++))
+  fi
 
   # 输出结果
   echo "=========================================="
   if [[ $failed -eq 0 ]]; then
-    log_success "Wave 0 测试通过！rclone 已安装"
-    echo ""
-    echo "下一步："
-    echo "  1. 完成 Wave 1（实现 lib/cloud.sh）"
-    echo "  2. 重新运行此脚本进行完整测试"
-    echo "=========================================="
-    return 0
+    log_success "所有 5/5 测试通过！rclone 配置正确"
   else
-    log_error "测试失败：$failed/1"
-    echo "=========================================="
-    return 1
+    log_error "测试失败：$failed/5"
   fi
+  echo "=========================================="
+
+  [[ $failed -eq 0 ]]
 }
 
 # 执行主函数
