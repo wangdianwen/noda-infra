@@ -119,22 +119,9 @@ services:
   #     retries: 3
 
   # ----------------------------------------
-  # Findclass 前端（生产环境）
+  # Findclass SSR（生产环境）
   # ----------------------------------------
-  findclass:
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          cpus: '0.1'
-          memory: 64M
-
-  # ----------------------------------------
-  # Express API（生产环境）
-  # ----------------------------------------
-  api:
+  findclass-ssr:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/findclass_db
       DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/findclass_db

@@ -61,38 +61,14 @@ services:
       - noda-network
 
   # ----------------------------------------
-  # Findclass 前端（Nginx 静态文件）
+  # Findclass SSR 服务（API + SSR 渲染 + 静态文件）
   # ----------------------------------------
-  findclass:
+  findclass-ssr:
     build:
-      context: ../../oneteam
-      dockerfile: infra/docker/Dockerfile.findclass
-      args:
-        VITE_KEYCLOAK_URL: https://auth.noda.co.nz
-        VITE_KEYCLOAK_REALM: noda
-        VITE_KEYCLOAK_CLIENT_ID: noda-frontend
-    image: noda-app-findclass-web:latest
-    restart: unless-stopped
-    networks:
-      noda-network:
-        aliases:
-          - findclass-web
-    depends_on:
-      - api
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost/health || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-
-  # ----------------------------------------
-  # Express API 服务器
-  # ----------------------------------------
-  api:
-    build:
-      context: ../../oneteam
-      dockerfile: infra/docker/Dockerfile.api
-    image: noda-app-findclass-api:latest
+      context: ../../noda-apps
+      dockerfile: ../noda-infra/deploy/Dockerfile.findclass-ssr
+    image: findclass-ssr:latest
+    container_name: findclass-ssr
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -104,12 +80,18 @@ services:
     networks:
       noda-network:
         aliases:
-          - findclass-api
+          - findclass-ssr
     depends_on:
       postgres:
         condition: service_healthy
       keycloak:
         condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:3001/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # ----------------------------------------
   # Keycloak 认证服务（基础配置）

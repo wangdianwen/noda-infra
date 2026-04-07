@@ -59,3 +59,14 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+
+  # ----------------------------------------
+  # Findclass SSR（开发环境配置）
+  # ----------------------------------------
+  findclass-ssr:
+    ports:
+      - "3001:3001"  # 内网访问端口
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/findclass_db
+      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/findclass_db
