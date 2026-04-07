@@ -23,6 +23,7 @@ logs/
 # 数据库备份文件（不要提交到 git）
 backups/sql/*.sql
 backups/*.sql
+docker/volumes/backup/
 
 # 备份系统配置文件（包含敏感信息）
 scripts/backup/.env.backup
