@@ -1,0 +1,103 @@
+# ============================================
+# Findclass SSR 容器 - 多阶段构建
+# ============================================
+# 镜像名: findclass-ssr:latest
+# 功能: 单容器提供 API + SSR 渲染 + 静态文件服务
+# ============================================
+
+# ----------------------------------------
+# Stage 1: 依赖安装
+# ----------------------------------------
+FROM node:20-alpine AS deps
+
+WORKDIR /app
+
+# 复制 package 文件
+COPY package.json package-lock.json ./
+COPY tsconfig.base.json ./
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/database/package.json ./packages/database/
+COPY apps/findclass/web/package.json ./apps/findclass/web/
+COPY apps/findclass/api/package.json ./apps/findclass/api/
+
+# 安装依赖
+RUN npm ci
+
+# ----------------------------------------
+# Stage 2: 构建
+# ----------------------------------------
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# 复制依赖
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
+COPY --from=deps /app/packages/database/node_modules ./packages/database/node_modules
+COPY --from=deps /app/apps/findclass/web/node_modules ./apps/findclass/web/node_modules
+COPY --from=deps /app/apps/findclass/api/node_modules ./apps/findclass/api/node_modules
+
+# 复制源代码和配置
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages/shared ./packages/shared
+COPY packages/database ./packages/database
+COPY apps/findclass ./apps/findclass
+
+# 生成 Prisma Client
+WORKDIR /app/packages/database
+RUN npx prisma generate
+
+# 构建 web (client + server)
+WORKDIR /app/apps/findclass/web
+RUN npm run build
+
+# 构建 api (tsc)
+WORKDIR /app/apps/findclass/api
+RUN npm run build
+
+# ----------------------------------------
+# Stage 3: 运行镜像
+# ----------------------------------------
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+# 设置生产环境
+ENV NODE_ENV=production
+ENV PORT=3001
+
+# 创建非 root 用户
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nodejs
+
+# 复制根目录文件
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+
+# 复制 shared 包（源文件，因为使用 src 作为入口）
+COPY --from=builder /app/packages/shared/src ./packages/shared/src
+COPY --from=builder /app/packages/shared/package.json ./packages/shared/
+
+# 复制 database 包（源文件 + prisma）
+COPY --from=builder /app/packages/database/src ./packages/database/src
+COPY --from=builder /app/packages/database/package.json ./packages/database/
+COPY --from=builder /app/packages/database/prisma ./packages/database/prisma
+COPY --from=builder /app/packages/database/node_modules/.prisma ./packages/database/node_modules/.prisma
+COPY --from=builder /app/packages/database/node_modules/@prisma ./packages/database/node_modules/@prisma
+
+# 复制 web 构建产物
+COPY --from=builder /app/apps/findclass/web/dist ./apps/findclass/web/dist
+
+# 复制 api 构建产物
+COPY --from=builder /app/apps/findclass/api/dist ./apps/findclass/api/dist
+COPY --from=builder /app/apps/findclass/api/package.json ./apps/findclass/api/
+
+# 设置权限
+RUN chown -R nodejs:nodejs /app
+
+USER nodejs
+
+EXPOSE 3001
+
+# 启动 API 服务器（已集成 SSR 中间件）
+CMD ["node", "apps/findclass/api/dist/api/src/api.js"]
