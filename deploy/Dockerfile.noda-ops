@@ -1,0 +1,62 @@
+# ============================================
+# Noda Ops - 运维工具集容器
+# ============================================
+# 功能：数据库备份 + Cloudflare Tunnel（二合一）
+# 替代：opdev + cloudflared 两个独立容器
+# ============================================
+
+FROM alpine:3.19
+
+# 安装必要工具
+RUN apk add --no-cache \
+    bash \
+    curl \
+    wget \
+    jq \
+    coreutils \
+    rclone \
+    dcron \
+    supervisor \
+    ca-certificates \
+    postgresql-client \
+    gnupg \
+    && rm -rf /var/cache/apk/*
+
+# 安装 cloudflared
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then CLOUDFLARED_ARCH="amd64"; \
+    elif [ "$ARCH" = "aarch64" ]; then CLOUDFLARED_ARCH="arm64"; \
+    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
+    wget -q "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CLOUDFLARED_ARCH}" -O /usr/local/bin/cloudflared && \
+    chmod +x /usr/local/bin/cloudflared && \
+    cloudflared --version
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制备份脚本
+COPY scripts/backup/ /app/backup/
+RUN chmod +x /app/backup/*.sh 2>/dev/null || true
+
+# 复制 crontab 配置
+COPY deploy/crontab /etc/crontabs/root
+
+# 复制 supervisord 配置
+COPY deploy/supervisord.conf /etc/supervisord.conf
+
+# 复制启动脚本
+COPY deploy/entrypoint-ops.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# 创建日志和运行目录
+RUN mkdir -p /var/log/supervisor /var/log/noda-backup /app/history /run/supervisor
+
+# 暴露端口（健康检查用）
+EXPOSE 8080
+
+# 健康检查
+HEALTHCHECK --interval=1h --timeout=10s --start-period=30s --retries=3 \
+    CMD pg_isready -h "${POSTGRES_HOST:-noda-infra-postgres-1}" -U "${POSTGRES_USER:-postgres}" || exit 1
+
+# 使用 supervisord 启动多进程
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
