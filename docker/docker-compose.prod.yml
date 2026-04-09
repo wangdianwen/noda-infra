@@ -4,7 +4,7 @@
 # 此文件覆盖生产环境特定的配置
 # 使用方法：docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
-name: noda-prod
+name: noda-infra
 
 services:
   # ----------------------------------------
