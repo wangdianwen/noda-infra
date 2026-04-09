@@ -34,14 +34,18 @@ Vite 的 `VITE_*` 变量在 `docker build` 时写入 JS 文件，运行时环境
 3. Keycloak 303 重定向到 `https://auth.noda.co.nz/broker/google/login`
 4. cookie 不跨域（localhost → auth.noda.co.nz）→ `cookie_not_found`
 
-**修复：** 重新构建 findclass-ssr 镜像，传入构建参数：
+**修复：** 在 `deploy/Dockerfile.findclass-ssr` 中添加 ARG 并重新构建：
 ```yaml
+# Dockerfile 中
+ARG VITE_KEYCLOAK_URL=https://auth.noda.co.nz
+
+# docker-compose.app.yml 中
 build:
   args:
     VITE_KEYCLOAK_URL: https://auth.noda.co.nz
-    VITE_KEYCLOAK_REALM: noda
-    VITE_KEYCLOAK_CLIENT_ID: noda-frontend
 ```
+
+**附加修复：** nginx `/auth/` 代理覆盖了应用的 `/auth/callback` 路由，需移除。
 
 **调试方法：** 用 Chrome DevTools MCP 跟踪网络请求链，检查实际的 redirect chain 和 cookie domain。
 
