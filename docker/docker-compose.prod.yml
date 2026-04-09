@@ -63,7 +63,7 @@ services:
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
       # 主机名配置
       KC_HOSTNAME: auth.noda.co.nz
-      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT: "true"
       KC_HOSTNAME_STRICT_HTTPS: "false"
       KC_HOSTNAME_PORT: "443"
       KC_HTTP_ENABLED: "true"

@@ -5,7 +5,7 @@ milestone_name: milestone
 status: completed
 stopped_at: Phase 9 context gathered (assumptions mode)
 last_updated: "2026-04-06T09:59:59.030Z"
-last_activity: 2026-04-06
+last_activity: 2026-04-10 - Completed quick task 260410-al7: 修复Keycloak登录跳转到8080端口的bug
 progress:
   total_phases: 9
   completed_phases: 8
@@ -199,3 +199,9 @@ Next: Phase 08 执行恢复脚本
 - [x] UPLOAD-05: 清理未完成的上传文件
 - [x] SECURITY-01: 凭证通过环境变量管理
 - [x] SECURITY-02: 最小权限 B2 Application Key
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260410-al7 | 修复Keycloak登录跳转到8080端口的bug | 2026-04-10 | 2ff2a30 | [260410-al7-keycloak-8080-bug](./quick/260410-al7-keycloak-8080-bug/) |

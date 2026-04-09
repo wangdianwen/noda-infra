@@ -140,7 +140,7 @@ services:
       # Hostname 配置
       KC_HOSTNAME: "auth.noda.co.nz"
       KC_HOSTNAME_PORT: "443"
-      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT: "true"
       # Proxy 配置（Cloudflare Tunnel）
       KC_PROXY: "edge"
       KC_PROXY_HEADERS: "xforwarded"

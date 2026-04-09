@@ -76,7 +76,7 @@ log_info "步骤 3/6: 停止现有容器"
 log_info "=========================================="
 
 log_info "停止现有基础设施容器..."
-docker-compose -f docker/docker-compose.yml down
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
 
 log_success "容器已停止"
 
@@ -88,7 +88,7 @@ log_info "步骤 4/6: 启动基础设施服务"
 log_info "=========================================="
 
 log_info "启动 PostgreSQL, Keycloak, Nginx..."
-docker-compose -f docker/docker-compose.yml up -d postgres keycloak nginx
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d postgres keycloak nginx
 
 log_success "基础设施服务已启动"
 
