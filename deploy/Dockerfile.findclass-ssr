@@ -10,6 +10,11 @@
 # ----------------------------------------
 FROM node:20-alpine AS builder
 
+# Vite 构建参数（构建时写入 JS 文件）
+ARG VITE_KEYCLOAK_URL=https://auth.noda.co.nz
+ARG VITE_KEYCLOAK_REALM=noda
+ARG VITE_KEYCLOAK_CLIENT_ID=noda-frontend
+
 WORKDIR /app
 
 # 复制整个项目
@@ -26,6 +31,9 @@ RUN cd apps/findclass/web && npm run build
 
 # 构建 api (tsc)
 RUN cd apps/findclass/api && npm run build
+
+# 修复 lru-cache ESM 兼容问题
+RUN sed -i "s/import { LRUCache } from 'lru-cache'/import _lru from 'lru-cache'; const LRUCache = _lru.default || _lru/" apps/findclass/api/dist/lib/ssr-cache.js
 
 # ----------------------------------------
 # Stage 2: 运行镜像
@@ -71,4 +79,4 @@ USER nodejs
 EXPOSE 3001
 
 # 启动 API 服务器（已集成 SSR 中间件）
-CMD ["node", "apps/findclass/api/dist/api/src/api.js"]
+CMD ["node", "apps/findclass/api/dist/api.js"]

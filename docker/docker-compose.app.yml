@@ -17,7 +17,11 @@ services:
   findclass-ssr:
     build:
       context: ../../noda-apps
-      dockerfile: ./infra/docker/Dockerfile.findclass-ssr
+      dockerfile: ../noda-infra/deploy/Dockerfile.findclass-ssr
+      args:
+        VITE_KEYCLOAK_URL: https://auth.noda.co.nz
+        VITE_KEYCLOAK_REALM: noda
+        VITE_KEYCLOAK_CLIENT_ID: noda-frontend
     image: findclass-ssr:latest
     container_name: findclass-ssr
     restart: unless-stopped
