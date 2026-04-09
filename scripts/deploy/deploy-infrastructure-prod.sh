@@ -76,6 +76,9 @@ log_info "步骤 3/6: 停止现有容器"
 log_info "=========================================="
 
 log_info "停止现有基础设施容器..."
+# 停止旧项目名（noda-infra）的容器
+docker compose -f docker/docker-compose.yml down 2>/dev/null || true
+# 停止当前项目名（noda-prod）的容器
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml down
 
 log_success "容器已停止"
