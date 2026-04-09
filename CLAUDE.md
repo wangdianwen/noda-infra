@@ -4,67 +4,13 @@
 
 Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL、Keycloak、Nginx、Cloudflare Tunnel、findclass-ssr 等服务。
 
-## 架构要点
+## 架构
 
-### 网络拓扑
 ```
 浏览器 → Cloudflare CDN → Cloudflare Tunnel (noda-ops 容器) → Docker 内部服务
-  class.noda.co.nz → nginx → findclass-ssr
-  auth.noda.co.nz → keycloak:8080
+  class.noda.co.nz → nginx → findclass-ssr (SSR + API + 静态文件)
+  auth.noda.co.nz  → keycloak:8080
 ```
-
-### 项目名一致性
-- `docker-compose.yml` 和 `docker-compose.prod.yml` 项目名必须一致（当前为 `noda-infra`）
-- 不一致会导致创建重复容器和空数据卷
-
-## 关键经验教训
-
-### 构建时 vs 运行时环境变量（重要！）
-
-Vite 的 `VITE_*` 变量在 `docker build` 时写入 JS 文件，运行时环境变量只影响 SSR 服务端。
-**修改前端配置必须重新构建镜像，不能只改运行时环境变量。**
-
-### Google 登录 8080 端口问题（2026-04-10）
-
-**根因：** findclass-ssr 镜像构建时未传入 `VITE_KEYCLOAK_URL`，前端 JS 硬编码为 `http://localhost:8080`。
-
-**完整链路：**
-1. 浏览器加载 `index-DFMfROkI.js`，其中 Keycloak URL = `http://localhost:8080`
-2. 登录时浏览器请求 `http://localhost:8080`（cookie 设在 localhost 域）
-3. Keycloak 303 重定向到 `https://auth.noda.co.nz/broker/google/login`
-4. cookie 不跨域（localhost → auth.noda.co.nz）→ `cookie_not_found`
-
-**修复：** 在 `deploy/Dockerfile.findclass-ssr` 中添加 ARG 并重新构建：
-```yaml
-# Dockerfile 中
-ARG VITE_KEYCLOAK_URL=https://auth.noda.co.nz
-
-# docker-compose.app.yml 中
-build:
-  args:
-    VITE_KEYCLOAK_URL: https://auth.noda.co.nz
-```
-
-**附加修复：** nginx `/auth/` 代理覆盖了应用的 `/auth/callback` 路由，需移除。
-
-**调试方法：** 用 Chrome DevTools MCP 跟踪网络请求链，检查实际的 redirect chain 和 cookie domain。
-
-### Keycloak v2 Hostname SPI（26.2.3）
-
-Keycloak 26 使用 v2 Hostname SPI：
-- `KC_HOSTNAME` 接受完整 URL：`https://auth.noda.co.nz`（包含 scheme，端口自动推导）
-- `KC_HOSTNAME_PORT`、`KC_PROXY` 是 v1 废弃选项（会触发 WARNING 但仍可用）
-- `KC_PROXY: "edge"` 必须保留，否则 cookie 缺少 Secure 标记
-- `KC_PROXY_HEADERS: "xforwarded"` 读取 Cloudflare Tunnel 的 X-Forwarded 头
-
-### 部署注意事项
-
-1. **不要只重启 Keycloak** — 问题可能在前端构建产物
-2. **Cloudflare CDN 缓存** — 静态资源更新后需要清除 CDN 缓存
-3. **容器内热修补不持久** — `sed` 替换仅在容器生命周期内有效，重建容器会丢失
-4. **部署脚本** `deploy-infrastructure-prod.sh` 需要同时清理旧项目名（`noda-infra`）的容器
-
-## 服务配置
 
 | 服务 | 端口 | 备注 |
 |------|------|------|
@@ -73,3 +19,79 @@ Keycloak 26 使用 v2 Hostname SPI：
 | findclass-ssr | 3001 | SSR + 静态文件，通过 nginx 代理 |
 | noda-ops | - | 备份 + Cloudflare Tunnel |
 | Nginx | 80 | 反向代理 |
+
+## 部署规则
+
+### 项目名一致性
+- `docker-compose.yml` 和 `docker-compose.prod.yml` 项目名必须一致（当前为 `noda-infra`）
+- 不一致会创建重复容器和空数据卷
+
+### 构建时 vs 运行时环境变量
+Vite 的 `VITE_*` 变量在 `docker build` 时写入 JS 文件，运行时环境变量只影响 SSR 服务端。
+**修改前端配置必须重新构建镜像，不能只改运行时环境变量。**
+
+### Cloudflare 缓存
+静态资源更新后需要清除 CDN 缓存。静态资源 URL 包含 hash，但 index.html 会被缓存。
+
+## Google 登录 8080 端口问题修复记录（2026-04-10）
+
+### 发现的 5 层问题
+
+| # | 层 | 问题 | 修复文件 |
+|---|---|------|----------|
+| 1 | 前端构建 | JS 中 Keycloak URL 硬编码为 `localhost:8080`（构建时未传 `VITE_KEYCLOAK_URL`） | `deploy/Dockerfile.findclass-ssr` 添加 ARG |
+| 2 | Nginx 路由 | `/auth/` 被代理到 Keycloak，覆盖了应用 `/auth/callback` | `config/nginx/conf.d/default.conf` 移除 `/auth/` 代理 |
+| 3 | SSR 中间件 | `url.startsWith('/auth')` 跳过了 `/auth/callback`，不渲染 SPA | `noda-apps/.../ssr-middleware.ts` 移除跳过条件 |
+| 4 | Keycloak 配置 | v1 hostname 选项废弃，`KC_HOSTNAME_PORT` 不生效 | `docker-compose.yml` 改为 `KC_HOSTNAME: "https://auth.noda.co.nz"` |
+| 5 | 项目名冲突 | `docker-compose.prod.yml` 项目名 `noda-prod` 与 `noda-infra` 冲突 | 统一为 `noda-infra` |
+
+### 根因链路
+
+```
+浏览器加载 JS → Keycloak URL = localhost:8080（构建时硬编码）
+  → 登录请求发到 localhost（cookie 设在 localhost 域）
+  → Keycloak 重定向到 auth.noda.co.nz
+  → cookie 不跨域 → cookie_not_found 错误
+```
+
+### 修复要点
+
+**Dockerfile（永久修复）：**
+```dockerfile
+ARG VITE_KEYCLOAK_URL=https://auth.noda.co.nz
+ARG VITE_KEYCLOAK_REALM=noda
+ARG VITE_KEYCLOAK_CLIENT_ID=noda-frontend
+```
+
+**Keycloak v2 Hostname SPI：**
+- `KC_HOSTNAME: "https://auth.noda.co.nz"` — 完整 URL，端口从 scheme 推导
+- `KC_PROXY: "edge"` — 必须保留，否则 cookie 缺少 Secure 标记
+- `KC_PROXY_HEADERS: "xforwarded"` — 读取 Cloudflare X-Forwarded 头
+- 不要使用 `KC_HOSTNAME_PORT`、`KC_HOSTNAME_STRICT_HTTPS`（v1 废弃选项）
+
+**部署脚本：**
+- `deploy-infrastructure-prod.sh` 需使用 `-f base -f prod` 双文件
+- 需清理旧项目名容器避免端口冲突
+
+### 调试方法论
+
+1. **用 Chrome DevTools MCP 跟踪网络请求**，检查 redirect chain 和 cookie domain
+2. 不要只验证 Keycloak OIDC 端点，要跟踪完整登录链路
+3. 问题表象（Keycloak :8080）不一定等于根因（前端 localhost:8080）
+4. 构建产物中的硬编码值无法通过运行时环境变量覆盖
+
+### 附加修复
+
+- `lru-cache` ESM 兼容问题：Dockerfile 中 sed 修复 named export
+- API 入口文件路径修正：`dist/api/src/api.js` → `dist/api.js`
+
+## 部署命令
+
+```bash
+# 基础设施（Keycloak + Postgres）
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+
+# 应用（需要构建）
+docker compose -f docker/docker-compose.app.yml build findclass-ssr
+docker compose -f docker/docker-compose.app.yml up -d findclass-ssr
+```
