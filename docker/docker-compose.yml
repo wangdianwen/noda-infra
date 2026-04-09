@@ -102,7 +102,8 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
       DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
-      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_URL: https://auth.noda.co.nz
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
       KEYCLOAK_REALM: noda
       KEYCLOAK_CLIENT_ID: noda-frontend
     networks:
@@ -139,7 +140,7 @@ services:
       KC_HTTP_ENABLED: "true"
       # Hostname 配置（v2 SPI - 使用完整 URL）
       KC_HOSTNAME: "https://auth.noda.co.nz"
-      KC_HOSTNAME_STRICT: "true"
+      KC_HOSTNAME_STRICT: "false"
       # Proxy 配置（Cloudflare Tunnel）
       KC_PROXY: "edge"
       KC_PROXY_HEADERS: "xforwarded"

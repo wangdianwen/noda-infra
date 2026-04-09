@@ -63,7 +63,7 @@ services:
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
       # 主机名配置（v2 SPI - 使用完整 URL）
       KC_HOSTNAME: "https://auth.noda.co.nz"
-      KC_HOSTNAME_STRICT: "true"
+      KC_HOSTNAME_STRICT: "false"
       KC_HTTP_ENABLED: "true"
       KC_PROXY: "edge"
       KC_PROXY_HEADERS: "xforwarded"
