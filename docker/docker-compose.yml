@@ -137,12 +137,10 @@ services:
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
       # 启用 HTTP 模式（开发/内部网络）
       KC_HTTP_ENABLED: "true"
-      # Hostname 配置
-      KC_HOSTNAME: "auth.noda.co.nz"
-      KC_HOSTNAME_PORT: "443"
+      # Hostname 配置（v2 SPI - 使用完整 URL）
+      KC_HOSTNAME: "https://auth.noda.co.nz"
       KC_HOSTNAME_STRICT: "true"
       # Proxy 配置（Cloudflare Tunnel）
-      KC_PROXY: "edge"
       KC_PROXY_HEADERS: "xforwarded"
       # Frontend URL（强制使用 HTTPS）
       KC_FRONTEND_URL: "https://auth.noda.co.nz"

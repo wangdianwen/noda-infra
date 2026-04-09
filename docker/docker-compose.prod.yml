@@ -61,14 +61,11 @@ services:
       KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
       KC_DB_USERNAME: ${POSTGRES_USER}
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
-      # 主机名配置
-      KC_HOSTNAME: auth.noda.co.nz
+      # 主机名配置（v2 SPI - 使用完整 URL）
+      KC_HOSTNAME: "https://auth.noda.co.nz"
       KC_HOSTNAME_STRICT: "true"
-      KC_HOSTNAME_STRICT_HTTPS: "false"
-      KC_HOSTNAME_PORT: "443"
       KC_HTTP_ENABLED: "true"
       KC_PROXY_HEADERS: "xforwarded"
-      KC_PROXY: edge
       # 启用健康检查
       KC_HEALTH_ENABLED: "true"
       # 管理员账号
