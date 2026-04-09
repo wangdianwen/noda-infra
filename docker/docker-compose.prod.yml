@@ -65,6 +65,7 @@ services:
       KC_HOSTNAME: "https://auth.noda.co.nz"
       KC_HOSTNAME_STRICT: "true"
       KC_HTTP_ENABLED: "true"
+      KC_PROXY: "edge"
       KC_PROXY_HEADERS: "xforwarded"
       # 启用健康检查
       KC_HEALTH_ENABLED: "true"
