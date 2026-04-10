@@ -6,15 +6,36 @@
 
 services:
   # ----------------------------------------
-  # PostgreSQL 开发环境配置
+  # PostgreSQL 生产环境（开发环境中也不暴露端口）
   # ----------------------------------------
   postgres:
+    # 保持生产 postgres 的初始化脚本（生产数据库）
+    # 开发环境不暴露端口
+
+  # ----------------------------------------
+  # PostgreSQL 开发环境（独立容器，带种子数据）
+  # ----------------------------------------
+  postgres-dev:
+    image: postgres:17.9
+    container_name: noda-infra-postgres-dev
+    restart: unless-stopped
     ports:
-      - "5433:5432"  # 暴露端口供本地连接
+      - "5433:5432"  # 暴露端口供本地开发连接
     environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${DEV_POSTGRES_DB:-noda_dev}
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
       - ./services/postgres/init-dev:/docker-entrypoint-initdb.d:ro
+    networks:
+      - noda-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ----------------------------------------
   # Nginx 开发环境配置
@@ -70,3 +91,10 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
       DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
+
+# ============================================
+# Volumes（开发环境额外数据卷）
+# ============================================
+volumes:
+  postgres_dev_data:
+    driver: local

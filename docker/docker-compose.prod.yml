@@ -11,9 +11,7 @@ services:
   # PostgreSQL 生产环境配置
   # ----------------------------------------
   postgres:
-    # 开发环境临时暴露端口（后续移除）
-    ports:
-      - "5432:5432"
+    # 生产环境不暴露端口，仅通过 Docker 内部网络访问
     environment:
       POSTGRES_DB: ${PROD_POSTGRES_DB:-noda_prod}
     deploy:

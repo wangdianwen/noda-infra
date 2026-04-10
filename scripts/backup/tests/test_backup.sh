@@ -128,7 +128,7 @@ test_backup_format() {
   fi
 
   # 使用 pg_restore --list 验证（VERIFY-01）
-  if docker exec noda-infra-postgres-1 pg_restore --list "$latest_backup" > /dev/null 2>&1; then
+  if docker exec noda-infra-postgres-prod pg_restore --list "$latest_backup" > /dev/null 2>&1; then
     test_pass "验证备份文件格式"
   else
     test_fail "验证备份文件格式" "pg_restore --list 验证失败"

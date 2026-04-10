@@ -14,7 +14,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEST_DB_NAME="test_backup_db"
-POSTGRES_CONTAINER="noda-infra-postgres-1"
+POSTGRES_CONTAINER="noda-infra-postgres-prod"
 
 # 创建测试数据库
 create_test_database() {

@@ -56,7 +56,7 @@ EXPOSE 8080
 
 # 健康检查
 HEALTHCHECK --interval=1h --timeout=10s --start-period=30s --retries=3 \
-    CMD pg_isready -h "${POSTGRES_HOST:-noda-infra-postgres-1}" -U "${POSTGRES_USER:-postgres}" || exit 1
+    CMD pg_isready -h "${POSTGRES_HOST:-noda-infra-postgres-prod}" -U "${POSTGRES_USER:-postgres}" || exit 1
 
 # 使用 supervisord 启动多进程
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]

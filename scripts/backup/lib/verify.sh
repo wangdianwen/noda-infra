@@ -37,7 +37,7 @@ verify_backup_readable() {
   # 检查是否在容器内运行
   if [[ -f /.dockerenv ]]; then
     # 容器内：直接使用 pg_restore
-    if PGPASSWORD=$POSTGRES_PASSWORD pg_restore --list -h noda-infra-postgres-1 -U postgres "$backup_file" > /dev/null 2>&1; then
+    if PGPASSWORD=$POSTGRES_PASSWORD pg_restore --list -h noda-infra-postgres-prod -U postgres "$backup_file" > /dev/null 2>&1; then
       log_success "备份文件可读性验证通过"
       return 0
     else
@@ -46,7 +46,7 @@ verify_backup_readable() {
     fi
   else
     # 宿主机：使用 docker exec
-    if docker exec noda-infra-postgres-1 pg_restore --list "$backup_file" > /dev/null 2>&1; then
+    if docker exec noda-infra-postgres-prod pg_restore --list "$backup_file" > /dev/null 2>&1; then
       log_success "备份文件可读性验证通过"
       return 0
     else

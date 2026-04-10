@@ -90,13 +90,13 @@ test_restore_to_different_db() {
 
   # 验证目标数据库已创建
   local db_exists
-  db_exists=$(docker exec noda-infra-postgres-1 psql -U postgres -d postgres -t -c \
+  db_exists=$(docker exec noda-infra-postgres-prod psql -U postgres -d postgres -t -c \
     "SELECT 1 FROM pg_database WHERE datname='$test_db_name';" 2>/dev/null | xargs || echo "")
 
   if [[ "$db_exists" == "1" ]]; then
     # 验证表数量 > 0
     local table_count
-    table_count=$(docker exec noda-infra-postgres-1 psql -U postgres -d "$test_db_name" -t -c \
+    table_count=$(docker exec noda-infra-postgres-prod psql -U postgres -d "$test_db_name" -t -c \
       "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | xargs || echo "0")
 
     if [[ "$table_count" -gt 0 ]]; then
@@ -106,7 +106,7 @@ test_restore_to_different_db() {
     fi
 
     # 清理临时数据库
-    docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c \
+    docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
       "DROP DATABASE IF EXISTS $test_db_name;" >/dev/null 2>&1 || true
   else
     test_fail "恢复到不同数据库" "目标数据库未创建，输出: $(echo "$restore_output" | tail -5)"
@@ -122,9 +122,9 @@ test_verify_backup_integrity() {
 
   # 创建小型测试数据库进行本地验证
   local test_db="test_verify_integrity_$(date +%s)"
-  docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c \
+  docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
     "CREATE DATABASE $test_db;" >/dev/null 2>&1
-  docker exec -i noda-infra-postgres-1 psql -U postgres -d "$test_db" >/dev/null 2>&1 <<SQL
+  docker exec -i noda-infra-postgres-prod psql -U postgres -d "$test_db" >/dev/null 2>&1 <<SQL
 CREATE TABLE test_data (id SERIAL PRIMARY KEY, value TEXT);
 INSERT INTO test_data (value) VALUES ('test1'), ('test2');
 SQL
@@ -132,7 +132,7 @@ SQL
   # 创建本地 .dump 备份用于验证
   local tmp_dir
   tmp_dir=$(mktemp -d)
-  docker exec noda-infra-postgres-1 pg_dump -U postgres -Fc "$test_db" > "$tmp_dir/test_backup.dump" 2>/dev/null
+  docker exec noda-infra-postgres-prod pg_dump -U postgres -Fc "$test_db" > "$tmp_dir/test_backup.dump" 2>/dev/null
 
   local dump_size
   dump_size=$(stat -f%z "$tmp_dir/test_backup.dump" 2>/dev/null || stat -c%s "$tmp_dir/test_backup.dump" 2>/dev/null)
@@ -182,11 +182,11 @@ SQL
 
     # 通过 docker cp + pg_restore --list 验证 dump 文件
     local container_path="/tmp/verify_integrity_$$.dump"
-    docker cp "$tmp_dir/test_backup.dump" "noda-infra-postgres-1:$container_path" 2>/dev/null
-    if ! docker exec noda-infra-postgres-1 pg_restore -l "$container_path" >/dev/null 2>&1; then
+    docker cp "$tmp_dir/test_backup.dump" "noda-infra-postgres-prod:$container_path" 2>/dev/null
+    if ! docker exec noda-infra-postgres-prod pg_restore -l "$container_path" >/dev/null 2>&1; then
       integrity_ok=false
     fi
-    docker exec noda-infra-postgres-1 rm -f "$container_path" 2>/dev/null || true
+    docker exec noda-infra-postgres-prod rm -f "$container_path" 2>/dev/null || true
 
     if [[ "$integrity_ok" == true ]]; then
       test_pass "备份完整性验证（文件大小 + pg_restore --list 本地验证）"
@@ -196,7 +196,7 @@ SQL
   fi
 
   # 清理
-  docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c \
+  docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
     "DROP DATABASE IF EXISTS $test_db;" >/dev/null 2>&1 || true
   rm -rf "$tmp_dir"
 }
@@ -251,21 +251,21 @@ test_edge_cases() {
   test_start "边界-D11" "恢复到已存在的数据库（覆盖行为）"
 
   local test_db="test_edge_exists_$(date +%s)"
-  docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c \
+  docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
     "CREATE DATABASE $test_db;" >/dev/null 2>&1
 
   # 创建源数据库和 .dump 备份
   local edge_db="test_edge_source_$(date +%s)"
-  docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c \
+  docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
     "CREATE DATABASE $edge_db;" >/dev/null 2>&1
-  docker exec -i noda-infra-postgres-1 psql -U postgres -d "$edge_db" >/dev/null 2>&1 <<SQL
+  docker exec -i noda-infra-postgres-prod psql -U postgres -d "$edge_db" >/dev/null 2>&1 <<SQL
 CREATE TABLE edge_data (id INT);
 INSERT INTO edge_data VALUES (1);
 SQL
 
   local tmp_dir
   tmp_dir=$(mktemp -d)
-  docker exec noda-infra-postgres-1 pg_dump -U postgres -Fc "$edge_db" > "$tmp_dir/edge_backup.dump" 2>/dev/null
+  docker exec noda-infra-postgres-prod pg_dump -U postgres -Fc "$edge_db" > "$tmp_dir/edge_backup.dump" 2>/dev/null
 
   # 使用 bash 直接调用 restore_database 恢复到已存在的数据库
   local restore_rc=0
@@ -281,7 +281,7 @@ SQL
   " >/dev/null 2>&1 || restore_rc=$?
 
   local table_count
-  table_count=$(docker exec noda-infra-postgres-1 psql -U postgres -d "$test_db" -t -c \
+  table_count=$(docker exec noda-infra-postgres-prod psql -U postgres -d "$test_db" -t -c \
     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | xargs || echo "0")
 
   if [[ "$table_count" -gt 0 ]]; then
@@ -291,9 +291,9 @@ SQL
   fi
 
   # 清理
-  docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c \
+  docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
     "DROP DATABASE IF EXISTS $test_db;" >/dev/null 2>&1 || true
-  docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c \
+  docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
     "DROP DATABASE IF EXISTS $edge_db;" >/dev/null 2>&1 || true
   rm -rf "$tmp_dir"
 
@@ -394,7 +394,7 @@ main() {
   echo "=========================================="
 
   # 检查前置条件
-  if ! docker exec noda-infra-postgres-1 pg_isready -U postgres >/dev/null 2>&1; then
+  if ! docker exec noda-infra-postgres-prod pg_isready -U postgres >/dev/null 2>&1; then
     echo "[失败] PostgreSQL 容器不可用，终止测试"
     exit 1
   fi

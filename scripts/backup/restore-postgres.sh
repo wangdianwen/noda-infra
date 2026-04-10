@@ -54,7 +54,7 @@ Noda 数据库恢复脚本 - 从 B2 云存储恢复数据库
   $0 --verify test_db_20260406_113147.dump
 
 环境变量:
-  POSTGRES_HOST        PostgreSQL 主机（默认: noda-infra-postgres-1）
+  POSTGRES_HOST        PostgreSQL 主机（默认: noda-infra-postgres-prod）
   POSTGRES_PORT        PostgreSQL 端口（默认: 5432）
   POSTGRES_USER        PostgreSQL 用户（默认: postgres）
   BACKUP_DIR           本地备份目录（默认: /var/lib/postgresql/backup）

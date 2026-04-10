@@ -10,6 +10,7 @@ services:
   # ----------------------------------------
   postgres:
     image: postgres:17.9
+    container_name: noda-infra-postgres-prod
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -32,6 +33,7 @@ services:
   # ----------------------------------------
   postgres-dev:
     image: postgres:17.9
+    container_name: noda-infra-postgres-dev
     restart: unless-stopped
     ports:
       - "5433:5432"

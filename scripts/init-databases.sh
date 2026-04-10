@@ -36,7 +36,7 @@ REQUIRED_DBS=(
 # ============================================
 log_info "检查 PostgreSQL 容器状态..."
 
-if ! docker ps --format "{{.Names}}" | grep -q "noda-infra-postgres-1"; then
+if ! docker ps --format "{{.Names}}" | grep -q "noda-infra-postgres-prod"; then
   log_error "PostgreSQL 容器未运行"
   exit 1
 fi
@@ -55,7 +55,7 @@ for db_info in "${REQUIRED_DBS[@]}"; do
   IFS=':' read -r db_name db_desc <<< "$db_info"
 
   # 检查数据库是否存在
-  DB_EXISTS=$(docker exec noda-infra-postgres-1 psql -U postgres -d postgres -t -c \
+  DB_EXISTS=$(docker exec noda-infra-postgres-prod psql -U postgres -d postgres -t -c \
     "SELECT 1 FROM pg_database WHERE datname='$db_name';" 2>/dev/null || echo "0")
 
   if [ "$DB_EXISTS" = "1" ]; then
@@ -65,7 +65,7 @@ for db_info in "${REQUIRED_DBS[@]}"; do
     log_info "✗ 创建 $db_name ($db_desc)..."
 
     # 创建数据库
-    docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c \
+    docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
       "CREATE DATABASE $db_name WITH OWNER = postgres ENCODING = 'UTF8' LC_COLLATE = 'en_US.utf8' LC_CTYPE = 'en_US.utf8' TEMPLATE = template0 CONNECTION LIMIT = -1;" \
       > /dev/null 2>&1
 

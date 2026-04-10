@@ -227,7 +227,7 @@ restore_database() {
   # 删除旧数据库（如果存在）
   log_info "删除旧数据库（如果存在）..."
   if [[ "$is_host" == true ]]; then
-    docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c "DROP DATABASE IF EXISTS $target_db" 2>/dev/null && log_info "已删除旧数据库" || true
+    docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c "DROP DATABASE IF EXISTS $target_db" 2>/dev/null && log_info "已删除旧数据库" || true
   else
     psql $pg_params -d postgres -c "DROP DATABASE IF EXISTS $target_db" 2>/dev/null && log_info "已删除旧数据库" || true
   fi
@@ -235,7 +235,7 @@ restore_database() {
   # 创建新数据库
   log_info "创建新数据库..."
   if [[ "$is_host" == true ]]; then
-    if ! docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c "CREATE DATABASE $target_db" 2>/dev/null; then
+    if ! docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c "CREATE DATABASE $target_db" 2>/dev/null; then
       log_error "创建数据库失败"
       return 1
     fi
@@ -254,12 +254,12 @@ restore_database() {
     if [[ "$is_host" == true ]]; then
       # 宿主机: 需要将文件复制到容器内，因为 pg_restore 在容器内运行
       local container_backup_path="/tmp/restore_$(date +%s)_$(basename "$backup_file")"
-      docker cp "$backup_file" "noda-infra-postgres-1:$container_backup_path" 2>/dev/null
-      if docker exec noda-infra-postgres-1 pg_restore -U postgres -d "$target_db" -j 4 "$container_backup_path"; then
-        docker exec noda-infra-postgres-1 rm -f "$container_backup_path" 2>/dev/null || true
+      docker cp "$backup_file" "noda-infra-postgres-prod:$container_backup_path" 2>/dev/null
+      if docker exec noda-infra-postgres-prod pg_restore -U postgres -d "$target_db" -j 4 "$container_backup_path"; then
+        docker exec noda-infra-postgres-prod rm -f "$container_backup_path" 2>/dev/null || true
         log_success "数据恢复成功"
       else
-        docker exec noda-infra-postgres-1 rm -f "$container_backup_path" 2>/dev/null || true
+        docker exec noda-infra-postgres-prod rm -f "$container_backup_path" 2>/dev/null || true
         log_error "数据恢复失败"
         return 1
       fi
@@ -274,7 +274,7 @@ restore_database() {
   else
     # 使用 psql 恢复 plain SQL
     if [[ "$is_host" == true ]]; then
-      if docker exec -i noda-infra-postgres-1 psql -U postgres -d "$target_db" < "$backup_file"; then
+      if docker exec -i noda-infra-postgres-prod psql -U postgres -d "$target_db" < "$backup_file"; then
         log_success "数据恢复成功"
       else
         log_error "数据恢复失败"
@@ -294,7 +294,7 @@ restore_database() {
   log_info "验证恢复结果..."
   local table_count
   if [[ "$is_host" == true ]]; then
-    table_count=$(docker exec noda-infra-postgres-1 psql -U postgres -d "$target_db" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null | xargs || echo "0")
+    table_count=$(docker exec noda-infra-postgres-prod psql -U postgres -d "$target_db" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null | xargs || echo "0")
   else
     table_count=$(psql $pg_params -d "$target_db" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null | xargs || echo "0")
   fi
@@ -352,9 +352,9 @@ verify_backup_integrity() {
     if [[ "$is_host" == true ]]; then
       # 宿主机: 需要将文件复制到容器内，因为 pg_restore 在容器内运行
       local container_verify_path="/tmp/verify_$(date +%s)_$(basename "$backup_file")"
-      docker cp "$backup_file" "noda-infra-postgres-1:$container_verify_path" 2>/dev/null
-      docker exec noda-infra-postgres-1 pg_restore -l "$container_verify_path" >/dev/null 2>&1 || pg_restore_result=$?
-      docker exec noda-infra-postgres-1 rm -f "$container_verify_path" 2>/dev/null || true
+      docker cp "$backup_file" "noda-infra-postgres-prod:$container_verify_path" 2>/dev/null
+      docker exec noda-infra-postgres-prod pg_restore -l "$container_verify_path" >/dev/null 2>&1 || pg_restore_result=$?
+      docker exec noda-infra-postgres-prod rm -f "$container_verify_path" 2>/dev/null || true
     else
       pg_restore -l "$backup_file" >/dev/null 2>&1 || pg_restore_result=$?
     fi

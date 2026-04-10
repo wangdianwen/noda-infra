@@ -44,7 +44,7 @@ test_prepare_test_data() {
   fi
 
   # 验证测试数据
-  local count=$(docker exec noda-infra-postgres-1 psql -U postgres -d "$TEST_DB_NAME" -t -c \
+  local count=$(docker exec noda-infra-postgres-prod psql -U postgres -d "$TEST_DB_NAME" -t -c \
     "SELECT COUNT(*) FROM test_users;" 2>/dev/null | tr -d ' ')
 
   if [ "$count" = "3" ]; then
@@ -87,14 +87,14 @@ test_restore_to_new_db() {
   fi
 
   # 创建恢复数据库
-  docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c \
+  docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
     "DROP DATABASE IF EXISTS $RESTORE_DB_NAME;" > /dev/null 2>&1 || true
-  docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c \
+  docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
     "CREATE DATABASE $RESTORE_DB_NAME;" > /dev/null 2>&1
 
   # 执行恢复
   local backup_path="/var/lib/postgresql/backup/$(echo "$latest_backup" | grep -oP '\d{4}/\d{2}/\d{2}/\K[^/]+$')"
-  if docker exec noda-infra-postgres-1 pg_restore -U postgres -d "$RESTORE_DB_NAME" \
+  if docker exec noda-infra-postgres-prod pg_restore -U postgres -d "$RESTORE_DB_NAME" \
       "/var/lib/postgresql/backup/$(basename "$latest_backup")" > /tmp/test_restore.log 2>&1; then
     test_pass "恢复到新数据库"
   else
@@ -107,7 +107,7 @@ test_verify_restored_data() {
   test_start "验证恢复后的数据完整性"
 
   # 检查表是否存在
-  local tables=$(docker exec noda-infra-postgres-1 psql -U postgres -d "$RESTORE_DB_NAME" -t -c \
+  local tables=$(docker exec noda-infra-postgres-prod psql -U postgres -d "$RESTORE_DB_NAME" -t -c \
     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | tr -d ' ')
 
   if [ "$tables" != "2" ]; then
@@ -116,10 +116,10 @@ test_verify_restored_data() {
   fi
 
   # 检查数据是否完整
-  local users_count=$(docker exec noda-infra-postgres-1 psql -U postgres -d "$RESTORE_DB_NAME" -t -c \
+  local users_count=$(docker exec noda-infra-postgres-prod psql -U postgres -d "$RESTORE_DB_NAME" -t -c \
     "SELECT COUNT(*) FROM test_users;" 2>/dev/null | tr -d ' ')
 
-  local posts_count=$(docker exec noda-infra-postgres-1 psql -U postgres -d "$RESTORE_DB_NAME" -t -c \
+  local posts_count=$(docker exec noda-infra-postgres-prod psql -U postgres -d "$RESTORE_DB_NAME" -t -c \
     "SELECT COUNT(*) FROM test_posts;" 2>/dev/null | tr -d ' ')
 
   if [ "$users_count" = "3" ] && [ "$posts_count" = "2" ]; then
@@ -136,7 +136,7 @@ test_cleanup_test_dbs() {
   bash "$TEST_DB_SCRIPT" --cleanup > /dev/null 2>&1 || true
 
   # 清理恢复数据库
-  docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c \
+  docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
     "DROP DATABASE IF EXISTS $RESTORE_DB_NAME;" > /dev/null 2>&1 || true
 
   test_pass "清理测试数据库"

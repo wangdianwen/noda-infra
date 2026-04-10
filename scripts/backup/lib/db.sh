@@ -37,7 +37,7 @@ CREATED_BACKUPS=()
 # 发现所有用户数据库（排除模板数据库）
 # 返回：数据库名称列表（每行一个）
 discover_databases() {
-  PGPASSWORD=$POSTGRES_PASSWORD psql -h noda-infra-postgres-1 -U postgres -d postgres -t -c \
+  PGPASSWORD=$POSTGRES_PASSWORD psql -h noda-infra-postgres-prod -U postgres -d postgres -t -c \
     "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"
 }
 
@@ -61,7 +61,7 @@ backup_database() {
   log_info "开始备份数据库: $db_name"
 
   # 使用 pg_dump -Fc 格式备份（D-03）
-  if PGPASSWORD=$POSTGRES_PASSWORD pg_dump -h noda-infra-postgres-1 -U postgres -Fc -f "$backup_file" "$db_name"; then
+  if PGPASSWORD=$POSTGRES_PASSWORD pg_dump -h noda-infra-postgres-prod -U postgres -Fc -f "$backup_file" "$db_name"; then
     # 设置文件权限为 600（D-13）
     chmod 600 "$backup_file"
 
@@ -95,7 +95,7 @@ backup_globals() {
   log_info "开始备份全局对象（角色和表空间）"
 
   # 使用 pg_dumpall -g 备份全局对象（D-32）
-  if PGPASSWORD=$POSTGRES_PASSWORD pg_dumpall -h noda-infra-postgres-1 -U postgres -g -U postgres -f "$backup_file"; then
+  if PGPASSWORD=$POSTGRES_PASSWORD pg_dumpall -h noda-infra-postgres-prod -U postgres -g -U postgres -f "$backup_file"; then
     # 设置文件权限为 600（D-13）
     chmod 600 "$backup_file"
 
@@ -206,7 +206,7 @@ get_database_stats() {
   local db_name=$1
 
   # 查询数据库统计信息
-  local stats=$(PGPASSWORD=$POSTGRES_PASSWORD psql -h noda-infra-postgres-1 -U postgres -d "$db_name" -t -c "
+  local stats=$(PGPASSWORD=$POSTGRES_PASSWORD psql -h noda-infra-postgres-prod -U postgres -d "$db_name" -t -c "
     SELECT
       (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE') as table_count,
       (SELECT SUM(row_count)::bigint FROM (

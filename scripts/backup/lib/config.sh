@@ -15,7 +15,7 @@ set -euo pipefail
 # ============================================
 
 # PostgreSQL 连接配置
-DEFAULT_POSTGRES_HOST="${DEFAULT_POSTGRES_HOST:-noda-infra-postgres-1}"
+DEFAULT_POSTGRES_HOST="${DEFAULT_POSTGRES_HOST:-noda-infra-postgres-prod}"
 DEFAULT_POSTGRES_PORT="${DEFAULT_POSTGRES_PORT:-5432}"
 DEFAULT_POSTGRES_USER="${DEFAULT_POSTGRES_USER:-postgres}"
 

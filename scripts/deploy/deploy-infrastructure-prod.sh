@@ -106,7 +106,7 @@ log_info "等待 PostgreSQL 启动..."
 MAX_WAIT=30
 WAIT_TIME=0
 while [ $WAIT_TIME -lt $MAX_WAIT ]; do
-  if docker exec noda-infra-postgres-1 pg_isready -U postgres >/dev/null 2>&1; then
+  if docker exec noda-infra-postgres-prod pg_isready -U postgres >/dev/null 2>&1; then
     log_success "PostgreSQL 已就绪"
     break
   fi
