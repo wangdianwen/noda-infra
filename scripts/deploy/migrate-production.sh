@@ -7,10 +7,6 @@
 # - 环境检查和备份提醒
 # - 用户确认机制
 # - 迁移后验证
-#
-# 参考:
-# - 51-CONTEXT.md 决策 D-04: 保留 Supabase 备份
-# - infra/scripts/switch-env.sh 的环境检查模式
 
 set -euo pipefail
 
@@ -24,7 +20,7 @@ check_production_environment() {
 
     # 检查 NODE_ENV
     if [[ "${NODE_ENV:-}" != "production" ]]; then
-        log_warn "⚠️  NODE_ENV 未设置为 'production'"
+        log_warn "NODE_ENV 未设置为 'production'"
         log_warn "   当前值: ${NODE_ENV:-未设置}"
         echo ""
 
@@ -37,10 +33,10 @@ check_production_environment() {
     fi
 
     # 检查备份文件是否存在
-    local backup_dir="infra/postgres/backup/manual"
+    local backup_dir="scripts/backup/output"
     if [[ ! -d "${backup_dir}" ]] || [[ -z "$(ls -A ${backup_dir} 2>/dev/null)" ]]; then
-        log_warn "⚠️  未找到备份文件"
-        log_warn "   建议在迁移前创建 Supabase 手动备份"
+        log_warn "未找到备份文件"
+        log_warn "   建议在迁移前创建数据库备份"
         echo ""
 
         read -p "是否继续迁移？(y/n): " -n 1 -r
@@ -51,7 +47,7 @@ check_production_environment() {
         fi
     fi
 
-    log_info "生产环境检查完成 ✓"
+    log_info "生产环境检查完成"
     echo ""
 }
 
@@ -65,20 +61,16 @@ show_backup_reminder() {
     echo ""
     log_warn "在继续迁移之前，请确保："
     echo ""
-    echo "  1. ✅ 已创建 Supabase 手动备份"
-    echo "     访问: https://supabase.com/dashboard/project/qxplheelnlqdapmprhui/database/backups"
+    echo "  1. ✅ 已创建数据库备份"
+    echo "     命令: bash scripts/backup/backup.sh"
     echo ""
     echo "  2. ✅ 已通知用户停机（预计 30 分钟）"
-    echo "     网站: https://noda.co.nz"
     echo ""
     echo "  3. ✅ 已准备好回滚方案"
-    echo "     回滚命令: docker exec -i noda-postgres psql -U noda_prod_user -d noda_prod < backup.sql"
+    echo "     回滚命令: bash scripts/backup/restore.sh <备份文件>"
     echo ""
     echo "  4. ✅ 已检查所有前置条件"
     echo "     Docker 容器运行中、环境变量已配置"
-    echo ""
-    echo "  5. ✅ 已准备好监控迁移进度"
-    echo "     迁移日志: .planning/phases/51-数据库迁移/migration.log"
     echo ""
 }
 
@@ -133,14 +125,8 @@ migrate_production() {
         log_info "总耗时: ${duration} 秒"
         echo ""
         log_info "后续步骤："
-        log_info "1. 查看迁移报告:"
-        log_info "   cat .planning/phases/51-数据库迁移/51-04-FINAL-REPORT.json | jq ."
-        echo ""
-        log_info "2. 验证网站功能:"
-        log_info "   打开 https://noda.co.nz 并测试关键功能"
-        echo ""
-        log_info "3. 监控数据库性能:"
-        log_info "   docker stats noda-postgres"
+        log_info "1. 验证网站功能: 打开 https://noda.co.nz 并测试关键功能"
+        log_info "2. 监控数据库性能: docker stats noda-infra-postgres-prod"
         echo ""
     else
         echo "╔════════════════════════════════════════════════════════════════╗"
@@ -150,16 +136,10 @@ migrate_production() {
         log_error "迁移失败，耗时: ${duration} 秒"
         echo ""
         log_error "故障排查："
-        log_error "1. 查看错误日志:"
-        log_error "   cat .planning/phases/51-数据库迁移/migration.log"
-        echo ""
+        log_error "1. 查看错误日志"
         log_error "2. 检查数据库状态:"
-        log_error "   docker exec -it noda-postgres psql -U noda_prod_user -d noda_prod -c \"SELECT COUNT(*) FROM courses;\""
-        echo ""
-        log_error "3. 回滚到 Supabase（如果需要）:"
-        log_error "   - 确认 Supabase 备份可用"
-        log_error "   - 更新环境变量 DATABASE_URL 指回 Supabase"
-        log_error "   - 重启应用"
+        log_error "   docker exec -it noda-infra-postgres-prod psql -U postgres -d noda_prod -c \"SELECT COUNT(*) FROM courses;\""
+        log_error "3. 从备份恢复: bash scripts/backup/restore.sh <备份文件>"
         echo ""
         exit 1
     fi

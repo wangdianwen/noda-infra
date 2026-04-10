@@ -42,7 +42,7 @@ case "$ENV" in
   production|prod)
     ENC_FILE="secrets/.env.production.enc"
     OUT_FILE="$DECRYPT_DIR/.env.production"
-    VALIDATE_VARS="VERCEL_OIDC_TOKEN VITE_KEYCLOAK_URL"
+    VALIDATE_VARS="VITE_KEYCLOAK_URL"
     ;;
   infra)
     ENC_FILE="secrets/infra.env.prod.enc"
