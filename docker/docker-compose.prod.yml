@@ -13,7 +13,7 @@ services:
   postgres:
     # 生产环境不暴露端口，仅通过 Docker 内部网络访问
     environment:
-      POSTGRES_DB: ${PROD_POSTGRES_DB:-noda_prod}
+      POSTGRES_DB: noda_prod
     deploy:
       resources:
         limits:
@@ -56,7 +56,7 @@ services:
     environment:
       # 数据库配置（独立数据库架构）
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: ${POSTGRES_USER}
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
       # 主机名配置（v2 SPI - 使用完整 URL）

@@ -24,11 +24,8 @@ log_error() {
 # 必要的数据库列表
 # ============================================
 REQUIRED_DBS=(
-  "keycloak:Keycloak Authentication Service"
-  "keycloak_db:Keycloak Database (legacy)"
-  "findclass_db:Findclass Application Database"
-  "noda_prod:Noda Production Database"
-  "oneteam_prod:OneTeam Production Database"
+  "noda_prod:Findclass Application Database"
+  "keycloak:Keycloak Authentication Database"
 )
 
 # ============================================
