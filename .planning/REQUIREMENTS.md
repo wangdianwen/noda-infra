@@ -1,11 +1,9 @@
-# Requirements: Noda 数据库备份系统
+# Requirements: Noda 基础设施
 
-**Defined:** 2026-04-06
-**Core Value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
+**Defined:** 2026-04-11
+**Core Value:** 数据库永不丢失。即使发生灾难，也能从最近12小时内的备份中恢复数据。
 
-## v1 Requirements
-
-里程碑 v1.0 的需求。每个需求都映射到路线图的某个阶段。
+## v1.0 Requirements (Shipped)
 
 ### Backup — 备份执行
 
@@ -48,9 +46,37 @@
 - [x] **SECURITY-01**: 所有凭证（B2 Key、DB 密码）通过环境变量管理，绝不硬编码
 - [x] **SECURITY-02**: 使用最低权限的 B2 Application Key（仅限备份 bucket + 必要权限 + 文件前缀限制）
 
-## v2 Requirements
+## v1.2 Requirements
 
-推迟到未来版本的需求。当前不在路线图中。
+### 备份修复
+
+- [ ] **BFIX-01**: B2 自动备份恢复 — 调查 4/8 起中断原因，修复后备份正常上传到 B2
+- [ ] **BFIX-02**: 磁盘空间检查正常工作 — 备份前检查磁盘空间并在不足时告警
+- [ ] **BFIX-03**: 验证测试下载功能正常 — 自动验证测试能成功下载备份文件进行校验
+
+### 服务整合
+
+- [ ] **GROUP-01**: findclass-ssr 目录迁移 — 相关文件迁移到 noda-apps/ 目录下
+- [ ] **GROUP-02**: Docker 分组标签 — 容器 labels/project 归入 noda-apps 分组
+
+### Keycloak 双环境
+
+- [ ] **KCDEV-01**: 本地 dev Keycloak 实例 — 独立 keycloak-dev 容器 + keycloak_dev 数据库 + 端口偏移
+- [ ] **KCDEV-02**: Dev 认证方式 — 开发环境可使用密码登录（Google OAuth 可选）
+- [ ] **KCDEV-03**: Dev 开发效率 — 开发环境禁用主题缓存，支持热重载
+
+### Keycloak 自定义主题
+
+- [ ] **THEME-01**: 品牌化登录页 — 创建 noda 主题，CSS 覆盖实现 Noda 品牌风格
+- [ ] **THEME-02**: 自定义 Logo — 替换默认 Keycloak Logo 为 Noda Logo
+
+## Future Requirements
+
+### Keycloak 增强
+
+- **THEME-03**: 中文消息包 — 登录页中文文案自定义
+- **THEME-04**: Email 主题 — 品牌化邮件模板
+- **THEME-05**: Account 主题 — 品牌化账户管理页
 
 ### 性能优化
 
@@ -61,59 +87,40 @@
 
 - **ADV-01**: PITR 时间点恢复 — 恢复到任意时间点
 - **ADV-02**: 跨区域备份复制 — 地理灾难恢复
-- **ADV-03**: Web 管理面板 — 可视化管理备份
 
 ## Out of Scope
 
-明确排除的功能。记录原因防止以后重新添加。
-
-| 功能 | 排除原因 |
-|------|----------|
-| 实时复制/流备份 | 需要主从架构，至少双倍基础设施成本。6-12 小时 RPO 已满足需求 |
-| PITR 时间点恢复 | 需要基础备份 + 完整 WAL 归档链，复杂度极高。当前已有 WAL 归档但只存本地，未配合云上传，形成了技术债务 |
-| 跨区域备份复制 | 增加存储成本（至少翻倍）和管理复杂度。B2 本身已有数据中心冗余 |
-| 手动备份触发 Web UI | Jenkins 已提供手动触发能力（Build Now 按钮）和参数化构建。Web UI 需要额外开发和维护 |
-| 自定义客户端加密方案 | 自定义加密容易出错，反而降低安全性。rclone crypt 是成熟方案 |
-| 压缩格式选择 | pg_dump -Fc 已内置 zlib 压缩，效果足够好。提供多种格式增加测试矩阵 |
-| 数据库自动发现 | 自动发现会备份系统数据库，浪费空间。显式数据库列表更安全 |
-| 可配置保留策略 | 增加配置复杂度和测试负担。7 天保留策略已明确 |
-| Web 管理面板 | 需要额外开发和维护 Web 前端+后端+认证。Jenkins 已提供日志查看 |
+| Feature | Reason |
+|---------|--------|
+| 实时复制/流备份 | 需要主从架构，6-12 小时 RPO 已满足需求 |
+| PITR 时间点恢复 | 复杂度极高 |
+| 跨区域备份复制 | B2 已有数据中心冗余 |
+| v2 React 主题 | Keycloak 26.x 仍推荐 v1 FreeMarker，v2 仅限 Account Console |
+| 多 Realm 管理 | 当前仅需 noda realm，无需多租户 |
+| LDAP/AD 集成 | Google OAuth 已满足认证需求 |
 
 ## Traceability
 
-哪些阶段覆盖哪些需求。路线图创建时更新。
+v1.0 需求已完成归档。v1.2 需求待路线图创建时映射。
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BACKUP-01 | Phase 1 | Complete |
-| BACKUP-02 | Phase 1 | Complete |
-| BACKUP-03 | Phase 1 | Complete |
-| BACKUP-04 | Phase 1 | Complete |
-| BACKUP-05 | Phase 1 | Complete |
-| VERIFY-01 | Phase 1 | Complete |
-| MONITOR-04 | Phase 1 | Complete |
-| UPLOAD-01 | Phase 7 | Complete |
-| UPLOAD-02 | Phase 7 | Complete |
-| UPLOAD-03 | Phase 7 | Complete |
-| UPLOAD-04 | Phase 7 | Complete |
-| UPLOAD-05 | Phase 7 | Complete |
-| SECURITY-01 | Phase 7 | Complete |
-| SECURITY-02 | Phase 7 | Complete |
-| RESTORE-01 | Phase 8 | Complete |
-| RESTORE-02 | Phase 8 | Complete |
-| RESTORE-03 | Phase 8 | Complete |
-| RESTORE-04 | Phase 8 | Complete |
-| VERIFY-02 | Phase 9 | Pending |
-| MONITOR-01 | Phase 9 | Pending |
-| MONITOR-02 | Phase 9 | Pending |
-| MONITOR-03 | Phase 9 | Pending |
-| MONITOR-05 | Phase 9 | Pending |
+| BFIX-01 | — | Pending |
+| BFIX-02 | — | Pending |
+| BFIX-03 | — | Pending |
+| GROUP-01 | — | Pending |
+| GROUP-02 | — | Pending |
+| KCDEV-01 | — | Pending |
+| KCDEV-02 | — | Pending |
+| KCDEV-03 | — | Pending |
+| THEME-01 | — | Pending |
+| THEME-02 | — | Pending |
 
 **Coverage:**
-- v1 requirements: 23 total
-- Mapped to phases: 23
-- Unmapped: 0 ✓
+- v1.2 requirements: 10 total
+- Mapped to phases: 0
+- Unmapped: 10 ⚠️
 
 ---
 *Requirements defined: 2026-04-06*
-*Last updated: 2026-04-06 after roadmap creation*
+*Last updated: 2026-04-11 after v1.2 requirements definition*
