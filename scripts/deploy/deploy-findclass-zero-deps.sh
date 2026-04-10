@@ -5,34 +5,17 @@
 
 set -euo pipefail
 
-# 颜色输出
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
 # 脚本目录
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+source "$PROJECT_ROOT/scripts/lib/log.sh"
 
 # 配置
 FINDCLASS_IMAGE="noda-findclass"
 API_IMAGE="noda-api"
 DEPLOY_TIMEOUT=300  # 5 分钟
 HEALTH_CHECK_INTERVAL=5
-
-# 日志函数
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
 
 # 错误处理
 error_exit() {
@@ -55,16 +38,12 @@ trap cleanup EXIT INT TERM
 check_dependencies() {
     log_info "检查依赖..."
 
-    local missing_deps=()
+    if ! command -v docker >/dev/null 2>&1; then
+        error_exit "缺少依赖: docker"
+    fi
 
-    for cmd in docker docker-compose; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
-            missing_deps+=("$cmd")
-        fi
-    done
-
-    if [[ ${#missing_deps[@]} -gt 0 ]]; then
-        error_exit "缺少依赖: ${missing_deps[*]}"
+    if ! docker compose version >/dev/null 2>&1; then
+        error_exit "缺少依赖: docker compose"
     fi
 
     log_info "依赖检查通过"
@@ -135,7 +114,7 @@ stop_old_containers() {
 
     cd "$PROJECT_ROOT/docker"
 
-    if ! docker-compose \
+    if ! docker compose \
         -f docker-compose.yml \
         -f docker-compose.prod.yml \
         down; then
@@ -152,7 +131,7 @@ start_new_containers() {
     cd "$PROJECT_ROOT/docker"
 
     # 启动服务
-    if ! docker-compose \
+    if ! docker compose \
         -f docker-compose.yml \
         -f docker-compose.prod.yml \
         up -d; then
@@ -188,27 +167,19 @@ wait_for_containers() {
 health_check() {
     log_info "执行健康检查..."
 
-    # 运行验证脚本
-    if [[ -f "$SCRIPT_DIR/verify-findclass-jenkins.sh" ]]; then
-        if bash "$SCRIPT_DIR/verify-findclass-jenkins.sh"; then
+    local verify_script="$PROJECT_ROOT/scripts/verify/verify-findclass.sh"
+    if [[ -f "$verify_script" ]]; then
+        if bash "$verify_script"; then
             log_info "健康检查通过"
             return 0
         else
             log_warn "健康检查失败，但容器已启动"
             return 1
         fi
-    elif [[ -f "$SCRIPT_DIR/verify-findclass.sh" ]]; then
-        if bash "$SCRIPT_DIR/verify-findclass.sh"; then
-            log_info "健康检查通过"
-            return 0
-        else
-            log_warn "健康检查失败，但容器已启动"
-            return 1
-        fi
-    else
-        log_warn "验证脚本不存在，跳过健康检查"
-        return 0
     fi
+
+    log_warn "验证脚本不存在，跳过健康检查"
+    return 0
 }
 
 # 回滚部署
@@ -217,7 +188,7 @@ rollback_deployment() {
 
     # 停止当前容器
     cd "$PROJECT_ROOT/docker"
-    docker-compose \
+    docker compose \
         -f docker-compose.yml \
         -f docker-compose.prod.yml \
         down || true
@@ -237,7 +208,7 @@ show_deployment_status() {
     echo "容器状态"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    docker-compose \
+    docker compose \
         -f docker-compose.yml \
         -f docker-compose.prod.yml \
         ps

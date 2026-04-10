@@ -57,7 +57,7 @@ export GOOGLE_OAUTH_CLIENT_SECRET="your_google_client_secret_here"
 
 2. 运行配置脚本:
    ```bash
-   bash infra/keycloak/scripts/configure-google-idp.sh
+   bash scripts/setup-keycloak-full.sh
    ```
 
 3. 验证配置成功:

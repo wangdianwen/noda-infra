@@ -1,13 +1,9 @@
 #!/bin/bash
 # Keycloak 初始化脚本
 # 在 Keycloak 启动后自动创建 realm 和 client
+# 注意：此脚本在 Keycloak 容器内执行，无法 source 外部日志库
 
 set -e
-
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
 
 MAX_RETRIES=30
 RETRY_DELAY=2

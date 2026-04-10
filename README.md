@@ -101,7 +101,6 @@ noda-infra/
 │   ├── keycloak/       # Keycloak 自定义主题
 │   ├── nginx/          # Nginx 辅助配置
 │   ├── findclass/      # Findclass 应用配置
-│   └── jenkins/        # Jenkins CI/CD 配置
 └── docs/               # 项目文档
 ```
 

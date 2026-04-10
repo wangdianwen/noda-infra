@@ -166,8 +166,6 @@ Tunnel ID: `9cab5df3-a546-48fb-9dc5-eacb48c56ff8` <!-- VERIFY: Tunnel ID 来自 
 | `docker/docker-compose.dev-standalone.yml` | 独立开发数据库（无其他服务） |
 | `docker/docker-compose.simple.yml` | 简化版一键部署 |
 | `docker/docker-compose.app.yml` | 应用层服务（findclass-ssr） |
-| `docker/docker-compose.jenkins.yml` | Jenkins CI 服务 |
-| `docker/docker-compose.jenkins-override.yml` | Jenkins 环境路径覆盖 |
 
 ### 使用方式
 

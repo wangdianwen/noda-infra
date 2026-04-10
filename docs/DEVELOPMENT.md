@@ -48,12 +48,6 @@ docker network create noda-network
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d
 ```
 
-或者使用环境切换脚本一键操作：
-
-```bash
-bash scripts/utils/switch-env.sh dev
-```
-
 开发环境与生产环境的主要差异：
 
 | 配置项 | 开发环境 | 生产环境 |
@@ -95,9 +89,8 @@ Noda 基础设施没有 `package.json`，所有构建和部署通过 Docker Comp
 
 | 脚本路径 | 用途 |
 |---------|------|
-| `scripts/deploy/deploy-infrastructure-prod.sh` | 生产环境基础设施完整部署（6 步自动化：验证 → 初始化数据库 → 停容器 → 启动 → 等待就绪 → 配置 Keycloak） |
+| `scripts/deploy/deploy-infrastructure-prod.sh` | 生产环境基础设施完整部署（5 步自动化：验证 → 重启容器 → 等待健康 + 初始化数据库 → 配置 Keycloak → 验证） |
 | `scripts/deploy/deploy-apps-prod.sh` | 生产环境应用部署（验证基础设施 → 构建 → 启动 findclass-ssr） |
-| `scripts/deploy/deploy-findclass.sh` | findclass-ssr 独立部署（含 sitemap 生成 + 镜像构建） |
 | `scripts/deploy/deploy-findclass-zero-deps.sh` | findclass-ssr 零依赖部署 |
 | `scripts/deploy/migrate-production.sh` | 生产环境数据库迁移（含备份提醒和确认机制） |
 
@@ -108,10 +101,8 @@ Noda 基础设施没有 `package.json`，所有构建和部署通过 Docker Comp
 | `deploy.sh` | 备份系统部署（build / start / stop / restart / logs / status / clean） |
 | `scripts/init-databases.sh` | 初始化所有必要数据库（keycloak, findclass_db, noda_prod 等） |
 | `scripts/setup-keycloak-full.sh` | Keycloak 完整初始化（创建 realm、client、Google Identity Provider） |
-| `scripts/utils/switch-env.sh` | 一键切换开发/生产环境（停止容器 → 加载变量 → 启动） |
-| `scripts/utils/validate-all.sh` | 运行完整验证套件（目录结构、Docker 配置、环境变量） |
 | `scripts/utils/decrypt-secrets.sh` | SOPS 密钥解密 |
-| `scripts/utils/check-env.sh` | 环境变量检查 |
+| `scripts/utils/validate-docker.sh` | Docker Compose 配置语法验证 |
 
 ### 验证脚本
 

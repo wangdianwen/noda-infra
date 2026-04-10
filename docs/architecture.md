@@ -110,7 +110,6 @@ noda-infra/
 │   ├── postgres/              # PostgreSQL 配置文件和初始化脚本
 │   ├── keycloak/              # Keycloak realm 初始化脚本和主题
 │   ├── findclass/             # Findclass 应用虚拟主机配置
-│   └── jenkins/               # Jenkins CI/CD 配置和脚本
 ├── docs/                      # 项目文档
 ├── backups/                   # 备份输出目录
 └── .env.production            # 生产环境变量模板（含占位符）

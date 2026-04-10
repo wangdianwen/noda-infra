@@ -28,23 +28,6 @@ services:
       - ./services/postgres/conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro  # PostgreSQL 配置文件
 
   # ----------------------------------------
-  # Nginx 生产环境配置（暂时禁用 - 服务未在基础文件中定义）
-  # ----------------------------------------
-  # nginx:
-  #   # 生产环境不暴露端口（通过 Cloudflare Tunnel 访问）
-  #   volumes:
-  #     - ./infra/docker/nginx/ssl:/etc/nginx/ssl:ro  # SSL 证书（未来）
-  #     - ./apps/noda/frontend/dist:/usr/share/nginx/html:ro
-  #   deploy:
-  #     resources:
-  #       limits:
-  #         cpus: '1'
-  #         memory: 512M
-  #       reservations:
-  #         cpus: '0.25'
-  #         memory: 128M
-
-  # ----------------------------------------
   # Keycloak 认证服务（生产环境）
   # ----------------------------------------
   keycloak:
@@ -100,19 +83,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-
-  # ----------------------------------------
-  # Cloudflare Tunnel（生产环境启用 - 暂时禁用）
-  # ----------------------------------------
-  # cloudflared:
-  #   restart: always  # 确保自动重启
-  #   environment:
-  #     TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
-  #   healthcheck:
-  #     test: ["CMD", "cloudflared", "--version"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
 
   # ----------------------------------------
   # Findclass SSR（生产环境）

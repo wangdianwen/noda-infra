@@ -11,14 +11,8 @@ BACKUP_DIR="$PWD/deploy/volumes/backup"
 HISTORY_DIR="$PWD/deploy/volumes/history"
 LOG_DIR="$PWD/deploy/volumes/logs"
 
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/scripts/lib/log.sh"
 
 check_environment() {
   log_info "检查部署环境..."
