@@ -12,11 +12,11 @@
 
 | 工具 | 最低版本 | 说明 |
 |------|----------|------|
-| Docker | 29.1.3+ | 容器运行时，所有服务基于 Docker 部署 |
-| Docker Compose | v2.40.3+ | 服务编排工具（随 Docker Desktop 安装） |
+| Docker | 20.10+ | 容器运行时，所有服务基于 Docker 部署 |
+| Docker Compose | v2.0+ | 服务编排工具（随 Docker Desktop 安装） |
 | Git | 任意 | 版本控制 |
-| SOPS | 3.12.2+ | 密钥加密/解密工具（生产环境部署需要） |
-| age | 1.3.1+ | SOPS 的加密后端（生产环境部署需要） |
+| SOPS | 3.12+ | 密钥加密/解密工具（生产环境部署需要） |
+| age | 1.3+ | SOPS 的加密后端（生产环境部署需要） |
 
 **开发环境只需 Docker 和 Docker Compose**，SOPS 和 age 仅在生产部署解密密钥时需要。
 
@@ -43,6 +43,12 @@ cp config/environments/.env.example docker/.env
 - `POSTGRES_USER` / `POSTGRES_PASSWORD` -- 数据库凭据
 - `KEYCLOAK_ADMIN_USER` / `KEYCLOAK_ADMIN_PASSWORD` -- Keycloak 管理员凭据
 - `CLOUDFLARE_TUNNEL_TOKEN` -- Cloudflare Tunnel Token（开发环境可留空）
+
+可选但生产环境需要的变量：
+
+- `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` -- Keycloak 邮件服务配置
+- `RESEND_API_KEY` -- findclass-ssr 邮件服务
+- `B2_ACCOUNT_ID` / `B2_APPLICATION_KEY` -- Backblaze B2 备份存储
 
 完整的变量说明见 [CONFIGURATION.md](CONFIGURATION.md)。
 
@@ -75,14 +81,16 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up 
 bash scripts/deploy/deploy-infrastructure-prod.sh
 
 # 或手动启动
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.dev.yml up -d
 ```
 
-启动的服务包括：PostgreSQL、Keycloak、Nginx、noda-ops。
+> 注意：生产部署脚本实际使用三个 compose 文件（base + prod + dev），同时启动基础设施和开发数据库。
 
-### 启动应用服务
+启动的服务包括：PostgreSQL（生产 + 开发）、Keycloak、Nginx、noda-ops、findclass-ssr。
 
-findclass-ssr 需要单独构建并启动：
+### 单独启动应用服务（findclass-ssr）
+
+如果需要单独构建和启动 findclass-ssr，可以使用独立的 app compose 文件：
 
 ```bash
 # 构建镜像
@@ -107,11 +115,28 @@ bash scripts/verify/verify-infrastructure.sh
 **预期输出** -- 所有服务状态为 `Up`：
 
 ```
-noda-infra-postgres-1   Up X minutes   5432/tcp
-noda-infra-keycloak-1   Up X minutes   8080/tcp, 9000/tcp
-noda-infra-nginx-1      Up X minutes   80/tcp
-findclass-ssr           Up X minutes   3001/tcp
+noda-infra-postgres-prod   Up X minutes   5432/tcp
+noda-infra-postgres-dev    Up X minutes   5432->5433/tcp
+noda-infra-keycloak-1      Up X minutes   8080/tcp, 9000/tcp
+noda-infra-nginx           Up X minutes   80->8081/tcp (dev) / 80/tcp (prod)
+noda-ops                   Up X minutes
+findclass-ssr              Up X minutes   3001->3002/tcp (dev) / 3001/tcp (prod)
 ```
+
+### 初始化数据库
+
+首次部署时需要确保 PostgreSQL 中创建了所有必要数据库：
+
+```bash
+bash scripts/init-databases.sh
+```
+
+该脚本会创建以下数据库（如果不存在）：
+
+| 数据库 | 用途 |
+|--------|------|
+| `noda_prod` | findclass 应用主数据库 |
+| `keycloak` | Keycloak 认证数据库 |
 
 ### 检查服务端点
 
@@ -146,7 +171,7 @@ docker network create noda-network
 
 **解决方案**：
 
-1. 确认 `docker/.env` 中 `POSTGRES_USER`、`POSTGRES_PASSWORD`、`POSTGRES_DB` 配置正确
+1. 确认 `docker/.env` 中 `POSTGRES_USER`、`POSTGRES_PASSWORD` 配置正确
 2. 手动初始化数据库：
 
    ```bash
@@ -169,15 +194,16 @@ docker network create noda-network
 
 | 服务 | 开发端口 | 生产端口 |
 |------|----------|----------|
-| PostgreSQL | 5433 | 5432 |
+| PostgreSQL (dev) | 5433 | -- |
+| PostgreSQL (prod) | 不暴露 | 不暴露 |
 | Nginx | 8081 | 80 |
-| findclass-ssr | 3002 | 3001 |
+| findclass-ssr | 3002 | 3001（内部） |
 | Keycloak | 8080 | 8080 |
 
 检查占用端口的进程：
 
 ```bash
-lsof -i :5432
+lsof -i :8080
 ```
 
 ### 问题 4: SOPS 解密失败
@@ -215,6 +241,18 @@ lsof -i :5432
 ```bash
 docker compose -f docker/docker-compose.app.yml build findclass-ssr --no-cache
 docker compose -f docker/docker-compose.app.yml up -d findclass-ssr
+```
+
+### 问题 6: findclass-ssr 构建失败（lru-cache ESM 兼容）
+
+**症状**：构建或运行时报错 `Named export 'LRUCache' not found`
+
+**原因**：`lru-cache` 包的 ESM/CJS 兼容性问题
+
+**解决方案**：Dockerfile 中已包含 sed 修复步骤，确保使用最新的 Dockerfile 重新构建：
+
+```bash
+docker compose -f docker/docker-compose.app.yml build findclass-ssr --no-cache
 ```
 
 ---

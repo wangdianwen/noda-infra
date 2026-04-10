@@ -60,7 +60,7 @@ cp config/environments/.env.example config/environments/.env
 
 | 服务 | 镜像/版本 | 端口 | 说明 |
 |------|-----------|------|------|
-| PostgreSQL | `postgres:17.9` | 5432（生产） | 数据库，数据持久化在 `postgres_data` 卷 |
+| PostgreSQL | `postgres:17.9` | 5432（内部） | 数据库，数据持久化在 `postgres_data` 卷 |
 | Keycloak | `quay.io/keycloak/keycloak:26.2.3` | 8080, 9000 | 认证服务，通过 Cloudflare Tunnel 暴露为 `auth.noda.co.nz` |
 | Nginx | `nginx:1.25-alpine` | 80（内部） | 反向代理，将 `class.noda.co.nz` 路由到 findclass-ssr |
 | findclass-ssr | 自构建 | 3001 | SSR + API + 静态文件，三合一应用服务 |
@@ -80,6 +80,7 @@ cp config/environments/.env.example config/environments/.env
 noda-infra/
 ├── config/             # 配置文件
 │   ├── environments/   # 环境变量模板（.env.example, .env.production.template）
+│   ├── keys/           # 加密密钥
 │   ├── nginx/          # Nginx 配置（nginx.conf, conf.d/, snippets/）
 │   └── cloudflare/     # Cloudflare Tunnel 配置
 ├── deploy/             # Docker 构建文件
@@ -87,20 +88,22 @@ noda-infra/
 │   ├── Dockerfile.noda-ops        # 运维工具镜像构建
 │   └── Dockerfile.backup          # 备份服务镜像构建
 ├── docker/             # Docker Compose 编排文件
-│   ├── docker-compose.yml         # 基础服务定义
-│   ├── docker-compose.prod.yml    # 生产环境覆盖
-│   ├── docker-compose.dev.yml     # 开发环境覆盖
-│   └── docker-compose.app.yml     # 应用服务（findclass-ssr）
+│   ├── docker-compose.yml              # 基础服务定义
+│   ├── docker-compose.prod.yml         # 生产环境覆盖
+│   ├── docker-compose.dev.yml          # 开发环境覆盖
+│   ├── docker-compose.app.yml          # 应用服务（findclass-ssr）
+│   ├── docker-compose.simple.yml       # 简化版（无构建服务）
+│   └── docker-compose.dev-standalone.yml  # 独立开发环境（仅数据库）
 ├── scripts/            # 运维脚本
-│   ├── deploy/         # 部署脚本（deploy-infrastructure-prod.sh 等）
-│   ├── backup/         # 备份脚本（backup-postgres.sh）
-│   ├── verify/         # 验证脚本（verify-infrastructure.sh）
-│   └── utils/          # 工具脚本
+│   ├── backup/         # 备份与恢复脚本（backup-postgres.sh, restore-postgres.sh）
+│   ├── deploy/         # 部署脚本（deploy-infrastructure-prod.sh, deploy-apps-prod.sh）
+│   ├── verify/         # 验证脚本（verify-infrastructure.sh, quick-verify.sh）
+│   ├── utils/          # 工具脚本（validate-docker.sh, decrypt-secrets.sh）
+│   └── lib/            # 共享库（log.sh）
 ├── services/           # 服务专用配置
-│   ├── postgres/       # PostgreSQL 初始化脚本
-│   ├── keycloak/       # Keycloak 自定义主题
-│   ├── nginx/          # Nginx 辅助配置
-│   ├── findclass/      # Findclass 应用配置
+│   ├── postgres/       # PostgreSQL 初始化脚本和配置（init/, conf/）
+│   └── keycloak/       # Keycloak realm 配置和初始化脚本
+├── examples/           # 示例文件（macOS launchd plist 等）
 └── docs/               # 项目文档
 ```
 
@@ -130,6 +133,10 @@ scripts/backup/backup-postgres.sh
 ## 文档
 
 - [架构文档](docs/architecture.md) — 系统架构和安全设计原则
+- [快速开始](docs/GETTING-STARTED.md) — 前置要求和首次部署指引
+- [开发指南](docs/DEVELOPMENT.md) — 本地开发环境配置
+- [测试指南](docs/TESTING.md) — 测试框架和运行方式
+- [配置说明](docs/CONFIGURATION.md) — 环境变量和配置文件详解
 - [部署指南](docs/DEPLOYMENT_GUIDE.md) — 完整的生产/开发环境部署流程
 - [密钥管理](docs/secrets-management.md) — SOPS + age 密钥加密方案
 - [Keycloak 脚本](docs/KEYCLOAK_SCRIPTS.md) — Keycloak 配置和 realm 初始化脚本

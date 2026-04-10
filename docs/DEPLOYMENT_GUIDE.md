@@ -35,7 +35,7 @@ bash scripts/deploy/deploy-infrastructure-prod.sh
 
 | 脚本 | 功能 | 说明 |
 |------|------|------|
-| `scripts/init-databases.sh` | 初始化数据库 | 创建 keycloak, keycloak_db, findclass_db 等数据库 |
+| `scripts/init-databases.sh` | 初始化数据库 | 创建 noda_prod, keycloak 数据库 |
 | `scripts/setup-keycloak-full.sh` | 配置 Keycloak | 创建 realm, client, Google Identity Provider |
 
 ## 🔄 部署流程
@@ -55,11 +55,8 @@ docker-compose --version
 
 自动执行 `scripts/init-databases.sh`，创建以下数据库：
 
-- `keycloak` - Keycloak 认证服务（主数据库）
-- `keycloak_db` - Keycloak 认证服务（旧版）
-- `findclass_db` - Findclass 应用数据库
 - `noda_prod` - Noda 生产数据库
-- `oneteam_prod` - OneTeam 生产数据库
+- `keycloak` - Keycloak 认证服务数据库
 
 ### 步骤 3: 启动基础设施
 
@@ -123,9 +120,9 @@ docker ps --filter "name=noda-infra"
 
 **预期输出**：
 ```
-noda-infra-postgres-1   Up X minutes   5432/tcp
-noda-infra-keycloak-1   Up X minutes   8080/tcp, 9000/tcp
-noda-infra-nginx-1       Up X minutes   80/tcp
+noda-infra-postgres-prod   Up X minutes   5432/tcp
+noda-infra-keycloak-1      Up X minutes   8080/tcp, 9000/tcp
+noda-infra-nginx            Up X minutes   80/tcp
 ```
 
 ### 2. 检查 Keycloak 日志
@@ -142,7 +139,7 @@ INFO  [io.quarkus] (main) Keycloak 26.2.3 on JVM started
 ### 3. 检查数据库
 
 ```bash
-docker exec noda-infra-postgres-1 psql -U postgres -d postgres -c \
+docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
   "SELECT datname FROM pg_database WHERE datname LIKE '%keycloak%' OR datname LIKE '%prod%';"
 ```
 
@@ -337,7 +334,7 @@ sops --decrypt config/secrets.sops.yaml
 docker ps -a
 
 # 查看容器日志
-docker logs noda-infra-postgres-1
+docker logs noda-infra-postgres-prod
 docker logs noda-infra-keycloak-1
 
 # 手动重启

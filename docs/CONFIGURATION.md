@@ -13,12 +13,12 @@
 
 | 变量名 | 必填 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `POSTGRES_USER` | 是 | — | PostgreSQL 超级用户名 |
+| `POSTGRES_USER` | 是 | — | PostgreSQL 超级用户名（同时用于 Keycloak 数据库连接） |
 | `POSTGRES_PASSWORD` | 是 | — | PostgreSQL 超级用户密码（生产环境必须修改） |
 | `POSTGRES_DB` | 是 | — | PostgreSQL 默认数据库名 |
 | `KEYCLOAK_ADMIN_USER` | 是 | — | Keycloak 管理员用户名 |
 | `KEYCLOAK_ADMIN_PASSWORD` | 是 | — | Keycloak 管理员密码（生产环境必须修改） |
-| `KEYCLOAK_DB_PASSWORD` | 是 | — | Keycloak 数据库连接密码 |
+| `KEYCLOAK_DB_PASSWORD` | 否 | — | Keycloak 数据库连接密码（`.env.example` 中定义，但 Docker Compose 实际使用 `POSTGRES_PASSWORD` 作为 `KC_DB_PASSWORD`） |
 
 ### Cloudflare Tunnel 变量
 
@@ -37,6 +37,7 @@
 | `B2_BUCKET_NAME` | 否 | `noda-backups` | B2 存储桶名称 |
 | `B2_PATH` | 否 | `backups/postgres/` | B2 存储桶内的备份路径 |
 | `ALERT_EMAIL` | 否 | （空） | 备份告警接收邮箱 |
+| `ALERT_ENABLED` | 否 | `true` | 是否启用告警通知 |
 
 ### 邮件服务变量（SMTP - 用于密码重置）
 
@@ -65,6 +66,7 @@ findclass-ssr 的 `VITE_*` 变量在 `docker build` 阶段写入前端 JS 文件
 | `VITE_KEYCLOAK_URL` | 是 | `https://auth.noda.co.nz` | 前端使用的 Keycloak URL |
 | `VITE_KEYCLOAK_REALM` | 是 | `noda` | Keycloak Realm 名称 |
 | `VITE_KEYCLOAK_CLIENT_ID` | 是 | `noda-frontend` | Keycloak Client ID |
+| `VITE_LOCAL_API_URL` | 否 | （空） | 本地 API 地址（开发用） |
 
 > **重要提醒**：`VITE_*` 变量在构建时写入 JavaScript 文件，修改后必须重新构建镜像。仅修改运行时环境变量不会影响前端行为。
 
@@ -81,9 +83,11 @@ findclass-ssr 的 `VITE_*` 变量在 `docker build` 阶段写入前端 JS 文件
 | `config/environments/.env.example` | 变量模板和文档 | 是 |
 | `config/environments/.env.production.template` | 生产环境模板 | 是 |
 | `config/environments/.env.production` | 生产环境实际值（需从 `.env.production.template` 创建） | 否 |
+| `.env.production` | 根目录生产环境配置（构建时和运行时共用） | 否 |
 | `docker/.env` | Docker Compose 主配置 | 否（含敏感信息） |
-| `scripts/backup/.env.backup` | 备份系统专用配置 | 否（含 B2 密钥） |
-| `scripts/backup/templates/.env.backup` | 备份配置模板 | 是 |
+| `scripts/backup/.env.example` | 备份系统配置模板（详细版） | 是 |
+| `scripts/backup/templates/.env.backup` | 备份配置模板（精简版） | 是 |
+| `scripts/backup/.env.backup` | 备份系统实际配置 | 否（含 B2 密钥） |
 
 ### Nginx 配置
 
@@ -91,13 +95,14 @@ findclass-ssr 的 `VITE_*` 变量在 `docker build` 阶段写入前端 JS 文件
 |----------|------|
 | `config/nginx/nginx.conf` | Nginx 主配置（worker 进程数、日志格式、gzip 压缩） |
 | `config/nginx/conf.d/default.conf` | 虚拟主机配置（域名路由规则） |
-| `config/nginx/snippets/proxy-common.conf` | 通用代理头设置（Host、X-Forwarded-*） |
-| `config/nginx/snippets/proxy-websocket.conf` | 带 WebSocket 支持的代理头设置 |
+| `config/nginx/snippets/proxy-common.conf` | 通用代理头设置（Host、X-Forwarded-*、X-Forwarded-Proto） |
+| `config/nginx/snippets/proxy-websocket.conf` | 带 WebSocket 支持的代理头设置（额外包含 Upgrade、Connection 头） |
 
 Nginx 路由规则概览：
 - `auth.noda.co.nz` -> 代理到 `keycloak:8080`
 - `class.noda.co.nz` / `localhost` -> 代理到 `findclass-ssr:3001`
 - `/health` -> 返回 200 健康检查响应
+- 动态 `$forwarded_proto` 映射：`class.noda.co.nz` 和 `auth.noda.co.nz` 强制使用 HTTPS
 
 ### Cloudflare Tunnel 配置
 
@@ -119,8 +124,16 @@ Tunnel ID: `9cab5df3-a546-48fb-9dc5-eacb48c56ff8` <!-- VERIFY: Tunnel ID 来自 
 | 文件路径 | 说明 |
 |----------|------|
 | `deploy/crontab` | 备份定时任务（crontab 格式） |
-| `deploy/supervisord.conf` | noda-ops 容器进程管理配置 |
-| `deploy/entrypoint-ops.sh` | noda-ops 容器启动脚本 |
+| `deploy/supervisord.conf` | noda-ops 容器进程管理配置（cron + cloudflared 双进程） |
+| `deploy/entrypoint-ops.sh` | noda-ops 容器启动脚本（初始化备份和隧道配置） |
+| `deploy/Dockerfile.noda-ops` | noda-ops 容器构建文件（Alpine 3.19 基础镜像） |
+
+noda-ops 容器启动流程：
+1. 创建日志和运行目录
+2. 加载环境变量（`/app/.env.ops`）
+3. 验证备份系统配置（PostgreSQL + B2），自动配置 rclone
+4. 验证 Cloudflare Tunnel Token，未配置则自动禁用 cloudflared 进程
+5. 启动 supervisord 管理 cron 和 cloudflared
 
 定时备份计划：
 - 每天凌晨 3:00 执行数据库备份
@@ -132,10 +145,9 @@ Tunnel ID: `9cab5df3-a546-48fb-9dc5-eacb48c56ff8` <!-- VERIFY: Tunnel ID 来自 
 
 | 文件路径 | 说明 |
 |----------|------|
-| `docker/services/postgres/conf/` | PostgreSQL 自定义配置目录（当前为空，使用默认配置） |
-| `docker/services/postgres/init/` | 数据库初始化脚本 |
-| `docker/services/postgres/backup/` | 备份目录挂载点 |
-| `docker/services/postgres/backup/wal-archive/` | WAL 归档目录 |
+| `docker/services/postgres/init-dev/` | 开发数据库初始化脚本（包含建库和种子数据） |
+
+> **注意**：`docker/services/postgres/` 目录下目前仅有 `init-dev/` 子目录。生产环境的 PostgreSQL 配置、初始化脚本和备份目录均使用默认配置，对应子目录（`conf/`、`init/`、`backup/`）尚未创建。生产环境通过 `docker-compose.prod.yml` 挂载备份和 WAL 归档目录，但要求宿主机上先创建对应路径。
 
 ### 密钥管理文件
 
@@ -158,14 +170,14 @@ Tunnel ID: `9cab5df3-a546-48fb-9dc5-eacb48c56ff8` <!-- VERIFY: Tunnel ID 来自 
 
 项目使用 Docker Compose Overlay 模式，基础配置 + 环境覆盖：
 
-| 文件 | 用途 |
-|------|------|
-| `docker/docker-compose.yml` | 基础配置（所有环境共享） |
-| `docker/docker-compose.prod.yml` | 生产环境覆盖 |
-| `docker/docker-compose.dev.yml` | 开发环境覆盖 |
-| `docker/docker-compose.dev-standalone.yml` | 独立开发数据库（无其他服务） |
-| `docker/docker-compose.simple.yml` | 简化版一键部署 |
-| `docker/docker-compose.app.yml` | 应用层服务（findclass-ssr） |
+| 文件 | 项目名 | 用途 |
+|------|--------|------|
+| `docker/docker-compose.yml` | `noda-infra` | 基础配置（所有环境共享），包含全部服务定义 |
+| `docker/docker-compose.prod.yml` | `noda-infra` | 生产环境覆盖（资源限制、SMTP、健康检查） |
+| `docker/docker-compose.dev.yml` | 继承基础 | 开发环境覆盖（开发数据库、端口映射、Keycloak 本地访问） |
+| `docker/docker-compose.dev-standalone.yml` | `noda-dev` | 独立开发数据库（无其他服务） |
+| `docker/docker-compose.simple.yml` | `noda-infra` | 简化版一键部署（硬编码默认值，适合快速测试） |
+| `docker/docker-compose.app.yml` | `noda-apps` | 应用层服务（findclass-ssr 独立构建和部署） |
 
 ### 使用方式
 
@@ -176,8 +188,9 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up
 # 开发环境
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d
 
-# 单独部署应用
-docker compose -f docker/docker-compose.app.yml up -d --build
+# 单独构建和部署应用
+docker compose -f docker/docker-compose.app.yml build findclass-ssr
+docker compose -f docker/docker-compose.app.yml up -d
 ```
 
 ---
@@ -192,7 +205,7 @@ docker compose -f docker/docker-compose.app.yml up -d --build
 |------|-----------|----------|
 | `POSTGRES_USER` | PostgreSQL, Keycloak, findclass-ssr, noda-ops | 数据库连接失败 |
 | `POSTGRES_PASSWORD` | PostgreSQL, Keycloak, findclass-ssr, noda-ops | 数据库认证失败 |
-| `POSTGRES_DB` | PostgreSQL, Keycloak | 数据库不存在 |
+| `POSTGRES_DB` | PostgreSQL | 数据库不存在 |
 | `KEYCLOAK_ADMIN_USER` | Keycloak | 管理员账户创建失败 |
 | `KEYCLOAK_ADMIN_PASSWORD` | Keycloak | 管理员账户创建失败 |
 | `CLOUDFLARE_TUNNEL_TOKEN` | noda-ops (cloudflared) | 隧道无法连接（服务仍可启动，但外部不可访问） |
@@ -201,13 +214,14 @@ docker compose -f docker/docker-compose.app.yml up -d --build
 
 | 变量 | 默认值 | 来源 |
 |------|--------|------|
-| `POSTGRES_USER` (noda-ops 健康检查) | `postgres` | `docker/docker-compose.yml` 第 65 行 |
-| `B2_BUCKET_NAME` | `noda-backups` | `docker/docker-compose.yml` 第 72 行 |
-| `B2_PATH` | `backups/postgres/` | `docker/docker-compose.yml` 第 73 行 |
-| `ALERT_EMAIL` | （空） | `docker/docker-compose.yml` 第 74 行 |
+| `POSTGRES_USER` (noda-ops 健康检查) | `postgres` | `docker/docker-compose.yml` 第 66 行 |
+| `B2_BUCKET_NAME` | `noda-backups` | `docker/docker-compose.yml` 第 73 行 |
+| `B2_PATH` | `backups/postgres/` | `docker/docker-compose.yml` 第 74 行 |
+| `ALERT_EMAIL` | （空） | `docker/docker-compose.yml` 第 75 行 |
 | `RESEND_API_KEY` | （空） | `docker/docker-compose.app.yml` 第 36 行 |
-| `PROD_POSTGRES_DB` | `noda_prod` | `docker/docker-compose.prod.yml` 第 18 行 |
-| `DEV_POSTGRES_DB` | `noda_dev` | `docker/docker-compose.dev.yml` 第 15 行 |
+| `DEV_POSTGRES_DB` | `noda_dev` | `docker/docker-compose.dev.yml` 第 27 行 |
+
+> **注意**：生产环境的 `POSTGRES_DB` 在 `docker-compose.prod.yml` 第 16 行直接硬编码为 `noda_prod`，不通过环境变量引用。
 
 ---
 
@@ -216,30 +230,40 @@ docker compose -f docker/docker-compose.app.yml up -d --build
 ### 生产环境
 
 - Docker Compose 项目名：`noda-infra`
-- PostgreSQL 数据库名：`noda_prod`（通过 `PROD_POSTGRES_DB` 覆盖）
+- PostgreSQL 数据库名：`noda_prod`（在 `docker-compose.prod.yml` 中硬编码）
 - Keycloak hostname：`https://auth.noda.co.nz`
 - Keycloak 代理模式：`edge`（配合 Cloudflare Tunnel）
-- PostgreSQL 暴露端口 `5432`（供外部连接）
-- 资源限制：PostgreSQL 2 CPU / 2GB 内存，Keycloak 1 CPU / 1GB 内存
+- Keycloak 端口：`8080`（HTTP）、`8443`（HTTPS）、`9000`（管理）
+- PostgreSQL 端口：未对外暴露（仅 Docker 内部网络访问）
+- 资源限制：PostgreSQL 2 CPU / 2GB 内存，Keycloak 1 CPU / 1GB 内存，findclass-ssr 1 CPU / 512MB 内存
 - SMTP 邮件服务：启用（密码重置等功能）
+- Cloudflare Tunnel：启用（通过 supervisord 管理）
 
 ### 开发环境
 
 - Docker Compose 项目名：`noda-infra`（基础配置继承）
-- PostgreSQL 数据库名：`noda_dev`（通过 `DEV_POSTGRES_DB` 覆盖）
+- PostgreSQL 数据库名：`noda_dev`（通过 `DEV_POSTGRES_DB` 覆盖，独立容器 `postgres-dev`）
 - PostgreSQL 暴露端口：`5433`（避免与生产环境冲突）
-- Nginx 暴露端口：`8081`
+- Nginx 暴露端口：`8081`（避免与 dozzle 冲突）
 - Keycloak hostname：空（允许 `localhost` 访问）
 - Keycloak 代理模式：`none`
+- Keycloak 端口：`8080`（HTTP）、`8443`（HTTPS）、`9000`（管理）
 - Cloudflare Tunnel：禁用（`profiles: [dev]`）
 - findclass-ssr 暴露端口：`3002`
 
 ### 独立开发环境
 
 - Docker Compose 项目名：`noda-dev`
-- 仅包含 PostgreSQL 开发数据库
+- 仅包含 PostgreSQL 开发数据库（默认用户 `dev_user`，数据库 `noda_dev`）
 - 独立网络：`noda-dev-network`（bridge 驱动）
 - PostgreSQL 端口：`5433`
+
+### 简化部署环境
+
+- Docker Compose 项目名：`noda-infra`
+- 所有配置硬编码默认值（无需 `.env` 文件即可运行）
+- 包含独立的 cloudflared 容器（非 noda-ops 合并模式）
+- 适合快速测试和首次部署验证
 
 ---
 

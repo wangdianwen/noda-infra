@@ -27,11 +27,8 @@
 **`scripts/init-databases.sh`**
 - **用途**：创建所有必要的数据库
 - **功能**：
-  - 检查并创建 keycloak 数据库（Keycloak 必需）
-  - 检查并创建 keycloak_db 数据库
-  - 检查并创建 findclass_db 数据库
-  - 检查并创建 oneteam_prod 数据库
-  - 检查并创建 noda_prod 数据库
+  - 检查并创建 noda_prod 数据库（Findclass 应用）
+  - 检查并创建 keycloak 数据库（Keycloak 认证服务）
 - **被调用**：deploy-infrastructure-prod.sh（步骤 2）
 - **独立执行**：
   ```bash
@@ -139,7 +136,7 @@ bash scripts/setup-keycloak-full.sh
 
 ### 安全检查
 
-`setup-keycloak-full.sh` 有一个安全检查（第 54 行）：
+`setup-keycloak-full.sh` 有一个安全检查（第 41 行）：
 ```bash
 if ! docker ps --format "{{.Names}}" | grep -q "noda-infra-keycloak-1"; then
   log_error "Keycloak 容器未运行"
@@ -230,11 +227,8 @@ bash scripts/deploy/deploy-infrastructure-prod.sh
 deploy-infrastructure-prod.sh（主脚本）
 │
 ├── init-databases.sh（数据库初始化）
-│   ├── 检查并创建 keycloak 数据库
-│   ├── 检查并创建 keycloak_db 数据库
-│   ├── 检查并创建 findclass_db 数据库
-│   ├── 检查并创建 oneteam_prod 数据库
-│   └── 检查并创建 noda_prod 数据库
+│   ├── 检查并创建 noda_prod 数据库
+│   └── 检查并创建 keycloak 数据库
 │
 └── setup-keycloak-full.sh（Keycloak 配置）
     ├── 解密 secrets.sops.yaml（提取 Google OAuth 凭据）
@@ -252,7 +246,7 @@ deploy-infrastructure-prod.sh（主脚本）
 **检查日志**：
 ```bash
 docker logs noda-infra-keycloak-1
-docker logs noda-infra-postgres-1
+docker logs noda-infra-postgres-prod
 ```
 
 **常见原因**：

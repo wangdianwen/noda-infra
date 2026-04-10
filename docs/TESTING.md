@@ -20,7 +20,7 @@
 
 运行测试前必须满足以下条件：
 
-1. Docker Compose 服务已启动，`noda-infra-postgres-1` 容器运行中
+1. Docker Compose 服务已启动，`noda-infra-postgres-prod` 容器运行中
 2. 备份系统配置文件 `.env.backup` 已正确配置（B2 凭证、数据库连接信息）
 3. `rclone` 已安装（版本 >= 1.60），用于 B2 云存储操作
 4. `jq` 已安装，用于 JSON 格式验证
@@ -158,7 +158,7 @@ main "$@"
 
 各测试脚本内置了以下常用断言模式：
 
-- **`assert_equals expected actual message`** — 断言两个值相等（`test_alert.sh`、`test_metrics.sh`）
+- **`assert_equals expected actual message`** — 断言两个值相等（`test_alert.sh`、`test_metrics.sh`、`test_weekly_verify.sh`）
 - **`assert_success exit_code message`** — 断言命令执行成功（`test_weekly_verify.sh`）
 - **`assert_contains haystack needle message`** — 断言字符串包含（`test_weekly_verify.sh`）
 - **`assert_greater_than min actual message`** — 断言数值大于阈值（`test_metrics.sh`）
@@ -170,7 +170,7 @@ main "$@"
 
 | 库文件 | 功能 |
 |--------|------|
-| `constants.sh` | 退出码常量、测试配置（超时、重试、前缀） |
+| `constants.sh` | 退出码常量、测试配置（超时、重试、前缀）、告警和指标常量 |
 | `config.sh` | 配置加载和 B2 凭证验证 |
 | `log.sh` | 日志输出函数 |
 | `cloud.sh` | B2 云存储操作（上传、下载、清理） |
@@ -199,6 +199,6 @@ main "$@"
 - **每日自动备份**：凌晨 3:00 由 crontab 触发 `backup-postgres.sh`，内置验证步骤
 - **每周自动验证**：周日凌晨 3:00 由 crontab 触发 `test-verify-weekly.sh`，从 B2 下载最新备份并验证恢复
 
-Docker 镜像 `scripts/backup/docker/Dockerfile.test-verify` 提供了独立的测试验证环境，基于 `postgres:15-alpine`，预装 rclone、jq 等工具。
+Docker 镜像 `scripts/backup/docker/Dockerfile.test-verify` 提供了独立的测试验证环境，基于 `postgres:15-alpine`，预装 rclone、jq、bash 等工具。
 
 详细的端到端测试报告见 `scripts/backup/TEST_REPORT.md`。

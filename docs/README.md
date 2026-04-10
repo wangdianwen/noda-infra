@@ -57,6 +57,10 @@
 ```
 docs/
 ├── README.md                      # 本文档（导航索引）
+├── GETTING-STARTED.md             # 快速开始指南
+├── DEVELOPMENT.md                 # 开发指南
+├── TESTING.md                     # 测试指南
+├── CONFIGURATION.md               # 配置说明
 ├── DEPLOYMENT_GUIDE.md            # 主部署指南 ⭐
 ├── architecture.md                # 架构设计
 ├── KEYCLOAK_SCRIPTS.md            # Keycloak 脚本说明
@@ -113,7 +117,7 @@ curl -s https://auth.noda.co.nz/realms/noda | jq -r '.realm'
 1. **查看日志**：
    ```bash
    docker logs noda-infra-keycloak-1
-   docker logs noda-infra-postgres-1
+   docker logs noda-infra-postgres-prod
    ```
 
 2. **重新部署**：
