@@ -101,26 +101,26 @@
 
 ## Traceability
 
-v1.0 需求已完成归档。v1.2 需求待路线图创建时映射。
+v1.0 需求已完成归档。v1.2 需求映射如下：
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BFIX-01 | — | Pending |
-| BFIX-02 | — | Pending |
-| BFIX-03 | — | Pending |
-| GROUP-01 | — | Pending |
-| GROUP-02 | — | Pending |
-| KCDEV-01 | — | Pending |
-| KCDEV-02 | — | Pending |
-| KCDEV-03 | — | Pending |
-| THEME-01 | — | Pending |
-| THEME-02 | — | Pending |
+| BFIX-01 | Phase 10 | Pending |
+| BFIX-02 | Phase 10 | Pending |
+| BFIX-03 | Phase 10 | Pending |
+| GROUP-01 | Phase 11 | Pending |
+| GROUP-02 | Phase 11 | Pending |
+| KCDEV-01 | Phase 12 | Pending |
+| KCDEV-02 | Phase 12 | Pending |
+| KCDEV-03 | Phase 12 | Pending |
+| THEME-01 | Phase 13 | Pending |
+| THEME-02 | Phase 13 | Pending |
 
 **Coverage:**
 - v1.2 requirements: 10 total
-- Mapped to phases: 0
-- Unmapped: 10 ⚠️
+- Mapped to phases: 10
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-06*
-*Last updated: 2026-04-11 after v1.2 requirements definition*
+*Last updated: 2026-04-11 after v1.2 roadmap creation*
