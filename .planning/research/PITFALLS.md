@@ -1,298 +1,341 @@
 # Pitfalls Research
 
-**Domain:** PostgreSQL 云备份系统（Docker 容器环境 + 云存储）
-**Researched:** 2026-04-05
-**Confidence:** HIGH
+**Domain:** Keycloak 双环境部署 + 自定义主题（Docker Compose 基础设施）
+**Researched:** 2026-04-11
+**Confidence:** HIGH（官方文档验证）/ MEDIUM（社区实践）
 
 ---
 
 ## Critical Pitfalls
 
-### Pitfall 1: pg_dump 一致性误解 -- 认为备份了所有数据库就安全了
+### Pitfall 1: Keycloak 主题缓存 -- 修改了文件但页面不变
 
 **What goes wrong:**
-Noda 基础设施有多个数据库（keycloak_db、findclass_db）。pg_dump 每次只能备份一个数据库。如果只备份了 findclass_db 而忘记了 keycloak_db，灾难恢复时 Keycloak 配置丢失，所有用户认证失效。更严重的是，pg_dump 不备份角色（roles）和表空间（tablespaces）信息，恢复时可能因缺少角色导致权限错误。
+开发自定义主题时，修改了 FreeMarker 模板（`.ftl`）或 CSS 文件，刷新浏览器后页面完全没有变化。反复确认文件内容已更新，怀疑修改错了文件或路径不对。实际上 Keycloak 26.x（Quarkus）默认启用主题缓存，静态资源缓存时间为 30 天（`spi-theme-static-max-age=2592000`），模板和主题本身也被缓存在内存中。
 
 **Why it happens:**
-pg_dump 是单数据库工具。PostgreSQL 官方文档明确指出："pg_dump dumps only a single database at a time, and it does not dump information about roles or tablespaces (because those are cluster-wide rather than per-database)." 开发者经常以为一个 pg_dump 命令就备份了所有内容。
+Keycloak 出于性能考虑，会将主题资源（模板、CSS、JS、图片）缓存到内存和磁盘（`data/tmp/kc-gzip-cache` 目录）。即使底层文件已修改，缓存中的旧版本仍然被使用。更隐蔽的是，浏览器本身也会缓存这些静态资源。双重缓存（Keycloak + 浏览器）导致开发者误以为修改没有生效。
 
 **How to avoid:**
-- 使用 pg_dumpall --globals-only 单独备份角色和表空间定义
-- 对每个数据库单独运行 pg_dump（keycloak_db、findclass_db、oneteam_prod）
-- 在备份脚本中明确列出所有数据库名，不要使用通配符或硬编码单个库名
-- 备份脚本中包含预检查：连接数据库后先列出所有数据库，确认都在备份列表中
+- **开发环境**：在 Keycloak 启动命令中添加缓存禁用参数：
+  ```
+  --spi-theme-static-max-age=-1
+  --spi-theme-cache-themes=false
+  --spi-theme-cache-templates=false
+  ```
+- **生产环境**：保持默认缓存启用，修改主题后需要重启 Keycloak 容器
+- **浏览器**：开发时使用 Ctrl+Shift+R 强制刷新，或在 DevTools 中禁用缓存
+- **验证方法**：在模板中添加时间戳注释 `<!-- rendered at ${.now?string.iso} -->`，确认加载的是最新版本
 
 **Warning signs:**
-- 备份脚本只调用了一次 pg_dump
-- 备份输出文件名中没有区分数据库名
-- 恢复测试时发现缺少用户/角色
+- 修改 `.ftl` 文件后页面不变
+- 修改 CSS 后样式不变
+- 删除整个主题目录后登录页仍然正常显示（说明用的是缓存）
 
 **Phase to address:**
-Phase 1（备份脚本开发）-- 必须在第一个版本的备份脚本中就解决
+Phase 2（自定义主题开发）-- 开发环境启动参数必须在主题开发开始前配置好
 
 ---
 
-### Pitfall 2: 恢复失败 -- 备份成功但恢复时才暴露问题
+### Pitfall 2: Dev/Prod Keycloak 共享数据库 -- 数据互相污染
 
 **What goes wrong:**
-备份每天成功运行，日志显示一切正常。但当真正需要恢复时，发现：pg_dump 生成的纯文本格式恢复时遇到编码错误、扩展版本不兼容、或者恢复到不同版本的 PostgreSQL 时语法不兼容。更常见的是，恢复脚本从未被测试过，缺少关键步骤（如先创建数据库、设置 ON_ERROR_STOP）。
+当前 `docker-compose.yml` 中 Keycloak 的数据库配置为 `KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak`。`docker-compose.dev.yml` 覆盖了 `KC_HOSTNAME` 和 `KC_PROXY`，但**没有覆盖 `KC_DB_URL`**。这意味着开发环境和生产环境共用同一个 PostgreSQL `keycloak` 数据库。
 
-PostgreSQL 官方文档警告："you will only have a partially restored database"。默认情况下 psql 遇到错误会继续执行，导致恢复后数据库状态不完整但不报错。
+如果同时运行 `docker compose -f base -f dev up` 和 `docker compose -f base -f prod up`（或 docker-compose.app.yml），两个 Keycloak 实例会连接同一个数据库，导致：
+- Realm 配置互相覆盖
+- 用户数据不一致
+- 会话冲突
+- Schema 迁移竞争（Keycloak 启动时可能执行数据库迁移）
 
 **Why it happens:**
-- pg_dump 的纯文本输出在不同 PostgreSQL 版本之间可能不兼容
-- 恢复时缺少扩展或依赖
-- 没有使用 `ON_ERROR_STOP=on` 或 `--single-transaction` 参数
-- 恢复脚本从未被实际执行过
-- 恢复脚本中忘记了 `createdb -T template0` 步骤
+Docker Compose overlay 模式中，`dev.yml` 只覆盖了与生产不同的环境变量，但数据库连接字符串没有被认为是"需要覆盖"的项。开发者通常认为 dev overlay 已经处理了所有差异，不会逐一检查每个环境变量。
 
 **How to avoid:**
-- 使用 pg_dump -Fc（自定义格式）而非纯文本格式，用 pg_restore 恢复，支持选择性恢复和并行恢复
-- 恢复脚本中使用 `psql --set ON_ERROR_STOP=on` 或 `--single-transaction`
-- 恢复时必须先 `createdb -T template0 dbname`（用 template0 而非 template1）
-- 恢复后运行 ANALYZE 更新统计信息
-- 自动化恢复测试：每周在一个干净的测试环境中运行完整的备份恢复流程
+- 为 dev Keycloak 创建独立的数据库（如 `keycloak_dev`）
+- 在 `docker-compose.dev.yml` 中覆盖 `KC_DB_URL`：
+  ```yaml
+  keycloak:
+    environment:
+      KC_DB_URL: jdbc:postgresql://postgres-dev:5432/keycloak_dev
+  ```
+- 或者使用独立的 PostgreSQL 容器（复用现有的 `postgres-dev` 实例）
+- 在 PostgreSQL init 脚本中为 dev 环境创建 `keycloak_dev` 数据库
+- 确保 dev 和 prod 的 Keycloak 数据完全隔离
 
 **Warning signs:**
-- 备份文件是纯 SQL 文本格式（.sql）而非自定义格式（.dump）
-- 从未执行过恢复测试
-- 恢复脚本只有下载步骤，没有实际的 pg_restore/psql 步骤
+- dev 环境修改了 realm 配置后，prod 环境也被改变
+- 同时启动两个环境时 Keycloak 启动失败（数据库锁冲突）
+- dev 环境中看到了生产用户数据
 
 **Phase to address:**
-Phase 1（备份脚本开发）-- 选择 -Fc 格式；Phase 3（自动化测试）-- 建立恢复测试流水线
+Phase 1（双环境搭建）-- 必须在启动第二个 Keycloak 实例前解决
 
 ---
 
-### Pitfall 3: 云存储生命周期规则误配 -- 7天保留策略的 B2 特殊陷阱
+### Pitfall 3: 端口冲突 -- Dev 和 Prod Keycloak 无法同时运行
 
 **What goes wrong:**
-Backblaze B2 的生命周期规则基于文件版本（version），不是基于独立文件。Noda 项目每 6-12 小时生成一个新备份文件，文件名包含时间戳所以每个文件名不同。这意味着 `daysFromHidingToDeleting` 规则（删除旧版本）不会生效，因为每个备份文件的名称都不同，它们被视为独立文件而非同一文件的旧版本。
+`docker-compose.prod.yml` 和 `docker-compose.dev.yml` 都暴露了相同的端口：
+- 8080:8080（HTTP）
+- 8443:8443（HTTPS）
+- 9000:9000（管理端口）
 
-如果错误地使用 `daysFromUploadingToHiding` 来隐藏旧备份，会导致所有备份（包括最新的）在 7 天后被隐藏，无法通过正常列表看到。
+如果需要同时运行 dev 和 prod 环境（例如调试生产问题同时开发新功能），第二个启动的 Keycloak 实例会因端口占用而失败。Docker Compose 不会给出友好的错误信息，只显示 "port is already allocated"。
 
 **Why it happens:**
-Backblaze B2 的生命周期规则设计初衷是管理同一文件的版本历史（如备份软件上传同名文件时产生的旧版本），而不是管理不同名称的独立文件。开发者通常将"删除 7 天前的备份"理解为设置一个简单的生命周期规则，但 B2 的规则语义与直觉不同。
+端口映射在 Docker 层面是全局资源，不属于 Compose 项目隔离范围。即使使用不同的 Compose 文件（dev vs prod），同一主机上的端口只能绑定一次。`docker-compose.dev.yml` 复制了 `docker-compose.prod.yml` 的端口配置，没有做偏移。
 
 **How to avoid:**
-- **不要依赖 B2 生命周期规则来管理备份保留**。因为每个备份文件名不同（含时间戳），生命周期规则无法按预期工作
-- 在备份脚本中实现应用层清理逻辑：上传新备份后，列出 bucket 中的旧备份文件，删除超过 7 天的
-- 如果确实想用生命周期规则，必须使用 `daysFromUploadingToHiding` 配合 `daysFromHidingToDeleting`，但要清楚这会隐藏/删除该前缀下的所有文件（包括最近的），不适合备份场景
-- 在清理逻辑中保留安全缓冲：删除超过 8 天的文件（而非恰好 7 天），避免时区或定时任务延迟导致误删
+- dev 环境使用不同的端口映射：
+  ```yaml
+  keycloak:
+    ports:
+      - "18080:8080"   # 开发环境 HTTP
+      - "18443:8443"   # 开发环境 HTTPS
+      - "19000:9000"   # 开发环境管理端口
+  ```
+- 确保所有 dev 环境端口与 prod 端口有明确的偏移规则
+- 在 Nginx 配置中为 dev 环境的 Keycloak 添加路由（如果需要通过域名访问）
+- 文档中明确记录端口分配规则
 
 **Warning signs:**
-- Bucket 中文件数量持续增长，没有自动清理
-- 生命周期规则已设置但旧备份未被删除
-- 最新备份被意外隐藏或删除
+- 启动第二个 Compose 项目时报 "port is already allocated"
+- Keycloak 容器状态为 Restarting
+- 无法同时运行 dev 和 prod 环境
 
 **Phase to address:**
-Phase 2（云存储集成）-- 清理逻辑必须与上传逻辑一起实现
+Phase 1（双环境搭建）-- 端口规划必须在配置文件编写时完成
 
 ---
 
-### Pitfall 4: 凭证硬编码和泄露 -- 最常见的安全事故
+### Pitfall 4: 主题已部署但未生效 -- Admin Console 中未选择
 
 **What goes wrong:**
-云存储的 Access Key 和 Secret Key 被硬编码在备份脚本中、写入 .env 文件但没有 .gitignore、或以明文形式出现在 Docker Compose 配置中。一旦代码仓库泄露（包括推送到公开 GitHub），攻击者可以访问所有备份数据，甚至删除所有备份。
-
-当前项目中 `.env.production` 包含了数据库密码等敏感信息，且初始化 SQL 脚本 `01-create-databases.sql` 中硬编码了用户密码（keycloak_password_change_me、findclass_password_change_me）。
+按照 Keycloak 文档创建了主题目录结构、编写了 `theme.properties`、将文件放在正确路径（`themes/noda/login/`），重启了容器，但登录页面仍然显示默认的 Keycloak 主题。没有任何错误日志，主题文件看似正确。
 
 **Why it happens:**
-- 图方便直接在脚本中写入密钥
-- .env 文件没有被 .gitignore 忽略
-- Backblaze B2 的 Master Application Key 权限过大，一旦泄露影响整个账户
-- 团队成员不了解 Backblaze B2 的 Application Key 权限模型
+Keycloak 的主题不会自动应用。创建主题文件只是第一步，还需要在 Admin Console 中手动选择：
+1. 进入 Admin Console -> Realm Settings -> Themes 标签页
+2. 将 "Login Theme" 从 "keycloak" 改为 "noda"
+3. 保存
+
+如果使用 `init-realm.sh` 或 realm JSON 导入来初始化，需要在 JSON 配置中添加 `loginTheme: "noda"` 字段。当前 `noda-realm.json` 中没有 `loginTheme` 字段，`init-realm.sh` 也没有设置主题。
 
 **How to avoid:**
-- 为备份系统创建专用的 Backblaze B2 Standard Application Key，权限限制为：
-  - 仅限特定 bucket（不能访问其他 bucket）
-  - 仅限 writeFiles + deleteFiles + listFiles 权限（最低权限原则）
-  - 设置 fileNamePrefix 限制为备份路径前缀
-  - 不设置过期时间（或设置较长的有效期并记录在日历中提醒轮换）
-- 绝不使用 Master Application Key
-- 凭证通过环境变量传入脚本，不要硬编码
-- 确保 .env 文件在 .gitignore 中（当前 .env.production 已被 Git 追踪，需要立即处理）
-- 在 CI/CD 中使用 Jenkins Credentials 或密钥管理服务
+- 在 `noda-realm.json` 中添加主题配置：
+  ```json
+  {
+    "realm": "noda",
+    "loginTheme": "noda",
+    "accountTheme": "noda",
+    "emailTheme": "noda",
+    ...
+  }
+  ```
+- 或在 `init-realm.sh` 中通过 kcadm.sh 设置：
+  ```bash
+  /opt/keycloak/bin/kcadm.sh update realms/noda -s loginTheme=noda
+  ```
+- 在部署验证步骤中明确检查主题是否生效（访问登录页，检查页面源码中的自定义标识）
 
 **Warning signs:**
-- 脚本中出现明文 API Key
-- .env 文件被提交到 Git
-- 使用 Master Application Key
-- 单个 Key 能访问所有 bucket
+- 主题文件存在于正确路径，但登录页不变
+- Admin Console 中 Login Theme 仍为 "keycloak"
+- `noda-realm.json` 中没有 `loginTheme` 字段
 
 **Phase to address:**
-Phase 1（备份脚本开发）-- 凭证管理必须从一开始就正确
+Phase 2（自定义主题开发）-- 主题选择逻辑必须与主题文件一起交付
 
 ---
 
-### Pitfall 5: Docker 容器环境下的调度失效 -- cron 消失
+### Pitfall 5: theme.properties 继承配置错误 -- 主题加载失败或样式缺失
 
 **What goes wrong:**
-在 Docker 容器内运行 cron 定时任务，但容器重启后 cron 服务没有自动启动。或者 cron 任务使用了容器内的时区，与预期时区（Pacific/Auckland）不一致。更隐蔽的问题是，cron 任务在容器内运行 pg_dump 时，如果 PostgreSQL 容器已经停止或网络不通，备份会静默失败。
+自定义主题的 `theme.properties` 配置不正确，导致以下问题之一：
+- `parent=keycloak.v2` 但想修改的模板在 `keycloak`（v1）中
+- `parent=base` 但缺少基础样式，登录页裸露无样式
+- `import=common/keycloak` 写错路径，导致公共资源无法加载
+- Keycloak 26.x 的 login 主题默认 parent 是 `keycloak.v2`（React-based），不是旧的 `keycloak`
+
+更具体的陷阱：如果使用 `parent=keycloak.v2`，自定义 `.ftl` 模板不会生效，因为 v2 login 主题使用 React 组件渲染，不使用 FreeMarker。只有使用 `parent=keycloak`（v1 主题）才能通过 `.ftl` 模板自定义登录页。
 
 **Why it happens:**
-- Docker 容器默认不运行 init 系统，cron 不会自动启动
-- 容器时区默认是 UTC，与新西兰时区 NZST（UTC+12/NZDT UTC+13）不一致
-- cron 日志默认不输出到 Docker stdout/stderr，导致 `docker logs` 看不到备份日志
-- 容器 restart: unless-stopped 策略不会自动启动 cron 服务
+Keycloak 26.x 引入了基于 React 的新 login 主题（`keycloak.v2`），与传统的 FreeMarker 模板主题（`keycloak`）是两套不同的系统。开发者搜索到的教程大多是旧版 FreeMarker 方式，但新版本默认使用 React 方式。两套系统的模板文件结构、自定义方式完全不同。
+
+FreeMarker（v1）方式：修改 `.ftl` 模板文件
+React（v2）方式：通过 `messages/` 目录和 CSS 变量自定义，不能直接修改模板
 
 **How to avoid:**
-- **推荐方案：使用 Jenkins cron 调度**（项目已有 Jenkins 基础设施），避免在 Docker 容器内运行 cron
-- 如果使用 Docker 容器内 cron：
-  - 使用专门的备份容器（而非进入 PostgreSQL 容器）
-  - 设置 `TZ=Pacific/Auckland` 环境变量
-  - 确保入口脚本同时启动 cron 和 supervisord
-  - 将 cron 输出重定向到 stdout：`* */6 * * * /backup.sh >> /proc/1/fd/1 2>&1`
-- 备份脚本添加健康检查：执行前先验证 PostgreSQL 可连接
-- 使用 `docker compose exec` 或从备份容器通过 Docker 网络连接 PostgreSQL
+- **如果要完全自定义 HTML 结构**：使用 `parent=keycloak`（v1），编写 `.ftl` 模板
+- **如果只改颜色/Logo/文案**：使用 `parent=keycloak.v2`（v2），通过 CSS 变量和 `messages/*.properties` 自定义
+- 在 `theme.properties` 中明确指定 `parent`：
+  ```properties
+  # v1 方式（完全控制 HTML）
+  parent=keycloak
+  import=common/keycloak
+
+  # v2 方式（仅样式定制）
+  parent=keycloak.v2
+  ```
+- 不要混用 v1 的 `.ftl` 模板和 v2 的 React 组件
 
 **Warning signs:**
-- `docker logs` 中看不到任何备份日志
-- 备份文件的时间戳与预期不符（差 12-13 小时说明是 UTC vs NZ 时区问题）
-- 容器重启后备份停止运行
+- 设置了 `parent=keycloak.v2` 但修改 `.ftl` 文件无效
+- 登录页样式缺失（白屏或无样式文本）
+- Keycloak 日志中出现 theme not found 错误
+- 修改了 `login/theme.properties` 但没有任何变化
 
 **Phase to address:**
-Phase 1（备份脚本开发）-- 调度方案选择；Phase 2（自动化集成）-- 容器化调度
+Phase 2（自定义主题开发）-- 在编写任何主题代码前，必须确定使用 v1 还是 v2 方式
 
 ---
 
-### Pitfall 6: 网络传输失败 -- 上传中断和静默数据损坏
+### Pitfall 6: Hostname v2 SPI 配置错误导致 Cookie/Session 失效
 
 **What goes wrong:**
-备份文件上传到 Backblaze B2 时网络中断，导致上传不完整。脚本没有验证上传结果，认为备份成功。更常见的问题是：上传超时后脚本重试，但之前的不完整上传（unfinished large file）残留在 B2 中，占用存储空间并持续计费。
+Keycloak 26.x 使用 Hostname v2 SPI，配置规则比 v1 严格很多。以下错误配置会导致登录后 cookie 无法设置、session 失效、重定向循环：
 
-Backblaze B2 对大文件使用分片上传（multipart upload），每个分片最大 5GB。如果网络不稳定，可能部分分片上传成功但整体文件不完整。
+- `KC_HOSTNAME` 包含端口号（如 `https://auth.noda.co.nz:8080`）-- v2 会从 scheme 自动推导端口，显式写端口会导致 cookie domain 不匹配
+- `KC_HOSTNAME_STRICT=true` 但通过 IP 或 localhost 访问 -- 请求的 hostname 与配置不匹配，请求被拒绝
+- 同时设置 `KC_HOSTNAME` 和已废弃的 `KC_HOSTNAME_PORT` -- 冲突导致不可预测行为
+- Dev 环境忘记设置 `KC_HOSTNAME_STRICT=false` -- localhost 访问被拒绝
 
 **Why it happens:**
-- 备份文件较大（数据库增长后），上传时间超过网络超时设置
-- 脚本没有实现校验和验证（上传前计算 checksum，上传后对比）
-- Backblaze B2 的 unfinished large files 默认不会被自动清理（除非设置了 `daysFromStartingToCancelingUnfinishedLargeFiles` 生命周期规则）
-- 脚本使用简单的 `aws s3 cp` 但没有检查返回码
+v1 Hostname SPI 中 `KC_HOSTNAME_PORT` 和 `KC_HOSTNAME_STRICT_HTTPS` 是常用选项。升级到 v2 后，这些选项被废弃但仍然存在于很多教程和配置示例中。v2 的 `KC_HOSTNAME` 接受完整 URL（包含 scheme），端口自动从 scheme 推导（https=443, http=80），不需要也不应该单独设置端口。
+
+当前项目已经在 v1.1 中修复过这个问题（Google 登录 8080 端口问题的第 4 层），但添加 dev 环境时容易重新引入错误配置。
 
 **How to avoid:**
-- 上传前计算 SHA256 校验和，上传后用 `head-object` 或 `b2_get_file_info` 对比
-- 使用 `aws s3 cp` 时检查退出码（`$?`），失败时重试（指数退避，最多 3 次）
-- 设置 B2 bucket 的生命周期规则：`daysFromStartingToCancelingUnfinishedLargeFiles: 1`，自动清理未完成的上传
-- 对大文件使用分片上传，设置合理的分片大小（如 100MB）
-- 备份脚本必须有明确的成功/失败退出码，便于监控系统判断
+- **生产环境**：
+  ```yaml
+  KC_HOSTNAME: "https://auth.noda.co.nz"  # 完整 URL，不含端口
+  KC_HOSTNAME_STRICT: "false"              # 允许内部网络访问
+  KC_PROXY: "edge"                         # Cloudflare Tunnel TLS 终止
+  KC_PROXY_HEADERS: "xforwarded"           # 读取 X-Forwarded 头
+  ```
+- **开发环境**：
+  ```yaml
+  KC_HOSTNAME: ""                          # 空 = 允许任何 hostname
+  KC_HOSTNAME_STRICT: "false"
+  KC_HOSTNAME_STRICT_HTTPS: "false"
+  KC_PROXY: none                           # 不使用代理
+  ```
+- **绝对不要使用**：`KC_HOSTNAME_PORT`、`KC_HOSTNAME_STRICT_HTTPS`（v1 废弃选项）
+- **验证方法**：登录后检查浏览器 DevTools -> Application -> Cookies，确认 cookie domain 正确
 
 **Warning signs:**
-- 上传统常超时或失败
-- B2 账单中出现未预期的存储费用（unfinished large files 占用空间）
-- 备份文件大小不一致或比预期小很多
+- 登录后立即被重定向回登录页（cookie 未设置）
+- 浏览器地址栏显示 `auth.noda.co.nz:8080`（端口泄露）
+- Keycloak 日志显示 hostname mismatch 错误
+- Cookie domain 包含端口号
 
 **Phase to address:**
-Phase 2（云存储集成）-- 上传逻辑和校验；Phase 4（监控告警）-- 传输失败告警
+Phase 1（双环境搭建）-- Hostname 配置必须在第一个 Keycloak 实例启动前正确设置
 
 ---
 
-### Pitfall 7: 备份文件未压缩 -- 存储成本和传输时间倍增
+### Pitfall 7: Docker Volume 只读挂载导致主题无法热更新
 
 **What goes wrong:**
-pg_dump 默认输出的纯文本 SQL 文件未压缩。对于一个中等规模的数据库（100MB-1GB），未压缩的 SQL 文本可能是实际数据的 3-5 倍大小。这不仅增加存储成本（虽然 B2 仅 $6/TB/月，但长期累积不可忽视），更严重的是增加上传时间，导致备份窗口过长。
+`docker-compose.yml` 中 Keycloak 的主题挂载使用了 `:ro`（只读）标志：
+```yaml
+volumes:
+  - ./services/keycloak/themes:/opt/keycloak/themes/noda:ro
+```
+
+这意味着容器内无法写入主题目录。虽然这本身不是问题（主题文件由宿主机管理），但会导致以下混淆：
+
+1. 开发者尝试在容器内调试主题（如 `docker exec` 进入容器修改文件），修改被拒绝
+2. 宿主机修改文件后，由于 Keycloak 缓存（见 Pitfall 1），需要重启容器才能生效
+3. 路径映射 `themes/noda` 是容器内的主题名称，但宿主机路径 `services/keycloak/themes` 可能与开发者预期的目录结构不一致
+
+更关键的问题是：**宿主机的 `services/keycloak/themes/` 目录目前不存在**。Keycloak 启动时不会报错（目录不存在时 Docker 静默跳过挂载），但主题自然也不会加载。
 
 **Why it happens:**
-- pg_dump 默认输出纯文本，没有内置压缩
-- 开发者不了解 pg_dump -Fc 自定义格式自带压缩
-- 或者使用了纯文本格式配合管道压缩，但没有测试压缩/解压流程
+Docker 的 bind mount 对不存在的源目录处理方式是：如果是文件则报错，如果是目录则自动创建一个空目录。但这个空目录会被标记为 owned by root，可能导致权限问题。同时，`:ro` 标志防止了容器内任何写入操作。
 
 **How to avoid:**
-- 使用 `pg_dump -Fc`（自定义格式），自带 zlib 压缩，且支持并行恢复
-- 或者使用 `pg_dump | gzip > backup.sql.gz`（纯文本 + gzip），简单且压缩效果好
-- 如果使用 -Fd（目录格式），可以用 `-j` 参数并行备份，加快大型数据库的备份速度
-- 不要同时使用 -Fc 和 gzip（双重压缩没有额外收益）
+- **开发环境**：移除 `:ro` 标志，允许容器写入（方便调试）：
+  ```yaml
+  volumes:
+    - ./services/keycloak/themes:/opt/keycloak/themes/noda
+  ```
+- **生产环境**：保持 `:ro`（安全最佳实践）
+- 在项目初始化脚本中创建主题目录：
+  ```bash
+  mkdir -p services/keycloak/themes/noda/login
+  mkdir -p services/keycloak/themes/noda/login/resources/css
+  mkdir -p services/keycloak/themes/noda/login/resources/img
+  ```
+- 修改主题后重启容器（生产）或禁用缓存（开发，见 Pitfall 1）
 
 **Warning signs:**
-- 备份文件是 .sql 纯文本格式
-- 备份文件大小接近或超过数据库实际大小
-- 上传时间超过 10 分钟（对小数据库来说太长）
+- `docker exec` 修改文件失败（read-only file system）
+- Keycloak Admin Console 主题列表中没有 "noda" 选项
+- `ls services/keycloak/themes/` 显示目录不存在或为空
 
 **Phase to address:**
-Phase 1（备份脚本开发）-- 格式选择必须在第一版确定
+Phase 2（自定义主题开发）-- 目录创建和挂载配置必须在主题开发开始前完成
 
 ---
 
-### Pitfall 8: 监控盲区 -- 备份成功但数据损坏
+### Pitfall 8: CSP 策略阻止自定义 JavaScript
 
 **What goes wrong:**
-备份脚本返回退出码 0，日志显示"备份成功"，但实际上：pg_dump 过程中遇到了非致命错误（如权限不足导致部分表被跳过）、数据库本身已损坏、或磁盘空间不足导致输出文件被截断。监控系统只检查退出码，认为一切正常，直到灾难发生时才发现备份不可用。
+在自定义登录主题中添加了 JavaScript（如自定义验证逻辑、第三方分析脚本），但脚本不执行。浏览器控制台显示 Content Security Policy (CSP) 违规错误：
+```
+Refused to execute inline script because it violates the following Content Security Policy directive: "script-src ..."
+```
+
+Keycloak 默认的 CSP 策略非常严格，不允许内联脚本、eval、以及非白名单域名的脚本加载。
 
 **Why it happens:**
-- pg_dump 在遇到某些错误时可能仍然返回 0（如使用 --if-exists 时遇到不存在的对象）
-- 脚本只检查了命令退出码，没有检查 stderr 输出
-- 没有验证备份文件的完整性（文件大小、能否被 pg_restore 读取目录）
-- 磁盘空间不足时 pg_dump 可能写入一个不完整的文件而不报错
+Keycloak 的安全策略默认禁止内联脚本（防止 XSS）。自定义主题中的 `<script>` 标签如果不是通过外部文件引入，或者没有在 CSP 中添加对应域名，会被浏览器阻止。
 
 **How to avoid:**
-- 备份后立即验证：`pg_restore --list backup.dump` 能成功列出内容
-- 检查备份文件大小是否在合理范围内（与上次备份比较，偏差不超过 50%）
-- 记录每次备份的行数/表数，与历史数据对比
-- 检查 stderr 输出中是否有 WARNING 或 ERROR
-- 监控本地磁盘空间，空间不足时立即告警
-- 实现 BACKUP-06（每周自动恢复测试）作为最终保障
+- 将所有 JavaScript 放在外部 `.js` 文件中（`resources/js/` 目录），不要使用内联脚本
+- 在 `theme.properties` 中添加 CSP 白名单（如果需要加载外部脚本）：
+  ```properties
+  scripts=script.js
+  ```
+- 避免在主题中使用 `eval()`、`new Function()` 等不安全操作
+- 如果确实需要修改 CSP 策略，通过 Keycloak SPI 或 realm 属性设置（不推荐）
+- 尽量用纯 CSS 实现视觉效果，减少 JavaScript 依赖
 
 **Warning signs:**
-- 备份文件大小突然变小
-- pg_restore --list 输出错误
-- 备份日志中有 WARNING 但被忽略
-- 本地磁盘使用率超过 90%
+- 浏览器控制台出现 CSP 违规错误
+- 自定义 JavaScript 功能不工作
+- 第三方脚本加载失败
 
 **Phase to address:**
-Phase 1（备份脚本开发）-- 基本验证；Phase 4（监控告警）-- 完整监控
+Phase 2（自定义主题开发）-- 如果主题需要 JavaScript，必须使用外部文件方式
 
 ---
 
-### Pitfall 9: WAL 归档与 pg_dump 的混淆
+### Pitfall 9: Google OAuth 回调 URL 在 Dev 环境不匹配
 
 **What goes wrong:**
-当前 PostgreSQL 配置已启用 WAL 归档（`archive_mode = on`，`archive_command` 指向本地目录），但 WAL 归档文件只存储在本地 Docker volume 中。开发者可能认为有了 WAL 归档就等于有了完整备份，但 WAL 归档需要配合基础备份（base backup）才能实现 PITR（时间点恢复）。单独的 WAL 归档文件无法恢复数据。
-
-同时，pg_dump 和 WAL 归档是两种独立的备份策略，不应该混用。pg_dump 是逻辑备份（SQL 级别），WAL 归档是物理备份（文件级别）。
+在开发环境中启动 Keycloak 后，Google OAuth 登录失败，显示 "redirect_uri_mismatch" 错误。这是因为 Google OAuth 的 Authorized Redirect URIs 配置了 `https://auth.noda.co.nz/realms/noda/protocol/openid-connect/auth`，但开发环境使用 `http://localhost:8080`，域名和协议都不匹配。
 
 **Why it happens:**
-PostgreSQL 的备份概念体系复杂（逻辑备份 vs 物理备份、基础备份 vs WAL 归档、PITR），容易混淆。WAL 归档看起来像"自动备份"，但实际上它只是事务日志，需要配合 pg_basebackup 才能恢复。
+Google OAuth 的回调 URL 必须精确匹配（包括协议、域名、端口、路径）。开发环境使用 localhost + HTTP，与生产环境的自定义域名 + HTTPS 完全不同。当前 `init-realm.sh` 中 Google OAuth 配置使用环境变量，但没有区分 dev/prod 环境。
 
 **How to avoid:**
-- 明确选择一种备份策略。对于 Noda 项目的规模（小中型数据库），pg_dump 足够
-- 如果不使用 PITR，考虑关闭 WAL 归档（`archive_mode = off`），减少不必要的磁盘 I/O 和存储
-- 如果保留 WAL 归档，必须定期运行 pg_basebackup 作为基础备份，并且 WAL 归档文件也要上传到云存储
-- 在文档中清楚说明当前使用的是哪种备份策略
+- 在 Google Cloud Console 中为 OAuth Client 添加多个 Authorized Redirect URIs：
+  - 生产：`https://auth.noda.co.nz/realms/nada/protocol/openid-connect/auth`
+  - 开发：`http://localhost:8080/realms/noda/protocol/openid-connect/auth`
+  - 以及对应的 JavaScript origins
+- 在 `docker-compose.dev.yml` 中覆盖 Google OAuth 环境变量（如果使用不同的 Client）
+- 或者开发环境跳过 Google OAuth，使用用户名/密码登录
 
 **Warning signs:**
-- WAL 归档目录持续增长但从未清理
-- 只有 WAL 文件没有基础备份
-- 备份策略文档中同时提到 pg_dump 和 PITR 但没有说明关系
+- 开发环境 Google 登录报 redirect_uri_mismatch
+- Google OAuth 登录页显示的回调 URL 与实际不符
+- 生产环境正常但开发环境 Google 登录失败
 
 **Phase to address:**
-Phase 1（备份脚本开发）-- 明确备份策略，清理现有配置中的混淆
-
----
-
-### Pitfall 10: 加密误解 -- 云存储"加密"不等于端到端安全
-
-**What goes wrong:**
-Backblaze B2 默认提供 SSE-B2（服务端加密，使用 B2 管理的密钥）。开发者认为这已经"加密"了，但实际上这意味着 Backblaze 持有加密密钥，任何有账户访问权限的人都可以解密数据。如果 Access Key 泄露，攻击者可以下载并读取所有备份数据。
-
-对于 PostgreSQL 备份，更大的风险是：备份文件中包含了完整的数据库内容，包括用户个人信息、密码哈希、Keycloak 配置等敏感数据。
-
-**Why it happens:**
-- 对"加密"的理解不够精确：传输加密（TLS）不等于存储加密，SSE 不等于零知识加密
-- Backblaze B2 的 SSE-B2 默认开启，让开发者误以为数据已经安全
-- pg_dump 输出是纯文本（或自定义格式的二进制），包含所有明文数据
-
-**How to avoid:**
-- 启用 B2 的 SSE-B2（至少保证存储加密），这在 B2 中已经是默认行为
-- 对于更高安全要求，使用 SSE-C（客户管理的密钥）：上传时提供自己的加密密钥，B2 不存储密钥
-- 关键安全措施：保护 Access Key（见 Pitfall 4），这比加密方式更重要
-- pg_dump -Fc 格式的输出虽然是二进制，但不是加密的，不要混淆"二进制"和"加密"
-- 对于当前项目规模，SSE-B2 + 严格的 Key 权限管理已足够
-
-**Warning signs:**
-- 安全策略中只写了"使用云存储加密"但没有说明具体方式
-- 使用 Master Application Key 访问 B2
-- 备份文件可以直接用 pg_restore 读取而不需要密钥
-
-**Phase to address:**
-Phase 2（云存储集成）-- 加密配置；Phase 4（安全审计）-- 验证加密方案
+Phase 1（双环境搭建）-- Dev 环境的 Google OAuth 配置必须与 prod 分开处理
 
 ---
 
@@ -300,99 +343,114 @@ Phase 2（云存储集成）-- 加密配置；Phase 4（安全审计）-- 验证
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| 只备份一个数据库 | 脚本简单，快速完成 | Keycloak 数据丢失导致全部认证失效 | 永远不可接受 |
-| 使用纯文本 pg_dump | 简单直接，可用 psql 恢复 | 文件大、恢复不可控、无法选择性恢复 | 仅用于开发环境的临时备份 |
-| 依赖 B2 生命周期规则清理 | 不用写清理代码 | 备份文件名含时间戳，规则不生效 | 永远不可接受 -- 必须在脚本中清理 |
-| 备份脚本中硬编码密钥 | 快速完成开发 | 密钥泄露导致全部备份数据暴露 | 仅用于本地开发测试，且必须是不含真实数据的 Key |
-| 跳过恢复测试 | 节省测试时间 | 灾难时才发现备份不可用 | 永远不可接受 |
-| 不验证上传结果 | 脚本简单 | 备份文件损坏或上传不完整 | 永远不可接受 |
-| 保留 WAL 归档但不配合 base backup | 看起来有备份 | 占用磁盘空间但无法恢复 | 可以暂时保留（已有 pg_dump），但应评估是否关闭 |
+| Dev/Prod Keycloak 共用数据库 | 少维护一个数据库，配置简单 | 数据互相污染，realm 配置冲突，无法安全测试 | 永远不可接受 |
+| 使用默认 keycloak 主题（不自定义） | 零开发成本 | 品牌识别度低，用户信任度差 | 仅在 MVP 阶段 |
+| 主题开发不创建 dev 禁用缓存参数 | 配置简单 | 每次修改需重启容器，开发效率极低 | 仅生产环境可以接受 |
+| 不为 dev 环境配置独立 Google OAuth | 省一个 OAuth Client 配置 | Dev 环境无法测试 Google 登录 | 可以暂时接受（用密码登录替代） |
+| 使用 v1 FreeMarker 主题（而非 v2 React） | 教程多，自由度高 | 未来 Keycloak 版本可能弃用 v1 | 当前推荐（v1 仍然支持） |
+| 主题文件不打包为 JAR | 简单直接，目录挂载即可 | 升级 Keycloak 版本时可能丢失自定义配置 | 仅在单节点部署时可以接受 |
+| 复制整个 keycloak 主题再修改 | 快速看到效果 | 升级时无法继承上游修复，维护负担大 | 永远不可接受 -- 应使用 parent 继承 |
 
 ## Integration Gotchas
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| Backblaze B2 S3 API | 使用 AWS S3 的 endpoint URL | 必须使用 B2 的 S3 endpoint：`s3.<region>.backblazeb2.com` |
-| AWS CLI with B2 | 忽略 B2 不支持的功能 | B2 不支持 IAM Roles、Object Tagging、Website Configuration；使用 S3 API 时要注意兼容性 |
-| pg_dump in Docker | 在宿主机上运行 pg_dump 连接容器 | 使用与 PostgreSQL 容器相同版本的 pg_dump（17.9），通过 Docker 网络连接 |
-| Docker networking | 使用 localhost:5432 连接 | 使用 Docker 服务名 `postgres:5432` 连接（仅在 Docker 网络内） |
-| B2 Application Key | 使用 Master Key | 创建专用的 Standard Key，限制到单个 bucket 和必要的权限 |
-| B2 lifecycle rules | 用 daysFromHidingToDeleting 管理 7 天保留 | 该规则只管同名文件的旧版本；不同名称的备份文件需应用层清理 |
-| pg_restore | 直接恢复到运行中的数据库 | 恢复前先创建干净的数据库（从 template0），恢复后运行 ANALYZE |
-| Jenkins cron | 在 Jenkins controller 上运行 pg_dump | 确保 Jenkins agent 上安装了与 PostgreSQL 版本匹配的客户端工具 |
+| Keycloak + PostgreSQL | Dev 和 Prod 连接同一个数据库 | 为 dev Keycloak 创建独立的 `keycloak_dev` 数据库 |
+| Keycloak + Cloudflare Tunnel | 忘记设置 `KC_PROXY: edge` | 必须设置 `edge` + `KC_PROXY_HEADERS: xforwarded` + `KC_HTTP_ENABLED: true` |
+| Keycloak + Nginx | Nginx 代理 `/auth/` 到 Keycloak，覆盖了应用的 `/auth/callback` | 分域名路由：`auth.noda.co.nz` -> keycloak，`class.noda.co.nz` -> app（当前已修复） |
+| Keycloak + Google OAuth | Dev 环境用 prod 域名回调 | Google Console 中添加 localhost 回调 URL，或 dev 环境跳过 Google OAuth |
+| Keycloak + Docker Network | 使用 `localhost` 连接其他服务 | 使用 Docker 服务名（如 `postgres:5432`）连接同网络内的服务 |
+| 主题 + Docker Volume | 主题目录不存在时 Docker 静默创建空目录 | 在启动前 `mkdir -p` 创建完整的目录结构 |
+| 主题 + 浏览器缓存 | 修改主题后浏览器显示旧版本 | 开发时 DevTools 禁用缓存；生产环境修改后重启容器 |
 
 ## Performance Traps
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| 未压缩的 pg_dump | 备份文件 > 500MB，上传 > 10min | 使用 -Fc 格式（自带压缩） | 数据库 > 100MB |
-| 备份锁表 | 应用响应变慢，出现锁等待 | pg_dump 不阻塞读操作，但会阻塞 DDL；在低峰期运行 | 大量 DDL 操作期间 |
-| 磁盘空间不足 | pg_dump 失败，容器崩溃 | 监控磁盘使用率，备份到临时目录后立即上传删除 | 本地存储 < 2x 数据库大小 |
-| 上传带宽瓶颈 | 备份窗口超时 | 使用压缩减少传输量，分片上传 | 网络带宽 < 10Mbps |
-| B2 API 调用频率 | 超过免费额度产生费用 | 合并 API 调用，使用分片上传减少请求次数 | 每天 > 2500 次 Class B/C 调用 |
+| Keycloak 主题缓存导致每次修改需重启 | 开发主题时效率极低 | Dev 环境添加 `--spi-theme-cache-themes=false` | 开发阶段 |
+| 主题包含大量未优化图片 | 登录页加载慢 | 压缩图片，使用 WebP，控制总大小 < 200KB | 图片 > 500KB |
+| 过多自定义 CSS/JS 资源 | 登录页渲染延迟 | 合并压缩资源文件，总 CSS < 50KB | 文件数 > 5 |
+| Dev 环境禁用缓存导致 Keycloak CPU 增高 | 容器资源使用率上升 | 仅在开发环境禁用；生产保持默认 | 并发用户 > 100 时 |
+| 两个 Keycloak 实例争抢 PostgreSQL 连接 | 数据库连接池耗尽 | 为每个实例配置独立的连接池和数据库 | 同时运行 dev + prod |
 
 ## Security Mistakes
 
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| 使用 Master Application Key | 泄露后攻击者可访问/删除所有 bucket 所有文件 | 创建专用 Standard Key，限制到单个 bucket + 最低权限 |
-| .env 文件提交到 Git | 所有密钥暴露在版本控制历史中 | 确保 .gitignore 包含 .env*（当前 .env.production 已被追踪，需清理） |
-| 初始化 SQL 中硬编码密码 | 密码以明文存储在 Git 中 | 使用环境变量传入密码，init 脚本中引用 ${VAR} |
-| 备份文件无加密传输 | 中间人可截获数据库完整内容 | 确保使用 HTTPS（B2 S3 API 默认强制 TLS） |
-| 备份 bucket 设为 public | 任何人可下载所有备份 | bucket 必须设为 private（allPrivate） |
-| SQL 初始化脚本中明文密码 | keycloak_password_change_me、findclass_password_change_me 在 Git 中 | 使用环境变量或 Docker secrets |
+| Dev Keycloak 暴露相同端口且无认证保护 | 本地开发时攻击者可访问管理控制台 | Dev 环境使用非标准端口；设置 admin 密码；仅绑定 localhost |
+| 主题中的 XSS 漏洞 | 用户凭证被盗 | 使用 FreeMarker 的 `?no_esc` 要谨慎；避免内联脚本；遵循 CSP 策略 |
+| Dev 环境使用 HTTP 传输敏感数据 | 本地网络嗅探可获取密码和 token | Dev 环境仅用于测试，不使用真实用户数据 |
+| 主题中硬编码 Client Secret | Secret 泄露到前端代码 | 主题文件不应包含任何敏感配置；Secret 通过环境变量或 Admin Console 配置 |
+| `init-realm.sh` 中 `secret=YOUR_CLIENT_SECRET_HERE` 占位符未替换 | Client Secret 为已知默认值 | 使用环境变量 `${CLIENT_SECRET}` 或通过 Admin Console 手动配置 |
+
+## UX Pitfalls
+
+| Pitfall | User Impact | Better Approach |
+|---------|-------------|-----------------|
+| 主题只改了颜色没改文案 | 用户仍然觉得是 "Keycloak" 而不是 "Noda" | 同时修改 `messages/*.properties` 中的所有面向用户的文案 |
+| 登录页没有 Noda 品牌 Logo | 用户不信任登录页面（看起来像第三方） | 添加 Noda Logo 和品牌标识 |
+| 忘记处理移动端适配 | 手机上登录页布局错乱 | 使用响应式 CSS，测试主流移动设备 |
+| 自定义主题不支持暗色模式 | 强光环境下可读性差 | 跟随系统 `prefers-color-scheme` 或提供手动切换 |
+| 错误提示使用 Keycloak 默认英文 | 中文用户不理解错误含义 | 在 `messages_zh_CN.properties` 中提供中文翻译 |
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **备份脚本:** 常缺失对所有数据库的备份 -- 验证脚本循环覆盖 keycloak_db、findclass_db、oneteam_prod
-- [ ] **云存储上传:** 常缺失上传后校验 -- 验证上传后检查文件大小或校验和
-- [ ] **旧备份清理:** 常缺失清理逻辑 -- 验证超过 7 天的备份文件被自动删除
-- [ ] **恢复脚本:** 常缺失完整的恢复流程 -- 验证包含创建数据库、恢复数据、运行 ANALYZE
-- [ ] **告警通知:** 常缺失失败告警 -- 验证备份失败时有 webhook/邮件通知
-- [ ] **日志输出:** 常缺失结构化日志 -- 验证日志包含时间戳、操作类型、数据库、文件大小、耗时、状态
-- [ ] **权限最小化:** 常缺失专用 API Key -- 验证使用受限的 Standard Application Key
-- [ ] **时区处理:** 常缺失时区配置 -- 验证备份文件名使用 Pacific/Auckland 时区
-- [ ] **WAL 归档:** 常缺失归档策略说明 -- 验证文档中明确说明 pg_dump 与 WAL 归档的关系
+- [ ] **主题文件部署:** 常缺失 Admin Console 中的主题选择 -- 验证 Realm Settings -> Themes -> Login Theme 设为 "noda"
+- [ ] **主题继承:** 常缺失 `parent=keycloak` 导致样式全丢 -- 验证 `theme.properties` 中 parent 配置正确
+- [ ] **Dev 环境数据库隔离:** 常缺失 dev Keycloak 的独立数据库 -- 验证 `KC_DB_URL` 在 dev overlay 中被覆盖
+- [ ] **Dev 环境端口偏移:** 常缺失 dev 环境的端口映射修改 -- 验证 dev 和 prod 可以同时启动
+- [ ] **主题目录结构:** 常缺失完整的目录层级 -- 验证 `themes/noda/login/theme.properties` 和 `themes/noda/login/login.ftl` 存在
+- [ ] **Google OAuth Dev 回调:** 常缺失 localhost 回调 URL -- 验证 Google Console 包含开发环境回调地址
+- [ ] **Hostname v2 配置:** 常混入 v1 废弃选项 -- 验证没有 `KC_HOSTNAME_PORT` 或 `KC_HOSTNAME_STRICT_HTTPS`
+- [ ] **本地化消息:** 常缺失中文消息文件 -- 验证 `messages_zh_CN.properties` 包含所有自定义文案
+- [ ] **Favicon 和页面标题:** 常缺失自定义 favicon 和标题 -- 验证登录页标签显示 Noda 而非 Keycloak
+- [ ] **主题资源文件:** 常缺失 `resources/` 目录中的 CSS/图片 -- 验证自定义样式和 Logo 文件存在
 
 ## Recovery Strategies
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| 只备份了一个数据库 | MEDIUM | 立即补充备份缺失的数据库；如有本地 WAL 归档可尝试恢复 |
-| 备份格式错误导致恢复失败 | LOW | 用 pg_restore --list 检查；如纯文本格式可手动编辑修复 |
-| B2 旧备份未清理 | LOW | 手动运行清理脚本；设置 daysFromStartingToCancelingUnfinishedLargeFiles: 1 清理残留上传 |
-| 凭证泄露 | HIGH | 立即轮换所有泄露的 Key；检查 B2 访问日志；审计是否有未授权操作 |
-| Docker cron 失效 | LOW | 切换到 Jenkins 调度；或重新配置容器入口点 |
-| 备份文件损坏 | HIGH | 尝试恢复到最近的可用备份；如有 WAL 归档可尝试 PITR 恢复 |
-| 加密配置错误 | LOW | 重新配置 SSE-B2 或 SSE-C；现有文件自动使用新加密策略 |
-| 恢复脚本未测试 | MEDIUM | 在测试环境执行完整恢复流程；修复发现的问题后更新脚本 |
+| 主题缓存导致修改不生效 | LOW | 重启 Keycloak 容器；或添加缓存禁用参数后重启 |
+| Dev/Prod 共享数据库导致数据污染 | HIGH | 从最近的 prod 备份恢复；清理 dev 环境写入的冲突数据；重建 dev 数据库 |
+| 端口冲突无法启动 | LOW | 修改 dev 环境的端口映射，重新启动 |
+| Hostname v2 配置错误导致登录循环 | MEDIUM | 停止容器；修改环境变量；清除浏览器 Cookie；重启容器 |
+| 主题继承配置错误（白屏） | LOW | 修改 `theme.properties` 的 parent；重启容器 |
+| CSP 阻止自定义 JS | LOW | 将内联脚本移到外部文件；更新 `theme.properties` 的 scripts 配置 |
+| Google OAuth dev 回调不匹配 | LOW | 在 Google Console 添加 localhost 回调 URL（需等待 5 分钟生效） |
+| Volume 目录不存在 | LOW | 创建目录结构；重启容器 |
 
 ## Pitfall-to-Phase Mapping
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| 多数据库备份遗漏 | Phase 1（备份脚本） | 备份脚本列出所有数据库并逐一备份 |
-| 恢复失败 | Phase 1（格式选择）+ Phase 3（自动化测试） | pg_restore --list 成功；每周恢复测试通过 |
-| B2 生命周期规则误配 | Phase 2（云存储集成） | 清理脚本正确删除超过 7 天的独立备份文件 |
-| 凭证硬编码 | Phase 1（备份脚本） | 代码审查确认无硬编码密钥；Key 权限最小化 |
-| Docker 调度失效 | Phase 2（自动化集成） | Jenkins cron 按预期触发；容器重启后调度恢复 |
-| 网络传输失败 | Phase 2（云存储集成） | 上传后校验和匹配；重试机制工作正常 |
-| 未压缩备份 | Phase 1（格式选择） | 使用 -Fc 格式，文件大小比纯文本小 60-80% |
-| 监控盲区 | Phase 4（监控告警） | 备份失败或文件异常时告警触发 |
-| WAL 归档混淆 | Phase 1（策略明确） | 文档明确备份策略；评估是否关闭 archive_mode |
-| 加密误解 | Phase 2（加密配置） | 使用 SSE-B2；Access Key 严格受限 |
+| 主题缓存 | Phase 2（主题开发） | Dev 环境启动参数包含缓存禁用参数；修改文件后刷新可见 |
+| Dev/Prod 数据库共享 | Phase 1（双环境搭建） | Dev KC_DB_URL 指向 keycloak_dev；prod 指向 keycloak |
+| 端口冲突 | Phase 1（双环境搭建） | Dev 和 prod Keycloak 可以同时启动无端口冲突 |
+| 主题未在 Admin Console 选择 | Phase 2（主题开发） | noda-realm.json 包含 loginTheme 字段；或 init-realm.sh 设置主题 |
+| theme.properties 继承错误 | Phase 2（主题开发） | 登录页正确显示自定义样式和内容 |
+| Hostname v2 配置错误 | Phase 1（双环境搭建） | 登录后 Cookie domain 正确；无重定向循环 |
+| Volume 只读挂载 | Phase 2（主题开发） | themes/noda/ 目录存在且有完整文件结构 |
+| CSP 阻止 JS | Phase 2（主题开发） | 浏览器控制台无 CSP 违规；自定义 JS 正常执行 |
+| Google OAuth dev 回调 | Phase 1（双环境搭建） | Dev 环境 Google 登录正常工作或明确跳过 |
+
+## Phase-Specific Warnings
+
+| Phase Topic | Likely Pitfall | Mitigation |
+|-------------|---------------|------------|
+| Keycloak Dev 环境配置 | 数据库共享 + 端口冲突 + Hostname 配置 | 先规划端口和数据库，再写配置文件 |
+| 自定义主题开发 | 缓存问题 + v1/v2 选择 + 继承配置 | 先确定技术路线（v1 vs v2），再开始编码 |
+| 主题部署 | Admin Console 未选择 + 目录不存在 | 部署后验证清单：目录存在 -> Admin 选择 -> 浏览器验证 |
+| Dev 环境测试 | Google OAuth 回调不匹配 | 提前在 Google Console 配置 localhost 回调 |
 
 ## Sources
 
-- PostgreSQL 官方文档：SQL Dump (https://www.postgresql.org/docs/current/backup-dump.html) -- pg_dump 一致性保证、恢复注意事项、自定义格式说明
-- PostgreSQL 官方文档：pg_dump 参考 (https://www.postgresql.org/docs/current/app-pgdump.html) -- 命令行参数、格式选项
-- Backblaze B2 定价页面 (https://www.backblaze.com/cloud-storage/pricing) -- 存储费用 $6/TB/月，免费 egress 3x
-- Backblaze B2 API 交易定价 (https://www.backblaze.com/cloud-storage/transaction-pricing) -- Class A 免费，Class B/C 每天 2500 次免费
-- Backblaze B2 生命周期规则文档 (https://www.backblaze.com/docs/cloud-storage-lifecycle-rules) -- 规则语义、版本管理、daysFromHidingToDeleting vs daysFromUploadingToHiding
-- Backblaze B2 S3 兼容 API 文档 (https://www.backblaze.com/docs/cloud-storage-s3-compatible-api) -- SSE 支持、不支持的功能列表
-- Backblaze B2 Application Keys 文档 (https://www.backblaze.com/docs/cloud-storage-application-keys) -- Standard vs Master Key、权限限制、最佳实践
-- Noda 项目代码库分析：docker-compose.yml、docker-compose.prod.yml、postgresql.conf、01-create-databases.sql
+- Keycloak 26.2.3 Server Developer Guide -- Themes（https://www.keycloak.org/docs/26.2/server_development/#themes）-- 主题类型、theme.properties、继承、缓存控制
+- Keycloak 26.2.3 Server Administration Guide -- Hostname v2（https://www.keycloak.org/docs/26.2/server_admin/#hostname）-- v2 SPI 配置、废弃选项、验证规则
+- Keycloak 26.2.3 Server Administration Guide -- Reverse Proxy（https://www.keycloak.org/docs/26.2/server_admin/#reverse-proxy）-- proxy 模式、edge TLS 终止、proxy-headers
+- Noda 项目 CLAUDE.md -- Google 登录 8080 端口 5 层修复记录（已验证 Hostname v2 配置）
+- Noda 项目 docker-compose.yml / docker-compose.dev.yml / docker-compose.prod.yml -- 当前配置分析
+- Noda 项目 services/keycloak/ -- init-realm.sh、noda-realm.json 现状分析
 
 ---
-*Pitfalls research for: Noda PostgreSQL 云备份系统*
-*Researched: 2026-04-05*
+*Pitfalls research for: Keycloak 双环境部署 + 自定义主题开发*
+*Researched: 2026-04-11*

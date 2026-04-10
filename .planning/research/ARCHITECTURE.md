@@ -1,758 +1,733 @@
-# Architecture Patterns: PostgreSQL 云备份系统
+# Architecture Patterns: Keycloak 自定义主题 + 双环境
 
-**Domain:** 数据库备份系统，集成到现有 Docker Compose 基础设施
-**Researched:** 2026-04-06
-**Overall confidence:** HIGH（基于项目代码库直接分析 + STACK.md 技术决策）
-
----
-
-## 推荐架构总览
-
-```
-                                 Noda 基础设施
-┌─────────────────────────────────────────────────────────────────────┐
-│                                                                     │
-│  ┌──────────────┐                                                   │
-│  │  Jenkins      │── cron 触发（每6小时）──┐                        │
-│  │  (noda-jenkins)│                         │                        │
-│  └──────────────┘                           ▼                        │
-│                              ┌──────────────────────────┐           │
-│                              │  backup-to-cloud.sh      │           │
-│                              │  (新组件：备份编排脚本)    │           │
-│                              └──────────────────────────┘           │
-│                                         │                            │
-│                          ┌──────────────┼──────────────┐            │
-│                          ▼              ▼              ▼            │
-│                   ┌───────────┐  ┌───────────┐  ┌───────────┐     │
-│                   │ pg_dump   │  │ pg_dump   │  │ pg_dumpall│     │
-│                   │ noda_prod │  │ keycloak  │  │ globals   │     │
-│                   └─────┬─────┘  └─────┬─────┘  └─────┬─────┘    │
-│                         │              │              │            │
-│                         └──────────────┼──────────────┘            │
-│                                        ▼                            │
-│                              ┌──────────────────┐                   │
-│                              │  .dump 文件       │                   │
-│                              │  (临时本地存储)    │                   │
-│                              │  /tmp/backup-*    │                   │
-│                              └────────┬─────────┘                   │
-│                                       │                             │
-│                              ┌────────▼─────────┐                   │
-│                              │  rclone copy      │                   │
-│                              │  + 校验和验证      │                   │
-│                              └────────┬─────────┘                   │
-│                                       │                             │
-└───────────────────────────────────────┼─────────────────────────────┘
-                                        │ HTTPS (SSE-B2 加密)
-                                        ▼
-                              ┌─────────────────────┐
-                              │  Backblaze B2        │
-                              │  Bucket: noda-backup │
-                              │                      │
-                              │  noda_prod/          │
-                              │    noda_prod_*.dump  │
-                              │  keycloak/           │
-                              │    keycloak_*.dump   │
-                              │  globals/            │
-                              │    globals_*.sql     │
-                              └─────────────────────┘
-```
+**Domain:** Keycloak 认证服务定制与开发环境隔离
+**Researched:** 2026-04-11
+**Overall confidence:** HIGH（基于项目代码库直接分析 + Keycloak 官方文档）
 
 ---
 
-## 一、组件清单：新组件 vs 修改现有组件
+## 一、架构总览
+
+### 当前架构（v1.1）
+
+```
+浏览器 → Cloudflare CDN → Cloudflare Tunnel (noda-ops) → Docker 内部网络
+  class.noda.co.nz → nginx → findclass-ssr:3001
+  auth.noda.co.nz  → nginx → keycloak:8080
+                                │
+                                ▼
+                          postgres:5432/keycloak
+```
+
+### v1.2 目标架构
+
+```
+生产环境:
+  auth.noda.co.nz → Cloudflare Tunnel → nginx → keycloak:8080
+                                                  │
+                                                  ├─ postgres:5432/keycloak (prod 数据库)
+                                                  └─ /opt/keycloak/themes/noda/login/ (自定义主题)
+
+开发环境:
+  localhost:8180 → keycloak-dev:8080
+                      │
+                      ├─ postgres-dev:5432/keycloak_dev (dev 数据库)
+                      └─ /opt/keycloak/themes/noda/login/ (共享自定义主题，热更新)
+```
+
+### 变更范围
+
+| 变更类型 | 组件 | 说明 |
+|---------|------|------|
+| 新增 | `docker/services/keycloak/themes/noda/login/` | 自定义登录主题文件 |
+| 新增 | `keycloak-dev` 服务定义（dev overlay） | 开发环境独立 Keycloak 实例 |
+| 修改 | `docker/docker-compose.dev.yml` | 添加 keycloak-dev 服务 |
+| 不变 | `docker/docker-compose.yml` | 主题卷挂载已预留 |
+| 不变 | `docker/docker-compose.prod.yml` | 主题卷挂载已预留 |
+| 不变 | `config/nginx/conf.d/default.conf` | 路由规则无需变更 |
+| 不变 | `docker/services/postgres/init-dev/` | keycloak_dev 数据库已创建 |
+
+---
+
+## 二、组件清单
 
 ### 新增组件
 
 | 组件 | 类型 | 位置 | 职责 |
 |------|------|------|------|
-| `backup-to-cloud.sh` | Shell 脚本 | `scripts/backup/` | 备份编排：调用 pg_dump -> 上传 -> 清理旧备份 -> 输出状态 |
-| `verify-backup.sh` | Shell 脚本 | `scripts/backup/` | 下载最新备份并运行 `pg_restore --list` 验证完整性 |
-| `restore-from-cloud.sh` | Shell 脚本 | `scripts/backup/` | 一键恢复：从 B2 下载 -> pg_restore 到目标数据库 |
-| `notify-status.sh` | Shell 脚本 | `scripts/backup/` | 发送备份状态通知（成功/失败），支持 webhook |
-| `Jenkinsfile.backup` | Jenkins Pipeline | 项目根目录或 `jenkins/` | Jenkins 流水线定义，定时触发备份 |
-| `rclone.conf`（模板） | 配置文件 | `config/backup/` | rclone B2 远程连接配置（凭据通过 SOPS 加密管理） |
-| `.env.backup`（模板） | 环境变量 | `config/backup/` | 备份相关环境变量（B2 bucket 名、保留天数等） |
+| `theme.properties` | 配置文件 | `docker/services/keycloak/themes/noda/login/theme.properties` | 声明主题名称、父主题、样式资源 |
+| `login.ftl` | FreeMarker 模板 | `docker/services/keycloak/themes/noda/login/login.ftl` | 可选：自定义登录页 HTML 结构 |
+| `noda.css` | 样式表 | `docker/services/keycloak/themes/noda/login/resources/css/noda.css` | 品牌化样式覆盖 |
+| `messages_zh.properties` | 消息包 | `docker/services/keycloak/themes/noda/login/messages/messages_zh.properties` | 中文界面文本定制 |
+| `messages_en.properties` | 消息包 | `docker/services/keycloak/themes/noda/login/messages/messages_en.properties` | 英文界面文本定制 |
+| `keycloak-dev` 服务 | Docker Compose | `docker/docker-compose.dev.yml` | 开发环境独立 Keycloak 实例 |
 
-### 需要修改的现有组件
+### 需要修改的组件
 
 | 组件 | 修改内容 | 影响范围 | 修改量 |
 |------|---------|---------|--------|
-| `config/secrets.sops.yaml` | 新增 B2 API 凭据字段 | 仅追加，不影响现有字段 | 小 |
-| `deploy.sh` | 可选：安装 rclone（如果宿主机没有） | 可作为独立步骤 | 小 |
-| `docker-compose.jenkins.yml` | 可选：挂载 rclone 配置到 Jenkins 容器 | 添加一行 volume 挂载 | 极小 |
-| `backups/README.md` | 更新为云备份说明 | 纯文档 | 小 |
-| `.gitignore` | 确保 `config/backup/rclone.conf` 不被提交 | 追加一行 | 极小 |
+| `docker-compose.dev.yml` | 添加 keycloak-dev 服务 + 修改现有 keycloak 服务指向 postgres-dev | 开发环境 | 中 |
 
 ### 不需要修改的组件
 
 | 组件 | 原因 |
 |------|------|
-| `docker-compose.simple.yml` | 备份通过 `docker exec` 访问 PostgreSQL，不需要新容器 |
-| `docker-compose.app.yml` | 备份不影响应用服务 |
-| `docker-compose.prod.yml` | 备份在宿主机/Jenkins 层面执行，不涉及生产配置覆盖 |
-| PostgreSQL 容器 | pg_dump 已内置在 postgres:17.9 镜像中 |
-| Nginx 配置 | 备份系统不通过 HTTP 暴露 |
-| Cloudflare Tunnel | 备份上传走宿主机到 B2 的 HTTPS，不经过 Tunnel |
-
-**关键设计决策：备份不在 Docker 网络内运行，而是在宿主机/Jenkins 容器内通过 `docker exec` 调用 pg_dump。** 这避免了给 Docker Compose 配置增加复杂性。
+| `docker-compose.yml`（基础） | 主题卷挂载 `./services/keycloak/themes:/opt/keycloak/themes/noda:ro` 已存在 |
+| `docker-compose.prod.yml`（生产） | 主题卷挂载已存在，生产 Keycloak 无需修改 |
+| Nginx 配置 | 主题是 Keycloak 内部渲染，不影响代理路由 |
+| findclass-ssr | 应用不直接与主题交互，仅通过 OAuth 协议通信 |
+| noda-ops | 备份系统不涉及主题文件 |
+| postgres init 脚本 | `keycloak_dev` 数据库已在 `01-create-databases.sql` 中创建 |
 
 ---
 
-## 二、备份流程架构
+## 三、自定义主题架构
 
-### 数据流
-
-```
-Jenkins cron 触发
-       │
-       ▼
-backup-to-cloud.sh
-       │
-       ├─ 1. 前置检查
-       │     ├─ 检查 PostgreSQL 容器健康状态
-       │     ├─ 检查 rclone 配置是否可用
-       │     └─ 检查磁盘空间（至少 2x 预估备份大小）
-       │
-       ├─ 2. 数据库转储
-       │     ├─ docker exec postgres pg_dump -Fc -U postgres -d noda_prod
-       │     ├─ docker exec postgres pg_dump -Fc -U postgres -d keycloak
-       │     └─ docker exec postgres pg_dumpall --globals-only -U postgres
-       │
-       ├─ 3. 本地验证
-       │     └─ pg_restore --list 验证每个 .dump 文件可读
-       │
-       ├─ 4. 云上传
-       │     ├─ rclone copy --checksum --contimeout 60s --retries 3
-       │     └─ rclone check 验证上传完整性
-       │
-       ├─ 5. 清理旧备份（云端）
-       │     └─ rclone delete --min-age 7d（按数据库子目录）
-       │
-       └─ 6. 清理临时文件
-             └─ rm -f /tmp/backup-*.dump
-```
-
-### 关键设计原则
-
-1. **原子性**：每个数据库独立备份。一个数据库备份失败不影响其他数据库的备份和上传。
-2. **先验证后上传**：本地先用 `pg_restore --list` 验证 .dump 文件完整性，再上传到云端。
-3. **校验和保护**：rclone 上传时使用 `--checksum` 参数，上传后用 `rclone check` 验证。
-4. **临时文件隔离**：所有临时文件使用 `/tmp/backup-` 前缀，备份完成后清理。
-5. **幂等性**：脚本可以安全地重复执行，不会产生重复文件或状态错误。
-
-### 脚本接口设计
-
-```bash
-# backup-to-cloud.sh 接口
-# 输入：无（通过环境变量配置）
-# 输出：stdout 日志 + exit code（0=成功，1=失败）
-# 环境变量：
-#   B2_REMOTE     - rclone 远程名称（默认：b2-backup）
-#   B2_BUCKET     - B2 bucket 名称（默认：noda-db-backup）
-#   RETENTION_DAYS - 保留天数（默认：7）
-#   BACKUP_DBS    - 要备份的数据库列表（默认："noda_prod keycloak"）
-#   PG_CONTAINER  - PostgreSQL 容器名（默认：noda-infra-postgres-1）
-```
-
----
-
-## 三、存储架构
-
-### B2 Bucket 结构
+### 3.1 主题目录结构
 
 ```
-noda-db-backup/                         # Bucket 根
-├── noda_prod/                          # 生产数据库备份
-│   ├── noda_prod_20260406_0001.dump    # 自定义格式（-Fc）
-│   ├── noda_prod_20260406_1200.dump
-│   ├── noda_prod_20260406_1800.dump
-│   ├── noda_prod_20260407_0001.dump
-│   └── ...
-├── keycloak/                           # Keycloak 数据库备份
-│   ├── keycloak_20260406_0001.dump
-│   ├── keycloak_20260406_1200.dump
-│   └── ...
-└── globals/                            # 全局角色和表空间定义
-    ├── globals_20260406_0001.sql
-    ├── globals_20260406_1200.sql
-    └── ...
+docker/services/keycloak/
+└── themes/
+    └── noda/                          # 主题名称（Keycloak 管理界面选择 "noda"）
+        └── login/                     # 主题类型：login
+            ├── theme.properties       # 主题元数据（父主题、资源引用）
+            ├── login.ftl              # 可选：覆盖登录页模板
+            ├── resources/
+            │   ├── css/
+            │   │   └── noda.css       # 品牌化样式
+            │   └── img/
+            │       └── logo.svg       # Noda 品牌 Logo（可选）
+            └── messages/
+                ├── messages_en.properties  # 英文文本覆盖
+                └── messages_zh.properties  # 中文文本覆盖
 ```
 
-### 文件命名规范
-
-```
-{database}_{YYYYMMDD}_{HHMM}.dump       # 数据库备份
-globals_{YYYYMMDD}_{HHMM}.sql           # 全局对象备份
-```
-
-**设计理由：**
-- 时间戳使用 UTC，避免时区混乱
-- 按数据库名分目录，便于 rclone 按目录清理旧备份
-- `.dump` 扩展名表示 -Fc 自定义格式，`.sql` 表示纯文本
-- 时间戳精度到分钟（HHMM），对于 6 小时备份频率足够区分
-
-### 元数据
-
-每个备份文件通过 B2 的文件信息（file info）携带元数据：
-
-```
-source: noda-infra
-database: noda_prod
-pg_version: 17.9
-backup_type: full
-backup_tool: pg_dump -Fc
-created_by: jenkins-backup-job
-```
-
-rclone 上传时通过 `--metadata` 参数附加（rclone 1.62+ 支持）。
-
-### 保留策略
-
-```
-云端保留：7 天（按 RETENTION_DAYS 环境变量控制）
-    → 7天 x 4次/天 = ~28 个文件/数据库
-    → 3个数据库 x 28 = ~84 个文件
-
-本地不保留：备份上传成功后删除本地临时文件
-    → 原因：本地磁盘空间有限，且云端已有校验和验证
-```
-
-**清理脚本逻辑：**
-
-```bash
-# 清理指定数据库目录中超过 RETENTION_DAYS 天的文件
-rclone delete "${B2_REMOTE}:${B2_BUCKET}/${db_name}/" \
-    --min-age "${RETENTION_DAYS}d" \
-    --verbose
-```
-
-注意：不使用 B2 生命周期规则。原因见 PITFALLS.md Pitfall 3 -- B2 生命周期基于文件版本而非时间戳。
-
----
-
-## 四、调度架构
-
-### 调度方式：Jenkins Pipeline
-
-```
-Jenkins Server (noda-jenkins)
-┌─────────────────────────────────┐
-│                                 │
-│  Jenkinsfile.backup             │
-│  ┌───────────────────────────┐  │
-│  │ triggers:                  │  │
-│  │   cron('H */6 * * *')     │  │── 每6小时触发
-│  │                            │  │
-│  │ stages:                    │  │
-│  │   1. Pre-flight checks     │  │── 检查依赖和状态
-│  │   2. Backup databases      │  │── 执行 pg_dump
-│  │   3. Verify backups        │  │── pg_restore --list
-│  │   4. Upload to B2          │  │── rclone copy + check
-│  │   5. Cleanup old backups   │  │── rclone delete --min-age
-│  │   6. Cleanup temp files    │  │── rm /tmp/backup-*
-│  │                            │  │
-│  │ post:                      │  │
-│  │   success: notify          │  │── webhook 通知（可选）
-│  │   failure: notify          │  │── webhook 通知（必须）
-│  └───────────────────────────┘  │
-│                                 │
-│  Credentials:                   │
-│   b2-key-id     (Secret text)   │
-│   b2-app-key    (Secret text)   │
-│                                 │
-└─────────────────────────────────┘
-```
-
-### 为什么不用 Docker 容器 cron
-
-| 问题 | Jenkins 方案 | Docker cron 方案 |
-|------|-------------|-----------------|
-| 时区配置 | Jenkins 全局配置 | 需要在容器中设置 TZ |
-| 日志查看 | Jenkins Web UI | 需要 docker logs |
-| 通知集成 | Jenkins 内置 | 需要自行实现 |
-| 手动触发 | Jenkins "Build Now" | 需要 docker exec |
-| 凭据管理 | Jenkins Credentials | 需要挂载或环境变量 |
-| 容器重启 | 无影响（Jenkins 持久化） | cron 任务丢失（除非持久化） |
-| 运维成本 | 低（已有 Jenkins） | 高（新增容器管理） |
-
-详细分析见 PITFALLS.md Pitfall 5。
-
-### Jenkins 与 Docker 的交互方式
-
-```
-Jenkins 容器
-    │
-    │ docker exec（通过挂载的 docker.sock）
-    ▼
-noda-infra-postgres-1 容器
-    │
-    │ pg_dump -Fc
-    ▼
-Jenkins 容器内的临时文件
-    │
-    │ rclone copy
-    ▼
-Backblaze B2
-```
-
-**关键集成点：** Jenkins 容器已挂载 `/var/run/docker.sock`（见 `docker-compose.jenkins.yml` 第 12 行），可以直接执行 `docker exec` 命令操作 PostgreSQL 容器。
-
----
-
-## 五、恢复架构
-
-### 恢复流程
-
-```
-restore-from-cloud.sh
-       │
-       ├─ 1. 选择恢复源
-       │     ├─ 参数指定：--date YYYYMMDD --time HHMM
-       │     └─ 默认：最新备份
-       │
-       ├─ 2. 从 B2 下载
-       │     ├─ rclone copy 下载 .dump 文件到 /tmp/
-       │     └─ rclone check 验证下载完整性
-       │
-       ├─ 3. 验证备份文件
-       │     └─ pg_restore --list 验证可读性
-       │
-       ├─ 4. 停止相关服务（可选）
-       │     └─ docker compose stop api keycloak
-       │        （避免恢复期间写入冲突）
-       │
-       ├─ 5. 恢复数据库
-       │     ├─ 重建目标数据库（drop + create）
-       │     ├─ pg_restore -Fc -U postgres -d noda_prod < dump文件
-       │     └─ 恢复全局对象（角色/表空间）
-       │
-       └─ 6. 重启服务
-             └─ docker compose start api keycloak
-```
-
-### 恢复脚本接口
-
-```bash
-# restore-from-cloud.sh 接口
-# 用法：
-#   ./restore-from-cloud.sh                          # 恢复最新备份到 noda_prod
-#   ./restore-from-cloud.sh --db noda_prod           # 恢复指定数据库
-#   ./restore-from-cloud.sh --db noda_prod --date 20260406  # 恢复指定日期的备份
-#   ./restore-from-cloud.sh --list                    # 列出可用备份
-#   ./restore-from-cloud.sh --dry-run                 # 只下载验证不实际恢复
-
-# 参数：
-#   --db DATABASE    目标数据库名（默认：noda_prod）
-#   --date YYYYMMDD  恢复指定日期的备份（默认：最新）
-#   --time HHMM      恢复指定时间的备份（默认：当天最新）
-#   --list           列出云端可用备份
-#   --dry-run        只下载和验证，不实际恢复
-#   --target CONTAINER  目标 PostgreSQL 容器（默认：noda-infra-postgres-1）
-```
-
-### 每周自动恢复测试
-
-```
-Jenkins 定时任务（每周日凌晨 3 点）
-       │
-       ▼
-verify-backup.sh
-       │
-       ├─ 1. 从 B2 下载最新 noda_prod 备份
-       ├─ 2. 创建临时数据库 noda_verify
-       ├─ 3. pg_restore 到 noda_verify
-       ├─ 4. 运行基本查询验证：
-       │     SELECT count(*) FROM information_schema.tables
-       │     SELECT count(*) FROM [核心表]
-       ├─ 5. 删除 noda_verify 数据库
-       └─ 6. 报告验证结果
-```
-
-这个验证在 PostgreSQL 容器内完成，不影响生产数据库。
-
----
-
-## 六、监控架构
-
-### 日志层次
-
-```
-Level 1: 脚本输出（stdout/stderr）
-    ├─ 每个步骤的开始/结束时间戳
-    ├─ 文件大小和传输速度
-    ├─ 错误详情和退出码
-    └─ rclone 原始输出
-
-Level 2: Jenkins 构建记录
-    ├─ 构建历史（成功/失败趋势）
-    ├─ 构建时长统计
-    ├─ 控制台输出（可搜索）
-    └─ 构建状态（蓝色/红色）
-
-Level 3: 外部通知（Webhook）
-    ├─ 备份失败 -> 立即发送告警
-    ├─ 备份成功 -> 可选发送摘要
-    └─ 恢复测试失败 -> 立即发送告警
-```
-
-### 通知机制
-
-```bash
-# notify-status.sh 接口
-# 输入：
-#   BACKUP_STATUS   - success / failure / warning
-#   BACKUP_MESSAGE  - 状态描述
-#   WEBHOOK_URL     - 通知目标（从 secrets 加载）
-
-# 支持的通知方式：
-# 1. Webhook（首选）- 可对接 Slack/Discord/Teams/Telegram
-# 2. 邮件 - 通过 Jenkins 内置邮件插件（已有 SMTP 配置）
-```
-
-### 监控面板
-
-**初期方案：Jenkins Dashboard**
-
-不需要额外搭建监控面板。Jenkins 自身提供：
-- 构建历史趋势图
-- 构建时间线
-- 控制台输出搜索
-- 失败构建高亮
-
-**未来可选升级：**
-如果需要更详细的备份状态监控，可以考虑：
-- 在现有 Nginx 上添加一个 `/backup-status` 端点
-- 脚本在备份成功后更新一个状态 JSON 文件
-- 前端读取该 JSON 显示最近备份状态
-
-但 MVP 阶段不需要这个复杂度。
-
-### 关键监控指标
-
-| 指标 | 来源 | 告警条件 |
-|------|------|---------|
-| 备份执行状态 | Jenkins 构建状态 | 连续 2 次失败 |
-| 备份文件大小 | pg_restore --list 输出 | 与前次相比偏差 >50% |
-| 上传完整性 | rclone check 输出 | 校验和不匹配 |
-| 恢复测试结果 | verify-backup.sh 退出码 | 验证失败 |
-| 备份时长 | Jenkins 构建时长 | >30 分钟 |
-| 云端文件数 | rclone ls 输出 | 少于预期（清理异常） |
-
----
-
-## 七、与现有系统的集成点
-
-### 1. Docker 网络
-
-```
-noda-network (外部网络)
-    ├── noda-infra-postgres-1      ← 备份脚本通过 docker exec 访问
-    ├── noda-infra-keycloak-1
-    ├── noda-infra-nginx-1
-    ├── noda-infra-cloudflared-1
-    ├── findclass-web
-    ├── findclass-api
-    └── noda-jenkins               ← 备份任务在此执行
-
-注意：备份脚本不需要新的网络连接。
-    Jenkins 容器通过 docker.sock 访问 postgres 容器。
-    rclone 从 Jenkins 容器直连 Backblaze B2（HTTPS 出站）。
-```
-
-备份数据流不经过 noda-network。pg_dump 在 postgres 容器内执行，结果通过 docker exec 的 stdout 管道传回 Jenkins 容器。
-
-### 2. 环境变量集成
+**目录路径必须精确匹配**：Keycloak 从 `/opt/keycloak/themes/<主题名>/<类型>/` 加载主题。当前 docker-compose.yml 中的卷挂载是：
 
 ```yaml
-# config/secrets.sops.yaml 新增字段
-b2_account_id: ENC[...]           # B2 Account ID
-b2_application_key: ENC[...]      # B2 受限 Standard Application Key
-backup_webhook_url: ENC[...]      # 可选：通知 webhook URL
-```
-
-```bash
-# .env.backup 模板（不加密，不含敏感信息）
-B2_REMOTE=b2-backup
-B2_BUCKET=noda-db-backup
-RETENTION_DAYS=7
-BACKUP_DBS="noda_prod keycloak"
-PG_CONTAINER=noda-infra-postgres-1
-BACKUP_TMP_DIR=/tmp
-```
-
-**凭据管理策略：**
-- 敏感凭据（B2 API Key、Webhook URL）存入 `config/secrets.sops.yaml`，使用已有的 SOPS + age 加密体系
-- 非敏感配置（bucket 名、保留天数）存入 `.env.backup` 模板
-- Jenkins 凭据通过 Jenkins Credentials 管理，不暴露在文件系统中
-
-### 3. SOPS 加密体系集成
-
-项目已使用 SOPS + age 管理密钥（见 `.sops.yaml` 和 `config/secrets.sops.yaml`）。备份系统的密钥自然融入此体系：
-
-```
-config/secrets.sops.yaml       ← 现有，追加 B2 凭据
-config/keys/                   ← 现有 age 密钥目录
-.sops.yaml                     ← 现有 SOPS 配置
-```
-
-Jenkins 解密方式沿用 `deploy.sh` 的模式：
-1. 优先通过 `sops --decrypt` 解密（需要 SOPS_AGE_KEY_FILE）
-2. 回退到 `config/secrets.local.yaml`（开发环境）
-
-### 4. Jenkins 容器挂载
-
-需要在 `docker-compose.jenkins.yml` 中添加的挂载：
-
-```yaml
-# 新增挂载
 volumes:
-  - jenkins_home:/var/jenkins_home
-  - /var/run/docker.sock:/var/run/docker.sock      # 已有
-  - ~/.claude/team-keys:/var/jenkins_home/keys:ro   # 已有
-  - ../config/backup/rclone.conf:/var/jenkins_home/.config/rclone/rclone.conf:ro  # 新增
+  - ./services/keycloak/themes:/opt/keycloak/themes/noda:ro
 ```
 
-rclone 配置文件放在 `config/backup/rclone.conf`，挂载到 Jenkins 容器内。该文件不包含凭据（凭据在 Jenkins Credentials 中），只包含 B2 endpoint 和 account ID。
+这意味着宿主机 `./services/keycloak/themes/` 下的内容映射到容器内 `/opt/keycloak/themes/noda/`。所以宿主机目录结构应该是：
 
-### 5. 部署脚本集成
-
-`deploy.sh` 可选添加 rclone 安装检查：
-
-```bash
-# 在部署基础设施服务之后，可选检查备份工具
-if ! command -v rclone > /dev/null 2>&1; then
-    echo -e "${YELLOW}rclone 未安装，云备份功能不可用${NC}"
-    echo -e "${YELLOW}安装命令：curl https://rclone.org/install.sh | sudo bash${NC}"
-fi
+```
+docker/services/keycloak/themes/login/...
 ```
 
-这不是必须的 -- rclone 可以独立安装，不影响核心部署流程。
+容器内看到的是 `/opt/keycloak/themes/noda/login/...`。
+
+### 3.2 theme.properties 配置
+
+```properties
+# 主题元数据
+parent=keycloak
+import=common/keycloak
+
+# 样式资源
+styles=css/noda.css
+
+# 可选：JavaScript
+# scripts=js/noda.js
+
+# 可选：额外 HTML 属性
+# htmlClasses=noda-login
+```
+
+**关键决策：使用 `parent=keycloak` 继承基础主题。**
+
+原因：
+- 不继承基础主题意味着需要重写所有 FreeMarker 模板（login.ftl、login-otp.ftl、login-password.ftl 等 20+ 个模板）
+- 继承后只需覆盖需要定制的文件，其余自动回退到父主题
+- Keycloak 升级时，自定义文件少意味着兼容性风险低
+- 未来 Keycloak 新增登录流程模板（如 WebAuthn），自定义主题自动继承
+
+### 3.3 样式覆盖策略
+
+**推荐：仅覆盖 CSS，不覆盖 FreeMarker 模板。**
+
+仅在以下情况覆盖 `login.ftl`：
+- 需要修改 HTML 结构（如添加额外 DOM 元素）
+- 需要插入自定义 JavaScript
+- 需要修改表单字段顺序或布局
+
+纯 CSS 可以实现的品牌化：
+- Logo 替换（背景图片覆盖 `.kc-logo-text`）
+- 颜色方案（CSS 变量覆盖）
+- 字体（Google Fonts 引入）
+- 布局微调（间距、圆角、阴影）
+- 按钮样式
+- 背景图片
+
+**示例 noda.css 最小集：**
+
+```css
+/* Noda 品牌化样式 - 覆盖 Keycloak 默认主题 */
+:root {
+  --pf-global--primary-color--100: #2563eb;  /* Noda 品牌蓝 */
+  --pf-global--primary-color--200: #1d4ed8;
+  --pf-global--BackgroundColor--100: #f8fafc;
+}
+
+/* 登录页容器 */
+.login-pf body {
+  background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+}
+
+/* Logo 区域 */
+.kc-logo-text {
+  background-image: url('../img/logo.svg');
+  background-repeat: no-repeat;
+  background-size: contain;
+  width: 120px;
+  height: 40px;
+}
+
+/* 登录卡片 */
+.card-pf {
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+/* 登录按钮 */
+.pf-c-button.pf-m-primary {
+  background-color: #2563eb;
+  border-radius: 8px;
+}
+```
+
+### 3.4 消息包定制
+
+**仅覆盖需要修改的文本，未覆盖的自动使用 Keycloak 默认翻译。**
+
+`messages_en.properties`:
+```properties
+# 覆盖登录页标题
+loginTitle=Noda
+loginTitleHtml=Noda
+
+# 覆盖欢迎文本
+loginWelcome=Sign in to your account
+
+# 覆盖 Google 登录按钮文本（如果使用 identity provider）
+identity-provider-link-label=Sign in with Google
+```
+
+`messages_zh.properties`:
+```properties
+loginTitle=Noda
+loginTitleHtml=Noda
+loginWelcome=\u767b\u5f55\u60a8\u7684\u8d26\u6237
+identity-provider-link-label=\u4f7f\u7528 Google \u767b\u5f55
+```
+
+### 3.5 主题激活流程
+
+主题文件就位后，需要在 Keycloak Admin Console 中激活：
+
+```
+1. 访问 https://auth.noda.co.nz/admin/ （生产）或 http://localhost:8180/admin/ （开发）
+2. 登录管理员账号（KEYCLOAK_ADMIN_USER / KEYCLOAK_ADMIN_PASSWORD）
+3. 选择 noda realm
+4. Realm Settings → Themes 标签
+5. Login Theme 下拉菜单选择 "noda"
+6. 保存
+```
+
+**注意：** 主题选择是 realm 级别的设置，存储在 Keycloak 数据库中。这意味着：
+- 生产环境选择一次即可，后续主题文件更新自动生效
+- 开发环境需要单独选择（不同的数据库）
+- 主题选择不会因为容器重启而丢失
+
+### 3.6 与现有 Docker Compose 的集成
+
+当前 `docker-compose.yml` 中已预留主题卷挂载：
+
+```yaml
+# docker-compose.yml 第 155 行
+keycloak:
+  volumes:
+    - ./services/keycloak/themes:/opt/keycloak/themes/noda:ro
+```
+
+`docker-compose.prod.yml` 也重复了这个挂载（第 68 行）。两者指向同一个宿主机目录，因此：
+
+1. 创建 `docker/services/keycloak/themes/login/` 目录和主题文件
+2. Docker Compose 无需修改（卷挂载已就绪）
+3. 重启 Keycloak 容器或等待主题缓存过期后生效
+
+**卷挂载使用 `:ro`（只读），主题文件通过宿主机编辑，容器内只读加载。** 这是正确的模式 -- 主题文件由 Git 管理，不应该在容器内修改。
 
 ---
 
-## 八、架构模式
+## 四、双环境架构
 
-### Pattern 1: 宿主机编排，容器内执行
+### 4.1 设计原则
 
-**What:** 备份编排在 Jenkins（宿主机层面）执行，pg_dump 在 PostgreSQL 容器内通过 `docker exec` 调用。
+复用 PostgreSQL 双环境的成功模式：
+- prod 实例：内部网络，不暴露端口，使用生产数据
+- dev 实例：暴露端口，使用开发数据，独立容器名
 
-**When:** 当数据库运行在 Docker 容器中，且不需要额外 sidecar 容器时。
+Keycloak 双环境遵循相同的 overlay 模式：
 
-**Example:**
+```
+docker-compose.yml          → 基础 Keycloak 配置（prod）
+docker-compose.dev.yml      → 开发覆盖：添加 keycloak-dev 服务 + 修改现有 keycloak 指向 dev
+docker-compose.prod.yml     → 生产覆盖：SMTP、资源限制、健康检查
+```
+
+### 4.2 开发环境 Keycloak 服务定义
+
+需要在 `docker-compose.dev.yml` 中添加以下配置：
+
+**方案：添加独立的 `keycloak-dev` 服务。**
+
+为什么不直接覆盖现有 `keycloak` 服务：
+- 覆盖 `keycloak` 服务会让开发环境连到同一个 postgres 数据库，没有真正隔离
+- 独立服务可以同时运行 prod 和 dev，方便对比测试
+- 与 postgres-dev 的模式一致（独立服务，不覆盖）
+
+```yaml
+# docker-compose.dev.yml 中新增
+keycloak-dev:
+  image: quay.io/keycloak/keycloak:26.2.3
+  container_name: noda-infra-keycloak-dev
+  restart: unless-stopped
+  command: start-dev
+  ports:
+    - "8180:8080"   # 开发环境 HTTP 端口（避免与 prod 8080 冲突）
+    - "9100:9000"   # 开发环境管理端口
+  environment:
+    # 数据库配置：连接 postgres-dev 的 keycloak_dev 数据库
+    KC_DB: postgres
+    KC_DB_URL: jdbc:postgresql://postgres-dev:5432/keycloak_dev
+    KC_DB_USERNAME: ${POSTGRES_USER}
+    KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+    # 开发模式：禁用主机名和代理
+    KC_HOSTNAME: ""
+    KC_HOSTNAME_STRICT: "false"
+    KC_HOSTNAME_STRICT_HTTPS: "false"
+    KC_PROXY: none
+    KC_HTTP_ENABLED: "true"
+    KC_HEALTH_ENABLED: "true"
+    # 管理员账号
+    KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER}
+    KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+    # 开发模式：禁用主题缓存，方便实时预览主题修改
+    KC_THEME_CACHE_THEMES: "false"
+    KC_THEME_STATIC_MAX_AGE: "-1"
+  volumes:
+    - ./services/keycloak/themes:/opt/keycloak/themes/noda:ro
+  networks:
+    - noda-network
+  depends_on:
+    postgres-dev:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD-SHELL", "echo > /dev/tcp/localhost/9000 2>/dev/null || exit 1"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 60s
+```
+
+### 4.3 环境对比
+
+| 维度 | 生产 Keycloak | 开发 Keycloak |
+|------|-------------|-------------|
+| 容器名 | keycloak（或 noda-infra-keycloak-1） | noda-infra-keycloak-dev |
+| 端口 | 8080（内部）→ Cloudflare Tunnel | 8180（本地暴露） |
+| 数据库 | postgres:5432/keycloak | postgres-dev:5432/keycloak_dev |
+| 命令 | `start` | `start-dev` |
+| 主机名 | `https://auth.noda.co.nz` | 空（localhost） |
+| 代理模式 | `edge`（Cloudflare TLS） | `none`（本地直连） |
+| SMTP | 已配置 | 不配置（开发不需要发邮件） |
+| 主题缓存 | 默认（缓存开启） | 禁用（方便调试） |
+| 资源限制 | CPU 1核 / 内存 1G | 无限制（开发用） |
+| 外部访问 | Cloudflare Tunnel → auth.noda.co.nz | 仅 localhost:8180 |
+
+### 4.4 开发环境启动命令
 
 ```bash
-# Jenkins Pipeline 中的关键命令
-# 通过 docker exec 在 postgres 容器内运行 pg_dump
-# 结果通过 stdout 管道传回 Jenkins 工作空间
-docker exec -i ${PG_CONTAINER} pg_dump -Fc -U postgres -d ${DB_NAME} \
-    > "${WORKSPACE}/${DB_NAME}_${TIMESTAMP}.dump"
+# 启动开发环境（包含 dev PostgreSQL + dev Keycloak）
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.dev.yml \
+  up -d postgres-dev keycloak-dev
+
+# 查看日志
+docker compose logs -f keycloak-dev
+
+# 停止开发环境
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.dev.yml \
+  stop keycloak-dev postgres-dev
 ```
 
-**Why not sidecar:** 当前已有 Jenkins 作为编排器，添加 sidecar 容器（如 pgbackrest/restic 容器）增加运维成本但无额外收益。对于小规模数据库（<1GB），`docker exec` + `pg_dump` 是最简单可靠的方案。
+### 4.5 findclass-ssr 开发环境 Keycloak 指向
 
-### Pattern 2: 分层凭据管理
+开发环境中 findclass-ssr 应该指向 dev Keycloak：
 
-**What:** 敏感凭据通过 SOPS 加密存储，运行时注入。非敏感配置通过环境变量或配置文件管理。
-
-**When:** 项目已有 SOPS + age 加密体系时。
-
-**Example:**
-
-```
-凭据层（加密）：
-    config/secrets.sops.yaml → b2_account_id, b2_application_key
-    Jenkins Credentials → 运行时注入到 Pipeline
-
-配置层（明文）：
-    .env.backup → B2_BUCKET, RETENTION_DAYS, BACKUP_DBS
-    rclone.conf → B2 endpoint, account ID（不含密钥）
+```yaml
+# docker-compose.dev.yml 中修改 findclass-ssr
+findclass-ssr:
+  environment:
+    KEYCLOAK_URL: http://localhost:8180
+    KEYCLOAK_INTERNAL_URL: http://keycloak-dev:8080
+    KEYCLOAK_REALM: noda
+    KEYCLOAK_CLIENT_ID: noda-frontend
+    DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-dev:5432/noda_dev
+    DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-dev:5432/noda_dev
 ```
 
-### Pattern 3: 纵向验证链
+**注意：** 开发环境的 findclass-ssr 需要：
+1. 前端 URL 使用 `http://localhost:8180`（浏览器直接访问 dev Keycloak）
+2. 内部 URL 使用 `http://keycloak-dev:8080`（容器间通信）
+3. 数据库切换到 `postgres-dev` 的 `noda_dev`
 
-**What:** 备份系统在三个层面验证数据完整性：本地验证 -> 传输验证 -> 远程验证。
+---
 
-**When:** 任何涉及数据上传/传输的备份系统。
+## 五、数据流
+
+### 5.1 主题渲染流程
 
 ```
-Layer 1 - 本地验证：
-    pg_restore --list dump文件   → 确认 pg_dump 输出有效
+用户访问 auth.noda.co.nz/login
+       │
+       ▼
+Cloudflare Tunnel → Nginx → Keycloak:8080
+       │
+       ▼
+Keycloak 检查 realm 设置 → Login Theme = "noda"
+       │
+       ▼
+加载 /opt/keycloak/themes/noda/login/theme.properties
+       │
+       ├─ parent=keycloak → 继承基础模板和样式
+       ├─ styles=css/noda.css → 加载自定义 CSS
+       │
+       ▼
+渲染 login.ftl（如果存在用 noda 版本，否则用 keycloak 基础版本）
+       │
+       ▼
+返回完整 HTML（基础结构 + noda.css 覆盖样式）
+```
 
-Layer 2 - 传输验证：
-    rclone copy --checksum       → 上传时校验和比对
+### 5.2 主题开发迭代流程（开发环境）
 
-Layer 3 - 远程验证：
-    rclone check                 → 上传后二次确认云端文件完整
+```
+1. 编辑 docker/services/keycloak/themes/noda/login/resources/css/noda.css
+2. 保存文件（宿主机）
+3. 刷新浏览器 → Keycloak 重新读取卷挂载文件
+   （开发环境禁用了主题缓存，立即生效）
+4. 满意后 git commit 推送到生产
+5. 生产环境需要重启 Keycloak 容器或等待缓存过期
+   docker compose restart keycloak
+```
 
-Layer 4 - 恢复验证（每周）：
-    pg_restore 到临时数据库       → 确认备份可以成功恢复
+### 5.3 双环境 OAuth 流程对比
+
+**生产：**
+```
+浏览器 → class.noda.co.nz → findclass-ssr → 重定向到 auth.noda.co.nz
+  → Cloudflare Tunnel → Keycloak (prod) → Google OAuth → 回调
+  → findclass-ssr → 获取 token → 完成
+```
+
+**开发：**
+```
+浏览器 → localhost:3002 → findclass-ssr → 重定向到 localhost:8180
+  → Keycloak (dev) → Google OAuth（或本地用户名密码）→ 回调
+  → findclass-ssr → 获取 token → 完成
 ```
 
 ---
 
-## 九、反模式（需要避免）
+## 六、架构模式
 
-### Anti-Pattern 1: 在 Docker Compose 中添加备份 sidecar 容器
+### Pattern 1: Docker Compose Overlay 隔离
 
-**What:** 创建一个包含 pg_dump + rclone + cron 的 sidecar 容器，添加到 docker-compose.yml。
+**What:** 使用同一个基础配置 + 环境特定 overlay 实现多环境隔离。
+
+**When:** 需要 dev/staging/prod 环境共享核心配置但有环境差异时。
+
+**Example:**
+
+```
+docker-compose.yml          → 所有环境共享的服务定义
+docker-compose.prod.yml     → 生产覆盖（SMTP、资源限制、安全配置）
+docker-compose.dev.yml      → 开发覆盖（新服务、端口映射、调试配置）
+```
+
+**在本项目中的应用：**
+- PostgreSQL：prod（内部）+ dev（暴露 5433 端口）
+- Keycloak：prod（Cloudflare Tunnel）+ dev（localhost:8180）
+- 两者使用独立的数据库和容器名，完全隔离
+
+### Pattern 2: 主题继承（Theme Inheritance）
+
+**What:** 自定义主题通过 `parent=keycloak` 继承基础主题，只覆盖需要定制的部分。
+
+**When:** 品牌化定制不需要修改 HTML 结构，只需 CSS 样式覆盖。
+
+**好处：**
+- 最少代码量实现品牌化
+- Keycloak 版本升级时兼容性好
+- 自动获得新登录流程页面
+- 调试简单（对比基础主题和自定义差异）
+
+### Pattern 3: 卷挂载共享主题
+
+**What:** 主题文件通过 Docker 卷挂载从宿主机注入容器，prod 和 dev 共享同一套主题源码。
+
+**When:** 主题需要在多个环境中使用，且需要通过 Git 管理版本。
+
+```
+宿主机 Git 仓库
+  docker/services/keycloak/themes/login/
+       │
+       ├─→ keycloak (prod) :ro 卷挂载
+       └─→ keycloak-dev (dev) :ro 卷挂载
+```
+
+两个环境读取同一套文件。开发环境禁用缓存方便实时预览，生产环境使用缓存保证性能。
+
+---
+
+## 七、反模式（需要避免）
+
+### Anti-Pattern 1: 覆盖现有 keycloak 服务实现开发环境
+
+**What:** 在 docker-compose.dev.yml 中直接覆盖 `keycloak` 服务的 environment 和 command。
 
 **Why bad:**
-- 增加容器编排复杂度
-- 需要管理容器内的 cron daemon
-- 日志需要额外配置才能从容器外访问
-- 项目已有 Jenkins 作为任务编排器
-- 容器重启时 cron 任务可能丢失
+- 无法同时运行 prod 和 dev 实例（端口冲突）
+- 开发环境会连接 prod 的 PostgreSQL 数据库
+- 切换环境需要重启整个服务栈
+- 不符合 PostgreSQL 双环境的设计模式（独立服务）
 
-**Instead:** 使用 Jenkins（已有基础设施）+ `docker exec` + 宿主机 rclone。
+**Instead:** 添加独立的 `keycloak-dev` 服务，与 `postgres-dev` 模式一致。
 
-### Anti-Pattern 2: 直接在 PostgreSQL 容器内安装 rclone
+### Anti-Pattern 2: 完全重写 FreeMarker 模板
 
-**What:** 修改 PostgreSQL Dockerfile 或通过 volume 注入 rclone 二进制文件到 postgres 容器。
-
-**Why bad:**
-- 违反容器不可变原则
-- PostgreSQL 容器应该只运行数据库
-- 版本升级时需要重新安装 rclone
-- 增加攻击面
-
-**Instead:** rclone 运行在 Jenkins 容器或宿主机上，与 PostgreSQL 容器分离。
-
-### Anti-Pattern 3: 使用 B2 生命周期规则管理备份保留
-
-**What:** 配置 B2 bucket 的 Lifecycle Rules 来自动删除旧文件。
+**What:** 不设置 `parent=keycloak`，从零编写所有 login 类型模板。
 
 **Why bad:**
-- B2 生命周期规则基于文件版本（versions），不是文件创建时间
-- 适合隐藏旧版本而非删除带时间戳的独立文件
-- 无法精确控制保留策略（如"保留最近7天的备份"）
-- 详细分析见 PITFALLS.md Pitfall 3
+- Keycloak 26.x 的 login 主题有 20+ 个模板（login.ftl、login-otp.ftl、login-password.ftl、login-reset-password.ftl、register.ftl 等）
+- 每次升级 Keycloak 都需要对比和合并模板变更
+- 容易遗漏安全相关的隐藏字段（如 CSRF token）
+- 维护成本远大于收益
 
-**Instead:** 在 `backup-to-cloud.sh` 中使用 `rclone delete --min-age 7d` 实现应用层清理。
+**Instead:** 使用 `parent=keycloak` 继承 + CSS 覆盖。仅在有明确需求时覆盖特定模板文件。
 
-### Anti-Pattern 4: 备份文件使用纯文本 SQL 格式
+### Anti-Pattern 3: 使用 Keycloak 自定义 SPI 或 Provider
 
-**What:** 使用 `pg_dump`（默认纯文本）而不是 `pg_dump -Fc`。
+**What:** 编写 Java 代码实现自定义 Authenticator、Required Action 等 SPI。
 
 **Why bad:**
-- 无法用 `pg_restore --list` 验证完整性
-- 文件更大（无压缩）
-- 恢复时无法选择性恢复特定表
-- 恢复速度更慢（逐行 INSERT）
+- 需要编译 JAR 并部署到 Keycloak 容器
+- 增加构建复杂度和维护成本
+- 需要理解 Keycloak SPI 接口和生命周期
+- 与 Keycloak 版本强耦合
 
-**Instead:** 使用 `pg_dump -Fc` 自定义格式。详细分析见 PITFALLS.md Pitfall 2 和 7。
+**Instead:** 对于品牌化登录页需求，纯主题（CSS + 可选 FreeMarker）足够。仅在需要自定义认证流程时才考虑 SPI。
+
+### Anti-Pattern 4: 在容器内修改主题文件
+
+**What:** `docker exec` 进入容器修改 `/opt/keycloak/themes/` 下的文件。
+
+**Why bad:**
+- 容器重建后修改丢失
+- 无法通过 Git 追踪变更
+- 当前卷挂载使用 `:ro` 模式，不允许容器内写入
+
+**Instead:** 在宿主机编辑 `docker/services/keycloak/themes/` 下的文件，通过卷挂载自动同步到容器。
+
+### Anti-Pattern 5: 开发环境复用生产 SMTP 配置
+
+**What:** 在 keycloak-dev 中配置与生产相同的 SMTP 服务器。
+
+**Why bad:**
+- 开发环境可能触发真实邮件发送
+- 密码重置测试邮件会发给真实用户
+- 增加不必要的外部依赖
+
+**Instead:** 开发环境不配置 SMTP。如果需要测试邮件相关功能，使用 MailHog 或 Mailpit 等本地邮件 mock 服务（可后续添加）。
+
+---
+
+## 八、构建顺序建议
+
+基于依赖关系，建议按以下顺序构建：
+
+### Step 1: 创建主题目录和最小文件
+
+**前置条件：** 无
+**内容：**
+1. 创建 `docker/services/keycloak/themes/noda/login/` 目录结构
+2. 编写 `theme.properties`（parent=keycloak）
+3. 编写最小化 `noda.css`（颜色和 Logo 覆盖）
+4. 编写消息包（loginTitle 等）
+
+**验证：**
+```bash
+# 重启生产 Keycloak 加载新主题
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml restart keycloak
+
+# 在 Admin Console 中选择 "noda" 主题
+# 访问 auth.noda.co.nz 查看效果
+```
+
+**为什么先做：** 不需要修改任何 Docker Compose 配置（卷挂载已预留）。风险最低，效果立即可见。
+
+### Step 2: 添加 keycloak-dev 服务
+
+**前置条件：** Step 1 完成（主题文件存在）
+**依赖：** postgres-dev 服务和 keycloak_dev 数据库已存在（v1.1 已完成）
+**内容：**
+1. 在 `docker-compose.dev.yml` 中添加 `keycloak-dev` 服务定义
+2. 配置连接 `postgres-dev:5432/keycloak_dev`
+3. 暴露 `8180:8080` 端口
+4. 禁用主题缓存（开发模式配置）
+
+**验证：**
+```bash
+# 启动开发环境
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d keycloak-dev
+
+# 访问 http://localhost:8180 确认 Keycloak 启动
+# 在 Admin Console 中选择 "noda" 主题
+```
+
+**为什么第二步：** 依赖 Step 1 的主题文件。有了开发环境后，可以更方便地迭代主题设计。
+
+### Step 3: 主题迭代和优化
+
+**前置条件：** Step 2 完成（开发环境可用）
+**内容：**
+1. 使用开发环境实时预览主题修改
+2. 调整 CSS 直到满意
+3. 可选：添加 Logo SVG 文件
+4. 可选：覆盖特定 FreeMarker 模板（如需要）
+5. 可选：添加 favicon 和其他资源
+
+**验证：**
+- 开发环境实时预览（无缓存）
+- 最终在生产环境确认
+
+### Step 4: 更新 findclass-ssr 开发配置
+
+**前置条件：** Step 2 完成
+**内容：**
+1. 修改 `docker-compose.dev.yml` 中 findclass-ssr 的环境变量
+2. KEYCLOAK_URL 指向 `http://localhost:8180`
+3. KEYCLOAK_INTERNAL_URL 指向 `http://keycloak-dev:8080`
+4. DATABASE_URL 指向 `postgres-dev:5432/noda_dev`
+
+**验证：**
+```bash
+# 完整开发环境测试
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d
+
+# 访问 localhost:3002 测试完整 OAuth 登录流程
+```
+
+---
+
+## 九、Keycloak 版本兼容性注意事项
+
+### Keycloak 26.x 主题系统变化
+
+| 方面 | Keycloak < 23 | Keycloak 23-26 | 本项目影响 |
+|------|--------------|----------------|-----------|
+| CSS 框架 | PatternFly 3 | PatternFly 4/5 | CSS 类名与 PF4/5 对齐 |
+| 模板引擎 | FreeMarker 2.x | FreeMarker 2.x | 无变化 |
+| 主题 SPI | ThemeProvider | ThemeProvider | 无变化 |
+| 主机名 SPI | v1（KC_HOSTNAME_PORT 等） | v2（KC_HOSTNAME 完整 URL） | 已在 v1.1 修复 |
+| 管理端口 | 9990 | 9000 | 已在 compose 中配置 |
+
+**关键点：** Keycloak 26.x 使用 PatternFly 5（`pf-v5-*` 类名前缀）。CSS 覆盖需要针对 PF5 的类名，而不是旧版本的 PF3/4 类名。
+
+### PatternFly 5 关键 CSS 类名
+
+```css
+/* 登录页面容器 */
+.pf-v5-c-login
+
+/* 登录卡片 */
+.pf-v5-c-login__main
+.pf-v5-c-card
+
+/* 标题 */
+.pf-v5-c-title
+
+/* 表单 */
+.pf-v5-c-form
+.pf-v5-c-form__group
+
+/* 按钮 */
+.pf-v5-c-button
+.pf-v5-c-button.pf-m-primary
+.pf-v5-c-button.pf-m-secondary
+
+/* 输入框 */
+.pf-v5-c-form-control
+
+/* 社交登录按钮 */
+.pf-v5-c-form__helper-text
+.kc-social-grp-cookieless  /* Keycloak 特定 */
+```
 
 ---
 
 ## 十、可扩展性考虑
 
-| 关注点 | 当前（小规模） | 中等规模（数据库 >10GB） | 大规模（数据库 >100GB） |
-|-------|--------------|----------------------|----------------------|
-| 备份方式 | pg_dump -Fc | pg_dump -Fd -j 4（并行） | pgBackRest 或 WAL-G |
-| 备份频率 | 6小时 | 2-4小时 | 持续 WAL 归档 |
-| 存储成本 | 免费（<10GB） | ~$0.60/月（100GB） | ~$6/月（1TB） |
-| 保留策略 | 7天 | 7天 + 4个周备份 | 分级保留（天/周/月/年） |
-| 恢复时间 | <1分钟 | 2-5分钟 | 5-30分钟 |
-| 验证频率 | 每周 | 每周 | 每日 |
-| 监控 | Jenkins Dashboard | Prometheus + Grafana | 专业备份监控 |
-
-### 升级路径
-
-当数据库增长到需要升级时：
-
-```
-当前方案（pg_dump -Fc）
-    ↓ 数据库 >10GB
-pg_dump -Fd -j 4（并行备份）
-    ↓ 需要更频繁备份 / PITR
-pgBackRest（物理备份 + 增量 + PITR）
-    ↓ 多节点 / 高可用
-WAL-G + 流复制
-```
-
-每个升级步骤都是独立的，不需要重写之前的架构。当前架构的脚本结构（编排 -> 转储 -> 上传 -> 验证）可以复用到更复杂的方案中。
+| 关注点 | 当前（单主题） | 中等（多主题 + 多语言） | 高级（完全自定义 UI） |
+|-------|--------------|---------------------|---------------------|
+| 主题类型 | login | login + email + account | login + email + account + welcome |
+| 模板覆盖 | 无（纯 CSS） | login.ftl + register.ftl | 全部模板 |
+| 语言 | en + zh | + ja, ko 等 | 自动检测 + 翻译管理 |
+| JavaScript | 无 | 自定义验证逻辑 | 完全自定义 SPA |
+| Logo/图片 | CSS 背景图 | SVG 资源目录 | 动态主题切换 |
+| 维护成本 | 极低（每版本 <30 分钟验证） | 低（半天验证） | 中（每次升级需要测试） |
 
 ---
 
-## 十一、安全架构
+## 十一、与现有系统的集成点
 
-### 访问控制矩阵
-
-| 操作 | B2 Application Key 权限 | 说明 |
-|------|------------------------|------|
-| 上传备份文件 | `writeFiles` | 必需 |
-| 下载备份文件（恢复） | `readFiles` | 必需 |
-| 列出备份文件 | `listFiles` | 必需（清理和恢复） |
-| 删除旧备份 | `deleteFiles` | 必需（保留策略） |
-| 创建/删除 Bucket | 不授予 | 不需要 |
-| 管理 Bucket 设置 | 不授予 | 不需要 |
-| 读取其他 Bucket | 不授予 | fileNamePrefix 限制 |
-
-### Application Key 创建规范
-
-```bash
-# 创建受限 Standard Application Key（通过 B2 控制台或 CLI）
-# 必须设置：
-#   - 权限：readFiles, writeFiles, deleteFiles, listFiles
-#   - Bucket 限制：仅 noda-db-backup
-#   - fileNamePrefix：可选，进一步限制访问范围
-#   - 有效期：建议设置合理的过期时间
-#
-# 绝对不要使用 Master Application Key
-# 详见 PITFALLS.md Pitfall 4
-```
-
-### 网络安全
+### 1. Docker 网络集成
 
 ```
-Jenkins 容器 ──HTTPS──→ Backblaze B2 API
-                         (api.backblazeb2.com:443)
-
-不需要：
-  - 不需要开放入站端口
-  - 不需要 VPN 或特殊网络配置
-  - 不经过 Cloudflare Tunnel
-  - 不经过 Nginx 代理
+noda-network (外部网络)
+    ├── noda-infra-postgres-prod         ← 生产 Keycloak 连接
+    ├── noda-infra-postgres-dev          ← 开发 Keycloak 连接（新增）
+    ├── keycloak                         ← 生产 Keycloak（已有）
+    ├── noda-infra-keycloak-dev          ← 开发 Keycloak（新增）
+    ├── noda-infra-nginx                 ← 代理路由（无需变更）
+    ├── noda-ops                         ← Cloudflare Tunnel（无需变更）
+    └── findclass-ssr                    ← 应用（开发环境指向 dev Keycloak）
 ```
 
----
+keycloak-dev 自动加入 noda-network，可以访问 postgres-dev 和被 findclass-ssr 访问。
 
-## 十二、构建顺序建议
+### 2. 环境变量集成
 
-基于以上架构，建议按以下顺序构建：
+不需要新增环境变量。现有 `.env` 文件中的 `KEYCLOAK_ADMIN_USER` 和 `KEYCLOAK_ADMIN_PASSWORD` 被 keycloak-dev 复用。
 
-### Phase 1: 本地备份增强
-- 改进现有备份脚本为 `backup-to-cloud.sh` 的骨架
-- 实现 `docker exec pg_dump -Fc` 替代当前的纯文本格式
-- 添加本地验证（`pg_restore --list`）
-- **交付物：** 可靠的本地备份脚本
+如果未来需要 dev 环境独立的 Keycloak 管理员密码，可以在 `.env` 中添加：
+```
+KEYCLOAK_DEV_ADMIN_USER=admin
+KEYCLOAK_DEV_ADMIN_PASSWORD=dev_password
+```
 
-### Phase 2: 云存储集成
-- 安装和配置 rclone
-- 创建 B2 Bucket 和受限 Application Key
-- 实现上传和校验和验证
-- 实现旧备份清理
-- 将 B2 凭据加入 SOPS 加密管理
-- **交付物：** 完整的备份到云存储流程
+### 3. 备份系统集成
 
-### Phase 3: Jenkins 自动化
-- 创建 Jenkinsfile.backup
-- 配置定时触发器
-- 配置 Jenkins Credentials
-- 添加失败通知
-- **交付物：** 全自动化的定时备份
+现有的备份系统（noda-ops）会备份 `keycloak` 数据库。需要确保：
+- 生产备份只包含 `keycloak` 数据库（不包含 `keycloak_dev`）
+- 开发数据库 `keycloak_dev` 不需要备份（可随时从 init 脚本重建）
 
-### Phase 4: 恢复和验证
-- 实现 `restore-from-cloud.sh`
-- 实现 `verify-backup.sh`（每周自动验证）
-- 编写恢复操作文档
-- 执行首次完整恢复测试
-- **交付物：** 可靠的恢复流程和验证机制
-
-### Phase 5: 监控完善
-- 优化通知内容（包含备份大小、时长、数据库列表）
-- 添加备份状态可视化（可选）
-- 添加异常检测（文件大小突变告警）
-- **交付物：** 完善的监控和告警
+当前备份配置只备份生产数据库，所以无需修改。
 
 ---
 
@@ -760,21 +735,16 @@ Jenkins 容器 ──HTTPS──→ Backblaze B2 API
 
 | 来源 | 置信度 | 用途 |
 |------|--------|------|
-| `docker/docker-compose.yml` | HIGH（直接读取） | 基础服务定义 |
-| `docker/docker-compose.simple.yml` | HIGH（直接读取） | 生产环境实际配置 |
-| `docker/docker-compose.jenkins.yml` | HIGH（直接读取） | Jenkins 容器配置 |
-| `docker/docker-compose.prod.yml` | HIGH（直接读取） | 生产环境覆盖配置 |
-| `docker/docker-compose.app.yml` | HIGH（直接读取） | 应用服务配置 |
-| `config/secrets.sops.yaml` | HIGH（直接读取） | 现有凭据结构 |
-| `deploy.sh` | HIGH（直接读取） | 部署流程和凭据加载方式 |
-| `.planning/research/STACK.md` | HIGH（直接读取） | 技术栈决策 |
-| `.planning/research/PITFALLS.md` | HIGH（直接读取） | 陷阱和最佳实践 |
-| `docs/architecture.md` | HIGH（直接读取） | 现有架构文档 |
-| `backups/README.md` | HIGH（直接读取） | 现有备份说明 |
-| Backblaze B2 定价页面 | HIGH（2026-04-06 抓取） | 存储定价确认 |
-| Wasabi 定价页面 | HIGH（2026-04-06 抓取） | 替代方案定价 |
+| `docker/docker-compose.yml` | HIGH（直接读取） | 基础服务定义和主题卷挂载 |
+| `docker/docker-compose.prod.yml` | HIGH（直接读取） | 生产环境 Keycloak 配置 |
+| `docker/docker-compose.dev.yml` | HIGH（直接读取） | 开发环境现有配置 |
+| `docker/services/postgres/init-dev/01-create-databases.sql` | HIGH（直接读取） | keycloak_dev 数据库已创建确认 |
+| `config/nginx/conf.d/default.conf` | HIGH（直接读取） | Nginx 路由无需变更确认 |
+| Keycloak Server Developer Guide (26.x) | HIGH（官方文档） | 主题系统架构、FreeMarker 模板、PatternFly 集成 |
+| Keycloak Hostname SPI v2 文档 | HIGH（官方文档） | KC_HOSTNAME 配置确认 |
+| `.planning/PROJECT.md` | HIGH（直接读取） | v1.2 里程碑目标 |
 
 ---
 
-*Architecture research for: Noda PostgreSQL 云备份系统*
-*Researched: 2026-04-06*
+*Architecture research for: Noda v1.2 Keycloak 自定义主题 + 双环境*
+*Researched: 2026-04-11*
