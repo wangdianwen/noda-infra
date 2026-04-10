@@ -3,61 +3,63 @@
 -- ============================================
 -- 仅为开发/测试环境提供示例数据
 -- 生产环境永远不执行此脚本
+-- 基于 noda-apps Prisma schema 生成
 
 \c noda_dev;
 
--- UUID 扩展（Prisma 等框架需要）
+-- UUID 扩展（Prisma 需要）
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- 示例：基础表结构（根据实际应用 schema 调整）
-CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  email VARCHAR(255) UNIQUE NOT NULL,
-  name VARCHAR(255),
-  role VARCHAR(50) DEFAULT 'user',
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
+-- ============================================
+-- 注意：表结构由 Prisma migration 自动创建
+-- 此脚本仅在 migration 执行后插入种子数据
+-- 如果表不存在则自动跳过
+-- ============================================
 
-CREATE TABLE IF NOT EXISTS courses (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  title VARCHAR(255) NOT NULL,
-  description TEXT,
-  instructor_id UUID REFERENCES users(id),
-  created_at TIMESTAMP DEFAULT NOW()
-);
+DO $$
+BEGIN
+  -- 插入测试数据源
+  IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'sources') THEN
+    INSERT INTO sources (code, name, slug, type, category, icon, color, is_active, total_courses, created_at, updated_at) VALUES
+      ('manual', '手动录入', 'manual', 'direct', '平台', 'edit', '#6b7280', true, 0, NOW(), NOW()),
+      ('test_source', '测试数据源', 'test-source', 'api', '平台', 'bug', '#ef4444', true, 0, NOW(), NOW())
+    ON CONFLICT (code) DO NOTHING;
+  END IF;
 
--- 插入测试用户
-INSERT INTO users (email, name, role) VALUES
-  ('dev@test.com', 'Dev User', 'user'),
-  ('admin@test.com', 'Admin User', 'admin'),
-  ('teacher@test.com', 'Teacher User', 'instructor')
-ON CONFLICT (email) DO NOTHING;
+  -- 插入测试分类（一级分类）
+  IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'categories') THEN
+    INSERT INTO categories (id, name, name_en, slug, level, parent_id) VALUES
+      ('a0000000-0000-0000-0000-000000000001', '数学', 'Mathematics', 'math', 1, NULL),
+      ('a0000000-0000-0000-0000-000000000002', '英语', 'English', 'english', 1, NULL),
+      ('a0000000-0000-0000-0000-000000000003', '美术', 'Art', 'art', 1, NULL)
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
 
--- 插入测试课程
-INSERT INTO courses (title, description, instructor_id) VALUES
-  ('测试课程 1', '用于开发测试的示例课程', (SELECT id FROM users WHERE email = 'teacher@test.com')),
-  ('测试课程 2', '另一个开发测试课程', (SELECT id FROM users WHERE email = 'teacher@test.com'))
-ON CONFLICT DO NOTHING;
+  -- 插入测试教师
+  IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'profiles') THEN
+    INSERT INTO profiles (id, name, wechat, phone, email, source, created_at, updated_at) VALUES
+      ('b0000000-0000-0000-0000-000000000001', '张老师', 'zhang_teacher', '0210000001', 'zhang@test.com', 'user', NOW(), NOW()),
+      ('b0000000-0000-0000-0000-000000000002', '李老师', 'li_teacher', '0210000002', 'li@test.com', 'user', NOW(), NOW())
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+
+  -- 插入测试课程
+  IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'courses') THEN
+    INSERT INTO courses (id, teacher_id, title, grade_level, city, region, location_type, price, price_unit, category_id, source, is_duplicate, data_quality_score, created_at, updated_at) VALUES
+      ('c0000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-000000000001', '高中数学强化班', '高中', '奥克兰', '中区', '线下', 60, '小时', 'a0000000-0000-0000-0000-000000000001', 'user', false, 80, NOW(), NOW()),
+      ('c0000000-0000-0000-0000-000000000002', 'b0000000-0000-0000-0000-000000000002', '雅思口语精品课', '成人', '奥克兰', '北岸', '线上', 80, '小时', 'a0000000-0000-0000-0000-000000000002', 'user', false, 90, NOW(), NOW()),
+      ('c0000000-0000-0000-0000-000000000003', 'b0000000-0000-0000-0000-000000000001', '儿童创意美术', '小学', '奥克兰', '东区', '线下', 45, '小时', 'a0000000-0000-0000-0000-000000000003', 'user', false, 70, NOW(), NOW())
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+
+  RAISE NOTICE '种子数据插入完成';
+END
+$$;
 
 \c keycloak_dev;
 
--- Keycloak 开发数据库只需要空库，由 Keycloak 自动初始化 schema
+-- Keycloak 开发数据库由 Keycloak 自动初始化 schema
 
 \c findclass_dev;
 
--- Findclass 开发数据库
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
-CREATE TABLE IF NOT EXISTS classes (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name VARCHAR(255) NOT NULL,
-  description TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
--- 插入测试班级
-INSERT INTO classes (name, description) VALUES
-  ('测试班级 A', '2026 第一学期测试班'),
-  ('测试班级 B', '2026 第一学期普通班')
-ON CONFLICT DO NOTHING;
+-- findclass_dev 预留空库
