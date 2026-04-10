@@ -209,7 +209,7 @@ noda-infra/
 | `docker-compose.dev.yml` | 开发覆盖 | 开发环境特定配置 |
 | `docker-compose.app.yml` | 应用独立部署 | findclass-ssr 独立于基础设施部署 |
 | `docker-compose.simple.yml` | 简化部署 | 替代旧架构的精简方案 |
-| `.env` | 环境变量 | 本地开发默认值 |
+| `config/environments/.env.example` | 环境变量模板 | 所有可配置变量的文档和默认值 |
 | `.env.production` | 生产模板 | 生产环境变量占位符 |
 
 部署命令示例：

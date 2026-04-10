@@ -80,7 +80,7 @@ findclass-ssr 的 `VITE_*` 变量在 `docker build` 阶段写入前端 JS 文件
 |----------|------|-----------|
 | `config/environments/.env.example` | 变量模板和文档 | 是 |
 | `config/environments/.env.production.template` | 生产环境模板 | 是 |
-| `config/environments/.env.production` | 生产环境实际值 | 否 |
+| `config/environments/.env.production` | 生产环境实际值（需从 `.env.production.template` 创建） | 否 |
 | `docker/.env` | Docker Compose 主配置 | 否（含敏感信息） |
 | `scripts/backup/.env.backup` | 备份系统专用配置 | 否（含 B2 密钥） |
 | `scripts/backup/templates/.env.backup` | 备份配置模板 | 是 |

@@ -79,7 +79,7 @@ cp config/environments/.env.example config/environments/.env
 ```
 noda-infra/
 ├── config/             # 配置文件
-│   ├── environments/   # 环境变量模板（.env.example, .env.production）
+│   ├── environments/   # 环境变量模板（.env.example, .env.production.template）
 │   ├── nginx/          # Nginx 配置（nginx.conf, conf.d/, snippets/）
 │   └── cloudflare/     # Cloudflare Tunnel 配置
 ├── deploy/             # Docker 构建文件

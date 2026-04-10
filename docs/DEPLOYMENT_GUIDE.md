@@ -414,6 +414,6 @@ bash scripts/deploy/deploy-infrastructure-prod.sh
 
 ## 🔗 相关文档
 
-- [Keycloak 故障排查](/docs/KEYCLOAK_TROUBLESHOOTING.md)
+- [Keycloak 脚本说明](/docs/KEYCLOAK_SCRIPTS.md)
 - [密钥管理](/docs/secrets-management.md)
 - [数据量校验](/scripts/backup/DATA_VOLUME_CHECK.md)
