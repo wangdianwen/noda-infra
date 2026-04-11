@@ -78,10 +78,10 @@ Plans:
   2. Docker Compose 不再暴露 Keycloak 8080 和 9000 端口到宿主机
   3. 浏览器访问 auth.noda.co.nz 正常显示 Keycloak 登录页且 Google OAuth 登录流程完整可用
   4. 开发环境可通过 auth.noda.co.nz 完成认证（localhost redirect URI 已配置）
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 16-01: TBD
+- [ ] 16-01-PLAN.md — Cloudflare Tunnel 路由改为 nginx + Keycloak 端口移除 + 健康检查统一 + 部署验证
 
 ### Phase 17: 端口安全加固
 **Goal**: 开发用 PostgreSQL 仅本地可访问，Keycloak 管理端口不再外部暴露
@@ -122,6 +122,6 @@ Phases execute in numeric order: 15 → 16 → 17 → 18
 | 13. Keycloak 自定义主题 | v1.2 | 1/1 | Complete | 2026-04-11 |
 | 14. 容器保护与部署安全 | v1.2 | 3/3 | Complete | 2026-04-11 |
 | 15. PostgreSQL 客户端升级 | v1.3 | 0/1 | Planning complete | - |
-| 16. Keycloak 端口收敛 | v1.3 | 0/? | Not started | - |
+| 16. Keycloak 端口收敛 | v1.3 | 0/1 | Planning complete | - |
 | 17. 端口安全加固 | v1.3 | 0/? | Not started | - |
 | 18. 容器标签分组 | v1.3 | 0/? | Not started | - |
