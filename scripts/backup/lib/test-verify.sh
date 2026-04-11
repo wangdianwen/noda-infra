@@ -123,18 +123,18 @@ download_latest_backup() {
     return $EXIT_DOWNLOAD_FAILED
   fi
 
-  # 提取文件名
-  local filename
-  filename=$(echo "$backups" | awk '{print $2}')
+  # 提取完整相对路径（含子目录前缀）
+  local backup_path
+  backup_path=$(echo "$backups" | awk '{print $2}')
 
-  log_info "找到备份文件: $filename"
+  log_info "找到备份文件: $backup_path"
 
   # 下载（带重试）
   while [[ $attempt -le $max_retries ]]; do
     log_info "下载尝试 $attempt/$max_retries"
 
     local backup_file
-    backup_file=$(download_backup "$filename" "$TEST_BACKUP_DIR" 2>/dev/null)
+    backup_file=$(download_backup "$backup_path" "$TEST_BACKUP_DIR" 2>/dev/null)
 
     if [[ -f "$backup_file" ]]; then
       local file_size

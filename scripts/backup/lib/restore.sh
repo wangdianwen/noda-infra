@@ -89,17 +89,21 @@ list_backups_b2() {
 
 # download_backup - 从 B2 下载备份文件
 # 参数：
-#   $1: 备份文件名
+#   $1: 备份文件路径（可能是 "2026/04/07/db.dump" 或纯 "db.dump"）
 #   $2: 本地保存目录（可选，默认为临时目录）
 # 返回：0（成功）或非0（失败）
 download_backup() {
-  local backup_filename=$1
+  local backup_path=$1
   local local_dir=${2:-$(mktemp -d)}
+
+  # 提取纯文件名（去除可能的路径前缀）
+  local backup_filename
+  backup_filename=$(basename "$backup_path")
 
   # 注意：此函数通过 stdout 返回文件路径，所有日志输出重定向到 stderr
   log_info "下载备份文件: $backup_filename" >&2
 
-  # 验证文件名
+  # 验证文件名格式（使用纯文件名）
   if [[ ! $backup_filename =~ ^[^_]+_[0-9]{8}_[0-9]{6}\.(sql|dump)$ ]]; then
     log_error "无效的备份文件名格式: $backup_filename"
     return 1
@@ -120,7 +124,7 @@ download_backup() {
   if rclone copy "b2remote:${b2_bucket_name}/${b2_path}" \
     "$local_dir" \
     --config "$rclone_config" \
-    --include "$backup_filename" \
+    --include "**/$backup_filename" \
     --progress >&2; then
 
     cleanup_rclone_config "$rclone_config"
