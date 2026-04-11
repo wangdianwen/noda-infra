@@ -17,6 +17,7 @@ FINDCLASS_IMAGE="noda-findclass"
 API_IMAGE="noda-api"
 DEPLOY_TIMEOUT=300  # 5 分钟
 HEALTH_CHECK_INTERVAL=5
+DECRYPTED_ENV_FILE=""
 
 # 错误处理
 error_exit() {
@@ -26,8 +27,9 @@ error_exit() {
 
 # 清理函数
 cleanup() {
-    if [[ -f "$DECRYPTED_ENV_FILE" ]]; then
-        rm -f "$DECRYPTED_ENV_FILE"
+    local env_file="${DECRYPTED_ENV_FILE:-}"
+    if [[ -n "$env_file" && -f "$env_file" ]]; then
+        rm -f "$env_file"
         log_info "已清理临时环境变量文件"
     fi
 }
