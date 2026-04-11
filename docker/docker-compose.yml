@@ -91,9 +91,10 @@ services:
       - postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h noda-infra-postgres-prod -U ${POSTGRES_USER:-postgres} || exit 1"]
-      interval: 1h
+      interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
 
   # ----------------------------------------
   # Findclass SSR 服务（API + SSR 渲染 + 静态文件）

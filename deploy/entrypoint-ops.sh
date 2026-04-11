@@ -12,8 +12,8 @@ echo "Noda Ops 服务容器启动"
 echo "=========================================="
 
 # 创建日志目录
-mkdir -p /var/log/supervisor /var/log/noda-backup /app/history
-touch /var/log/supervisor/cron.log /var/log/supervisor/cloudflared.log
+mkdir -p /tmp/supervisor /var/log/noda-backup /app/history
+touch /tmp/supervisor/cron.log /tmp/supervisor/cloudflared.log
 
 # 加载环境变量
 if [ -f /app/.env.ops ]; then

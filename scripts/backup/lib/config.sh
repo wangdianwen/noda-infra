@@ -10,6 +10,12 @@
 
 set -euo pipefail
 
+# 防止重复加载（其他库也会 source config.sh）
+if [[ -n "${_NODA_CONFIG_LOADED:-}" ]]; then
+  return 0
+fi
+_NODA_CONFIG_LOADED=1
+
 # ============================================
 # 默认配置值
 # ============================================
@@ -36,6 +42,19 @@ DEFAULT_B2_BUCKET_NAME="${DEFAULT_B2_BUCKET_NAME:-noda-backups}"
 DEFAULT_B2_PATH="${DEFAULT_B2_PATH:-backups/postgres/}"
 
 # ============================================
+# 保存 docker-compose 注入的原始环境变量（必须在默认值覆盖之前）
+# ============================================
+_ORIG_ENV_POSTGRES_HOST="${POSTGRES_HOST:-}"
+_ORIG_ENV_POSTGRES_PORT="${POSTGRES_PORT:-}"
+_ORIG_ENV_POSTGRES_USER="${POSTGRES_USER:-}"
+_ORIG_ENV_BACKUP_DIR="${BACKUP_DIR:-}"
+_ORIG_ENV_RETENTION_DAYS="${RETENTION_DAYS:-}"
+_ORIG_ENV_B2_ACCOUNT_ID="${B2_ACCOUNT_ID:-}"
+_ORIG_ENV_B2_APPLICATION_KEY="${B2_APPLICATION_KEY:-}"
+_ORIG_ENV_B2_BUCKET_NAME="${B2_BUCKET_NAME:-}"
+_ORIG_ENV_B2_PATH="${B2_PATH:-}"
+
+# ============================================
 # 全局配置变量（可被外部修改）
 # ============================================
 
@@ -59,7 +78,7 @@ B2_PATH="${DEFAULT_B2_PATH}"
 # 配置加载函数
 # ============================================
 
-# load_config - 加载配置（按优先级：命令行参数 > .env 文件 > 默认值）
+# load_config - 加载配置（按优先级：环境变量 > .env 文件 > 默认值）
 # 参数：无（从环境变量和配置文件读取）
 # 返回：0=成功，非0=失败
 load_config() {
@@ -70,6 +89,9 @@ load_config() {
     script_dir="$(cd "$(dirname "${0}")/.." && pwd)"
   fi
   local config_file="${script_dir}/.env.backup"
+
+  # 0. 使用全局保存的原始环境变量（在默认值覆盖之前已保存）
+  # _ORIG_ENV_* 在脚本顶部定义，捕获 docker-compose 注入的值
 
   # 1. 加载默认值（已在全局变量中设置）
 
@@ -138,53 +160,16 @@ load_config() {
     echo "ℹ️  配置文件不存在，使用默认值: $config_file"
   fi
 
-  # 3. 环境变量覆盖（优先级最高）
-  # 支持两种格式：BACKUP_DIR 和 BACKUP_DIR_ENV
-  if [[ -n "${POSTGRES_HOST:-}" ]]; then
-    POSTGRES_HOST="$POSTGRES_HOST"
-  elif [[ -n "${POSTGRES_HOST_ENV:-}" ]]; then
-    POSTGRES_HOST="$POSTGRES_HOST_ENV"
-  fi
-  if [[ -n "${POSTGRES_PORT:-}" ]]; then
-    POSTGRES_PORT="$POSTGRES_PORT"
-  elif [[ -n "${POSTGRES_PORT_ENV:-}" ]]; then
-    POSTGRES_PORT="$POSTGRES_PORT_ENV"
-  fi
-  if [[ -n "${POSTGRES_USER:-}" ]]; then
-    POSTGRES_USER="$POSTGRES_USER"
-  elif [[ -n "${POSTGRES_USER_ENV:-}" ]]; then
-    POSTGRES_USER="$POSTGRES_USER_ENV"
-  fi
-  if [[ -n "${BACKUP_DIR:-}" ]]; then
-    BACKUP_DIR="$BACKUP_DIR"
-  elif [[ -n "${BACKUP_DIR_ENV:-}" ]]; then
-    BACKUP_DIR="$BACKUP_DIR_ENV"
-  fi
-  if [[ -n "${RETENTION_DAYS:-}" ]]; then
-    RETENTION_DAYS="$RETENTION_DAYS"
-  elif [[ -n "${RETENTION_DAYS_ENV:-}" ]]; then
-    RETENTION_DAYS="$RETENTION_DAYS_ENV"
-  fi
-  if [[ -n "${B2_ACCOUNT_ID:-}" ]]; then
-    B2_ACCOUNT_ID="$B2_ACCOUNT_ID"
-  elif [[ -n "${B2_ACCOUNT_ID_ENV:-}" ]]; then
-    B2_ACCOUNT_ID="$B2_ACCOUNT_ID_ENV"
-  fi
-  if [[ -n "${B2_APPLICATION_KEY:-}" ]]; then
-    B2_APPLICATION_KEY="$B2_APPLICATION_KEY"
-  elif [[ -n "${B2_APPLICATION_KEY_ENV:-}" ]]; then
-    B2_APPLICATION_KEY="$B2_APPLICATION_KEY_ENV"
-  fi
-  if [[ -n "${B2_BUCKET_NAME:-}" ]]; then
-    B2_BUCKET_NAME="$B2_BUCKET_NAME"
-  elif [[ -n "${B2_BUCKET_NAME_ENV:-}" ]]; then
-    B2_BUCKET_NAME="$B2_BUCKET_NAME_ENV"
-  fi
-  if [[ -n "${B2_PATH:-}" ]]; then
-    B2_PATH="$B2_PATH"
-  elif [[ -n "${B2_PATH_ENV:-}" ]]; then
-    B2_PATH="$B2_PATH_ENV"
-  fi
+  # 3. 环境变量覆盖（优先级最高，docker-compose 注入的值）
+  [[ -n "${_ORIG_ENV_POSTGRES_HOST:-}" ]] && POSTGRES_HOST="$_ORIG_ENV_POSTGRES_HOST"
+  [[ -n "${_ORIG_ENV_POSTGRES_PORT:-}" ]] && POSTGRES_PORT="$_ORIG_ENV_POSTGRES_PORT"
+  [[ -n "${_ORIG_ENV_POSTGRES_USER:-}" ]] && POSTGRES_USER="$_ORIG_ENV_POSTGRES_USER"
+  [[ -n "${_ORIG_ENV_BACKUP_DIR:-}" ]] && BACKUP_DIR="$_ORIG_ENV_BACKUP_DIR"
+  [[ -n "${_ORIG_ENV_RETENTION_DAYS:-}" ]] && RETENTION_DAYS="$_ORIG_ENV_RETENTION_DAYS"
+  [[ -n "${_ORIG_ENV_B2_ACCOUNT_ID:-}" ]] && B2_ACCOUNT_ID="$_ORIG_ENV_B2_ACCOUNT_ID"
+  [[ -n "${_ORIG_ENV_B2_APPLICATION_KEY:-}" ]] && B2_APPLICATION_KEY="$_ORIG_ENV_B2_APPLICATION_KEY"
+  [[ -n "${_ORIG_ENV_B2_BUCKET_NAME:-}" ]] && B2_BUCKET_NAME="$_ORIG_ENV_B2_BUCKET_NAME"
+  [[ -n "${_ORIG_ENV_B2_PATH:-}" ]] && B2_PATH="$_ORIG_ENV_B2_PATH"
 
   return 0
 }

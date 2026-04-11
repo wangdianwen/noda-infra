@@ -13,6 +13,14 @@ cd "$PROJECT_ROOT"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
 
+# 解析命令行参数
+SKIP_BACKUP=false
+for arg in "$@"; do
+  case "$arg" in
+    --skip-backup) SKIP_BACKUP=true ;;
+  esac
+done
+
 # 回滚目录和文件
 ROLLBACK_DIR="/tmp/noda-rollback"
 ROLLBACK_FILE="$ROLLBACK_DIR/images-$(date +%s).txt"
@@ -75,14 +83,17 @@ rollback_images() {
     return 1
   fi
 
-  # 容器名 -> compose 服务名映射
-  declare -A CONTAINER_TO_SERVICE=(
-    ["noda-infra-postgres-prod"]="postgres"
-    ["noda-infra-keycloak-prod"]="keycloak"
-    ["noda-infra-nginx"]="nginx"
-    ["noda-ops"]="noda-ops"
-    ["findclass-ssr"]="findclass-ssr"
-  )
+  # 容器名 -> compose 服务名映射（兼容 bash 3.2，不使用 declare -A）
+  container_to_service() {
+    case "$1" in
+      noda-infra-postgres-prod) echo "postgres" ;;
+      noda-infra-keycloak-prod) echo "keycloak" ;;
+      noda-infra-nginx) echo "nginx" ;;
+      noda-ops) echo "noda-ops" ;;
+      findclass-ssr) echo "findclass-ssr" ;;
+      *) echo "" ;;
+    esac
+  }
 
   log_info "开始生成回滚 compose override..."
 
@@ -96,7 +107,8 @@ YAML_HEADER
   local has_entries=false
   while IFS='=' read -r container image_id; do
     [ -z "$container" ] && continue
-    local service="${CONTAINER_TO_SERVICE[$container]:-}"
+    local service
+    service="$(container_to_service "$container")"
     if [ -z "$service" ]; then
       log_info "跳过未映射的容器: ${container}"
       continue
@@ -228,7 +240,9 @@ log_info "步骤 3/7: 部署前自动备份"
 log_info "=========================================="
 
 if ! check_recent_backup; then
-  if ! run_pre_deploy_backup; then
+  if [ "$SKIP_BACKUP" = true ]; then
+    log_info "已通过 --skip-backup 跳过部署前备份"
+  elif ! run_pre_deploy_backup; then
     log_error "部署前备份失败，中止部署"
     exit 1
   fi

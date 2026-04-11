@@ -81,8 +81,8 @@ services:
   # Findclass SSR（开发环境配置）
   # ----------------------------------------
   findclass-ssr:
-    ports:
-      - "3002:3001"  # 内网访问端口（改为 3002 避免冲突）
+    # 生产部署不暴露端口（通过 nginx 内部访问）
+    # 本地开发需要时使用: docker compose -f ... -p 3002:3001 up findclass-ssr
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
