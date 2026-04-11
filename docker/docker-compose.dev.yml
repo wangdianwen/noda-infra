@@ -20,7 +20,7 @@ services:
     container_name: noda-infra-postgres-dev
     restart: unless-stopped
     ports:
-      - "5433:5432"  # 暴露端口供本地开发连接
+      - "127.0.0.1:5433:5432"  # 仅本地可访问，供本地开发连接
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

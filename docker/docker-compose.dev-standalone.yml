@@ -24,7 +24,7 @@ services:
     networks:
       - noda-dev-network
     ports:
-      - "5433:5432"  # 使用不同端口避免冲突
+      - "127.0.0.1:5433:5432"  # 仅本地可访问，避免冲突
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dev_user"]
       interval: 10s

@@ -40,7 +40,7 @@ services:
       - "noda.service-group=infra"
     restart: unless-stopped
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -86,7 +86,7 @@ services:
       - "noda.service-group=infra"
     ports:
       - "8080:8080"
-      - "9000:9000"
+      - "127.0.0.1:9000:9000"
     environment:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
