@@ -169,7 +169,8 @@ services:
           - keycloak
     restart: unless-stopped
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
 
 # ============================================
 # Volumes（数据持久化）
