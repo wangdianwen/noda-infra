@@ -52,9 +52,9 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 **Plans**: 3 plans
 
 Plans:
-- [ ] 10-01-PLAN.md — 修复 B2 备份中断根因（crontab 路径不匹配）
-- [ ] 10-02-PLAN.md — 修复容器内磁盘空间检查被跳过（BFIX-02）
-- [ ] 10-03-PLAN.md — 修复 B2 下载路径解析错误（BFIX-03）
+- [x] 10-01-PLAN.md — 修复 B2 备份中断根因（crontab 路径不匹配）
+- [x] 10-02-PLAN.md — 修复容器内磁盘空间检查被跳过（BFIX-02）
+- [x] 10-03-PLAN.md — 修复 B2 下载路径解析错误（BFIX-03）
 
 ### Phase 11: 服务整合
 **Goal**: findclass-ssr 相关文件归入统一目录结构，Docker 容器分组清晰可辨
@@ -99,7 +99,7 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 10. B2 备份修复 | v1.2 | 0/3 | Not started | - |
+| 10. B2 备份修复 | v1.2 | 3/3 | Complete   | 2026-04-11 |
 | 11. 服务整合 | v1.2 | 0/? | Not started | - |
 | 12. Keycloak 双环境 | v1.2 | 0/? | Not started | - |
 | 13. Keycloak 自定义主题 | v1.2 | 0/? | Not started | - |
