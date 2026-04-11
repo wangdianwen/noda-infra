@@ -18,8 +18,6 @@ services:
   postgres-dev:
     image: postgres:17.9
     container_name: noda-infra-postgres-dev
-    labels:
-      - "noda.service-group=infra"
     restart: unless-stopped
     ports:
       - "5433:5432"  # 暴露端口供本地开发连接
@@ -60,8 +58,6 @@ services:
   # Keycloak 认证服务（开发环境配置）
   # ----------------------------------------
   keycloak:
-    labels:
-      - "noda.service-group=infra"
     environment:
       # 本地开发：不设置 KC_HOSTNAME，允许通过 localhost 访问
       # 使用空字符串覆盖生产配置的 KC_HOSTNAME
@@ -89,14 +85,54 @@ services:
   # Findclass SSR（开发环境配置）
   # ----------------------------------------
   findclass-ssr:
-    labels:
-      - "noda.service-group=apps"
     ports:
       - "3002:3001"  # 内网访问端口（改为 3002 避免冲突）
     environment:
-      NODE_ENV: development
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-dev:5432/noda_dev
-      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres-dev:5432/noda_dev
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
+      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
+
+  # ----------------------------------------
+  # Keycloak 开发环境（独立容器）
+  # start-dev 模式：自动禁用主题缓存、放宽 HTTPS 要求
+  # ----------------------------------------
+  keycloak-dev:
+    image: quay.io/keycloak/keycloak:26.2.3
+    container_name: noda-infra-keycloak-dev
+    labels:
+      - "noda.service-group=infra"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18080:8080"  # HTTP 开发端口（仅本机，per T-12-01 安全缓解）
+      - "127.0.0.1:19000:9000"  # 管理端口（仅本机）
+    environment:
+      # 数据库：连接 postgres-dev 的 keycloak_dev（与生产完全隔离）
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres-dev:5432/keycloak_dev
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      # 启用 HTTP（start-dev 自动处理，显式声明确保）
+      KC_HTTP_ENABLED: "true"
+      # 管理员账号
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+    # start-dev：自动禁用主题缓存 + 放宽安全限制（per D-01）
+    command: start-dev
+    # 读写挂载主题目录（per D-06, D-07）
+    volumes:
+      - ./services/keycloak/themes/noda:/opt/keycloak/themes/noda
+    networks:
+      - noda-network
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+    # 健康检查（start-dev 模式下仅监听 8080，不监听 9000 管理端口）
+    healthcheck:
+      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/8080 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 # ============================================
 # Volumes（开发环境额外数据卷）
