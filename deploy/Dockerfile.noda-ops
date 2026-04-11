@@ -5,7 +5,7 @@
 # 替代：opdev + cloudflared 两个独立容器
 # ============================================
 
-FROM alpine:3.19
+FROM alpine:3.21
 
 # 安装必要工具
 RUN apk add --no-cache \
@@ -18,7 +18,7 @@ RUN apk add --no-cache \
     dcron \
     supervisor \
     ca-certificates \
-    postgresql-client \
+    postgresql17-client \
     gnupg \
     && rm -rf /var/cache/apk/*
 
