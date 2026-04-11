@@ -1,9 +1,9 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.3
-milestone_name: 待规划
-status: idle
-last_updated: "2026-04-11T22:00:00.000Z"
+milestone_name: 安全收敛与分组整理
+status: planning
+last_updated: "2026-04-11T23:00:00.000Z"
 last_activity: 2026-04-11
 progress:
   total_phases: 0
@@ -23,10 +23,10 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 
 ## Current Position
 
-Phase: None
-Plan: None
-Status: Idle — awaiting v1.3 planning
-Last activity: 2026-04-11
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-11 — Milestone v1.3 started
 
 Progress: [ ] 0%
 
