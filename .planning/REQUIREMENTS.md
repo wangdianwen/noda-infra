@@ -56,8 +56,8 @@
 
 ### 服务整合
 
-- [ ] **GROUP-01**: findclass-ssr 目录迁移 — 相关文件迁移到 noda-apps/ 目录下
-- [ ] **GROUP-02**: Docker 分组标签 — 容器 labels/project 归入 noda-apps 分组
+- [ ] **GROUP-01**: findclass-ssr Dockerfile 路径统一 — 所有 compose 文件指向 noda-infra/deploy/Dockerfile.findclass-ssr
+- [ ] **GROUP-02**: Docker 分组标签 — noda.service-group 标签区分 infra/apps 服务
 
 ### Keycloak 双环境
 
