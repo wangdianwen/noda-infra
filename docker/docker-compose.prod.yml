@@ -35,9 +35,7 @@ services:
     labels:
       - "noda.service-group=infra"
     ports:
-      - "8080:8080"  # HTTP 端口
-      - "8443:8443"  # HTTPS 端口
-      - "9000:9000"  # 管理端口（健康检查）
+      - "127.0.0.1:8080:8080"  # HTTP 端口（仅本机可访问）
     environment:
       # 数据库配置（独立数据库架构）
       KC_DB: postgres
