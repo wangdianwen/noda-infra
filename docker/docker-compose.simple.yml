@@ -93,9 +93,8 @@ services:
       KC_DB_USERNAME: ${POSTGRES_USER}
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
       KC_HTTP_ENABLED: "true"
-      KC_HOSTNAME: "auth.noda.co.nz"
+      KC_HOSTNAME: "https://auth.noda.co.nz"
       KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_PORT: "443"
       KC_PROXY: "edge"
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
