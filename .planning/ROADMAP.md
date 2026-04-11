@@ -77,10 +77,10 @@ Plans:
   1. `docker compose -f docker-compose.yml -f docker-compose.dev.yml up keycloak-dev` 可启动独立的开发 Keycloak 实例，使用 18080 端口，连接独立的 keycloak_dev 数据库（与 prod 数据完全隔离）
   2. 开发环境支持密码登录（无需 Google OAuth 即可测试），可在 Admin Console 创建测试用户并登录
   3. 修改主题文件后在开发环境刷新浏览器即可看到变化（禁用主题缓存，无需重启容器）
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 12-01: TBD
+- [ ] 12-01-PLAN.md — 创建 keycloak-dev 服务 + 主题目录骨架 + 人工验证
 
 ### Phase 13: Keycloak 自定义主题
 **Goal**: 生产环境登录页展示 Noda 品牌，用户看到的是品牌化界面而非默认 Keycloak 样式
@@ -102,5 +102,5 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 |-------|-----------|----------------|--------|-----------|
 | 10. B2 备份修复 | v1.2 | 3/3 | Complete    | 2026-04-11 |
 | 11. 服务整合 | v1.2 | 2/2 | Complete    | 2026-04-11 |
-| 12. Keycloak 双环境 | v1.2 | 0/? | Not started | - |
+| 12. Keycloak 双环境 | v1.2 | 0/1 | Not started | - |
 | 13. Keycloak 自定义主题 | v1.2 | 0/? | Not started | - |
