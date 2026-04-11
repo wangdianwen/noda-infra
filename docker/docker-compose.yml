@@ -15,6 +15,7 @@ services:
     container_name: noda-infra-postgres-prod
     labels:
       - "noda.service-group=infra"
+      - "noda.environment=prod"
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -40,6 +41,7 @@ services:
     image: nginx:1.25-alpine
     labels:
       - "noda.service-group=infra"
+      - "noda.environment=prod"
     restart: unless-stopped
     ports:
       - "80:80"
@@ -64,6 +66,7 @@ services:
     container_name: noda-ops
     labels:
       - "noda.service-group=infra"
+      - "noda.environment=prod"
     restart: unless-stopped
     environment:
       # 备份系统配置
@@ -108,7 +111,8 @@ services:
     image: findclass-ssr:latest
     container_name: findclass-ssr
     labels:
-      - "noda.service-group=noda-apps"
+      - "noda.service-group=apps"
+      - "noda.environment=prod"
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -142,6 +146,7 @@ services:
     container_name: noda-infra-keycloak-prod
     labels:
       - "noda.service-group=infra"
+      - "noda.environment=prod"
     # 数据库配置（独立数据库架构）
     environment:
       KC_DB: postgres

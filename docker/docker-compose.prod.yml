@@ -59,6 +59,7 @@ services:
     image: quay.io/keycloak/keycloak:26.2.3
     labels:
       - "noda.service-group=infra"
+      - "noda.environment=prod"
     environment:
       # 数据库配置（独立数据库架构）
       KC_DB: postgres
@@ -113,7 +114,8 @@ services:
   findclass-ssr:
     <<: *common-security
     labels:
-      - "noda.service-group=noda-apps"
+      - "noda.service-group=apps"
+      - "noda.environment=prod"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
       DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
