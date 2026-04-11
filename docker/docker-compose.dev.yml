@@ -18,6 +18,9 @@ services:
   postgres-dev:
     image: postgres:17.9
     container_name: noda-infra-postgres-dev
+    labels:
+      - "noda.service-group=infra"
+      - "noda.environment=dev"
     restart: unless-stopped
     ports:
       - "127.0.0.1:5433:5432"  # 仅本地可访问，供本地开发连接
@@ -97,6 +100,7 @@ services:
     container_name: noda-infra-keycloak-dev
     labels:
       - "noda.service-group=infra"
+      - "noda.environment=dev"
     restart: unless-stopped
     ports:
       - "127.0.0.1:18080:8080"  # HTTP 开发端口（仅本机，per T-12-01 安全缓解）

@@ -13,6 +13,7 @@ services:
     container_name: noda-dev-postgres
     labels:
       - "noda.service-group=infra"
+      - "noda.environment=dev"
     restart: unless-stopped
     environment:
       POSTGRES_USER: dev_user
