@@ -34,12 +34,15 @@ RUN ARCH=$(uname -m) && \
 # 设置工作目录
 WORKDIR /app
 
+# 创建非 root 用户
+RUN addgroup -S nodaops && adduser -S -G nodaops nodaops
+
 # 复制备份脚本
 COPY scripts/backup/ /app/backup/
 RUN find /app/backup -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 
 # 复制 crontab 配置
-COPY deploy/crontab /etc/crontabs/root
+COPY deploy/crontab /etc/crontabs/nodaops
 
 # 复制 supervisord 配置
 COPY deploy/supervisord.conf /etc/supervisord.conf
@@ -50,9 +53,14 @@ RUN chmod +x /app/entrypoint.sh
 
 # 创建日志和运行目录
 RUN mkdir -p /var/log/supervisor /var/log/noda-backup /app/history /run/supervisor
+RUN chown -R nodaops:nodaops /app /var/log/supervisor /var/log/noda-backup /app/history /run/supervisor
+RUN mkdir -p /home/nodaops/.config/rclone && chown -R nodaops:nodaops /home/nodaops
 
 # 暴露端口（健康检查用）
 EXPOSE 8080
+
+# 以非 root 用户运行
+USER nodaops
 
 # 健康检查
 HEALTHCHECK --interval=1h --timeout=10s --start-period=30s --retries=3 \

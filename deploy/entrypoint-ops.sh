@@ -32,8 +32,9 @@ if [ -n "$POSTGRES_HOST" ] && [ -n "$B2_ACCOUNT_ID" ]; then
   mkdir -p /app/history
 
   # 配置 rclone
-  mkdir -p /root/.config/rclone
-  cat > /root/.config/rclone/rclone.conf <<EOF
+  mkdir -p /home/nodaops/.config/rclone
+  export RCLONE_CONFIG=/home/nodaops/.config/rclone/rclone.conf
+  cat > /home/nodaops/.config/rclone/rclone.conf <<EOF
 [b2remote]
 type = b2
 account = $B2_ACCOUNT_ID
@@ -50,8 +51,9 @@ if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
   echo "✓ Cloudflare Tunnel 配置验证通过"
 else
   echo "⚠ CLOUDFLARE_TUNNEL_TOKEN 未配置，隧道功能将禁用"
-  # 禁用 cloudflared 程序
-  sed -i 's/autostart=true/autostart=false/' /etc/supervisord.conf 2>/dev/null || true
+  # 将 supervisord.conf 复制到可写路径并禁用 cloudflared
+  cp /etc/supervisord.conf /tmp/supervisord.conf
+  sed -i 's/autostart=true/autostart=false/' /tmp/supervisord.conf 2>/dev/null || true
 fi
 
 # 显示定时任务
@@ -64,5 +66,9 @@ echo "=========================================="
 echo "启动 supervisord..."
 echo "=========================================="
 
-# 启动 supervisord
-exec /usr/bin/supervisord -c /etc/supervisord.conf
+# 启动 supervisord（如果 cloudflared 被禁用，使用修改后的配置）
+SUPERVISOR_CONF="/etc/supervisord.conf"
+if [ -f /tmp/supervisord.conf ]; then
+  SUPERVISOR_CONF="/tmp/supervisord.conf"
+fi
+exec /usr/bin/supervisord -c "$SUPERVISOR_CONF"
