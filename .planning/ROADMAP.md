@@ -104,10 +104,10 @@ Plans:
   1. 所有容器拥有 noda.environment=prod 或 noda.environment=dev 标签
   2. docker ps --filter label=noda.environment=prod 仅显示生产容器，docker ps --filter label=noda.environment=dev 仅显示开发容器
   3. 标签命名统一为 noda.service-group（无 noda-apps/apps 不一致）
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 18-01: TBD
+- [ ] 18-01-PLAN.md — 修复标签不一致 + 添加环境标签（5 个 compose 文件）
 
 ## Progress
 
