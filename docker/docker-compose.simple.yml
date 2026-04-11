@@ -96,6 +96,7 @@ services:
       KC_HOSTNAME: "https://auth.noda.co.nz"
       KC_HOSTNAME_STRICT: "false"
       KC_PROXY: "edge"
+      KC_PROXY_HEADERS: "xforwarded"
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
     command: start
