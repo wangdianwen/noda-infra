@@ -38,7 +38,7 @@ log_info "Client ID: ${GOOGLE_CLIENT_ID:0:20}..."
 # ============================================
 log_info "步骤 2/6: 检查 Keycloak 容器"
 
-if ! docker ps --format "{{.Names}}" | grep -q "noda-infra-keycloak-1"; then
+if ! docker ps --format "{{.Names}}" | grep -q "noda-infra-keycloak-prod"; then
   log_error "Keycloak 容器未运行"
   exit 1
 fi
@@ -50,14 +50,14 @@ log_success "Keycloak 容器运行正常"
 # ============================================
 log_info "步骤 3/6: 登录 Keycloak 管理员"
 
-KEYCLOAK_ADMIN_PASSWORD=$(docker exec noda-infra-keycloak-1 printenv KEYCLOAK_ADMIN_PASSWORD)
+KEYCLOAK_ADMIN_PASSWORD=$(docker exec noda-infra-keycloak-prod printenv KEYCLOAK_ADMIN_PASSWORD)
 
 if [ -z "$KEYCLOAK_ADMIN_PASSWORD" ]; then
   log_error "无法获取管理员密码"
   exit 1
 fi
 
-docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh config credentials \
+docker exec noda-infra-keycloak-prod /opt/keycloak/bin/kcadm.sh config credentials \
   --server http://localhost:8080 \
   --realm master \
   --user admin \
@@ -70,12 +70,12 @@ log_success "管理员登录成功"
 # ============================================
 log_info "步骤 4/6: 创建 noda realm"
 
-if docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh get realms/noda > /dev/null 2>&1; then
+if docker exec noda-infra-keycloak-prod /opt/keycloak/bin/kcadm.sh get realms/noda > /dev/null 2>&1; then
   log_info "Realm 'noda' 已存在"
 else
   log_info "创建 realm 'noda'..."
 
-  docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh create realms \
+  docker exec noda-infra-keycloak-prod /opt/keycloak/bin/kcadm.sh create realms \
     -s realm=noda \
     -s enabled=true \
     -s sslRequired=none \
@@ -117,21 +117,21 @@ cat > "$CLIENT_JSON" << 'EOF'
 }
 EOF
 
-docker cp "$CLIENT_JSON" noda-infra-keycloak-1:/tmp/client.json > /dev/null 2>&1
+docker cp "$CLIENT_JSON" noda-infra-keycloak-prod:/tmp/client.json > /dev/null 2>&1
 
 # 检查 client 是否已存在（缓存结果避免重复查询）
-CLIENTS_JSON=$(docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh get realms/noda/clients)
+CLIENTS_JSON=$(docker exec noda-infra-keycloak-prod /opt/keycloak/bin/kcadm.sh get realms/noda/clients)
 if echo "$CLIENTS_JSON" | jq -e '.[] | select(.clientId=="noda-frontend")' > /dev/null 2>&1; then
   log_info "Client 'noda-frontend' 已存在，更新 CORS 配置..."
 
   CLIENT_ID=$(echo "$CLIENTS_JSON" | jq -r '.[] | select(.clientId=="noda-frontend") | .id')
-  docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh update realms/noda/clients/$CLIENT_ID \
+  docker exec noda-infra-keycloak-prod /opt/keycloak/bin/kcadm.sh update realms/noda/clients/$CLIENT_ID \
     -s 'webOrigins=["https://class.noda.co.nz", "https://auth.noda.co.nz", "https://noda.co.nz", "http://localhost:*"]' \
     -s 'redirectUris=["https://class.noda.co.nz/*", "https://auth.noda.co.nz/*", "http://localhost:*"]' > /dev/null 2>&1
 
   log_success "Client CORS 配置已更新"
 else
-  docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh create clients -r noda -f /tmp/client.json > /dev/null 2>&1
+  docker exec noda-infra-keycloak-prod /opt/keycloak/bin/kcadm.sh create clients -r noda -f /tmp/client.json > /dev/null 2>&1
   log_success "Client 'noda-frontend' 创建成功"
 fi
 
@@ -152,13 +152,13 @@ GOOGLE_IDP_ARGS=(
 )
 
 # 检查 IdP 是否已存在
-if docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh get realms/noda/identity-provider/instances/google > /dev/null 2>&1; then
+if docker exec noda-infra-keycloak-prod /opt/keycloak/bin/kcadm.sh get realms/noda/identity-provider/instances/google > /dev/null 2>&1; then
   log_info "Google IdP 已存在，更新配置..."
-  docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh update realms/noda/identity-provider/instances/google \
+  docker exec noda-infra-keycloak-prod /opt/keycloak/bin/kcadm.sh update realms/noda/identity-provider/instances/google \
     "${GOOGLE_IDP_ARGS[@]}" > /dev/null 2>&1
 else
   log_info "创建 Google IdP..."
-  docker exec noda-infra-keycloak-1 /opt/keycloak/bin/kcadm.sh create identity-provider/instances \
+  docker exec noda-infra-keycloak-prod /opt/keycloak/bin/kcadm.sh create identity-provider/instances \
     -r noda "${GOOGLE_IDP_ARGS[@]}" > /dev/null 2>&1
 fi
 
