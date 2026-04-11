@@ -22,6 +22,19 @@ Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL
 
 ## 部署规则
 
+### 禁止直接使用 Docker Compose 命令
+
+**严禁 LLM 直接运行 `docker compose up/down/restart/start/stop` 等命令来上线/下线服务。**
+
+所有服务部署、重启、下线操作必须通过项目脚本执行：
+
+| 操作 | 脚本 |
+|------|------|
+| 全量部署（基础设施+应用） | `bash scripts/deploy/deploy-infrastructure-prod.sh` |
+| 部署应用（findclass-ssr） | `bash scripts/deploy/deploy-apps-prod.sh` |
+
+允许的 docker compose 命令仅限只读操作：`ps`、`logs`、`config`、`images`。
+
 ### 项目名一致性
 - `docker-compose.yml` 和 `docker-compose.prod.yml` 项目名必须一致（当前为 `noda-infra`）
 - 不一致会创建重复容器和空数据卷
@@ -88,10 +101,12 @@ ARG VITE_KEYCLOAK_CLIENT_ID=noda-frontend
 ## 部署命令
 
 ```bash
-# 基础设施（Keycloak + Postgres）
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+# 全量部署（基础设施 + 应用）
+bash scripts/deploy/deploy-infrastructure-prod.sh
 
-# 应用（需要构建）
-docker compose -f docker/docker-compose.app.yml build findclass-ssr
-docker compose -f docker/docker-compose.app.yml up -d findclass-ssr
+# 仅部署应用（findclass-ssr）
+bash scripts/deploy/deploy-apps-prod.sh
+
+# 查看状态（只读，允许直接使用）
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.dev.yml ps
 ```
