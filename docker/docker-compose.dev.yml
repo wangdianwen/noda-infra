@@ -119,8 +119,10 @@ services:
     # start-dev：自动禁用主题缓存 + 放宽安全限制（per D-01）
     command: start-dev
     # 读写挂载主题目录（per D-06, D-07）
+    # Docker Desktop VirtioFS 无法直接看到深层新建目录，挂载 themes 父目录
+    # noda 主题自动出现在 /opt/keycloak/themes/noda/ 下
     volumes:
-      - ./services/keycloak/themes/noda:/opt/keycloak/themes/noda
+      - ./services/keycloak/themes:/opt/keycloak/themes
     networks:
       - noda-network
     depends_on:
