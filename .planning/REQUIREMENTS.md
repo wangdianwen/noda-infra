@@ -12,9 +12,9 @@
 
 ### Keycloak 端口收敛 (KC)
 
-- [ ] **KC-01**: auth.noda.co.nz 由 nginx 统一反向代理到 Keycloak（Cloudflare Dashboard 路由更新）
-- [ ] **KC-02**: Docker Compose 移除 Keycloak 8080/9000 端口直接暴露
-- [ ] **KC-03**: dev 应用复用线上 Keycloak（Google OAuth 配置 localhost redirect URI，dev 使用 auth.noda.co.nz 认证）
+- [x] **KC-01**: auth.noda.co.nz 由 nginx 统一反向代理到 Keycloak（Cloudflare Dashboard 路由更新）
+- [x] **KC-02**: Docker Compose 移除 Keycloak 8080/9000 端口直接暴露
+- [x] **KC-03**: dev 应用复用线上 Keycloak（Google OAuth 配置 localhost redirect URI，dev 使用 auth.noda.co.nz 认证）
 
 ### 端口安全 (SEC)
 
@@ -48,9 +48,9 @@
 |-------------|-------|--------|
 | PG-01 | Phase 15 | Pending |
 | PG-02 | Phase 15 | Pending |
-| KC-01 | Phase 16 | Pending |
-| KC-02 | Phase 16 | Pending |
-| KC-03 | Phase 16 | Pending |
+| KC-01 | Phase 16 | Complete |
+| KC-02 | Phase 16 | Complete |
+| KC-03 | Phase 16 | Complete |
 | SEC-01 | Phase 17 | Pending |
 | SEC-02 | Phase 17 | Pending |
 | GRP-01 | Phase 18 | Pending |
