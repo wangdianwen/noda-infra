@@ -51,7 +51,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 - [ ] **Phase 15: PostgreSQL 客户端升级** — pg_dump 版本匹配 + sslmode 显式设置
 - [x] **Phase 16: Keycloak 端口收敛** — nginx 统一反代 + 端口移除 + dev 复用线上认证 (completed 2026-04-11)
-- [ ] **Phase 17: 端口安全加固** — dev PostgreSQL 端口绑定 localhost + Keycloak 管理端口收敛
+- [x] **Phase 17: 端口安全加固** — dev PostgreSQL 端口绑定 localhost + Keycloak 管理端口收敛 (completed 2026-04-11)
 - [ ] **Phase 18: 容器标签分组** — noda.environment 标签 + 命名规范统一
 
 ## Phase Details
@@ -94,7 +94,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 17-01-PLAN.md — 修改 3 个 compose 文件端口绑定 127.0.0.1 + 部署后验证
+- [x] 17-01-PLAN.md — 修改 3 个 compose 文件端口绑定 127.0.0.1 + 部署后验证
 
 ### Phase 18: 容器标签分组
 **Goal**: 所有容器携带统一的环境标签，可通过 docker ps --filter 按环境筛选
@@ -123,5 +123,5 @@ Phases execute in numeric order: 15 → 16 → 17 → 18
 | 14. 容器保护与部署安全 | v1.2 | 3/3 | Complete | 2026-04-11 |
 | 15. PostgreSQL 客户端升级 | v1.3 | 0/1 | Planning complete | - |
 | 16. Keycloak 端口收敛 | v1.3 | 1/1 | Complete   | 2026-04-11 |
-| 17. 端口安全加固 | v1.3 | 0/1 | Planning complete | - |
+| 17. 端口安全加固 | v1.3 | 1/1 | Complete    | 2026-04-11 |
 | 18. 容器标签分组 | v1.3 | 0/? | Not started | - |
