@@ -63,10 +63,11 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. findclass-ssr 所有相关文件（Dockerfile、配置）位于 noda-apps/ 目录下，`docker compose config` 输出路径正确且服务正常启动
   2. `docker compose ps --format json` 显示所有容器带有 noda-apps 分组标签，可通过 `docker compose ps --filter label=project=noda-apps` 过滤查看
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 11-01: TBD
+- [ ] 11-01-PLAN.md — 统一 Dockerfile 路径引用 + 修复废弃脚本（GROUP-01）
+- [ ] 11-02-PLAN.md — 为所有 compose 文件添加 noda.service-group 分组标签（GROUP-02）
 
 ### Phase 12: Keycloak 双环境
 **Goal**: 开发者拥有独立的 Keycloak 开发环境，可安全测试配置变更而不影响生产数据
@@ -100,6 +101,6 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 10. B2 备份修复 | v1.2 | 3/3 | Complete    | 2026-04-11 |
-| 11. 服务整合 | v1.2 | 0/? | Not started | - |
+| 11. 服务整合 | v1.2 | 0/2 | Planning | - |
 | 12. Keycloak 双环境 | v1.2 | 0/? | Not started | - |
 | 13. Keycloak 自定义主题 | v1.2 | 0/? | Not started | - |
