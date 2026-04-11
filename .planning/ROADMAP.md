@@ -80,7 +80,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 12-01-PLAN.md — 创建 keycloak-dev 服务 + 主题目录骨架 + 人工验证
+- [x] 12-01-PLAN.md — 创建 keycloak-dev 服务 + 主题目录骨架 + 人工验证
 
 ### Phase 13: Keycloak 自定义主题
 **Goal**: 生产环境登录页展示 Noda 品牌，用户看到的是品牌化界面而非默认 Keycloak 样式
@@ -102,5 +102,5 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 |-------|-----------|----------------|--------|-----------|
 | 10. B2 备份修复 | v1.2 | 3/3 | Complete    | 2026-04-11 |
 | 11. 服务整合 | v1.2 | 2/2 | Complete    | 2026-04-11 |
-| 12. Keycloak 双环境 | v1.2 | 0/1 | Not started | - |
+| 12. Keycloak 双环境 | v1.2 | 1/1 | Complete    | 2026-04-11 |
 | 13. Keycloak 自定义主题 | v1.2 | 0/? | Not started | - |
