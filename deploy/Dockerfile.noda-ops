@@ -36,7 +36,7 @@ WORKDIR /app
 
 # 复制备份脚本
 COPY scripts/backup/ /app/backup/
-RUN chmod +x /app/backup/*.sh 2>/dev/null || true
+RUN find /app/backup -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 
 # 复制 crontab 配置
 COPY deploy/crontab /etc/crontabs/root
