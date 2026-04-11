@@ -98,6 +98,36 @@ ARG VITE_KEYCLOAK_CLIENT_ID=noda-frontend
 - `lru-cache` ESM 兼容问题：Dockerfile 中 sed 修复 named export
 - API 入口文件路径修正：`dist/api/src/api.js` → `dist/api.js`
 
+## Phase 16 端口收敛 + OAuth 修复记录（2026-04-12）
+
+### 端口收敛
+
+- Keycloak 移除 `ports:` 段（8080/9000），仅通过 nginx 反向代理访问
+- auth.noda.co.nz 流量：Cloudflare → nginx → keycloak:8080（Docker 内部网络）
+- 健康检查从 `localhost:9000` 改为 `localhost:8080` TCP 检查
+
+### OAuth 登录修复（3 层问题）
+
+| # | 问题 | 根因 | 修复 |
+|---|------|------|------|
+| 1 | keycloak-js 默认 `responseMode='fragment'` | 回调参数在 URL hash 中，PKCE 无法交换 token | `keycloak.init({ responseMode: 'query' })` |
+| 2 | Keycloak 容器 `KC_PROXY=none` | 容器未重建，compose 配置未生效；导致 cookie 缺少 Secure 标记 | `docker compose up --force-recreate keycloak` |
+| 3 | nginx `X-Frame-Options: SAMEORIGIN` | 阻止 Keycloak SSO iframe 被 class.noda.co.nz 嵌入 | 改为 `ALLOW-FROM` + `CSP frame-ancestors` |
+
+### findclass-ssr 镜像重建
+
+shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法加载。Dockerfile 中添加：
+1. `tsc --build` 编译 TypeScript
+2. Node.js 脚本修复 ESM 扩展名（目录导入 → `./dir/index.js`，文件导入 → `./file.js`）
+3. 重写 `package.json` 指向 `./dist/` 编译产物
+
+### Docker 构建注意事项
+
+- `docker compose build` 可能使用 BuildKit 缓存导致 Dockerfile 修改未生效
+- 关键修改后用 `docker build --no-cache` 直接构建验证
+- `tsc --build` 增量编译受 `tsconfig.tsbuildinfo` 影响，Dockerfile 中无需处理（每次全新构建）
+- tsc 的 `moduleResolution: "bundler"` 不会添加 `.js` 扩展名，需要后处理
+
 ## 部署命令
 
 ```bash

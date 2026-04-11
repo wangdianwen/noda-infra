@@ -36,6 +36,43 @@ RUN cd apps/findclass/api && npm run build
 # 修复 lru-cache ESM 兼容问题
 RUN sed -i "s/import { LRUCache } from 'lru-cache'/import _lru from 'lru-cache'; const LRUCache = _lru.default || _lru/" apps/findclass/api/dist/lib/ssr-cache.js
 
+# 编译 shared 包（Node.js 无法直接运行 .ts 文件）
+RUN cd packages/shared && npx tsc --build
+
+# 修复 shared 包 ESM 扩展名 + 重写 package.json
+# tsc --module ESNext 不添加 .js 扩展名，Node.js ESM 模式要求必须有
+# 目录导入（如 ./types）需要变成 ./types/index.js，文件导入（如 ./ssr-serialization）变成 ./ssr-serialization.js
+RUN cd packages/shared && node -e " \
+var fs = require('fs'); \
+var path = require('path'); \
+function fixImports(dir) { \
+  for (var f of fs.readdirSync(dir, { withFileTypes: true })) { \
+    var fp = path.join(dir, f.name); \
+    if (f.isDirectory()) { fixImports(fp); continue; } \
+    if (!f.name.endsWith('.js')) continue; \
+    var c = fs.readFileSync(fp, 'utf8'); \
+    c = c.replace(/from\\s+['\"](\\.[^'\"]+)['\"]/g, function(m, imp) { \
+      if (imp.endsWith('.js')) return m; \
+      var resolved = path.resolve(path.dirname(fp), imp); \
+      try { if (fs.statSync(resolved).isDirectory()) return \"from '\" + imp + \"/index.js'\"; } catch(e) {} \
+      return \"from '\" + imp + \".js'\"; \
+    }); \
+    fs.writeFileSync(fp, c); \
+  } \
+} \
+fixImports('dist'); \
+var pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); \
+pkg.main = './dist/index.js'; \
+pkg.types = './dist/index.d.ts'; \
+for (var k of Object.keys(pkg.exports)) { \
+  var e = pkg.exports[k]; \
+  var base = k === '.' ? 'index' : k.split('/').pop() + '/index'; \
+  e.types = './dist/' + base + '.d.ts'; \
+  e.default = './dist/' + base + '.js'; \
+} \
+fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\\n'); \
+console.log('Fixed ESM imports and package.json');"
+
 # ----------------------------------------
 # Stage 2: 运行镜像
 # ----------------------------------------
@@ -56,6 +93,7 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 
 # 复制 shared 包
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
 COPY --from=builder /app/packages/shared/src ./packages/shared/src
 COPY --from=builder /app/packages/shared/package.json ./packages/shared/
 
