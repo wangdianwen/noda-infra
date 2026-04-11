@@ -159,9 +159,68 @@ check_disk_space() {
 
   # 检查是否在容器内运行
   if [[ -f /.dockerenv ]]; then
-    # 在容器内，简化检查（仅检查挂载点）
-    echo "ℹ️  容器内运行，跳过详细磁盘检查"
-    echo "ℹ️  备份目录: $backup_dir"
+    echo "ℹ️  容器内运行，检查挂载点磁盘空间"
+
+    local pg_host
+    local pg_user
+    pg_host=$(get_postgres_host)
+    pg_user=$(get_postgres_user)
+
+    # 1. 查询所有用户数据库总大小（容器内用 psql 直连，不用 docker exec）
+    echo "ℹ️  查询所有用户数据库大小..." >&2
+
+    local total_db_size=0
+    local databases
+    databases=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -U "$pg_user" \
+      -d postgres -t -c \
+      "SELECT datname FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres', 'template0', 'template1') ORDER BY datname;" 2>/dev/null | tr -d ' \n' | sed 's/$/\n/' | grep -v '^$')
+
+    for db in $databases; do
+      local db_size
+      db_size=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -U "$pg_user" \
+        -d postgres -t -c "SELECT pg_database_size('$db');" 2>/dev/null | tr -d ' ')
+      if [[ -n "$db_size" && "$db_size" =~ ^[0-9]+$ ]]; then
+        total_db_size=$((total_db_size + db_size))
+        local db_size_mb
+        db_size_mb=$((db_size / 1024 / 1024))
+        echo "  - $db: ${db_size_mb} MB" >&2
+      fi
+    done
+
+    if [[ $total_db_size -eq 0 ]]; then
+      echo "⚠️  无法获取数据库大小，跳过磁盘空间检查"
+      return 0
+    fi
+
+    # 2. 计算所需空间 = 数据库总大小 × 2
+    local required_space=$((total_db_size * 2))
+    local required_space_mb=$((required_space / 1024 / 1024))
+    echo "ℹ️  所需磁盘空间: ${required_space_mb} MB (数据库大小 × 2)"
+
+    # 3. 检查备份目录挂载点可用空间
+    local available
+    available=$(df -B1 "$backup_dir" 2>/dev/null | tail -1 | awk '{print $4}')
+
+    if [[ -z "$available" || ! "$available" =~ ^[0-9]+$ ]]; then
+      echo "⚠️  无法获取磁盘空间信息，继续备份"
+      return 0
+    fi
+
+    local available_mb=$((available / 1024 / 1024))
+    echo "  - 可用空间: ${available_mb} MB"
+
+    if [[ $available -lt $required_space ]]; then
+      echo "❌ 错误: 磁盘空间不足"
+      echo "  - 可用: ${available_mb} MB"
+      echo "  - 需要: ${required_space_mb} MB"
+      echo ""
+      echo "解决建议："
+      echo "  - 清理旧的备份文件: find $backup_dir -type f -mtime +7 -delete"
+      echo "  - 检查: df -h $backup_dir"
+      return $EXIT_DISK_SPACE_INSUFFICIENT
+    fi
+
+    echo "✅ 磁盘空间检查通过"
     return 0
   fi
 
