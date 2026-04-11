@@ -87,11 +87,13 @@ Plans:
 **Depends on**: Phase 12 (需要 dev 环境进行主题热重载迭代)
 **Requirements**: THEME-01, THEME-02
 **Success Criteria** (what must be TRUE):
-  1. 访问 auth.noda.co.nz 登录页时显示 Noda 品牌样式（自定义颜色、字体、按钮风格），而非默认 Keycloak 界面
-  2. 登录页显示 Noda Logo（替换默认 Keycloak Logo），Logo 文件从宿主机 volume 挂载并受 Git 管理
-  3. 开发环境修改 CSS 后刷新浏览器即可看到变化（热重载验证通过，开发效率高于生产环境）
-**Plans**: TBD
-**UI hint**: yes
+  1. 访问 auth.noda.co.nz 登录页时显示 Noda 品牌样式（自定义颜色、按钮风格），而非默认 Keycloak 界面
+  2. 登录页保留 Keycloak 默认 Logo（D-04 决策：Noda 尚无独立品牌 Logo）
+  3. 开发环境修改 CSS 后刷新浏览器即可看到变化（热重载验证通过）
+**Plans**: 1 plan
+
+Plans:
+- [ ] 13-01-PLAN.md — 修复 theme.properties + 填充 styles.css 品牌色覆盖 + 人工验证
 
 ## Progress
 
@@ -103,4 +105,4 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 | 10. B2 备份修复 | v1.2 | 3/3 | Complete    | 2026-04-11 |
 | 11. 服务整合 | v1.2 | 2/2 | Complete    | 2026-04-11 |
 | 12. Keycloak 双环境 | v1.2 | 1/1 | Complete    | 2026-04-11 |
-| 13. Keycloak 自定义主题 | v1.2 | 0/? | Not started | - |
+| 13. Keycloak 自定义主题 | v1.2 | 0/1 | Not started | - |
