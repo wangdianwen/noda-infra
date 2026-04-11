@@ -64,10 +64,10 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
   1. noda-ops 容器内 `pg_dump --version` 输出 17.x（与服务端 17.9 主版本一致）
   2. 备份脚本执行时无 sslmode 警告或连接失败
   3. 现有备份流程（健康检查 -> 备份 -> 上传 B2）端到端正常完成
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 15-01: TBD
+- [ ] 15-01-PLAN.md — 升级 Dockerfile (Alpine 3.21 + PG17 client) + 添加 PGSSLMODE=disable 环境变量
 
 ### Phase 16: Keycloak 端口收敛
 **Goal**: auth.noda.co.nz 流量统一经过 nginx 反向代理到 Keycloak，Docker 不再直接暴露 Keycloak 端口
@@ -121,7 +121,7 @@ Phases execute in numeric order: 15 → 16 → 17 → 18
 | 12. Keycloak 双环境 | v1.2 | 1/1 | Complete | 2026-04-11 |
 | 13. Keycloak 自定义主题 | v1.2 | 1/1 | Complete | 2026-04-11 |
 | 14. 容器保护与部署安全 | v1.2 | 3/3 | Complete | 2026-04-11 |
-| 15. PostgreSQL 客户端升级 | v1.3 | 0/? | Not started | - |
+| 15. PostgreSQL 客户端升级 | v1.3 | 0/1 | Planning complete | - |
 | 16. Keycloak 端口收敛 | v1.3 | 0/? | Not started | - |
 | 17. 端口安全加固 | v1.3 | 0/? | Not started | - |
 | 18. 容器标签分组 | v1.3 | 0/? | Not started | - |
