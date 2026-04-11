@@ -109,35 +109,6 @@ services:
       start_period: 60s
 
   # ----------------------------------------
-  # Findclass SSR（生产环境）
-  # ----------------------------------------
-  findclass-ssr:
-    <<: *common-security
-    labels:
-      - "noda.service-group=apps"
-      - "noda.environment=prod"
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
-      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
-      KEYCLOAK_URL: http://keycloak:8080
-      KEYCLOAK_REALM: noda
-      KEYCLOAK_CLIENT_ID: noda-frontend
-      RESEND_API_KEY: ${RESEND_API_KEY}
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 512M
-        reservations:
-          cpus: '0.25'
-          memory: 128M
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp
-
-  # ----------------------------------------
   # Nginx 安全加固（生产环境）
   # ----------------------------------------
   nginx:

@@ -2,6 +2,7 @@
 # ============================================
 # 部署应用服务到生产环境
 # findclass-ssr: 重新构建镜像 + 部署
+# 使用独立的 docker-compose.app.yml（name: noda-apps）
 # ============================================
 
 set -euo pipefail
@@ -13,16 +14,15 @@ cd "$PROJECT_ROOT"
 source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/lib/health.sh"
 
-# 注意：此变量故意不加引号使用，依赖 word splitting 拆分为多个 -f 参数
-COMPOSE_FILES="-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.dev.yml"
+# 应用服务使用独立的 compose 文件（noda-apps 项目）
+COMPOSE_FILE="-f docker/docker-compose.app.yml"
 
 # 回滚目录和文件
 ROLLBACK_DIR="/tmp/noda-rollback"
 ROLLBACK_FILE="$ROLLBACK_DIR/images-apps-$(date +%s).txt"
-ROLLBACK_COMPOSE="$ROLLBACK_DIR/docker-compose.app-rollback.yml"
 
 # ============================================
-# 镜像回滚函数 (D-05)
+# 镜像回滚函数
 # ============================================
 
 save_app_image_tags() {
@@ -54,13 +54,14 @@ rollback_app() {
   log_info "回滚 findclass-ssr 到镜像 ${image_id:0:12}..."
 
   # 生成 compose override 文件指定回滚镜像
-  cat > "$ROLLBACK_COMPOSE" <<EOF
+  local rollback_compose="$ROLLBACK_DIR/docker-compose.app-rollback.yml"
+  cat > "$rollback_compose" <<EOF
 services:
   findclass-ssr:
     image: ${image_id}
 EOF
 
-  if ! docker compose $COMPOSE_FILES -f "$ROLLBACK_COMPOSE" up -d --no-deps --force-recreate findclass-ssr; then
+  if ! docker compose $COMPOSE_FILE -f "$rollback_compose" up -d --no-deps --force-recreate findclass-ssr; then
     log_error "findclass-ssr 回滚失败"
     return 1
   fi
@@ -94,7 +95,7 @@ log_info "=========================================="
 log_info "步骤 3/5: 构建 findclass-ssr 镜像"
 log_info "=========================================="
 
-docker compose $COMPOSE_FILES build findclass-ssr
+docker compose $COMPOSE_FILE build findclass-ssr
 log_success "镜像构建完成"
 
 # ============================================
@@ -104,7 +105,7 @@ log_info "=========================================="
 log_info "步骤 4/5: 部署新版本"
 log_info "=========================================="
 
-docker compose $COMPOSE_FILES up -d --no-deps --force-recreate findclass-ssr
+docker compose $COMPOSE_FILE up -d --force-recreate findclass-ssr
 
 # ============================================
 # 步骤 5/5: 等待健康检查

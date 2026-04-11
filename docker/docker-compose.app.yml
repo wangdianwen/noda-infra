@@ -4,8 +4,10 @@
 # 包含：findclass-ssr（API + SSR 渲染 + 静态文件）
 # 旧服务（findclass-web, findclass-api）已被 findclass-ssr 替代
 #
-# 注意：此文件独立于基础设施服务（postgres, keycloak）
-# 基础设施服务通过外部网络 noda-network 连接
+# 独立于基础设施服务（postgres, keycloak, nginx, noda-ops）
+# 通过外部网络 noda-network 连接基础设施
+#
+# 部署：bash scripts/deploy/deploy-apps-prod.sh
 
 name: noda-apps
 
@@ -28,12 +30,20 @@ services:
       - "noda.service-group=apps"
       - "noda.environment=prod"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 30s
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod
       DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod
       KEYCLOAK_URL: https://auth.noda.co.nz
-      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
+      KEYCLOAK_INTERNAL_URL: http://noda-infra-keycloak-prod:8080
       KEYCLOAK_REALM: noda
       KEYCLOAK_CLIENT_ID: noda-frontend
       RESEND_API_KEY: ${RESEND_API_KEY:-}
@@ -53,6 +63,11 @@ services:
         reservations:
           cpus: '0.25'
           memory: 128M
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
 
 networks:
   noda-network:

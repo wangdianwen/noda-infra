@@ -102,43 +102,6 @@ services:
       start_period: 30s
 
   # ----------------------------------------
-  # Findclass SSR 服务（API + SSR 渲染 + 静态文件）
-  # ----------------------------------------
-  findclass-ssr:
-    build:
-      context: ../../noda-apps
-      dockerfile: ../noda-infra/deploy/Dockerfile.findclass-ssr
-    image: findclass-ssr:latest
-    container_name: findclass-ssr
-    labels:
-      - "noda.service-group=apps"
-      - "noda.environment=prod"
-    restart: unless-stopped
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
-      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
-      KEYCLOAK_URL: https://auth.noda.co.nz
-      KEYCLOAK_INTERNAL_URL: http://keycloak:8080
-      KEYCLOAK_REALM: noda
-      KEYCLOAK_CLIENT_ID: noda-frontend
-    networks:
-      noda-network:
-        aliases:
-          - findclass-ssr
-    depends_on:
-      postgres:
-        condition: service_healthy
-      keycloak:
-        condition: service_started
-    healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:3001/api/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  # ----------------------------------------
   # Keycloak 认证服务（基础配置）
   # ----------------------------------------
   keycloak:

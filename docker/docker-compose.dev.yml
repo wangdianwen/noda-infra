@@ -81,17 +81,6 @@ services:
       start_period: 60s
 
   # ----------------------------------------
-  # Findclass SSR（开发环境配置）
-  # ----------------------------------------
-  findclass-ssr:
-    # 生产部署不暴露端口（通过 nginx 内部访问）
-    # 本地开发需要时使用: docker compose -f ... -p 3002:3001 up findclass-ssr
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
-      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
-
-  # ----------------------------------------
   # Keycloak 开发环境（独立容器）
   # start-dev 模式：自动禁用主题缓存、放宽 HTTPS 要求
   # ----------------------------------------
