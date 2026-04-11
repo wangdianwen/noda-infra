@@ -128,7 +128,7 @@ wait_for_containers() {
 
     while [[ $elapsed -lt $DEPLOY_TIMEOUT ]]; do
         # 检查关键容器是否运行
-        if docker ps --format '{{.Names}}' | grep -q "noda-findclass"; then
+        if docker ps --format '{{.Names}}' | grep -q "findclass-ssr"; then
             log_info "容器已就绪"
             return 0
         fi
