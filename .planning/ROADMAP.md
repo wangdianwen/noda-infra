@@ -99,7 +99,7 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 10. B2 备份修复 | v1.2 | 3/3 | Complete   | 2026-04-11 |
+| 10. B2 备份修复 | v1.2 | 3/3 | Complete    | 2026-04-11 |
 | 11. 服务整合 | v1.2 | 0/? | Not started | - |
 | 12. Keycloak 双环境 | v1.2 | 0/? | Not started | - |
 | 13. Keycloak 自定义主题 | v1.2 | 0/? | Not started | - |
