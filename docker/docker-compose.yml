@@ -79,6 +79,8 @@ services:
       B2_BUCKET_NAME: ${B2_BUCKET_NAME:-noda-backups}
       B2_PATH: ${B2_PATH:-backups/postgres/}
       ALERT_EMAIL: ${ALERT_EMAIL:-}
+      # SSL 配置（Docker 内部网络无需 SSL）
+      PGSSLMODE: disable
       # Cloudflare Tunnel 配置
       CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
     volumes:
