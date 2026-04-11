@@ -11,6 +11,8 @@ services:
   postgres-dev:
     image: postgres:17.9
     container_name: noda-dev-postgres
+    labels:
+      - "noda.service-group=infra"
     restart: unless-stopped
     environment:
       POSTGRES_USER: dev_user

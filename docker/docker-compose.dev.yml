@@ -18,6 +18,8 @@ services:
   postgres-dev:
     image: postgres:17.9
     container_name: noda-infra-postgres-dev
+    labels:
+      - "noda.service-group=infra"
     restart: unless-stopped
     ports:
       - "5433:5432"  # 暴露端口供本地开发连接
@@ -58,6 +60,8 @@ services:
   # Keycloak 认证服务（开发环境配置）
   # ----------------------------------------
   keycloak:
+    labels:
+      - "noda.service-group=infra"
     environment:
       # 本地开发：不设置 KC_HOSTNAME，允许通过 localhost 访问
       # 使用空字符串覆盖生产配置的 KC_HOSTNAME
@@ -85,6 +89,8 @@ services:
   # Findclass SSR（开发环境配置）
   # ----------------------------------------
   findclass-ssr:
+    labels:
+      - "noda.service-group=apps"
     ports:
       - "3002:3001"  # 内网访问端口（改为 3002 避免冲突）
     environment:

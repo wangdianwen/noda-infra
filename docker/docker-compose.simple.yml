@@ -11,6 +11,8 @@ services:
   postgres:
     image: postgres:17.9
     container_name: noda-infra-postgres-prod
+    labels:
+      - "noda.service-group=infra"
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -34,6 +36,8 @@ services:
   postgres-dev:
     image: postgres:17.9
     container_name: noda-infra-postgres-dev
+    labels:
+      - "noda.service-group=infra"
     restart: unless-stopped
     ports:
       - "5433:5432"
@@ -56,6 +60,8 @@ services:
   # ----------------------------------------
   nginx:
     image: nginx:1.25-alpine
+    labels:
+      - "noda.service-group=infra"
     restart: unless-stopped
     ports:
       - "80:80"
@@ -76,6 +82,8 @@ services:
   # ----------------------------------------
   keycloak:
     image: quay.io/keycloak/keycloak:26.2.3
+    labels:
+      - "noda.service-group=infra"
     ports:
       - "8080:8080"
       - "9000:9000"
@@ -106,6 +114,8 @@ services:
   # ----------------------------------------
   cloudflared:
     image: cloudflare/cloudflared:latest
+    labels:
+      - "noda.service-group=infra"
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
     environment:
