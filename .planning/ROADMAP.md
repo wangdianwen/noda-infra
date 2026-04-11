@@ -91,10 +91,10 @@ Plans:
   1. postgres-dev 5433 端口仅绑定 127.0.0.1，外部网络无法直接连接
   2. Keycloak 9000 管理端口不在 docker-compose ports 中暴露到宿主机
   3. 本地开发通过 127.0.0.1:5433 正常连接 dev 数据库
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 17-01: TBD
+- [ ] 17-01-PLAN.md — 修改 3 个 compose 文件端口绑定 127.0.0.1 + 部署后验证
 
 ### Phase 18: 容器标签分组
 **Goal**: 所有容器携带统一的环境标签，可通过 docker ps --filter 按环境筛选
@@ -123,5 +123,5 @@ Phases execute in numeric order: 15 → 16 → 17 → 18
 | 14. 容器保护与部署安全 | v1.2 | 3/3 | Complete | 2026-04-11 |
 | 15. PostgreSQL 客户端升级 | v1.3 | 0/1 | Planning complete | - |
 | 16. Keycloak 端口收敛 | v1.3 | 1/1 | Complete   | 2026-04-11 |
-| 17. 端口安全加固 | v1.3 | 0/? | Not started | - |
+| 17. 端口安全加固 | v1.3 | 0/1 | Planning complete | - |
 | 18. 容器标签分组 | v1.3 | 0/? | Not started | - |
