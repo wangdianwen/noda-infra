@@ -1,5 +1,24 @@
 # Milestones
 
+## v1.2 基础设施修复与整合 (Shipped: 2026-04-11)
+
+**Phases completed:** 5 phases, 10 plans, 16 tasks
+
+**Key accomplishments:**
+
+- 1. [Rule 3 - Blocking] 跳过 Task 0 checkpoint:decision
+- 修复容器内 check_disk_space() 的 return 0 跳过 bug，实现 psql 直连查询数据库大小 + df 挂载点空间检查，空间不足时返回 EXIT_DISK_SPACE_INSUFFICIENT (6)
+- 修复 download_backup/download_latest_backup 的 B2 日期子目录路径处理，使用 basename 提取纯文件名 +
+- 统一两个 Docker Compose 文件中 findclass-ssr 的 Dockerfile 路径引用为 ../noda-infra/deploy/Dockerfile.findclass-ssr，废弃引用不存在路径的部署脚本
+- 为 6 个 Docker Compose 变体文件添加 noda.service-group 分组标签，实现 infra/apps 容器过滤
+- keycloak-dev 独立容器（start-dev 模式）连接 keycloak_dev 数据库，主题目录热重载挂载，与生产完全隔离
+- Noda 品牌主题 CSS 覆盖：修复 theme.properties 加载声明 + PatternFly v4 变量覆盖（Pounamu Green #0D9B6A）+ 直接选择器覆盖（卡片边框、焦点环、圆角 0.5rem）
+- deploy/Dockerfile.noda-ops:
+- 修改文件：
+- Compose-based 镜像 digest 回滚 + 12 小时阈值部署前自动备份，确保部署失败时安全回退且数据始终受保护
+
+---
+
 ## v1.0 Complete PostgreSQL Backup System (Shipped: 2026-04-06)
 
 **Phases completed:** 9 phases, 16 plans, 23 tasks
