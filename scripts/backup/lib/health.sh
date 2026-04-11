@@ -166,25 +166,21 @@ check_disk_space() {
     pg_host=$(get_postgres_host)
     pg_user=$(get_postgres_user)
 
-    # 1. 查询所有用户数据库总大小（容器内用 psql 直连，不用 docker exec）
+    # 1. 查询所有用户数据库总大小（单条 SQL 避免 N+1）
     echo "ℹ️  查询所有用户数据库大小..." >&2
 
-    local total_db_size=0
-    local databases
-    databases=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -U "$pg_user" \
+    local total_db_size
+    total_db_size=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -U "$pg_user" \
       -d postgres -t -c \
-      "SELECT datname FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres', 'template0', 'template1') ORDER BY datname;" 2>/dev/null | tr -d ' \n' | sed 's/$/\n/' | grep -v '^$')
+      "SELECT COALESCE(SUM(pg_database_size(datname)), 0) FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres', 'template0', 'template1');" 2>/dev/null | tr -d ' ')
 
-    for db in $databases; do
-      local db_size
-      db_size=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -U "$pg_user" \
-        -d postgres -t -c "SELECT pg_database_size('$db');" 2>/dev/null | tr -d ' ')
-      if [[ -n "$db_size" && "$db_size" =~ ^[0-9]+$ ]]; then
-        total_db_size=$((total_db_size + db_size))
-        local db_size_mb
-        db_size_mb=$((db_size / 1024 / 1024))
-        echo "  - $db: ${db_size_mb} MB" >&2
-      fi
+    # 显示各数据库大小（单条 SQL）
+    PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -U "$pg_user" \
+      -d postgres -t -c \
+      "SELECT datname, pg_database_size(datname) FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres', 'template0', 'template1') ORDER BY datname;" 2>/dev/null | while read -r db_name db_size _; do
+      [ -z "$db_name" ] && continue
+      local db_size_mb=$((db_size / 1024 / 1024))
+      echo "  - ${db_name}: ${db_size_mb} MB" >&2
     done
 
     if [[ $total_db_size -eq 0 ]]; then

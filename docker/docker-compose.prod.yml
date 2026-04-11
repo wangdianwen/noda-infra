@@ -6,11 +6,23 @@
 
 name: noda-infra
 
+# 共享安全加固配置（YAML anchors）
+x-common-security: &common-security
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+  stop_grace_period: 30s
+
 services:
   # ----------------------------------------
   # PostgreSQL 生产环境配置
   # ----------------------------------------
   postgres:
+    <<: *common-security
     # 生产环境不暴露端口，仅通过 Docker 内部网络访问
     environment:
       POSTGRES_DB: noda_prod
@@ -26,8 +38,6 @@ services:
       - ./services/postgres/backup:/var/lib/postgresql/backup  # 备份目录
       - ./services/postgres/backup/wal-archive:/var/lib/postgresql/wal_archive  # WAL 归档目录
       - ./services/postgres/conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro  # PostgreSQL 配置文件
-    security_opt:
-      - no-new-privileges:true
     cap_drop:
       - ALL
     cap_add:
@@ -40,17 +50,12 @@ services:
     tmpfs:
       - /var/run/postgresql
       - /tmp
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    stop_grace_period: 30s
 
   # ----------------------------------------
   # Keycloak 认证服务（生产环境）
   # ----------------------------------------
   keycloak:
+    <<: *common-security
     image: quay.io/keycloak/keycloak:26.2.3
     labels:
       - "noda.service-group=infra"
@@ -101,19 +106,12 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-    security_opt:
-      - no-new-privileges:true
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    stop_grace_period: 30s
 
   # ----------------------------------------
   # Findclass SSR（生产环境）
   # ----------------------------------------
   findclass-ssr:
+    <<: *common-security
     labels:
       - "noda.service-group=noda-apps"
     environment:
@@ -131,28 +129,19 @@ services:
         reservations:
           cpus: '0.25'
           memory: 128M
-    security_opt:
-      - no-new-privileges:true
     cap_drop:
       - ALL
     read_only: true
     tmpfs:
       - /tmp
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    stop_grace_period: 30s
 
   # ----------------------------------------
   # Nginx 安全加固（生产环境）
   # ----------------------------------------
   nginx:
+    <<: *common-security
     volumes:
       - ../config/nginx/errors:/etc/nginx/errors:ro
-    security_opt:
-      - no-new-privileges:true
     cap_drop:
       - ALL
     cap_add:
@@ -165,19 +154,12 @@ services:
       - /var/cache/nginx
       - /var/run
       - /tmp
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    stop_grace_period: 30s
 
   # ----------------------------------------
   # Noda Ops 安全加固（生产环境）
   # ----------------------------------------
   noda-ops:
-    security_opt:
-      - no-new-privileges:true
+    <<: *common-security
     cap_drop:
       - ALL
     cap_add:
@@ -190,12 +172,6 @@ services:
     tmpfs:
       - /tmp
       - /home/nodaops
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    stop_grace_period: 30s
 
 # ============================================
 # 网络定义

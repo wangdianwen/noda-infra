@@ -12,6 +12,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
+source "$PROJECT_ROOT/scripts/lib/health.sh"
 
 # 解析命令行参数
 SKIP_BACKUP=false
@@ -273,55 +274,7 @@ log_info "=========================================="
 HEALTH_TIMEOUT=90
 
 for container in "${EXPECTED_CONTAINERS[@]}"; do
-  WAITED=0
-  while [ $WAITED -lt $HEALTH_TIMEOUT ]; do
-    INSPECT=$(docker inspect --format='{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container" 2>/dev/null || echo "missing|missing")
-    # bash 内置参数展开，避免子进程
-    C_STATUS="${INSPECT%%|*}"
-    C_HEALTH="${INSPECT##*|}"
-
-    case "$C_STATUS" in
-      running)
-        case "$C_HEALTH" in
-          healthy)
-            log_success "$container — healthy"
-            break
-            ;;
-          unhealthy)
-            log_error "$container — unhealthy"
-            docker logs "$container" --tail 10 2>&1 | sed 's/^/  /'
-            exit 1
-            ;;
-          starting)
-            sleep 3
-            WAITED=$((WAITED + 3))
-            ;;
-          none)
-            log_success "$container — 运行中"
-            break
-            ;;
-        esac
-        ;;
-      missing)
-        log_error "$container 不存在"
-        docker logs "$container" --tail 10 2>&1 | sed 's/^/  /' || true
-        exit 1
-        ;;
-      exited|dead)
-        log_error "$container 状态异常: $C_STATUS"
-        docker logs "$container" --tail 10 2>&1 | sed 's/^/  /'
-        exit 1
-        ;;
-      *)
-        sleep 3
-        WAITED=$((WAITED + 3))
-        ;;
-    esac
-  done
-
-  if [ $WAITED -ge $HEALTH_TIMEOUT ]; then
-    log_error "$container — 健康检查超时（${HEALTH_TIMEOUT}s）"
-    docker logs "$container" --tail 15 2>&1 | sed 's/^/  /'
+  if ! wait_container_healthy "$container" "$HEALTH_TIMEOUT"; then
     log_info "尝试回滚到上一版本..."
     rollback_images || true
     exit 1
