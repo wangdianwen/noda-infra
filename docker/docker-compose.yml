@@ -142,9 +142,6 @@ services:
     container_name: noda-infra-keycloak-prod
     labels:
       - "noda.service-group=infra"
-    ports:
-      - "127.0.0.1:8080:8080"  # HTTP 端口（仅本机）
-      - "9000:9000"  # 管理端口（健康检查）
     # 数据库配置（独立数据库架构）
     environment:
       KC_DB: postgres

@@ -18,9 +18,9 @@ ingress:
   # 主域名 - 指向 Nginx (反向代理)
   - hostname: noda.co.nz
     service: http://noda-nginx:80
-  # 认证服务 - Keycloak
+  # 认证服务 - Keycloak（通过 nginx 反向代理）
   - hostname: auth.noda.co.nz
-    service: http://keycloak:8080
+    service: http://noda-nginx:80
   # 本地开发
   - hostname: localhost.noda.co.nz
     service: http://noda-nginx:80
