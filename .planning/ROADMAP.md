@@ -112,9 +112,9 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13 -> 14
 **Goal:** 为生产环境 Docker 容器添加全面安全加固（security_opt/capabilities/non-root/logging/graceful shutdown）、部署自动回滚机制、Nginx upstream 故障转移和自定义错误页面
 **Requirements:** D-01, D-02, D-03, D-04, D-05, D-06, D-07, D-08
 **Depends on:** Phase 13
-**Plans:** 3 plans
+**Plans:** 3/3 plans complete
 
 Plans:
-- [ ] 14-01-PLAN.md — noda-ops non-root 改造 + 生产 overlay 安全加固（D-01, D-02, D-03, D-04）
-- [ ] 14-02-PLAN.md — Nginx upstream 故障转移 + 自定义错误页面（D-07, D-08）
-- [ ] 14-03-PLAN.md — 部署脚本回滚机制 + 部署前自动备份（D-05, D-06）
+- [x] 14-01-PLAN.md — noda-ops non-root 改造 + 生产 overlay 安全加固（D-01, D-02, D-03, D-04）
+- [x] 14-02-PLAN.md — Nginx upstream 故障转移 + 自定义错误页面（D-07, D-08）
+- [x] 14-03-PLAN.md — 部署脚本回滚机制 + 部署前自动备份（D-05, D-06）
