@@ -34,8 +34,6 @@ services:
     image: quay.io/keycloak/keycloak:26.2.3
     labels:
       - "noda.service-group=infra"
-    ports:
-      - "127.0.0.1:8080:8080"  # HTTP 端口（仅本机可访问）
     environment:
       # 数据库配置（独立数据库架构）
       KC_DB: postgres

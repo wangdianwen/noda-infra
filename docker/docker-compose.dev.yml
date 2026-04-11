@@ -69,10 +69,6 @@ services:
       # 启用健康检查
       KC_HEALTH_ENABLED: "true"
       # 确保使用 noda realm
-    ports:
-      - "8080:8080"  # 暴露 HTTP 端口
-      - "8443:8443"  # 暴露 HTTPS 端口
-      - "9000:9000"  # 管理端口（健康检查）
     # 健康检查修正（使用 TCP 连接检查管理端口）
     healthcheck:
       test: ["CMD-SHELL", "echo > /dev/tcp/localhost/9000 2>/dev/null || exit 1"]
