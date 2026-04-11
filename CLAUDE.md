@@ -7,18 +7,18 @@ Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL
 ## 架构
 
 ```
-浏览器 → Cloudflare CDN → Cloudflare Tunnel (noda-ops 容器) → Docker 内部服务
+浏览器 → Cloudflare CDN → Cloudflare Tunnel (noda-ops 容器) → nginx → Docker 内部服务
   class.noda.co.nz → nginx → findclass-ssr (SSR + API + 静态文件)
-  auth.noda.co.nz  → keycloak:8080
+  auth.noda.co.nz  → nginx → keycloak:8080 (容器内部)
 ```
 
 | 服务 | 端口 | 备注 |
 |------|------|------|
 | PostgreSQL | 5432 | 数据持久化在 `noda-infra_postgres_data` 卷 |
-| Keycloak | 8080/9000 | HTTP + 管理端口，通过 Cloudflare Tunnel 暴露 |
+| Keycloak | 8080 (内部) | 不暴露外部端口，通过 nginx 反向代理访问 |
 | findclass-ssr | 3001 | SSR + 静态文件，通过 nginx 代理 |
 | noda-ops | - | 备份 + Cloudflare Tunnel |
-| Nginx | 80 | 反向代理 |
+| Nginx | 80 | 反向代理（所有外部流量统一入口） |
 
 ## 部署规则
 
