@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: 基础设施修复与整合
-status: executing
-stopped_at: Phase 14 context gathered
-last_updated: "2026-04-11T08:36:08.412Z"
+milestone: v1.3
+milestone_name: 待规划
+status: idle
+last_updated: "2026-04-11T22:00:00.000Z"
 last_activity: 2026-04-11
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 10
-  completed_plans: 10
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -21,20 +20,29 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
-**Current focus:** Phase 12 — keycloak
 
 ## Current Position
 
-Phase: 14
-Plan: Not started
-Status: Ready to execute
+Phase: None
+Plan: None
+Status: Idle — awaiting v1.3 planning
 Last activity: 2026-04-11
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [ ] 0%
 
-## Accumulated Context
+## Completed Milestones
 
-**v1.1 已交付 (2026-04-11):**
+**v1.2 基础设施修复与整合 (shipped 2026-04-11):**
+5 phases, 10 plans, 96 commits, 93 files changed (+12,200/-2,196 LOC)
+
+- B2 备份修复（3 bug）
+- 服务整合（Dockerfile 路径 + 分组标签）
+- Keycloak 双环境（dev 实例 + 密码登录 + 热重载）
+- Keycloak 品牌主题（Pounamu Green）
+- 容器安全加固（5 容器全面保护）
+- 部署自动化（回滚 + 备份 + 故障转移）
+
+**v1.1 基础设施现代化 (shipped 2026-04-11):**
 29 commits, 134 files changed, +2617/-3710 lines
 
 - findclass-ssr 三合一服务
@@ -43,34 +51,12 @@ Progress: [░░░░░░░░░░] 0%
 - noda-ops 容器合并
 - 全量文档更新
 
-**v1.0 已交付 (2026-04-06):**
+**v1.0 完整备份系统 (shipped 2026-04-06):**
 9 phases, 16 plans, 23 tasks
 
 - 完整备份系统、B2 云存储集成、恢复脚本、自动验证、监控告警
 
-**v1.2 路线图决策:**
+## Known Issues
 
-- Phase 10 (B2 备份修复) 为最高优先级 — 备份自 4/8 起中断
-- Phase 11 (服务整合) 独立于其他阶段
-- Phase 12 (双环境) 是 Phase 13 (主题) 的前置依赖
-- Phase 13 (主题) 需要 dev 环境提供热重载能力
-
-### Pending Todos
-
-None yet.
-
-### Blockers/Concerns
-
-- B2 备份中断根因未知 — Phase 10 开始时需调查容器日志和 rclone 状态
-- Noda Logo SVG 和品牌色值尚未确定 — Phase 13 主题开发时需要设计输入
-- Google OAuth dev 回调 URL — Phase 12 时可能需要在 Google Cloud Console 添加 localhost URL
-
-### Roadmap Evolution
-
-- Phase 14 added: Container protection and deployment safety
-
-## Session Continuity
-
-Last session: 2026-04-11T05:32:46.858Z
-Stopped at: Phase 14 context gathered
-Resume file: .planning/phases/14-container-protection-and-deployment-safety/14-CONTEXT.md
+- PostgreSQL 客户端版本不匹配（pg_dump 16.11 vs server 17.9）
+- findclass-ssr Prisma 7 兼容性待处理
