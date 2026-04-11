@@ -1,1 +1,62 @@
-/* Noda custom login theme - Phase 13 */
+/* ============================================
+   Noda Login Theme - Brand Color Overrides
+   ============================================
+   品牌色：Pounamu Green #0D9B6A（主色）
+   设计系统：noda-apps/packages/design-tokens
+   策略：最小覆盖，仅修改颜色变量和关键选择器（D-05, D-06）
+   ============================================ */
+
+/* --- PatternFly 全局变量覆盖（:root 级别）--- */
+:root {
+    /* 主色：Pounamu Green #0D9B6A（D-01） */
+    --pf-global--primary-color--100: #0D9B6A;
+    --pf-global--primary-color--200: #0a7d55;
+    --pf-global--primary-color--light-100: #0D9B6A;
+
+    /* 焦点环色 */
+    --pf-global--active-color--100: #0D9B6A;
+
+    /* 链接色 */
+    --pf-global--link--Color: #0D9B6A;
+    --pf-global--link--Color--hover: #0a7d55;
+}
+
+/* --- 直接选择器覆盖（login.css 硬编码值）--- */
+
+/* 登录卡片顶部边框条 */
+.card-pf {
+    border-top-color: #0D9B6A !important;
+}
+
+/* 页面标题文字色（D-02: Slate 900） */
+#kc-header-wrapper {
+    color: #0f172a;
+}
+
+/* 链接 hover 色（login.css 硬编码 #0099d3） */
+.login-pf a:hover {
+    color: #0D9B6A;
+}
+
+/* 认证方式选择标题 */
+.select-auth-box-headline {
+    color: #0D9B6A;
+}
+
+/* 输入框焦点环（D-01: Pounamu Green） */
+input:focus, select:focus {
+    border-color: #0D9B6A !important;
+    box-shadow: 0 0 0 2px rgba(13, 155, 106, 0.25) !important;
+}
+
+/* 按钮圆角（D-03: 0.5rem） */
+.pf-c-button {
+    border-radius: 0.5rem;
+}
+
+/* 输入框边框色和圆角（D-02: Slate 200, D-03: 0.5rem） */
+#kc-form input[type="text"],
+#kc-form input[type="password"] {
+    border-color: #e2e8f0;
+    border-radius: 0.5rem;
+}
