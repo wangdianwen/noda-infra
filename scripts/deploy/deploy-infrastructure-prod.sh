@@ -19,7 +19,7 @@ COMPOSE_FILES="-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f
 EXPECTED_CONTAINERS=(
   "noda-infra-postgres-prod"
   "noda-infra-postgres-dev"
-  "noda-infra-keycloak-1"
+  "noda-infra-keycloak-prod"
   "noda-infra-nginx"
   "noda-ops"
   "findclass-ssr"
