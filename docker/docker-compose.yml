@@ -95,7 +95,7 @@ services:
   findclass-ssr:
     build:
       context: ../../noda-apps
-      dockerfile: ./infra/docker/Dockerfile.findclass-ssr
+      dockerfile: ../noda-infra/deploy/Dockerfile.findclass-ssr
     image: findclass-ssr:latest
     container_name: findclass-ssr
     restart: unless-stopped
