@@ -4,7 +4,7 @@
 
 - ✅ **v1.0 完整备份系统** — Phases 1-9 (shipped 2026-04-06) — [详情](milestones/v1.0-ROADMAP.md)
 - ✅ **v1.1 基础设施现代化** — 29 commits (shipped 2026-04-11) — [详情](milestones/v1.1-MILESTONE.md)
-- 🚧 **v1.2 基础设施修复与整合** — Phases 10-13 (in progress)
+- 🚧 **v1.2 基础设施修复与整合** — Phases 10-14 (in progress)
 
 ## Phases
 
@@ -98,7 +98,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 10 -> 11 -> 12 -> 13
+Phases execute in numeric order: 10 -> 11 -> 12 -> 13 -> 14
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -106,3 +106,15 @@ Phases execute in numeric order: 10 -> 11 -> 12 -> 13
 | 11. 服务整合 | v1.2 | 2/2 | Complete    | 2026-04-11 |
 | 12. Keycloak 双环境 | v1.2 | 1/1 | Complete    | 2026-04-11 |
 | 13. Keycloak 自定义主题 | v1.2 | 1/1 | Complete    | 2026-04-11 |
+
+### Phase 14: Container protection and deployment safety
+
+**Goal:** 为生产环境 Docker 容器添加全面安全加固（security_opt/capabilities/non-root/logging/graceful shutdown）、部署自动回滚机制、Nginx upstream 故障转移和自定义错误页面
+**Requirements:** D-01, D-02, D-03, D-04, D-05, D-06, D-07, D-08
+**Depends on:** Phase 13
+**Plans:** 3 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — noda-ops non-root 改造 + 生产 overlay 安全加固（D-01, D-02, D-03, D-04）
+- [ ] 14-02-PLAN.md — Nginx upstream 故障转移 + 自定义错误页面（D-07, D-08）
+- [ ] 14-03-PLAN.md — 部署脚本回滚机制 + 部署前自动备份（D-05, D-06）
