@@ -105,7 +105,7 @@ services:
     image: findclass-ssr:latest
     container_name: findclass-ssr
     labels:
-      - "noda.service-group=apps"
+      - "noda.service-group=noda-apps"
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -136,6 +136,7 @@ services:
   # ----------------------------------------
   keycloak:
     image: quay.io/keycloak/keycloak:26.2.3
+    container_name: noda-infra-keycloak-prod
     labels:
       - "noda.service-group=infra"
     ports:

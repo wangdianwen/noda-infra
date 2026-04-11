@@ -89,7 +89,7 @@ services:
   # ----------------------------------------
   findclass-ssr:
     labels:
-      - "noda.service-group=apps"
+      - "noda.service-group=noda-apps"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
       DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
