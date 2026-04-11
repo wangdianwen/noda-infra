@@ -1,4 +1,5 @@
 #!/bin/bash
+# DEPRECATED: 此脚本已过时，请使用 scripts/deploy/deploy-infrastructure-prod.sh 或 scripts/deploy/deploy-apps-prod.sh
 
 # Findclass 零依赖部署脚本
 # 此脚本包含所有部署逻辑，无需外部配置或环境变量
@@ -80,32 +81,8 @@ decrypt_secrets() {
 
 # 构建 Docker 镜像
 build_images() {
-    log_info "构建 Docker 镜像..."
-
-    # 构建前端镜像
-    log_info "构建前端镜像 ($FINDCLASS_IMAGE)..."
-    if ! docker build \
-        -t "$FINDCLASS_IMAGE:latest" \
-        -f "$PROJECT_ROOT/docker/Dockerfile.findclass" \
-        "$PROJECT_ROOT"; then
-        error_exit "前端镜像构建失败"
-    fi
-
-    log_info "前端镜像构建成功"
-
-    # 构建或拉取 API 镜像（如果存在 Dockerfile）
-    if [[ -f "$PROJECT_ROOT/docker/Dockerfile.api" ]]; then
-        log_info "构建 API 镜像 ($API_IMAGE)..."
-        if ! docker build \
-            -t "$API_IMAGE:latest" \
-            -f "$PROJECT_ROOT/docker/Dockerfile.api" \
-            "$PROJECT_ROOT"; then
-            error_exit "API 镜像构建失败"
-        fi
-        log_info "API 镜像构建成功"
-    else
-        log_warn "API Dockerfile 不存在，跳过 API 镜像构建"
-    fi
+    log_error "此脚本已废弃，请使用 deploy-infrastructure-prod.sh 或 deploy-apps-prod.sh"
+    exit 1
 }
 
 # 停止旧容器
