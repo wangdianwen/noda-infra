@@ -164,7 +164,9 @@ services:
     volumes:
       - ./services/keycloak/themes:/opt/keycloak/themes/noda:ro  # 可选：未来自定义主题
     networks:
-      - noda-network
+      noda-network:
+        aliases:
+          - keycloak
     restart: unless-stopped
     depends_on:
       - postgres
