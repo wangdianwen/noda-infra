@@ -2,15 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: 安全收敛与分组整理
-status: roadmap_created
-last_updated: "2026-04-12T00:00:00.000Z"
-last_activity: 2026-04-12
+status: executing
+stopped_at: Phase 16 planned
+last_updated: "2026-04-12T08:46:00.000Z"
+last_activity: 2026-04-12 -- Phase 16 planning verified
 progress:
   total_phases: 4
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 1
+  percent: 50
 ---
 
 # Project State
@@ -21,16 +22,16 @@ See: .planning/PROJECT.md (updated 2026-04-11)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** v1.3 安全收敛与分组整理 — Phase 15 PostgreSQL 客户端升级
+**Current focus:** Phase 16 — Keycloak 端口收敛
 
 ## Current Position
 
-Phase: 15 of 18 (PostgreSQL 客户端升级)
-Plan: 0 of ? in current phase
-Status: Ready to plan
-Last activity: 2026-04-12 — v1.3 ROADMAP.md 创建
+Phase: 16 (Keycloak 端口收敛) — PLANNED
+Plan: 1 of 1 (verified)
+Status: Ready for execution
+Last activity: 2026-04-12 -- Phase 16 plan verified by checker
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [████░░░░░░] 40%
 
 ## Completed Milestones
 
@@ -60,11 +61,12 @@ Progress: [░░░░░░░░░░] 0%
 
 ## Known Issues
 
-- PostgreSQL 客户端版本不匹配（pg_dump 16.11 vs server 17.9）— 将在 Phase 15 修复
+- PostgreSQL 客户端版本不匹配（pg_dump 16.11 vs server 17.9）— Phase 15 已修复，待部署验证
+- Keycloak 8080/9000 端口暴露到宿主机 — Phase 16 规划完成，待执行
 - findclass-ssr Prisma 7 兼容性待处理（Out of Scope for v1.3）
 
 ## Session Continuity
 
-Last session: 2026-04-12
-Stopped at: v1.3 ROADMAP.md 创建完成，等待用户审批
-Resume file: None
+Last session: 2026-04-12T08:46:00.000Z
+Stopped at: Phase 16 planned, ready for execution
+Resume file: .planning/phases/16-keycloak/16-01-PLAN.md
