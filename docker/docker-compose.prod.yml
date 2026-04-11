@@ -32,6 +32,8 @@ services:
   # ----------------------------------------
   keycloak:
     image: quay.io/keycloak/keycloak:26.2.3
+    labels:
+      - "noda.service-group=infra"
     ports:
       - "8080:8080"  # HTTP 端口
       - "8443:8443"  # HTTPS 端口
@@ -88,6 +90,8 @@ services:
   # Findclass SSR（生产环境）
   # ----------------------------------------
   findclass-ssr:
+    labels:
+      - "noda.service-group=apps"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod
       DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/noda_prod

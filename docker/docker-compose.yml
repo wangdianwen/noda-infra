@@ -13,6 +13,8 @@ services:
   postgres:
     image: postgres:17.9
     container_name: noda-infra-postgres-prod
+    labels:
+      - "noda.service-group=infra"
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -36,6 +38,8 @@ services:
   nginx:
     container_name: noda-infra-nginx
     image: nginx:1.25-alpine
+    labels:
+      - "noda.service-group=infra"
     restart: unless-stopped
     ports:
       - "80:80"
@@ -58,6 +62,8 @@ services:
       dockerfile: deploy/Dockerfile.noda-ops
     image: noda-ops:latest
     container_name: noda-ops
+    labels:
+      - "noda.service-group=infra"
     restart: unless-stopped
     environment:
       # 备份系统配置
@@ -98,6 +104,8 @@ services:
       dockerfile: ../noda-infra/deploy/Dockerfile.findclass-ssr
     image: findclass-ssr:latest
     container_name: findclass-ssr
+    labels:
+      - "noda.service-group=apps"
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -128,6 +136,8 @@ services:
   # ----------------------------------------
   keycloak:
     image: quay.io/keycloak/keycloak:26.2.3
+    labels:
+      - "noda.service-group=infra"
     ports:
       - "8080:8080"  # HTTP 端口
       - "9000:9000"  # 管理端口（健康检查）

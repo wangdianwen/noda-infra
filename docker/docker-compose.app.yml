@@ -24,6 +24,8 @@ services:
         VITE_KEYCLOAK_CLIENT_ID: noda-frontend
     image: findclass-ssr:latest
     container_name: findclass-ssr
+    labels:
+      - "noda.service-group=apps"
     restart: unless-stopped
     environment:
       NODE_ENV: production
