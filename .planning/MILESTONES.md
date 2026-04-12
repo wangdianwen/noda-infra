@@ -1,5 +1,18 @@
 # Milestones
 
+## v1.3 安全收敛与分组整理 (Shipped: 2026-04-12)
+
+**Phases completed:** 4 phases, 4 plans, 8 tasks
+
+**Key accomplishments:**
+
+- 升级 noda-ops 容器 Alpine 3.21 + postgresql17-client，通过 PGSSLMODE=disable 环境变量全局禁用 Docker 内部 SSL 协商
+- auth.noda.co.nz 流量统一经 nginx 反向代理到 Keycloak，移除 8080/9000 端口暴露，健康检查统一使用 8080 TCP 检查
+- 将 3 个 Docker Compose 文件中的 postgres-dev 5433 和 Keycloak 9000 管理端口从 0.0.0.0 绑定改为 127.0.0.1，消除网络暴露风险
+- 为 5 个 Docker Compose 文件统一双标签体系：noda.service-group(infra/apps) + noda.environment(prod/dev)，修复 findclass-ssr 的 noda-apps 不一致命名
+
+---
+
 ## v1.2 基础设施修复与整合 (Shipped: 2026-04-11)
 
 **Phases completed:** 5 phases, 10 plans, 16 tasks
