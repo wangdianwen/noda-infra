@@ -34,6 +34,13 @@ save_app_image_tags() {
     echo "findclass-ssr=${image_id}" >> "$ROLLBACK_FILE"
     log_info "已保存 findclass-ssr 镜像: ${image_id:0:12}..."
   fi
+
+  local noda_site_image_id
+  noda_site_image_id=$(docker inspect --format='{{.Image}}' noda-site 2>/dev/null || echo "")
+  if [ -n "$noda_site_image_id" ]; then
+    echo "noda-site=${noda_site_image_id}" >> "$ROLLBACK_FILE"
+    log_info "已保存 noda-site 镜像: ${noda_site_image_id:0:12}..."
+  fi
   log_success "应用镜像标签已保存"
 }
 
@@ -67,6 +74,22 @@ EOF
   fi
 
   log_success "findclass-ssr 已回滚"
+
+  local noda_site_image_id
+  noda_site_image_id=$(grep "noda-site=" "$ROLLBACK_FILE" | cut -d'=' -f2)
+  if [ -n "$noda_site_image_id" ]; then
+    log_info "回滚 noda-site 到镜像 ${noda_site_image_id:0:12}..."
+    cat >> "$rollback_compose" <<EOF
+  noda-site:
+    image: ${noda_site_image_id}
+EOF
+    if ! docker compose $COMPOSE_FILE -f "$rollback_compose" up -d --no-deps --force-recreate noda-site; then
+      log_error "noda-site 回滚失败"
+    else
+      log_success "noda-site 已回滚"
+    fi
+  fi
+
   return 0
 }
 
@@ -96,7 +119,10 @@ log_info "步骤 3/5: 构建 findclass-ssr 镜像"
 log_info "=========================================="
 
 docker compose $COMPOSE_FILE build findclass-ssr
-log_success "镜像构建完成"
+
+log_info "构建 noda-site 镜像..."
+docker compose $COMPOSE_FILE build noda-site
+log_success "所有镜像构建完成"
 
 # ============================================
 # 步骤 4/5: 部署新版本
@@ -106,6 +132,7 @@ log_info "步骤 4/5: 部署新版本"
 log_info "=========================================="
 
 docker compose $COMPOSE_FILE up -d --force-recreate findclass-ssr
+docker compose $COMPOSE_FILE up -d --force-recreate noda-site
 
 # ============================================
 # 步骤 5/5: 等待健康检查
@@ -118,6 +145,11 @@ if ! wait_container_healthy findclass-ssr 90; then
   log_info "尝试回滚到上一版本..."
   rollback_app || true
   exit 1
+fi
+
+log_info "等待 noda-site 健康检查..."
+if ! wait_container_healthy noda-site 30; then
+  log_error "noda-site 健康检查失败"
 fi
 
 # ============================================
