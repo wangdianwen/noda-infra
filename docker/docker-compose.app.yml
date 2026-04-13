@@ -69,6 +69,88 @@ services:
     tmpfs:
       - /tmp
 
+  # ----------------------------------------
+  # Skykiwi 爬虫（定时任务）
+  # 每天 UTC 18:00 / NZST 06:00 自动抓取课程数据
+  # 手动触发: docker compose -f docker/docker-compose.app.yml run --rm skykiwi-crawler
+  # ----------------------------------------
+  skykiwi-crawler:
+    build:
+      context: ../../noda-apps
+      dockerfile: ../noda-infra/deploy/Dockerfile.skykiwi-crawler
+    image: skykiwi-crawler:latest
+    container_name: skykiwi-crawler
+    labels:
+      - "noda.service-group=apps"
+      - "noda.environment=prod"
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.z.ai/api/anthropic}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:?请设置 ANTHROPIC_AUTH_TOKEN 环境变量}
+    networks:
+      - noda-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    cap_drop:
+      - ALL
+
+  # ----------------------------------------
+  # NODA Site（静态 Landing Page）
+  # 预渲染 HTML + 静态文件服务
+  # ----------------------------------------
+  noda-site:
+    build:
+      context: ../../noda-apps
+      dockerfile: ../noda-infra/deploy/Dockerfile.noda-site
+    image: noda-site:latest
+    container_name: noda-site
+    labels:
+      - "noda.service-group=apps"
+      - "noda.environment=prod"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - noda-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 64M
+        reservations:
+          cpus: '0.05'
+          memory: 16M
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
 networks:
   noda-network:
     external: true

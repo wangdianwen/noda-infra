@@ -1,0 +1,62 @@
+# ============================================
+# NODA Site 容器 - 多阶段构建
+# ============================================
+# 镜像名: noda-site:latest
+# 功能: 纯静态文件服务（预渲染 HTML + 静态资源）
+# ============================================
+
+# ----------------------------------------
+# Stage 1: 构建依赖和产出
+# ----------------------------------------
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# 先复制依赖文件（利用 Docker 层缓存）
+COPY package.json package-lock.json ./
+COPY apps/site/package.json ./apps/site/package.json
+COPY packages/design-tokens/package.json ./packages/design-tokens/package.json
+
+# 安装依赖
+RUN npm install --ignore-scripts
+
+# 安装 Chromium 供 prerender Puppeteer 使用
+RUN apk add --no-cache chromium
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
+# 复制源码
+COPY . .
+
+# 构建 site（包含 prerender）
+RUN cd apps/site && npm run build
+
+# ----------------------------------------
+# Stage 2: 轻量运行时
+# ----------------------------------------
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+# 安装 serve 静态文件服务器
+RUN npm install -g serve@14
+
+# 创建非 root 用户
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nodejs
+
+# 仅复制构建产物
+COPY --from=builder /app/apps/site/dist ./dist
+
+RUN chown -R nodejs:nodejs /app
+
+USER nodejs
+
+EXPOSE 3000
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=10s \
+  CMD wget --quiet --tries=1 --spider http://localhost:3000/ || exit 1
+
+# 启动静态文件服务器
+CMD ["serve", "-s", "dist", "-l", "3000"]
