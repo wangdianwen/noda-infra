@@ -21,17 +21,24 @@ WORKDIR /app
 # 复制整个项目
 COPY . .
 
-# 安装依赖（跳过 postinstall 脚本）
-RUN npm install --ignore-scripts
+# 启用 pnpm（通过 corepack）
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
-# 生成 Prisma Client（指定 schema 路径）
+# 安装依赖
+RUN pnpm install --frozen-lockfile
+
+# 生成 Prisma Client（需从两个上下文运行，因为 pnpm 为不同 TS 版本创建独立虚拟存储）
+RUN cd packages/database && npx prisma generate --schema=./prisma/schema.prisma
 RUN npx prisma generate --schema=./packages/database/prisma/schema.prisma
 
+# 构建 design-tokens（web 和 site 依赖其 CSS 输出）
+RUN cd packages/design-tokens && pnpm run build
+
 # 构建 web (client + server)
-RUN cd apps/findclass/web && npm run build
+RUN cd apps/findclass/web && pnpm run build
 
 # 构建 api (tsc)
-RUN cd apps/findclass/api && npm run build
+RUN cd apps/findclass/api && pnpm run build
 
 # 修复 lru-cache ESM 兼容问题
 RUN sed -i "s/import { LRUCache } from 'lru-cache'/import _lru from 'lru-cache'; const LRUCache = _lru.default || _lru/" apps/findclass/api/dist/lib/ssr-cache.js

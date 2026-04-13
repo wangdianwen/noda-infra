@@ -12,24 +12,25 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# 先复制依赖文件（利用 Docker 层缓存）
-COPY package.json package-lock.json ./
-COPY apps/site/package.json ./apps/site/package.json
-COPY packages/design-tokens/package.json ./packages/design-tokens/package.json
+# 复制整个项目（pnpm workspace 需要完整的包结构）
+COPY . .
 
-# 安装依赖
-RUN npm install --ignore-scripts
+# 启用 pnpm（通过 corepack）
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# 仅安装 site 及其依赖（跳过 postinstall 避免 prisma generate 失败）
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter @noda-apps/site...
 
 # 安装 Chromium 供 prerender Puppeteer 使用
 RUN apk add --no-cache chromium
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-# 复制源码
-COPY . .
+# 构建 design-tokens（site 依赖其 CSS 输出）
+RUN cd packages/design-tokens && pnpm run build
 
 # 构建 site（包含 prerender）
-RUN cd apps/site && npm run build
+RUN cd apps/site && pnpm run build
 
 # ----------------------------------------
 # Stage 2: 轻量运行时
