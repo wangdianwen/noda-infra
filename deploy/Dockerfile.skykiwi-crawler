@@ -1,0 +1,71 @@
+# ============================================
+# Skykiwi 爬虫容器
+# ============================================
+# 功能: 定时抓取 Skykiwi 论坛课程数据并写入数据库
+#
+# 模式:
+#   1. 单次执行: docker compose run --rm skykiwi-crawler
+#   2. 定时调度: docker compose up -d skykiwi-crawler
+#      (每天 NZST 06:00 自动执行，通过容器内 cron)
+# ============================================
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 安装系统依赖（psycopg2 需要 libpq，cron 用于定时调度）
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libpq-dev cron && \
+    rm -rf /var/lib/apt/lists/*
+
+# 复制 Python 依赖并安装
+COPY scripts/requirements.txt /app/scripts/requirements.txt
+RUN pip install --no-cache-dir -r /app/scripts/requirements.txt
+
+# 安装 scrapling 浏览器引擎
+RUN scrapling install --force
+
+# 复制爬虫脚本
+COPY scripts/crawl-skykiwi.py /app/scripts/crawl-skykiwi.py
+
+# 配置 cron 定时任务 — 每天 UTC 18:00（NZST 06:00）
+RUN echo '0 18 * * * cd /app && python3 -B scripts/crawl-skykiwi.py --all-boards >> /var/log/skykiwi-crawler.log 2>&1' > /etc/cron.d/skykiwi-crawler && \
+    chmod 0644 /etc/cron.d/skykiwi-crawler && \
+    crontab /etc/cron.d/skykiwi-crawler
+
+# 创建日志文件
+RUN touch /var/log/skykiwi-crawler.log
+
+# 默认环境变量（可通过 docker compose -e 覆盖）
+ENV ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic
+ENV LLM_DELAY_SECONDS=1.5
+
+# 入口脚本: 支持 "run"（单次执行）和 "cron"（定时调度）模式
+COPY --chmod=755 <<'EOF' /app/entrypoint.sh
+#!/bin/bash
+set -e
+MODE="${1:-cron}"
+case "$MODE" in
+  run)
+    echo "[$(date)] 开始执行 Skykiwi 爬虫（单次模式）..."
+    python3 -B scripts/crawl-skykiwi.py --all-boards
+    echo "[$(date)] 爬虫执行完毕"
+    ;;
+  cron)
+    echo "[$(date)] 启动 Skykiwi 爬虫定时调度..."
+    echo "[$(date)] 定时计划: 每天 UTC 18:00 / NZST 06:00"
+    echo "[$(date)] 查看日志: docker compose logs -f skykiwi-crawler"
+    echo "[$(date)] 手动触发: docker compose exec skykiwi-crawler /app/entrypoint.sh run"
+    cron -f
+    ;;
+  *)
+    echo "用法: $0 [run|cron]"
+    echo "  run  — 单次执行"
+    echo "  cron — 定时调度（默认）"
+    exit 1
+    ;;
+esac
+EOF
+
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["cron"]
