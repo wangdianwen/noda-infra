@@ -101,10 +101,10 @@ Docker Compose 项目：
 - ✓ postgres-dev 127.0.0.1 绑定 — v1.3
 - ✓ 容器双标签体系 — v1.3
 - ✓ Docker Compose 项目分离 — v1.3
+- ✓ Jenkins 宿主机原生安装/卸载 — v1.4
 
 ### Active
 
-- [ ] Jenkins 宿主机原生安装/卸载
 - [ ] 现有部署脚本迁移为 Jenkins Pipeline
 - [ ] findclass-ssr 蓝绿部署（零停机）
 - [ ] Pipeline lint + 单元测试门禁
