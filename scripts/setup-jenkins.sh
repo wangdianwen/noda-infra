@@ -324,22 +324,186 @@ cmd_status() {
 }
 
 # ============================================
-# 占位函数（Task 2 实现）
+# cmd_show_password() — 获取初始管理员密码
 # ============================================
 cmd_show_password() {
-  log_info "此功能将在后续版本中实现"
+  log_info "=========================================="
+  log_info "获取 Jenkins 初始管理员密码"
+  log_info "=========================================="
+
+  local password_file="${JENKINS_HOME}/secrets/initialAdminPassword"
+
+  if sudo test -f "$password_file"; then
+    local password
+    password=$(sudo cat "$password_file")
+    if [ -n "$password" ]; then
+      log_success "初始管理员密码:"
+      echo "$password"
+    else
+      log_error "密码文件为空: ${password_file}"
+      exit 1
+    fi
+  else
+    log_warn "初始密码文件不存在: ${password_file}"
+    log_info "可能已完成初始设置。如需重置密码，请使用:"
+    log_info "  bash $0 reset-password <新密码>"
+    exit 1
+  fi
 }
 
+# ============================================
+# cmd_restart() — 重启 Jenkins 服务
+# ============================================
 cmd_restart() {
-  log_info "此功能将在后续版本中实现"
+  log_info "=========================================="
+  log_info "重启 Jenkins 服务"
+  log_info "=========================================="
+
+  sudo systemctl restart jenkins
+  log_info "Jenkins 服务已发送重启信号"
+
+  if ! wait_for_jenkins; then
+    log_error "Jenkins 重启失败，请检查日志: sudo journalctl -u jenkins"
+    exit 1
+  fi
+
+  log_success "=========================================="
+  log_success "Jenkins 重启完成"
+  log_success "=========================================="
+  log_info "访问地址: http://localhost:${JENKINS_PORT}"
 }
 
+# ============================================
+# cmd_upgrade() — 升级到最新 LTS
+# ============================================
 cmd_upgrade() {
-  log_info "此功能将在后续版本中实现"
+  log_info "=========================================="
+  log_info "升级 Jenkins 到最新 LTS"
+  log_info "=========================================="
+
+  # 步骤 1/4: 获取当前版本
+  log_info "步骤 1/4: 获取当前版本"
+  local old_version
+  old_version=$(dpkg -s jenkins 2>/dev/null | grep '^Version:' | cut -d' ' -f2 || echo "未知")
+  log_info "当前版本: ${old_version}"
+
+  # 步骤 2/4: 升级包
+  log_info "步骤 2/4: 升级 Jenkins 包"
+  sudo apt update
+  sudo apt install --only-upgrade jenkins
+
+  # 步骤 3/4: 重启并等待就绪
+  log_info "步骤 3/4: 重启 Jenkins"
+  sudo systemctl restart jenkins
+
+  if ! wait_for_jenkins; then
+    log_error "Jenkins 升级后启动失败，请检查日志: sudo journalctl -u jenkins"
+    exit 1
+  fi
+
+  # 步骤 4/4: 显示新版本
+  log_info "步骤 4/4: 验证升级后版本"
+  local new_version
+  new_version=$(dpkg -s jenkins 2>/dev/null | grep '^Version:' | cut -d' ' -f2 || echo "未知")
+  log_success "=========================================="
+  log_success "Jenkins 升级完成"
+  log_success "=========================================="
+  log_info "旧版本: ${old_version}"
+  log_success "新版本: ${new_version}"
+  log_info "访问地址: http://localhost:${JENKINS_PORT}"
 }
 
+# ============================================
+# cmd_reset_password() — 重置管理员密码
+# ============================================
+# 参数：$2 = 新密码
+# 返回：0=成功，1=失败
 cmd_reset_password() {
-  log_info "此功能将在后续版本中实现"
+  log_info "=========================================="
+  log_info "重置 Jenkins 管理员密码"
+  log_info "=========================================="
+
+  local new_password="${2:-}"
+  if [ -z "$new_password" ]; then
+    log_error "请提供新密码: bash $0 reset-password <新密码>"
+    exit 1
+  fi
+
+  # 检查 Jenkins 是否运行
+  if ! curl -sf "http://localhost:${JENKINS_PORT}/login" > /dev/null 2>&1; then
+    log_error "Jenkins 未运行，请先启动: sudo systemctl start jenkins"
+    exit 1
+  fi
+
+  # 查找 jenkins-cli.jar
+  local cli_jar=""
+  local possible_paths=(
+    "${JENKINS_HOME}/war/WEB-INF/jenkins-cli.jar"
+    "${JENKINS_HOME}/jenkins-cli.jar"
+    "/usr/share/jenkins/jenkins-cli.jar"
+    "/usr/share/java/jenkins-cli.jar"
+  )
+
+  for path in "${possible_paths[@]}"; do
+    if sudo test -f "$path"; then
+      cli_jar="$path"
+      log_info "找到 jenkins-cli.jar: ${cli_jar}"
+      break
+    fi
+  done
+
+  if [ -z "$cli_jar" ]; then
+    log_error "未找到 jenkins-cli.jar，已检查以下路径:"
+    for path in "${possible_paths[@]}"; do
+      log_error "  ${path}"
+    done
+    log_info "请确认 Jenkins 安装路径或手动使用 Script Console 重置密码"
+    exit 1
+  fi
+
+  # 创建临时 Groovy 脚本
+  local groovy_script
+  groovy_script=$(mktemp /tmp/reset-jenkins-password.groovy.XXXXXX)
+  cat > "$groovy_script" <<GROOVY
+import jenkins.model.*
+import hudson.security.*
+
+def instance = Jenkins.getInstance()
+def realm = instance.getSecurityRealm()
+def user = realm.getUser('admin')
+if (user != null) {
+    user.setPassword('${new_password}')
+    instance.save()
+    println 'Password reset successful'
+} else {
+    println 'ERROR: admin user not found'
+    System.exit(1)
+}
+GROOVY
+
+  log_info "执行密码重置..."
+
+  # 使用 jenkins-cli.jar 执行 groovy 脚本
+  local reset_output
+  reset_output=$(sudo -u jenkins java -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$groovy_script" 2>&1) || {
+    log_error "密码重置执行失败"
+    log_error "输出: ${reset_output}"
+    rm -f "$groovy_script"
+    exit 1
+  }
+
+  # 清理临时脚本
+  rm -f "$groovy_script"
+
+  if echo "$reset_output" | grep -q "Password reset successful"; then
+    log_success "=========================================="
+    log_success "管理员密码重置成功"
+    log_success "=========================================="
+    log_info "请使用新密码登录: http://localhost:${JENKINS_PORT}"
+  else
+    log_error "密码重置可能失败，输出: ${reset_output}"
+    exit 1
+  fi
 }
 
 # ============================================
