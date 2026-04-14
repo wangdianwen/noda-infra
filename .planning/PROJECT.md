@@ -1,9 +1,21 @@
 # Noda 基础设施项目
 
+## Current Milestone: v1.4 CI/CD 零停机部署
+
+**Goal:** Jenkins + 蓝绿部署实现编译失败不 down 站，自动回滚保护
+
+**Target features:**
+- Jenkins 原生安装/卸载脚本（宿主机运行，直接操作 Docker）
+- 现有部署脚本迁移为 Jenkins Pipeline
+- 蓝绿部署：新容器启动成功 → 健康检查通过 → 切换流量 → 旧容器下线
+- Pipeline 集成 lint + 单元测试，不通过不上线
+- 上线后 HTTP E2E 健康检查，失败自动回滚到旧容器
+- 手动触发部署
+
 ## Current State
 
 **Last shipped:** v1.3 安全收敛与分组整理 (2026-04-12)
-**Next focus:** 规划中
+**Next focus:** v1.4 CI/CD 零停机部署
 
 ## Shipped Milestones
 
@@ -92,6 +104,12 @@ Docker Compose 项目：
 
 ### Active
 
+- [ ] Jenkins 宿主机原生安装/卸载
+- [ ] 现有部署脚本迁移为 Jenkins Pipeline
+- [ ] findclass-ssr 蓝绿部署（零停机）
+- [ ] Pipeline lint + 单元测试门禁
+- [ ] 上线后 HTTP E2E 健康检查
+- [ ] 验证失败自动回滚
 - [ ] Prisma 7 兼容性迁移
 
 ### Out of Scope
@@ -119,4 +137,4 @@ Docker Compose 项目：
 | 所有端口 127.0.0.1 绑定 | 仅本地可访问 | ✅ Good |
 
 ---
-*Last updated: 2026-04-12 after v1.3 milestone completion*
+*Last updated: 2026-04-14 after v1.4 milestone start*
