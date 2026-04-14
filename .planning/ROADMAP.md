@@ -79,11 +79,11 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
   2. Jenkins 用户可以通过 `docker ps` 列出当前运行的容器（已在 docker 组中）
   3. 管理员可从日志或文件中获取初始管理员密码并完成首次登录
   4. 管理员运行 `setup-jenkins.sh uninstall` 后 Jenkins 进程消失、相关文件全部清除
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 19-01: Jenkins 安装与卸载脚本
-- [ ] 19-02: Jenkins Docker 权限配置与首次启动验证
+- [ ] 19-01-PLAN.md — setup-jenkins.sh 主脚本（7 个子命令：install/uninstall/status/show-password/restart/upgrade/reset-password）
+- [ ] 19-02-PLAN.md — Jenkins init.groovy.d 自动化脚本（管理员/插件/安全/Pipeline 作业）+ 管理员凭据模板
 
 ### Phase 20: Nginx 蓝绿路由基础
 **Goal**: nginx 的 findclass upstream 定义从 default.conf 抽离到独立 include 文件，Pipeline 可通过重写该文件 + reload 切换流量指向
@@ -177,7 +177,7 @@ Phases execute in numeric order: 19 → 20 → 21 → 22 → 23 → 24 → 25
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 19. Jenkins 安装与基础配置 | v1.4 | 0/2 | Not started | - |
+| 19. Jenkins 安装与基础配置 | v1.4 | 0/2 | Planning complete | - |
 | 20. Nginx 蓝绿路由基础 | v1.4 | 0/1 | Not started | - |
 | 21. 蓝绿容器管理 | v1.4 | 0/1 | Not started | - |
 | 22. 蓝绿部署核心流程 | v1.4 | 0/2 | Not started | - |
