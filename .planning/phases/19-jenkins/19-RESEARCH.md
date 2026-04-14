@@ -432,22 +432,13 @@ cmd_reset_password() {
 | A5 | `DefaultCrumbIssuer` 类在 init.groovy.d 中可用（无需额外 import） | Code Examples | 如果 import 路径不对，CSRF 配置脚本会失败 |
 | A6 | 插件安装后需要重启 Jenkins 才能完全生效 | Common Pitfalls | 如果不需要重启，install 流程可以简化 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **管理员凭据存储方式**
-   - What we know: CONTEXT.md 提到从 `.env` 或配置文件读取
-   - What's unclear: 具体使用 `.env.jenkins` 还是 `config/secrets.sops.yaml`（项目已有 SOPS 加密）
-   - Recommendation: 使用独立的 `.env.jenkins` 文件（与 Jenkins 环境隔离），在 `.gitignore` 中排除。模板文件 `jenkins-admin.env.example` 提交到仓库
+1. **管理员凭据存储方式** — RESOLVED: 使用独立的 `.admin.env` 文件（由 Plan 02 Task 2 创建 `jenkins-admin.env.example` 模板），install 子命令复制到 `$JENKINS_HOME/.admin.env`（权限 600），groovy 脚本从该文件读取。决策依据: CONTEXT.md Claude's Discretion。
 
-2. **init.groovy.d 脚本清理时机**
-   - What we know: 脚本每次启动都会执行
-   - What's unclear: 是否应该在首次配置完成后立即删除，还是保留做幂等检查
-   - Recommendation: 首次配置完成后删除（install 子命令末尾执行 `rm -rf`），简单可靠
+2. **init.groovy.d 脚本清理时机** — RESOLVED: 首次配置完成后由 install 子命令末尾删除 `rm -rf $JENKINS_HOME/init.groovy.d/`。决策依据: CONTEXT.md D-04 + Research 推荐方案。
 
-3. **Pipeline 作业模板内容**
-   - What's know: 需要预创建第一个 Pipeline job
-   - What's unclear: 具体内容是什么（Phase 23 才定义 Jenkinsfile）
-   - Recommendation: 创建一个占位 Pipeline 作业，config.xml 中只有基本结构，具体 Jenkinsfile 在 Phase 23 填充
+3. **Pipeline 作业模板内容** — RESOLVED: 创建占位 Pipeline 作业（基本 config.xml 结构），具体 Jenkinsfile 在 Phase 23 填充。决策依据: CONTEXT.md Claude's Discretion + Research Open Question 3 推荐。
 
 ## Environment Availability
 

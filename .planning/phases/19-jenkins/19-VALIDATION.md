@@ -38,10 +38,10 @@ created: 2026-04-14
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 19-01-01 | 01 | 1 | JENK-01 | — | N/A | syntax | `bash -n scripts/setup-jenkins.sh` | ❌ W0 | ⬜ pending |
-| 19-01-02 | 01 | 1 | JENK-02 | — | N/A | syntax | `bash -n scripts/setup-jenkins.sh` | ❌ W0 | ⬜ pending |
-| 19-02-01 | 02 | 1 | JENK-03 | T-19-03 | jenkins 用户仅通过 docker 组权限操作 Docker | manual | `sudo -u jenkins docker ps` | ❌ W0 | ⬜ pending |
-| 19-02-02 | 02 | 1 | JENK-04 | — | N/A | manual | `bash scripts/setup-jenkins.sh show-password` | ❌ W0 | ⬜ pending |
+| 19-01-01 | 01 | 1 | JENK-01, JENK-03 | T-19-03 | jenkins 用户仅通过 docker 组权限操作 Docker | syntax | `bash -n scripts/setup-jenkins.sh` | ❌ W0 | ⬜ pending |
+| 19-01-02 | 01 | 1 | JENK-02, JENK-04 | — | N/A | syntax | `bash -n scripts/setup-jenkins.sh && shellcheck scripts/setup-jenkins.sh` | ❌ W0 | ⬜ pending |
+| 19-02-01 | 02 | 1 | JENK-04 | T-19-04, T-19-06 | 管理员凭据 .admin.env 权限 600 + groovy 脚本幂等 + 首次配置后删除 | file_exists | `test -f scripts/jenkins/init.groovy.d/01-security.groovy` | ❌ W0 | ⬜ pending |
+| 19-02-02 | 02 | 1 | JENK-04 | T-19-04 | .admin.env 被 .gitignore 排除 + 权限 600 | file_exists | `test -f scripts/jenkins/config/jenkins-admin.env.example && test -f scripts/jenkins/config/.gitignore` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
