@@ -1,159 +1,171 @@
 # Project Research Summary
 
-**Project:** Noda Infrastructure v1.2 -- Keycloak 双环境部署 + 自定义主题
-**Domain:** Docker Compose 基础设施 / Keycloak 认证服务定制
-**Researched:** 2026-04-11
+**Project:** Noda v1.4 CI/CD 零停机部署
+**Domain:** Jenkins CI/CD + Docker Compose 蓝绿部署（单服务器基础设施）
+**Researched:** 2026-04-14
 **Confidence:** HIGH
 
 ## Executive Summary
 
-本项目是为 Noda 教育平台基础设施（v1.2 里程碑）添加 Keycloak 开发/生产双环境隔离和品牌化登录主题。技术方案基于项目已验证的 Docker Compose overlay 模式（PostgreSQL 双实例已稳定运行），复用 `postgres-dev` 实例为开发 Keycloak 提供独立的 `keycloak_dev` 数据库，实现完全隔离的双环境架构。
+本项目为现有的 Docker Compose 单服务器基础设施（PostgreSQL、Keycloak、Nginx、findclass-ssr）添加 Jenkins CI/CD 流水线和蓝绿部署能力。核心目标是消除当前 `docker compose up --force-recreate` 带来的 30-60 秒停机窗口，实现零停机部署。研究结论明确：Jenkins 宿主机原生安装（非容器化）+ Nginx upstream include 文件切换 + Docker `docker run` 独立管理蓝绿容器，是单服务器场景下最简洁可靠的方案。
 
-推荐的技术路线是 Keycloak v1 FreeMarker 主题（`parent=keycloak`），通过 CSS 覆盖 + 消息包定制实现品牌化登录页。这条路线自由度高、社区文档丰富、与 Keycloak 26.2.3 完全兼容，避免了 v2 React 主题的定制限制。整个项目预估 7-12 小时工作量（约 1-2 个工作日），核心风险集中在双环境数据隔离和 Hostname v2 SPI 配置上，但均有项目内已验证的修复经验可供参考。
+推荐的技术路径分五步递进：Jenkins 安装 -> Nginx 配置重构 -> 蓝绿核心脚本 -> Pipeline 集成 -> 清理与文档。每个步骤独立可验证，前一步失败不阻塞回退。关键约束是所有蓝绿操作仅限于无状态应用容器（findclass-ssr），基础设施服务（PostgreSQL、Keycloak、Nginx）保持现有 compose 部署方式不变。
+
+主要风险集中在三个领域：(1) 蓝绿切换时 Nginx 配置语法错误导致全站不可用，需通过 `nginx -t` 前置验证 + 原子写文件防止；(2) Docker 镜像累积导致磁盘耗尽，Pipeline 必须内置清理步骤；(3) 数据库迁移破坏蓝绿共存，需采用 Expand-Contract 模式确保向后兼容。三层回滚机制（健康检查失败不切换 -> E2E 验证失败自动切回 -> 手动紧急回滚脚本）覆盖所有故障场景。
 
 ## Key Findings
 
 ### Recommended Stack
 
-主题开发无需安装任何额外 npm/pip 包，完全基于 Keycloak 内置的 FreeMarker 模板引擎和原生 CSS 覆盖机制。双环境方案复用已有的 Docker Compose overlay 模式和 PostgreSQL dev 实例。
+Jenkins LTS 2.541.x 宿主机原生安装，通过 systemd 管理，直接访问 Docker socket。配合 Nginx upstream include 文件切换实现蓝绿流量路由。核心部署逻辑放在 bash 脚本中，Jenkinsfile 仅编排调用，保证可手动执行。所有结论基于项目代码库深度分析和 Jenkins/Nginx 官方文档，置信度高。
 
 **Core technologies:**
-- **Keycloak 26.2.3:** 认证服务 -- 项目已部署，主题系统基于 FreeMarker，无额外依赖
-- **FreeMarker 模板:** 登录页 HTML 渲染 -- Keycloak 内置引擎，`.ftl` 文件放入 theme 目录即生效
-- **CSS3 + PatternFly 5 变量覆盖:** 品牌化样式 -- 通过 `theme.properties` 的 `styles` 属性加载，覆盖 PF5 默认样式
-- **Docker Compose overlay:** dev/prod 配置分离 -- 项目已验证的 base + overlay 模式
-- **Volume bind mount:** 主题文件注入 -- 宿主机 Git 管理的文件通过 `:ro` 挂载到容器
+- **Jenkins LTS 2.541.3:** CI/CD 控制器，Declarative Pipeline 语法，宿主机原生安装避免 Docker-in-Docker 安全风险
+- **OpenJDK 21 (Temurin):** Jenkins 运行时，LTS 2.541.x 支持 Java 17/21/25，Java 21 是当前最优选择
+- **Nginx upstream include 切换:** 蓝绿流量路由，通过重写 include 文件 + `nginx -s reload` 实现毫秒级零停机切换
+- **Docker `docker run` 独立管理:** 蓝绿容器脱离 compose 生命周期管理，实现独立启停控制；compose 仅用于 `docker compose build`
+- **Bash 部署脚本:** 核心部署逻辑（`blue-green-deploy.sh`），Jenkinsfile 仅编排调用，可脱离 Jenkins 独立执行
 
 ### Expected Features
 
+研究将特性分为三层：Table Stakes（部署流程不可靠不安全则缺少的必备项）、Differentiators（显著提升部署安全性的增强项）、Anti-Features（单服务器场景下的过度设计，明确不做）。
+
 **Must have (table stakes):**
-- **keycloak-dev 独立容器 (TS-1):** 开发环境独立 Keycloak 实例，使用 `start-dev` 命令
-- **独立数据库 keycloak_dev (TS-2):** 连接 `postgres-dev:5432/keycloak_dev`，避免数据污染
-- **端口偏移 (TS-3):** dev 使用 18080/9100 端口，与 prod 的 8080/9000 不冲突
-- **Hostname v2 SPI 配置 (TS-4):** dev 清空 `KC_HOSTNAME`、禁用 strict/proxy
-- **主题目录结构 (TS-5):** `services/keycloak/themes/noda/login/` 完整目录和 `theme.properties`
-- **主题继承 parent=keycloak (TS-6):** v1 FreeMarker 方式，CSS 覆盖实现品牌化
-- **Realm 启用主题 (TS-7):** `noda-realm.json` 添加 `loginTheme: "noda"` 字段
-- **品牌化 CSS (TS-8) + Logo (TS-9):** 颜色、字体、Logo 替换
-- **Dev 主题缓存禁用 (TS-10):** 开发环境添加 `--spi-theme-cache-*` 禁用参数
+- **Pipeline 阶段化 (T1):** Build -> Test -> Deploy -> Verify 四阶段骨架，Jenkins Declarative Pipeline 原生支持
+- **镜像 Git SHA 标签 (T2):** 版本可追溯，蓝绿区分新旧镜像的基础，替换当前 `findclass-ssr:latest`
+- **构建失败阻止部署 (T3):** Jenkins 天然支持，`sh` 步骤失败即中止 Pipeline
+- **HTTP E2E 健康检查 (T4):** 切换前验证新容器 + 切换后验证完整链路，不仅仅是 Docker HEALTHCHECK
+- **自动回滚 (T5):** 蓝绿模式下等于"不切换流量"，旧容器持续运行；三层回滚覆盖所有场景
+- **Jenkins 宿主机安装/卸载脚本 (T7):** 干净的安装和完全卸载能力，是所有 Pipeline 特性的基础
 
-**Should have (differentiators):**
-- **本地化消息 (DF-1):** `messages_zh_CN.properties` 中文翻译
-- **移动端适配 (DF-2):** 响应式媒体查询
-- **Dev realm 初始化 (DF-4):** 简化 dev 环境配置流程
+**Should have (competitive):**
+- **蓝绿部署零停机切换 (D1):** v1.4 核心价值，消除 30-60 秒停机窗口，复杂度最高
+- **Lint + 单元测试门禁 (D2):** 需要 noda-apps 仓库配合，v1.4.x 追加
+- **Cloudflare CDN 缓存清除 (D6):** 部署后用户看到新版本，需要 CF API Token 配置
 
-**Defer (v1.3+):**
-- **自定义 HTML 模板 (DF-3):** 仅在 CSS 不够用时使用
-- **邮件模板 (DF-5) / Account Console 主题 (DF-6):** 高级定制
+**Defer (v2+):**
+- **部署通知 (D5):** 单人维护场景价值低
+- **多环境 Pipeline (dev/staging/prod):** 当前 dev 环境按需手动启动
+- **基础设施服务蓝绿:** PostgreSQL/Keycloak 有状态，复杂度远高于无状态应用
 
 ### Architecture Approach
 
-项目采用 Docker Compose overlay 隔离模式，生产环境通过 Cloudflare Tunnel 暴露 `auth.noda.co.nz`，开发环境通过 `localhost:8180` 直连。两个环境的 Keycloak 实例完全独立（独立容器、独立数据库、独立端口），但共享同一套主题源码（通过 volume bind mount 从宿主机注入）。主题架构使用 `parent=keycloak` 继承基础 FreeMarker 主题，仅覆盖 CSS 和消息文件，保持最小变更集。
+蓝绿部署采用"构建与运行分离"模式：`docker compose build` 仅用于构建镜像，`docker run` 独立管理蓝绿容器生命周期。Nginx 通过 `include` 文件引用 upstream 定义，Pipeline 通过原子写文件 + `nginx -s reload` 实现流量切换。状态文件 `/var/lib/noda-deploy/current_color` 追踪活跃颜色。基础设施服务（PostgreSQL、Keycloak、Nginx、noda-ops）保持现有 compose 部署不变。
 
 **Major components:**
-1. **keycloak-dev 服务:** 开发环境独立容器，`start-dev` 模式，禁用主题缓存，暴露 18080 端口
-2. **主题文件目录:** `services/keycloak/themes/noda/login/` -- theme.properties + CSS + 消息包 + 图片
-3. **noda-realm.json 更新:** 添加 `loginTheme: "noda"` 字段激活主题
+1. **Jenkins (宿主机 systemd):** CI/CD 编排，Pipeline 管理，直接操作 Docker socket
+2. **蓝绿部署脚本 (`blue-green-deploy.sh`):** 核心部署逻辑，包括容器启停、健康检查、nginx 切换、状态管理
+3. **Nginx upstream include 文件 (`upstream-findclass.conf`):** 流量路由入口，Pipeline 动态生成和切换
+4. **蓝绿状态文件 (`/var/lib/noda-deploy/current_color`):** 纯文本记录活跃颜色，Pipeline 各阶段读写
+5. **Jenkinsfile:** Pipeline 骨架，仅编排 stage 调用，不包含复杂逻辑
 
 ### Critical Pitfalls
 
-1. **Dev/Prod 共享数据库导致数据污染 (Pitfall 2):** dev Keycloak 必须连接独立的 `keycloak_dev` 数据库，否则 realm 配置互相覆盖、schema 迁移竞争
-2. **Hostname v2 SPI 配置错误导致 cookie/session 失效 (Pitfall 6):** dev 环境必须清空 `KC_HOSTNAME`、设置 `KC_HOSTNAME_STRICT: false`、`KC_PROXY: none`；绝对不能使用 v1 废弃选项 `KC_HOSTNAME_PORT`
-3. **主题缓存导致修改不生效 (Pitfall 1):** 开发环境必须添加缓存禁用参数；生产环境修改主题后需重启容器
-4. **主题已部署但未在 Admin Console 启用 (Pitfall 4):** 必须在 `noda-realm.json` 中添加 `loginTheme: "noda"`，或在 Admin Console 手动选择
-5. **v1/v2 主题选择错误 (Pitfall 5):** 必须使用 `parent=keycloak`（v1 FreeMarker），不要使用 `parent=keycloak.v2`（React），否则 `.ftl` 模板和 CSS 覆盖不生效
+1. **Docker Socket 挂载导致容器逃逸:** Jenkins 必须宿主机原生安装，绝不使用 Docker 容器运行 + socket 挂载模式。这是安全底线，Phase 1 就要正确决策。
+2. **蓝绿切换 Nginx 配置语法错误:** 切换前必须执行 `docker exec nginx nginx -t` 验证配置，失败则不执行 reload。使用原子写（写临时文件 + mv）防止配置文件损坏。
+3. **健康检查假阳性:** Docker HEALTHCHECK 通过不等于应用就绪。必须做 HTTP E2E 检查（curl 返回 200 + 响应时间合理），不仅仅是 TCP connect。
+4. **Pipeline 部分失败状态不一致:** 维护状态文件追踪活跃颜色，每个阶段操作必须幂等，`post { failure }` 中根据状态文件判断回滚策略。旧容器在 E2E 验证通过后才删除。
+5. **磁盘空间耗尽:** Pipeline 末尾必须有清理步骤（`docker image prune` + `docker builder prune`），定期 cron 清理，磁盘监控超过 85% 告警。
 
 ## Implications for Roadmap
 
 Based on research, suggested phase structure:
 
-### Phase 1: Keycloak 双环境搭建
-**Rationale:** 双环境是基础设施层面的事，与主题无关但必须先就绪，才能在 dev 环境中高效开发主题。数据库隔离和端口规划是硬依赖。
-**Delivers:** 可独立启动的 keycloak-dev 容器，完全隔离的开发/生产环境
-**Addresses:** TS-1, TS-2, TS-3, TS-4
-**Avoids:** Pitfall 2（数据污染）、Pitfall 3（端口冲突）、Pitfall 6（Hostname 配置错误）
-**Key actions:**
-- 在 `docker-compose.dev.yml` 中添加 `keycloak-dev` 服务定义
-- 确认 `postgres-dev` 中 `keycloak_dev` 数据库已创建（init-dev SQL 已包含）
-- 配置端口偏移 18080/9100
-- 配置 Hostname v2 SPI（清空 KC_HOSTNAME、禁用 strict/proxy）
+### Phase 1: Jenkins 安装与基础配置
+**Rationale:** Jenkins 是所有 Pipeline 特性的基础，必须最先安装验证。独立于应用逻辑，风险最低。
+**Delivers:** 可运行的 Jenkins 实例，可访问 Docker，Pipeline Job 骨架
+**Addresses:** T7 (Jenkins 安装脚本), T1 (Pipeline 阶段化骨架)
+**Avoids:** Pitfall 1 (Docker Socket 安全) -- 宿主机原生安装
+**Research flag:** 标准模式，Jenkins 官方安装文档覆盖完整，无需额外研究
 
-### Phase 2: 自定义主题开发
-**Rationale:** 主题开发依赖 dev 环境的热重载能力（Phase 1 提供的缓存禁用），但主题文件的创建本身不依赖 dev 环境。可以先在生产环境验证主题基本可用，再在 dev 环境迭代优化。
-**Delivers:** 品牌化登录页，Noda Logo + 自定义颜色/字体
-**Uses:** Keycloak FreeMarker 主题系统、CSS 覆盖、PatternFly 5 变量
-**Implements:** TS-5, TS-6, TS-8, TS-9, TS-7, TS-10
-**Avoids:** Pitfall 1（缓存问题）、Pitfall 4（未启用主题）、Pitfall 5（继承错误）、Pitfall 7（目录不存在）
-**Key actions:**
-- 创建 `services/keycloak/themes/noda/login/` 目录结构
-- 编写 `theme.properties`（parent=keycloak, import=common/keycloak）
-- 编写 `noda.css`（颜色变量覆盖、Logo、按钮样式）
-- 添加 Noda Logo SVG 到 `resources/img/`
-- 修改 `noda-realm.json` 添加 `loginTheme: "noda"`
+### Phase 2: Nginx 配置重构
+**Rationale:** 蓝绿部署依赖 Nginx upstream 动态切换，需要先将 upstream 定义从 `default.conf` 抽离到独立 include 文件。这是蓝绿的流量路由基础设施。
+**Delivers:** `upstream-findclass.conf` include 文件，nginx reload 验证通过，现有流量不受影响
+**Addresses:** 蓝绿部署的 Nginx 基础改造
+**Avoids:** Pitfall 2 (蓝绿容器端口冲突) -- upstream 指向可动态切换的容器名
+**Research flag:** 标准模式，Nginx include + reload 是成熟方案
 
-### Phase 3: 集成验证 + 增强
-**Rationale:** 双环境和主题都完成后，需要端到端验证完整登录流程。增强功能（本地化、移动端适配）可在基本功能稳定后添加。
-**Delivers:** 完整可用的双环境 + 品牌化登录系统
-**Addresses:** DF-1, DF-2, DF-4
-**Avoids:** Pitfall 9（Google OAuth dev 回调不匹配）
-**Key actions:**
-- 验证 prod 登录流程（auth.noda.co.nz -> Google OAuth -> 回调）
-- 验证 dev 登录流程（localhost:8180 -> 密码/Google -> 回调）
-- 添加 `messages_zh_CN.properties` 中文消息
-- 添加移动端响应式媒体查询
-- 可选：创建 `init-realm-dev.sh` 简化 dev 环境初始化
+### Phase 3: 蓝绿部署核心脚本
+**Rationale:** 核心部署逻辑（容器启停、健康检查、nginx 切换、状态管理）先在 bash 脚本中实现并手动验证，再集成到 Jenkins。降低调试复杂度。
+**Delivers:** `blue-green-deploy.sh` + `rollback-findclass.sh`，手动测试蓝绿切换和回滚正常工作
+**Addresses:** T2 (Git SHA 标签), T4 (HTTP 健康检查), T5 (自动回滚), D1 (蓝绿部署核心)
+**Uses:** Docker `docker run` 独立管理容器，Nginx upstream include 切换，状态文件
+**Avoids:** Pitfall 3 (数据库迁移兼容), Pitfall 4 (健康检查假阳性), Pitfall 5 (Pipeline 部分失败)
+**Research flag:** 需要研究 -- 健康检查策略（重试次数、超时、E2E 验证 URL）需要在实际环境中调优
+
+### Phase 4: Jenkins Pipeline 集成
+**Rationale:** 核心部署逻辑验证通过后，包装进 Jenkinsfile 实现自动化。包括完整的 stage 编排、E2E 健康检查、自动回滚。
+**Delivers:** 可运行的 Jenkins Pipeline，手动触发 -> 零停机部署 -> 自动回滚
+**Addresses:** T1 (Pipeline 阶段化), T3 (构建失败阻止部署), T6 (部署前备份)
+**Uses:** Jenkins Declarative Pipeline, `post { failure }` 回滚
+**Avoids:** Pitfall 5 (Pipeline 部分失败) -- 状态文件 + 幂等操作 + failure 回滚
+**Research flag:** 标准模式，Jenkins Declarative Pipeline 文档覆盖完整
+
+### Phase 5: 清理、迁移与文档
+**Rationale:** 部署流程稳定后，迁移环境变量管理、添加镜像清理步骤、保留旧脚本作为备选入口、更新文档。
+**Delivers:** 完整的 CI/CD 系统，镜像清理机制，文档更新
+**Addresses:** 磁盘空间管理，现有脚本迁移映射，CLAUDE.md 部署文档更新
+**Avoids:** Pitfall 6 (磁盘空间耗尽) -- Pipeline 末尾清理 + 定期 cron
+**Research flag:** 标准模式
 
 ### Phase Ordering Rationale
 
-- **Phase 1 先于 Phase 2:** dev 环境的主题缓存禁用是高效开发主题的前提条件；数据库隔离是不可妥协的安全需求
-- **Phase 2 可部分与 Phase 1 并行:** 主题文件创建（TS-5, TS-6）不依赖 dev 环境，可以直接在现有 prod Keycloak 上验证；但主题迭代优化需要 dev 环境的热重载
-- **Phase 3 最后:** 端到端验证需要两个环境都就绪
-- **DF-4（dev realm 初始化）归入 Phase 3:** 不是 v1.2 的核心需求，但能显著提升后续开发效率
+- **依赖关系驱动：** Jenkins (Phase 1) -> Nginx 改造 (Phase 2) -> 蓝绿脚本 (Phase 3) -> Pipeline 集成 (Phase 4)，每一步依赖前一步的产出
+- **风险递进：** 先做独立的基础设施变更（Jenkins 安装），再做应用层改造（Nginx/蓝绿），最后做流程集成（Pipeline）
+- **可回退性：** Phase 1-2 都不影响现有部署流程，Phase 3 手动验证通过后才进入 Phase 4 自动化，任何阶段失败都可以安全回退
+- **蓝绿脚本先于 Pipeline：** 核心 bash 脚本可脱离 Jenkins 独立调试和执行，比在 Jenkinsfile (Groovy) 中调试更高效
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 1:** Google OAuth dev 环境配置（Pitfall 9）-- 需确认 Google Console 配置步骤和 localhost 回调 URL 格式
-- **Phase 2:** PatternFly 5 CSS 类名对照 -- 需要查阅 PF5 文档确认具体的选择器，确保 CSS 覆盖准确命中目标元素
+- **Phase 3:** 健康检查策略需要根据实际 findclass-ssr 冷启动时间调优（重试间隔、超时阈值、E2E 验证 URL）
+- **Phase 3:** 环境变量从 `config/secrets.sops.yaml` 到 `docker run` 的传递方案需要设计
+- **Phase 4:** Jenkins 与 GitHub SSH 集成（deploy key 配置、workspace 路径映射）需要实际调试
 
 Phases with standard patterns (skip research-phase):
-- **Phase 1 Docker Compose 配置:** 已有 PostgreSQL overlay 模式作为参考，配置结构完全一致
-- **Phase 2 主题目录结构:** Keycloak 官方文档有完整的目录结构说明
-- **Phase 3 集成验证:** 标准的 OAuth 流程验证
+- **Phase 1:** Jenkins 宿主机安装，官方文档完整覆盖
+- **Phase 2:** Nginx include + reload，成熟的标准模式
+- **Phase 5:** 镜像清理 + 文档更新，无需研究
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | 无额外技术依赖；Keycloak 主题系统是内置功能；overlay 模式已在项目中验证 |
-| Features | HIGH | 10 个 table stakes 特性均为 LOW-MEDIUM 复杂度；依赖关系清晰；已有详细实现方案 |
-| Architecture | HIGH | 直接基于项目代码库分析；卷挂载已预留；数据库已创建；无需新增外部依赖 |
-| Pitfalls | HIGH | 9 个 pitfalls 均有具体预防方案和验证方法；Hostname v2 问题已在 v1.1 修复过 |
+| Stack | HIGH | Jenkins LTS + Nginx upstream 切换 + Docker run，官方文档 + 社区最佳实践充分验证 |
+| Features | HIGH | 特性列表基于项目代码库深度分析，依赖关系和优先级明确 |
+| Architecture | HIGH | 组件边界清晰，数据流完整，反模式已识别。基于项目现有代码的直接分析 |
+| Pitfalls | MEDIUM | 6 个 Critical Pitfalls 基于代码分析和训练知识，Web 搜索遭遇限流，部分结论未经在线验证（特别是磁盘空间增长估算、健康检查超时阈值） |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **品牌设计资源:** Noda Logo SVG 和品牌色值尚未确定 -- 主题开发时需要设计输入
-- **Google OAuth dev 回调:** 需要在 Google Cloud Console 添加 localhost 回调 URL -- 可能需要账号权限
-- **PatternFly 5 选择器:** CSS 覆盖需要针对 PF5 的 `pf-v5-*` 类名前缀 -- 开发时需查阅 PF5 文档确认选择器
-- **Dev 环境验证:** `keycloak_dev` 数据库虽已在 init SQL 中创建，但尚未实际验证 Keycloak 能否成功连接和初始化 schema
+- **健康检查超时调优：** 研究建议 90s 超时 + 5s 间隔（最多 18 次重试），但实际 findclass-ssr 冷启动时间需要 Phase 3 实测确认
+- **环境变量传递方案：** 从 sops 加密文件到 `docker run -e` 的传递链路需要在 Phase 3 设计和验证
+- **Jenkins 端口冲突：** Jenkins 默认 8080 端口与 Keycloak 内部端口冲突（虽然 Keycloak 不暴露外部端口），需要在 Phase 1 确认是否需要修改 Jenkins 端口
+- **noda-site 蓝绿扩展：** 当前仅 findclass-ssr 纳入蓝绿，noda-site 的蓝绿部署模式需要单独评估
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Keycloak 26.2.3 Server Developer Guide -- Themes 章节 -- 主题类型、创建流程、theme.properties 配置、缓存控制
-- Keycloak 26.2.3 Server Administration Guide -- Hostname v2 SPI -- v2 配置规则、废弃选项
-- Noda 项目代码库（docker-compose.yml / docker-compose.dev.yml / docker-compose.prod.yml / init-dev SQL）-- 现有架构和配置分析
-- Noda 项目 CLAUDE.md -- Google 登录 8080 端口 5 层修复记录 -- Hostname v2 配置已验证经验
+- 项目代码库：`docker/docker-compose.app.yml`, `docker/docker-compose.yml`, `docker/docker-compose.prod.yml` -- 现有服务定义、网络配置、健康检查
+- 项目代码库：`config/nginx/conf.d/default.conf`, `config/nginx/nginx.conf` -- upstream 定义、include 机制验证
+- 项目代码库：`scripts/deploy/deploy-apps-prod.sh`, `scripts/deploy/deploy-infrastructure-prod.sh` -- 现有部署流程、回滚逻辑
+- 项目代码库：`scripts/lib/health.sh`, `deploy/Dockerfile.findclass-ssr` -- 健康检查实现、构建流程
+- Jenkins 官方文档：LTS 安装、Declarative Pipeline、Credentials Store、systemd 管理
+- Jenkins Pipeline Plugin (workflow-aggregator) -- 89.7% 安装率，Declarative Pipeline 标配
+- Nginx 官方文档：`nginx -s reload` 平滑重载机制，零停机原理
 
 ### Secondary (MEDIUM confidence)
-- Keycloak 26.2.3 Server Administration Guide -- Reverse Proxy -- proxy 模式选择
-- PatternFly 5 CSS 类名文档 -- 登录页组件选择器
+- Jenkins Pipeline 最佳实践 -- 使用 `sh` 步骤而非 Groovy 逻辑
+- Docker BuildKit 缓存管理 -- `docker builder prune` 清理策略
+- 蓝绿部署 Expand-Contract 模式 -- 数据库迁移兼容性最佳实践
+- Prisma `migrate deploy` -- 只执行 forward 迁移，与蓝绿回滚策略的关系
 
 ### Tertiary (LOW confidence)
-- 社区 Keycloak 主题开发教程 -- v1 vs v2 选择建议（已通过官方文档交叉验证）
+- 磁盘空间增长估算 -- 基于构建层大小推断，需实际监控验证
+- Cloudflare API 缓存清除 -- 未深入研究 API 细节，Phase 5 前需补充
 
 ---
-*Research completed: 2026-04-11*
+*Research completed: 2026-04-14*
 *Ready for roadmap: yes*
