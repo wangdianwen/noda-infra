@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: CI/CD 零停机部署
-status: Defining requirements
+status: Roadmap created
 last_updated: "2026-04-14T00:00:00.000Z"
 last_activity: 2026-04-14
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
-  total_plans: 0
+  total_plans: 10
   completed_plans: 0
   percent: 0
 ---
@@ -22,13 +22,14 @@ See: .planning/PROJECT.md (updated 2026-04-14)
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
 **Current milestone:** v1.4 CI/CD 零停机部署
+**Current focus:** Phase 19 — Jenkins 安装与基础配置
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-04-14 — Milestone v1.4 started
+Phase: 19 of 25 (Jenkins 安装与基础配置)
+Plan: 0 of 2 in current phase
+Status: Ready to plan
+Last activity: 2026-04-14 — Roadmap created for v1.4
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -51,6 +52,30 @@ Progress: [░░░░░░░░░░] 0%
 **v1.0 完整备份系统 (Shipped 2026-04-06):**
 9 phases, 16 plans, 23 tasks
 
-## Known Issues
+## Accumulated Context
 
+### Decisions
+
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
+
+- Phase 20: Nginx upstream 从 default.conf 抽离到独立 include 文件，支持蓝绿切换
+- Phase 21: 蓝绿容器通过 docker run 独立管理，不通过 compose（compose 仅用于 build）
+- Phase 22: 活跃环境状态通过 /opt/noda/active-env 文件追踪
+- Phase 23: Pipeline 使用 Declarative Pipeline 手动触发，核心逻辑在 bash 脚本中
+
+### Pending Todos
+
+None yet.
+
+### Blockers/Concerns
+
+- Jenkins 默认 8080 端口与 Keycloak 内部端口可能冲突（Keycloak 不暴露外部端口，需 Phase 19 确认）
+- 健康检查超时阈值需根据 findclass-ssr 实际冷启动时间调优（Phase 22 实测）
 - findclass-ssr Prisma 7 兼容性待处理（Out of Scope for v1.4）
+
+## Session Continuity
+
+Last session: 2026-04-14
+Stopped at: Roadmap created, ready to plan Phase 19
+Resume file: None

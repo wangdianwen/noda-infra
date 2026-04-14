@@ -71,39 +71,37 @@
 
 ## Traceability
 
-Which phases cover which requirements. Updated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| JENK-01 | — | Pending |
-| JENK-02 | — | Pending |
-| JENK-03 | — | Pending |
-| JENK-04 | — | Pending |
-| PIPE-01 | — | Pending |
-| PIPE-02 | — | Pending |
-| PIPE-03 | — | Pending |
-| PIPE-04 | — | Pending |
-| PIPE-05 | — | Pending |
-| BLUE-01 | — | Pending |
-| BLUE-02 | — | Pending |
-| BLUE-03 | — | Pending |
-| BLUE-04 | — | Pending |
-| BLUE-05 | — | Pending |
-| TEST-01 | — | Pending |
-| TEST-02 | — | Pending |
-| TEST-03 | — | Pending |
-| TEST-04 | — | Pending |
-| TEST-05 | — | Pending |
-| ENH-01 | — | Pending |
-| ENH-02 | — | Pending |
-| ENH-03 | — | Pending |
-| ENH-04 | — | Pending |
+| JENK-01 | Phase 19 | Pending |
+| JENK-02 | Phase 19 | Pending |
+| JENK-03 | Phase 19 | Pending |
+| JENK-04 | Phase 19 | Pending |
+| BLUE-02 | Phase 20 | Pending |
+| BLUE-01 | Phase 21 | Pending |
+| BLUE-03 | Phase 21 | Pending |
+| BLUE-04 | Phase 21 | Pending |
+| BLUE-05 | Phase 21 | Pending |
+| PIPE-02 | Phase 22 | Pending |
+| PIPE-03 | Phase 22 | Pending |
+| TEST-03 | Phase 22 | Pending |
+| TEST-04 | Phase 22 | Pending |
+| TEST-05 | Phase 22 | Pending |
+| PIPE-01 | Phase 23 | Pending |
+| PIPE-04 | Phase 23 | Pending |
+| PIPE-05 | Phase 23 | Pending |
+| TEST-01 | Phase 23 | Pending |
+| TEST-02 | Phase 23 | Pending |
+| ENH-01 | Phase 24 | Pending |
+| ENH-02 | Phase 24 | Pending |
+| ENH-03 | Phase 24 | Pending |
+| ENH-04 | Phase 25 | Pending |
 
 **Coverage:**
 - v1.4 requirements: 23 total
-- Mapped to phases: 0
-- Unmapped: 23
+- Mapped to phases: 23
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-14*
-*Last updated: 2026-04-14 after v1.4 milestone requirements definition*
+*Last updated: 2026-04-14 after roadmap creation*
