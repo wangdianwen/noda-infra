@@ -526,15 +526,17 @@ EOF
 }
 
 # ============================================
-# 子命令分发
+# 子命令分发（仅直接执行时触发，source 时跳过）
 # ============================================
-case "${1:-}" in
-  init)    cmd_init "$@" ;;
-  start)   cmd_start "$@" ;;
-  stop)    cmd_stop "$@" ;;
-  restart) cmd_restart "$@" ;;
-  status)  cmd_status "$@" ;;
-  logs)    cmd_logs "$@" ;;
-  switch)  cmd_switch "$@" ;;
-  *)       usage && exit 1 ;;
-esac
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  case "${1:-}" in
+    init)    cmd_init "$@" ;;
+    start)   cmd_start "$@" ;;
+    stop)    cmd_stop "$@" ;;
+    restart) cmd_restart "$@" ;;
+    status)  cmd_status "$@" ;;
+    logs)    cmd_logs "$@" ;;
+    switch)  cmd_switch "$@" ;;
+    *)       usage && exit 1 ;;
+  esac
+fi
