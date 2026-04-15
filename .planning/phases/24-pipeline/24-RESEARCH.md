@@ -419,19 +419,19 @@ cleanup_old_images() {
 
 **If this table is empty:** All claims in this research were verified or cited.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Jenkins 宿主机是否已安装 curl？**
+1. **Jenkins 宿主机是否已安装 curl？** → RESOLVED: 函数设计为失败不阻止（D-09），即使 curl 不可用也不影响部署。Plan 01 Task 2 使用 `|| true` 降级。
    - What we know: Jenkins 宿主机是 Debian/Ubuntu Linux，curl 通常预装
    - What's unclear: 是否通过 Jenkins 安装脚本已安装
    - Recommendation: CDN 清除函数已设计为失败不阻止（D-09），即使 curl 不可用也不影响部署
 
-2. **Jenkins Credentials 中是否需要手动创建 cf-api-token 和 cf-zone-id？**
+2. **Jenkins Credentials 中是否需要手动创建 cf-api-token 和 cf-zone-id？** → RESOLVED: 需管理员在 Jenkins UI 手动创建（一次性操作），Plan 02 注释已明确。
    - What we know: Phase 19 的 setup-jenkins.sh 仅预配置了 `noda-apps-git-credentials` 和 `noda-infra-git-credentials`
    - What's unclear: Phase 24 是否需要在 setup-jenkins.sh 中添加 Cloudflare 凭据的自动配置
    - Recommendation: Cloudflare 凭据需要在 Jenkins UI 手动添加（一次性操作），不需要自动化（token 敏感且不常变更）
 
-3. **dangling images 是否只清理 findclass-ssr 相关的？**
+3. **dangling images 是否只清理 findclass-ssr 相关的？** → RESOLVED: 使用 `docker image prune -f` 清理全部 dangling images（Plan 01 Task 3）。
    - What we know: D-15 要求"同时清理 dangling images"
    - What's unclear: 是否只清理 findclass-ssr 产生的 dangling images，还是全部 dangling images
    - Recommendation: 全部清理（`docker image prune -f` 更简单），因为 Jenkins workspace 不会产生其他服务的 dangling images。但为安全起见，可以用 `docker rmi` 逐个清理。
