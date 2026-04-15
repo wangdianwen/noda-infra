@@ -336,9 +336,11 @@ pipeline_build() {
 # 参数: $1 = APPS_DIR (noda-apps 目录)
 pipeline_test() {
   local apps_dir="$1"
-  cd "$apps_dir"
-  pnpm install --frozen-lockfile
-  log_success "依赖安装完成"
+  (
+    cd "$apps_dir"
+    pnpm install --frozen-lockfile
+    log_success "依赖安装完成"
+  )
 }
 
 # pipeline_deploy - 部署新容器到目标环境
