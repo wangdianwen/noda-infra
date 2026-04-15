@@ -481,26 +481,30 @@ pipeline {
 | A5 | noda-infra 仓库是私有的，需要凭据 checkout | 03-pipeline-job.groovy | 如果是公开仓库，可能不需要凭据 |
 | A6 | E2E 验证失败时应执行回滚（切换回旧环境），但 CONTEXT.md 中未明确 | Verify 阶段 | 需要确认是否在 Jenkinsfile 的 Verify stage 中包含回滚逻辑 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **noda-apps 仓库的 `package.json` 是否已有 lint 和 test 脚本？**
    - What we know: CONTEXT.md D-10 说"复用 noda-apps 已有的 `package.json` scripts"
    - What's unclear: noda-apps 仓库不在当前代码库中，无法验证
    - Recommendation: Plan 中假设已有，但在 Pre-flight 阶段添加检查 `grep -q '"lint"' noda-apps/package.json`
+   - RESOLVED: Plan 23-02 Task 1 在 pipeline_preflight() 中添加了 package.json lint/test 脚本检查
 
 2. **03-pipeline-job.groovy 的更新策略？**
    - What we know: Phase 19 创建了占位作业，幂等检查会跳过已存在的作业
    - What's unclear: 更新 groovy 脚本后如何让 Jenkins 重新应用配置
    - Recommendation: 在 Plan 23-01 中明确说明——更新 groovy 脚本后需手动操作（删除旧作业 + 重启 Jenkins），或在 groovy 中改为"更新模式"
+   - RESOLVED: Plan 23-01 Task 2 使用 updateByXml 策略更新已存在作业的配置
 
 3. **Verify 阶段失败后是否需要回滚？**
    - What we know: Phase 22 的 `blue-green-deploy.sh` main() 中 E2E 失败后自动回滚
    - What's unclear: Jenkinsfile 的 Verify stage 中 `e2e_verify()` 失败后，是在 stage 内回滚还是在 `post { failure }` 中回滚
    - Recommendation: 在 Verify stage 内用 `catchError` 或 `when` 处理回滚逻辑，因为回滚需要知道当前活跃环境
+   - RESOLVED: Verify 失败后 Pipeline 进入 post failure 块，pipeline_failure_cleanup 清理失败容器；流量未切换所以无需回滚
 
 4. **Node.js/pnpm 安装方式？**
    - What we know: D-09 锁定宿主机安装，Claude's Discretion 决定安装方式
    - What's unclear: 宿主机是否已有 Node.js
+   - RESOLVED: Plan 23-02 Task 1 在 pipeline_preflight() 中添加了 Node.js/pnpm 可用性检查，未安装时输出明确的安装指引
    - Recommendation: Plan 中添加一个检查步骤，如果未安装则报错提示手动安装
 
 ## Environment Availability
