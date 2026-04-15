@@ -41,6 +41,7 @@ check_backup_freshness() {
   local max_age_hours="${BACKUP_MAX_AGE_HOURS:-12}"
 
   # 策略：先检查当天目录，再检查前一天（D-04）
+  # 注意：date -d 是 GNU 扩展，仅在 Linux 上可用（macOS 的 BSD date 不支持）
   local today today_minus1
   today=$(date +"%Y/%m/%d")
   today_minus1=$(date -d "yesterday" +"%Y/%m/%d")
