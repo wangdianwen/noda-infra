@@ -1,8 +1,9 @@
 #!/usr/bin/env groovy
 // Noda Apps 蓝绿部署 Pipeline
-// 8 阶段: Pre-flight -> Build -> Test -> Deploy -> Health Check -> Switch -> Verify -> Cleanup
+// 9 阶段: Pre-flight -> Build -> Test -> Deploy -> Health Check -> Switch -> Verify -> CDN Purge -> Cleanup
 // 手动触发（无自动触发配置）
 // Phase 23: Pipeline 集成与测试门禁
+// Phase 24: CDN 缓存清除增强
 
 pipeline {
     agent any
@@ -122,6 +123,21 @@ pipeline {
                     source scripts/pipeline-stages.sh
                     pipeline_verify "$TARGET_ENV"
                 '''
+            }
+        }
+
+        stage('CDN Purge') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'cf-api-token', variable: 'CF_API_TOKEN'),
+                    string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
+                ]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        pipeline_purge_cdn
+                    '''
+                }
             }
         }
 
