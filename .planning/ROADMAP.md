@@ -64,7 +64,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [x] **Phase 20: Nginx 蓝绿路由基础** — 将 upstream 定义抽离为独立 include 文件，支持动态切换 (completed 2026-04-15)
 - [x] **Phase 21: 蓝绿容器管理** — docker run 独立管理蓝绿容器，状态文件追踪活跃环境 (completed 2026-04-15)
 - [x] **Phase 22: 蓝绿部署核心流程** — 完整的蓝绿部署脚本（容器启停 + 健康检查 + nginx 切换 + 回滚） (completed 2026-04-15)
-- [ ] **Phase 23: Pipeline 集成与测试门禁** — Jenkinsfile 八阶段 Pipeline + lint/test 质量门禁
+- [x] **Phase 23: Pipeline 集成与测试门禁** — Jenkinsfile 八阶段 Pipeline + lint/test 质量门禁 (completed 2026-04-15)
 - [ ] **Phase 24: Pipeline 增强特性** — 部署前备份检查 + CDN 缓存清除 + 镜像清理
 - [ ] **Phase 25: 清理与迁移** — 旧脚本保留为手动回退 + CLAUDE.md 文档更新
 
@@ -142,7 +142,7 @@ Plans:
 
 Plans:
 - [x] 23-01-PLAN.md — pipeline-stages.sh 阶段函数库 + Jenkinsfile 八阶段 Pipeline + 03-pipeline-job.groovy SCM 模式
-- [ ] 23-02-PLAN.md — Pre-flight 环境检查增强 + lint/test 质量门禁强化 + 人工验证
+- [x] 23-02-PLAN.md — Pre-flight 环境检查增强 + lint/test 质量门禁强化 + 人工验证
 
 ### Phase 24: Pipeline 增强特性
 **Goal**: Pipeline 在部署前检查备份时效性，部署后自动清除 CDN 缓存和旧镜像，提升部署安全性和磁盘空间管理
@@ -181,6 +181,6 @@ Phases execute in numeric order: 19 → 20 → 21 → 22 → 23 → 24 → 25
 | 20. Nginx 蓝绿路由基础 | v1.4 | 1/1 | Complete | 2026-04-15 |
 | 21. 蓝绿容器管理 | v1.4 | 1/1 | Complete    | 2026-04-15 |
 | 22. 蓝绿部署核心流程 | v1.4 | 2/2 | Complete    | 2026-04-15 |
-| 23. Pipeline 集成与测试门禁 | v1.4 | 1/2 | In Progress|  |
+| 23. Pipeline 集成与测试门禁 | v1.4 | 2/2 | Complete   | 2026-04-15 |
 | 24. Pipeline 增强特性 | v1.4 | 0/1 | Not started | - |
 | 25. 清理与迁移 | v1.4 | 0/1 | Not started | - |

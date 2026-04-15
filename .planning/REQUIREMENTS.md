@@ -30,8 +30,8 @@
 
 ### 测试与质量门禁
 
-- [ ] **TEST-01**: Pipeline Test 阶段执行 `pnpm lint`，lint 不通过则中止部署
-- [ ] **TEST-02**: Pipeline Test 阶段执行 `pnpm test`，单元测试不通过则中止部署
+- [x] **TEST-01**: Pipeline Test 阶段执行 `pnpm lint`，lint 不通过则中止部署
+- [x] **TEST-02**: Pipeline Test 阶段执行 `pnpm test`，单元测试不通过则中止部署
 - [ ] **TEST-03**: 部署后对目标容器执行 HTTP 健康检查（直接 curl 容器内部端点），最多重试 10 次每次间隔 5 秒
 - [ ] **TEST-04**: 流量切换后通过 nginx 执行 E2E 验证（curl 外部可达性），确认完整请求链路正常
 - [ ] **TEST-05**: 健康检查或 E2E 验证失败时，不切换流量、不停止旧容器，自动回滚到当前活跃环境
@@ -90,8 +90,8 @@
 | PIPE-01 | Phase 23 | Complete |
 | PIPE-04 | Phase 23 | Complete |
 | PIPE-05 | Phase 23 | Complete |
-| TEST-01 | Phase 23 | Pending |
-| TEST-02 | Phase 23 | Pending |
+| TEST-01 | Phase 23 | Complete |
+| TEST-02 | Phase 23 | Complete |
 | ENH-01 | Phase 24 | Pending |
 | ENH-02 | Phase 24 | Pending |
 | ENH-03 | Phase 24 | Pending |

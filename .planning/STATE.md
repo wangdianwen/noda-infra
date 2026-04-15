@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: CI/CD 零停机部署
-status: 23-01 SUMMARY created
-stopped_at: Completed 23-01-PLAN.md
-last_updated: "2026-04-15T20:04:34.262Z"
-last_activity: 2026-04-15 -- 23-01 Pipeline 集成完成
+status: 23-02 SUMMARY created
+stopped_at: Completed 23-02-PLAN.md
+last_updated: "2026-04-15T20:11:36.588Z"
+last_activity: 2026-04-15 -- 23-02 Pre-flight 增强 + Pipeline 验证完成
 progress:
   total_phases: 7
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 8
-  completed_plans: 7
-  percent: 88
+  completed_plans: 8
+  percent: 100
 ---
 
 # Project State
@@ -28,11 +28,11 @@ See: .planning/PROJECT.md (updated 2026-04-14)
 ## Current Position
 
 Phase: 23
-Plan: 01 complete, 02 next
-Status: 23-01 SUMMARY created
-Last activity: 2026-04-15 -- 23-01 Pipeline 集成完成
+Plan: 02 complete (Phase 23 done)
+Status: 23-02 SUMMARY created
+Last activity: 2026-04-15 -- 23-02 Pre-flight 增强 + Pipeline 验证完成
 
-Progress: [█████████░] 88%
+Progress: [██████████] 100%
 
 ## Previous Milestones
 
@@ -65,6 +65,9 @@ Recent decisions affecting current work:
 - Phase 22: 活跃环境状态通过 /opt/noda/active-env 文件追踪
 - Phase 23: Pipeline 使用 Declarative Pipeline 手动触发，核心逻辑在 bash 脚本中
 - [Phase 23]: pipeline-stages.sh 独立封装解决 blue-green-deploy.sh 无 source guard 问题
+- [Phase 23]: pipeline_preflight 增强为完整环境检查（Node.js/pnpm/noda-apps/package.json），安装指引包含 apt 命令
+- [Phase 23]: pipeline_preflight 接受可选 APPS_DIR 参数（默认 $WORKSPACE/noda-apps），支持自定义项目路径
+- [Phase 23]: 人工验证确认 8 阶段 Pipeline 结构正确，Pre-flight 单一真相源，Test 三步独立
 
 ### Pending Todos
 
@@ -78,6 +81,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-15T20:04:34.260Z
-Stopped at: Completed 23-01-PLAN.md
+Last session: 2026-04-15T20:11:36.586Z
+Stopped at: Completed 23-02-PLAN.md
 Resume file: None
