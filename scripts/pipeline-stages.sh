@@ -23,6 +23,64 @@ HEALTH_CHECK_INTERVAL=4
 E2E_MAX_RETRIES=5
 E2E_INTERVAL=2
 COMPOSE_FILE="$PROJECT_ROOT/docker/docker-compose.app.yml"
+BACKUP_HOST_DIR="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}"
+BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-12}"
+IMAGE_RETENTION_DAYS="${IMAGE_RETENTION_DAYS:-7}"
+
+# ============================================
+# 函数: check_backup_freshness
+# ============================================
+# 检查数据库备份文件是否在指定小时内
+# 策略：先检查当天/昨天日期子目录，再回退全目录搜索
+# 返回：0=备份新鲜，1=备份过期或不存在
+# 环境变量：
+#   BACKUP_HOST_DIR - 备份目录（默认 $PROJECT_ROOT/docker/volumes/backup）
+#   BACKUP_MAX_AGE_HOURS - 最大允许年龄小时数（默认 12）
+check_backup_freshness() {
+  local backup_dir="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}"
+  local max_age_hours="${BACKUP_MAX_AGE_HOURS:-12}"
+
+  # 策略：先检查当天目录，再检查前一天（D-04）
+  local today today_minus1
+  today=$(date +"%Y/%m/%d")
+  today_minus1=$(date -d "yesterday" +"%Y/%m/%d")
+
+  local newest_file=""
+  for search_dir in "$backup_dir/$today" "$backup_dir/$today_minus1"; do
+    if [ -d "$search_dir" ]; then
+      newest_file=$(find "$search_dir" -type f \( -name "*.dump" -o -name "*.sql" \) -printf '%T@ %p\n' \
+        2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+      [ -n "$newest_file" ] && break
+    fi
+  done
+
+  # 回退：全目录搜索最新备份文件
+  if [ -z "$newest_file" ]; then
+    newest_file=$(find "$backup_dir" -type f \( -name "*.dump" -o -name "*.sql" \) -printf '%T@ %p\n' \
+      2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+  fi
+
+  if [ -z "$newest_file" ]; then
+    log_error "未找到任何备份文件（查找路径: $backup_dir）"
+    return 1
+  fi
+
+  # 计算文件年龄（秒 -> 小时），使用 GNU stat（Linux 生产环境）
+  local file_epoch now_epoch age_seconds age_hours
+  file_epoch=$(stat -c%Y "$newest_file")
+  now_epoch=$(date +%s)
+  age_seconds=$((now_epoch - file_epoch))
+  age_hours=$((age_seconds / 3600))
+
+  if [ "$age_hours" -ge "$max_age_hours" ]; then
+    log_error "备份已过期 ${age_hours} 小时（阈值: ${max_age_hours} 小时）"
+    log_error "最新备份: $newest_file"
+    return 1
+  fi
+
+  log_info "备份检查通过: 最新备份 ${age_hours} 小时前（阈值: ${max_age_hours} 小时）"
+  return 0
+}
 
 # ============================================
 # 函数: http_health_check
@@ -229,6 +287,9 @@ pipeline_preflight() {
     return 1
   fi
   log_info "package.json test 脚本存在"
+
+  # 备份时效性检查（D-01, D-19: 放在所有其他检查之后）
+  check_backup_freshness || return 1
 
   log_success "前置检查全部通过"
 }
