@@ -370,6 +370,39 @@ pipeline_verify() {
   e2e_verify "$target_env" "$E2E_MAX_RETRIES" "$E2E_INTERVAL"
 }
 
+# pipeline_purge_cdn - 调用 Cloudflare API 清除 CDN 缓存
+# 环境变量（由 Jenkins withCredentials 注入）：
+#   CF_API_TOKEN - Cloudflare API Token
+#   CF_ZONE_ID   - Cloudflare Zone ID
+# 返回：0=成功或跳过（永远不阻止部署，per D-09）
+pipeline_purge_cdn() {
+  # 凭据缺失时跳过（D-11）
+  if [ -z "${CF_API_TOKEN:-}" ] || [ -z "${CF_ZONE_ID:-}" ]; then
+    log_warn "Cloudflare 凭据未配置，跳过 CDN 缓存清除"
+    return 0
+  fi
+
+  log_info "清除 CDN 缓存 (zone: $CF_ZONE_ID)..."
+
+  local http_code
+  http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+    -H "Authorization: Bearer ${CF_API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data '{"purge_everything":true}' \
+    --connect-timeout 10 \
+    --max-time 30 2>/dev/null) || true
+
+  if [ "$http_code" = "200" ]; then
+    log_success "CDN 缓存清除完成"
+  else
+    # D-09: 失败不阻止部署
+    log_error "CDN 缓存清除失败 (HTTP ${http_code:-timeout})，不影响部署"
+  fi
+
+  return 0
+}
+
 # pipeline_cleanup - 清理旧镜像
 pipeline_cleanup() {
   cleanup_old_images 5
