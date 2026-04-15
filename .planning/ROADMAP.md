@@ -61,7 +61,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 **Milestone Goal:** Jenkins + 蓝绿部署实现编译失败不 down 站，自动回滚保护
 
 - [x] **Phase 19: Jenkins 安装与基础配置** — 宿主机原生安装 Jenkins LTS，可操作 Docker daemon (completed 2026-04-14)
-- [ ] **Phase 20: Nginx 蓝绿路由基础** — 将 upstream 定义抽离为独立 include 文件，支持动态切换
+- [x] **Phase 20: Nginx 蓝绿路由基础** — 将 upstream 定义抽离为独立 include 文件，支持动态切换 (completed 2026-04-15)
 - [ ] **Phase 21: 蓝绿容器管理** — docker run 独立管理蓝绿容器，状态文件追踪活跃环境
 - [ ] **Phase 22: 蓝绿部署核心流程** — 完整的蓝绿部署脚本（容器启停 + 健康检查 + nginx 切换 + 回滚）
 - [ ] **Phase 23: Pipeline 集成与测试门禁** — Jenkinsfile 八阶段 Pipeline + lint/test 质量门禁
@@ -96,7 +96,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 20-01-PLAN.md — 抽离三个 upstream include 文件 + 验证 nginx reload 切换
+- [x] 20-01-PLAN.md — 抽离三个 upstream include 文件 + 验证 nginx reload 切换
 
 ### Phase 21: 蓝绿容器管理
 **Goal**: blue 和 green 两个 findclass-ssr 容器可以独立启停，通过状态文件追踪当前活跃环境
@@ -178,7 +178,7 @@ Phases execute in numeric order: 19 → 20 → 21 → 22 → 23 → 24 → 25
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 19. Jenkins 安装与基础配置 | v1.4 | 2/2 | Complete    | 2026-04-14 |
-| 20. Nginx 蓝绿路由基础 | v1.4 | 0/1 | Not started | - |
+| 20. Nginx 蓝绿路由基础 | v1.4 | 1/1 | Complete    | 2026-04-15 |
 | 21. 蓝绿容器管理 | v1.4 | 0/1 | Not started | - |
 | 22. 蓝绿部署核心流程 | v1.4 | 0/2 | Not started | - |
 | 23. Pipeline 集成与测试门禁 | v1.4 | 0/2 | Not started | - |
