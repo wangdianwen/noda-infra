@@ -185,39 +185,64 @@ e2e_verify() {
 # ============================================
 # 函数: cleanup_old_images
 # ============================================
-# 从 blue-green-deploy.sh 复制（该文件无 source guard，不能 source）
-# 保留最近 N 个带标签的镜像，删除更早的
-# 参数:
-#   $1: 保留数量（默认 5）
+# 删除超过指定天数的旧镜像和 dangling images（per D-12）
+# 原逻辑：保留最近 N 个 → 新逻辑：删除超过 7 天的
+# 参数：
+#   $1: 保留天数（可选，默认使用 IMAGE_RETENTION_DAYS 变量）
+# 环境变量：
+#   IMAGE_RETENTION_DAYS - 镜像保留天数（默认 7，per D-13）
 cleanup_old_images() {
-  local keep_count="${1:-5}"
+  local retention_days="${IMAGE_RETENTION_DAYS:-${1:-7}}"
 
-  # 列出所有非 latest 标签的镜像，按创建时间排序（最新在前）
-  local images
-  images=$(docker images findclass-ssr --format '{{.Tag}} {{.CreatedAt}}' \
-    | grep -v '^latest ' \
-    | sort -t' ' -k2 -r \
-    | awk '{print $1}')
+  log_info "镜像清理: 删除超过 ${retention_days} 天的旧镜像..."
 
-  local total
-  total=$(echo "$images" | grep -c . || true)
+  local cutoff_epoch
+  cutoff_epoch=$(date -d "${retention_days} days ago" +%s)
 
-  if [ "$total" -le "$keep_count" ]; then
-    log_info "镜像清理: ${total} 个标签镜像 <= 保留 ${keep_count}，无需清理"
-    return 0
-  fi
+  # 1. 清理带 Git SHA 标签的旧镜像（排除 latest，per D-14）
+  local sha_tags
+  sha_tags=$(docker images findclass-ssr --format '{{.Tag}}' \
+    | grep -v '^latest$' \
+    | grep -v '^<none>' || true)
 
-  local to_delete
-  to_delete=$(echo "$images" | tail -n +$((keep_count + 1)))
+  local deleted=0
+  for tag in $sha_tags; do
+    # 使用 docker inspect 获取 ISO 8601 创建时间（per RESEARCH: docker images CreatedAt 格式不稳定）
+    local created_iso
+    created_iso=$(docker inspect --format '{{.Created}}' "findclass-ssr:${tag}" 2>/dev/null || echo "")
 
-  log_info "镜像清理: ${total} 个标签镜像，保留 ${keep_count}，删除 $((total - keep_count)) 个"
+    if [ -z "$created_iso" ]; then
+      continue
+    fi
 
-  for tag in $to_delete; do
-    log_info "  删除 findclass-ssr:${tag}"
-    docker rmi "findclass-ssr:${tag}" 2>/dev/null || true
+    # 将 ISO 8601 转为 epoch
+    local image_epoch
+    image_epoch=$(date -d "$created_iso" +%s 2>/dev/null || echo "0")
+
+    if [ "$image_epoch" -eq 0 ]; then
+      continue
+    fi
+
+    if [ "$image_epoch" -lt "$cutoff_epoch" ]; then
+      log_info "  删除 findclass-ssr:${tag} ($(date -d "@$image_epoch" +"%Y-%m-%d"))"
+      docker rmi "findclass-ssr:${tag}" 2>/dev/null || true
+      deleted=$((deleted + 1))
+    fi
   done
 
-  log_success "旧镜像清理完成"
+  # 2. 清理 dangling images（per D-15）
+  local dangling_ids
+  dangling_ids=$(docker images -f "dangling=true" --format '{{.ID}}' 2>/dev/null || true)
+  for img_id in $dangling_ids; do
+    docker rmi "$img_id" 2>/dev/null || true
+    deleted=$((deleted + 1))
+  done
+
+  if [ "$deleted" -gt 0 ]; then
+    log_success "镜像清理完成: 删除 ${deleted} 个镜像"
+  else
+    log_info "镜像清理: 无需清理"
+  fi
 }
 
 # ============================================
@@ -405,7 +430,7 @@ pipeline_purge_cdn() {
 
 # pipeline_cleanup - 清理旧镜像
 pipeline_cleanup() {
-  cleanup_old_images 5
+  cleanup_old_images
 }
 
 # pipeline_failure_cleanup - 部署失败时捕获日志并清理
