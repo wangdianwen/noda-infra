@@ -141,7 +141,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 23-01-PLAN.md — pipeline-stages.sh 阶段函数库 + Jenkinsfile 八阶段 Pipeline + 03-pipeline-job.groovy SCM 模式
+- [x] 23-01-PLAN.md — pipeline-stages.sh 阶段函数库 + Jenkinsfile 八阶段 Pipeline + 03-pipeline-job.groovy SCM 模式
 - [ ] 23-02-PLAN.md — Pre-flight 环境检查增强 + lint/test 质量门禁强化 + 人工验证
 
 ### Phase 24: Pipeline 增强特性
@@ -181,6 +181,6 @@ Phases execute in numeric order: 19 → 20 → 21 → 22 → 23 → 24 → 25
 | 20. Nginx 蓝绿路由基础 | v1.4 | 1/1 | Complete | 2026-04-15 |
 | 21. 蓝绿容器管理 | v1.4 | 1/1 | Complete    | 2026-04-15 |
 | 22. 蓝绿部署核心流程 | v1.4 | 2/2 | Complete    | 2026-04-15 |
-| 23. Pipeline 集成与测试门禁 | v1.4 | 0/2 | Planning    | - |
+| 23. Pipeline 集成与测试门禁 | v1.4 | 1/2 | In Progress|  |
 | 24. Pipeline 增强特性 | v1.4 | 0/1 | Not started | - |
 | 25. 清理与迁移 | v1.4 | 0/1 | Not started | - |

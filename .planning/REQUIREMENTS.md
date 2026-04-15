@@ -14,11 +14,11 @@
 
 ### Pipeline 核心
 
-- [ ] **PIPE-01**: Pipeline 按 Pre-flight → Build → Test → Deploy → Health Check → Switch → Verify → Cleanup 八阶段执行
+- [x] **PIPE-01**: Pipeline 按 Pre-flight → Build → Test → Deploy → Health Check → Switch → Verify → Cleanup 八阶段执行
 - [ ] **PIPE-02**: 每次构建的镜像使用 Git SHA 短哈希标签（如 `findclass-ssr:abc1234`），替代 latest
 - [ ] **PIPE-03**: 构建阶段失败时自动中止 Pipeline，不进入部署阶段
-- [ ] **PIPE-04**: Pipeline 通过手动触发执行，不支持自动触发
-- [ ] **PIPE-05**: 部署失败时自动归档构建日志和容器日志到 Jenkins
+- [x] **PIPE-04**: Pipeline 通过手动触发执行，不支持自动触发
+- [x] **PIPE-05**: 部署失败时自动归档构建日志和容器日志到 Jenkins
 
 ### 蓝绿部署
 
@@ -87,9 +87,9 @@
 | TEST-03 | Phase 22 | Pending |
 | TEST-04 | Phase 22 | Pending |
 | TEST-05 | Phase 22 | Pending |
-| PIPE-01 | Phase 23 | Pending |
-| PIPE-04 | Phase 23 | Pending |
-| PIPE-05 | Phase 23 | Pending |
+| PIPE-01 | Phase 23 | Complete |
+| PIPE-04 | Phase 23 | Complete |
+| PIPE-05 | Phase 23 | Complete |
 | TEST-01 | Phase 23 | Pending |
 | TEST-02 | Phase 23 | Pending |
 | ENH-01 | Phase 24 | Pending |
