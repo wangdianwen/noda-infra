@@ -107,10 +107,10 @@ Plans:
   2. `/opt/noda/active-env` 文件内容为 `blue` 或 `green`，准确反映当前活跃环境
   3. 蓝绿容器通过 `docker run` 启动和管理（不通过 docker-compose.yml）
   4. nginx 可通过容器名 DNS 解析访问 blue 和 green 容器
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 21-01: 蓝绿容器管理脚本（启动/停止/状态查询）+ 状态文件 + Docker 网络配置
+- [ ] 21-01-PLAN.md — manage-containers.sh 蓝绿容器管理脚本（8 个子命令）+ env-findclass-ssr.env 环境变量文件
 
 ### Phase 22: 蓝绿部署核心流程
 **Goal**: 管理员可通过脚本执行完整的蓝绿部署流程，包括构建新镜像、启动目标容器、健康检查、切换流量、验证、回滚
