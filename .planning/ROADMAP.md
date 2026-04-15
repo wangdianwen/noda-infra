@@ -93,10 +93,10 @@ Plans:
   1. nginx 配置中 findclass 的 upstream 通过 `include snippets/upstream-findclass.conf` 引用
   2. 手动修改 include 文件内容后执行 `nginx -s reload`，流量无中断地指向新的后端地址
   3. class.noda.co.nz 现有访问不受影响（变更前后功能等价）
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 20-01: 抽离 upstream include 文件 + 验证 reload 切换
+- [ ] 20-01-PLAN.md — 抽离三个 upstream include 文件 + 验证 nginx reload 切换
 
 ### Phase 21: 蓝绿容器管理
 **Goal**: blue 和 green 两个 findclass-ssr 容器可以独立启停，通过状态文件追踪当前活跃环境
