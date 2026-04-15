@@ -65,7 +65,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [x] **Phase 21: 蓝绿容器管理** -- docker run 独立管理蓝绿容器，状态文件追踪活跃环境 (completed 2026-04-15)
 - [x] **Phase 22: 蓝绿部署核心流程** -- 完整的蓝绿部署脚本（容器启停 + 健康检查 + nginx 切换 + 回滚） (completed 2026-04-15)
 - [x] **Phase 23: Pipeline 集成与测试门禁** -- Jenkinsfile 八阶段 Pipeline + lint/test 质量门禁 (completed 2026-04-15)
-- [ ] **Phase 24: Pipeline 增强特性** -- 部署前备份检查 + CDN 缓存清除 + 镜像清理
+- [x] **Phase 24: Pipeline 增强特性** -- 部署前备份检查 + CDN 缓存清除 + 镜像清理 (completed 2026-04-15)
 - [ ] **Phase 25: 清理与迁移** -- 旧脚本保留为手动回退 + CLAUDE.md 文档更新
 
 ## Phase Details
@@ -155,8 +155,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 24-01-PLAN.md -- pipeline-stages.sh 三项增强函数（check_backup_freshness + pipeline_purge_cdn + cleanup_old_images 时间阈值重写）
-- [ ] 24-02-PLAN.md -- Jenkinsfile 新增 CDN Purge stage（9 阶段 Pipeline）
+- [x] 24-01-PLAN.md -- pipeline-stages.sh 三项增强函数（check_backup_freshness + pipeline_purge_cdn + cleanup_old_images 时间阈值重写）
+- [x] 24-02-PLAN.md -- Jenkinsfile 新增 CDN Purge stage（9 阶段 Pipeline）
 
 ### Phase 25: 清理与迁移
 **Goal**: 旧部署脚本保留为手动回退入口，部署文档更新反映新的 CI/CD 流程
@@ -183,5 +183,5 @@ Phases execute in numeric order: 19 -> 20 -> 21 -> 22 -> 23 -> 24 -> 25
 | 21. 蓝绿容器管理 | v1.4 | 1/1 | Complete    | 2026-04-15 |
 | 22. 蓝绿部署核心流程 | v1.4 | 2/2 | Complete | 2026-04-15 |
 | 23. Pipeline 集成与测试门禁 | v1.4 | 2/2 | Complete    | 2026-04-15 |
-| 24. Pipeline 增强特性 | v1.4 | 0/2 | Not started | - |
+| 24. Pipeline 增强特性 | v1.4 | 2/2 | Complete    | 2026-04-15 |
 | 25. 清理与迁移 | v1.4 | 0/1 | Not started | - |
