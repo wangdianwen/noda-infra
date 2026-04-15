@@ -2,11 +2,11 @@
 
 ## Milestones
 
-- ✅ **v1.0 完整备份系统** — Phases 1-9 (shipped 2026-04-06) — [详情](milestones/v1.0-ROADMAP.md)
-- ✅ **v1.1 基础设施现代化** — 29 commits (shipped 2026-04-11) — [详情](milestones/v1.1-MILESTONE.md)
-- ✅ **v1.2 基础设施修复与整合** — Phases 10-14 (shipped 2026-04-11) — [详情](milestones/v1.2-ROADMAP.md)
-- ✅ **v1.3 安全收敛与分组整理** — Phases 15-18 (shipped 2026-04-12)
-- 🚧 **v1.4 CI/CD 零停机部署** — Phases 19-25 (in progress)
+- **v1.0 完整备份系统** -- Phases 1-9 (shipped 2026-04-06) -- [详情](milestones/v1.0-ROADMAP.md)
+- **v1.1 基础设施现代化** -- 29 commits (shipped 2026-04-11) -- [详情](milestones/v1.1-MILESTONE.md)
+- **v1.2 基础设施修复与整合** -- Phases 10-14 (shipped 2026-04-11) -- [详情](milestones/v1.2-ROADMAP.md)
+- **v1.3 安全收敛与分组整理** -- Phases 15-18 (shipped 2026-04-12)
+- **v1.4 CI/CD 零停机部署** -- Phases 19-25 (in progress)
 
 ## Phases
 
@@ -17,7 +17,7 @@
 Decimal phases appear between their surrounding integers in numeric order.
 
 <details>
-<summary>✅ v1.0 完整备份系统 + v1.1 基础设施现代化 (Phases 1-9) — SHIPPED 2026-04-11</summary>
+<summary>v1.0 完整备份系统 + v1.1 基础设施现代化 (Phases 1-9) -- SHIPPED 2026-04-11</summary>
 
 v1.0 (shipped 2026-04-06): 9 phases, 16 plans, 23 tasks
 - 完整的本地备份流程（健康检查 -> 备份 -> 验证 -> 清理）
@@ -36,37 +36,37 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 </details>
 
 <details>
-<summary>✅ v1.2 基础设施修复与整合 (Phases 10-14) — SHIPPED 2026-04-11</summary>
+<summary>v1.2 基础设施修复与整合 (Phases 10-14) -- SHIPPED 2026-04-11</summary>
 
-- [x] Phase 10: B2 备份修复 (3/3 plans) — completed 2026-04-11
-- [x] Phase 11: 服务整合 (2/2 plans) — completed 2026-04-11
-- [x] Phase 12: Keycloak 双环境 (1/1 plans) — completed 2026-04-11
-- [x] Phase 13: Keycloak 自定义主题 (1/1 plans) — completed 2026-04-11
-- [x] Phase 14: 容器保护与部署安全 (3/3 plans) — completed 2026-04-11
+- [x] Phase 10: B2 备份修复 (3/3 plans) -- completed 2026-04-11
+- [x] Phase 11: 服务整合 (2/2 plans) -- completed 2026-04-11
+- [x] Phase 12: Keycloak 双环境 (1/1 plans) -- completed 2026-04-11
+- [x] Phase 13: Keycloak 自定义主题 (1/1 plans) -- completed 2026-04-11
+- [x] Phase 14: 容器保护与部署安全 (3/3 plans) -- completed 2026-04-11
 
 </details>
 
 <details>
-<summary>✅ v1.3 安全收敛与分组整理 (Phases 15-18) — SHIPPED 2026-04-12</summary>
+<summary>v1.3 安全收敛与分组整理 (Phases 15-18) -- SHIPPED 2026-04-12</summary>
 
-- [x] **Phase 15: PostgreSQL 客户端升级** — completed 2026-04-12
-- [x] **Phase 16: Keycloak 端口收敛** — completed 2026-04-11
-- [x] **Phase 17: 端口安全加固** — completed 2026-04-11
-- [x] **Phase 18: 容器标签分组** — completed 2026-04-11
+- [x] **Phase 15: PostgreSQL 客户端升级** -- completed 2026-04-12
+- [x] **Phase 16: Keycloak 端口收敛** -- completed 2026-04-11
+- [x] **Phase 17: 端口安全加固** -- completed 2026-04-11
+- [x] **Phase 18: 容器标签分组** -- completed 2026-04-11
 
 </details>
 
-### 🚧 v1.4 CI/CD 零停机部署 (In Progress)
+### v1.4 CI/CD 零停机部署 (In Progress)
 
 **Milestone Goal:** Jenkins + 蓝绿部署实现编译失败不 down 站，自动回滚保护
 
-- [x] **Phase 19: Jenkins 安装与基础配置** — 宿主机原生安装 Jenkins LTS，可操作 Docker daemon (completed 2026-04-14)
-- [x] **Phase 20: Nginx 蓝绿路由基础** — 将 upstream 定义抽离为独立 include 文件，支持动态切换 (completed 2026-04-15)
-- [x] **Phase 21: 蓝绿容器管理** — docker run 独立管理蓝绿容器，状态文件追踪活跃环境 (completed 2026-04-15)
-- [x] **Phase 22: 蓝绿部署核心流程** — 完整的蓝绿部署脚本（容器启停 + 健康检查 + nginx 切换 + 回滚） (completed 2026-04-15)
-- [x] **Phase 23: Pipeline 集成与测试门禁** — Jenkinsfile 八阶段 Pipeline + lint/test 质量门禁 (completed 2026-04-15)
-- [ ] **Phase 24: Pipeline 增强特性** — 部署前备份检查 + CDN 缓存清除 + 镜像清理
-- [ ] **Phase 25: 清理与迁移** — 旧脚本保留为手动回退 + CLAUDE.md 文档更新
+- [x] **Phase 19: Jenkins 安装与基础配置** -- 宿主机原生安装 Jenkins LTS，可操作 Docker daemon (completed 2026-04-14)
+- [x] **Phase 20: Nginx 蓝绿路由基础** -- 将 upstream 定义抽离为独立 include 文件，支持动态切换 (completed 2026-04-15)
+- [x] **Phase 21: 蓝绿容器管理** -- docker run 独立管理蓝绿容器，状态文件追踪活跃环境 (completed 2026-04-15)
+- [x] **Phase 22: 蓝绿部署核心流程** -- 完整的蓝绿部署脚本（容器启停 + 健康检查 + nginx 切换 + 回滚） (completed 2026-04-15)
+- [x] **Phase 23: Pipeline 集成与测试门禁** -- Jenkinsfile 八阶段 Pipeline + lint/test 质量门禁 (completed 2026-04-15)
+- [ ] **Phase 24: Pipeline 增强特性** -- 部署前备份检查 + CDN 缓存清除 + 镜像清理
+- [ ] **Phase 25: 清理与迁移** -- 旧脚本保留为手动回退 + CLAUDE.md 文档更新
 
 ## Phase Details
 
@@ -82,8 +82,8 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 **Plans**: 2 plans
 
 Plans:
-- [x] 19-01-PLAN.md — setup-jenkins.sh 主脚本（7 个子命令：install/uninstall/status/show-password/restart/upgrade/reset-password）
-- [x] 19-02-PLAN.md — Jenkins init.groovy.d 自动化脚本（管理员/插件/安全/Pipeline 作业）+ 管理员凭据模板
+- [x] 19-01-PLAN.md -- setup-jenkins.sh 主脚本（7 个子命令：install/uninstall/status/show-password/restart/upgrade/reset-password）
+- [x] 19-02-PLAN.md -- Jenkins init.groovy.d 自动化脚本（管理员/插件/安全/Pipeline 作业）+ 管理员凭据模板
 
 ### Phase 20: Nginx 蓝绿路由基础
 **Goal**: nginx 的 findclass upstream 定义从 default.conf 抽离到独立 include 文件，Pipeline 可通过重写该文件 + reload 切换流量指向
@@ -96,7 +96,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [x] 20-01-PLAN.md — 抽离三个 upstream include 文件 + 验证 nginx reload 切换
+- [x] 20-01-PLAN.md -- 抽离三个 upstream include 文件 + 验证 nginx reload 切换
 
 ### Phase 21: 蓝绿容器管理
 **Goal**: blue 和 green 两个 findclass-ssr 容器可以独立启停，通过状态文件追踪当前活跃环境
@@ -110,7 +110,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [x] 21-01-PLAN.md — manage-containers.sh 蓝绿容器管理脚本（8 个子命令）+ env-findclass-ssr.env 环境变量文件
+- [x] 21-01-PLAN.md -- manage-containers.sh 蓝绿容器管理脚本（8 个子命令）+ env-findclass-ssr.env 环境变量文件
 
 ### Phase 22: 蓝绿部署核心流程
 **Goal**: 管理员可通过脚本执行完整的蓝绿部署流程，包括构建新镜像、启动目标容器、健康检查、切换流量、验证、回滚
@@ -125,8 +125,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [x] 22-01: 蓝绿部署主脚本（blue-green-deploy.sh）— 构建 + 启动 + 健康检查 + 切换 + 验证
-- [x] 22-02: 回滚脚本（rollback-findclass.sh）— 紧急手动回滚
+- [x] 22-01: 蓝绿部署主脚本（blue-green-deploy.sh）-- 构建 + 启动 + 健康检查 + 切换 + 验证
+- [x] 22-02: 回滚脚本（rollback-findclass.sh）-- 紧急手动回滚
 
 ### Phase 23: Pipeline 集成与测试门禁
 **Goal**: 管理员可在 Jenkins 中手动触发 Pipeline，自动执行 lint + 单元测试 + 蓝绿部署全流程，构建日志在失败时自动归档
@@ -141,8 +141,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [x] 23-01-PLAN.md — pipeline-stages.sh 阶段函数库 + Jenkinsfile 八阶段 Pipeline + 03-pipeline-job.groovy SCM 模式
-- [x] 23-02-PLAN.md — Pre-flight 环境检查增强 + lint/test 质量门禁强化 + 人工验证
+- [x] 23-01-PLAN.md -- pipeline-stages.sh 阶段函数库 + Jenkinsfile 八阶段 Pipeline + 03-pipeline-job.groovy SCM 模式
+- [x] 23-02-PLAN.md -- Pre-flight 环境检查增强 + lint/test 质量门禁强化 + 人工验证
 
 ### Phase 24: Pipeline 增强特性
 **Goal**: Pipeline 在部署前检查备份时效性，部署后自动清除 CDN 缓存和旧镜像，提升部署安全性和磁盘空间管理
@@ -155,7 +155,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 24-01: 部署前备份检查 + CDN 缓存清除 + 旧镜像清理脚本集成
+- [ ] 24-01-PLAN.md -- pipeline-stages.sh 三项增强函数（check_backup_freshness + pipeline_purge_cdn + cleanup_old_images 时间阈值重写）
+- [ ] 24-02-PLAN.md -- Jenkinsfile 新增 CDN Purge stage（9 阶段 Pipeline）
 
 ### Phase 25: 清理与迁移
 **Goal**: 旧部署脚本保留为手动回退入口，部署文档更新反映新的 CI/CD 流程
@@ -173,14 +174,14 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 19 → 20 → 21 → 22 → 23 → 24 → 25
+Phases execute in numeric order: 19 -> 20 -> 21 -> 22 -> 23 -> 24 -> 25
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 19. Jenkins 安装与基础配置 | v1.4 | 2/2 | Complete    | 2026-04-14 |
 | 20. Nginx 蓝绿路由基础 | v1.4 | 1/1 | Complete | 2026-04-15 |
 | 21. 蓝绿容器管理 | v1.4 | 1/1 | Complete    | 2026-04-15 |
-| 22. 蓝绿部署核心流程 | v1.4 | 2/2 | Complete    | 2026-04-15 |
+| 22. 蓝绿部署核心流程 | v1.4 | 2/2 | Complete | 2026-04-15 |
 | 23. Pipeline 集成与测试门禁 | v1.4 | 2/2 | Complete    | 2026-04-15 |
-| 24. Pipeline 增强特性 | v1.4 | 0/1 | Not started | - |
+| 24. Pipeline 增强特性 | v1.4 | 0/2 | Not started | - |
 | 25. 清理与迁移 | v1.4 | 0/1 | Not started | - |
