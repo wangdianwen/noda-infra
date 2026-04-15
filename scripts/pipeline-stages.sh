@@ -444,7 +444,8 @@ pipeline_cleanup() {
 # 参数: $1 = TARGET_ENV
 pipeline_failure_cleanup() {
   local target_env="$1"
-  local target_container="findclass-ssr-${target_env}"
+  local target_container
+  target_container=$(get_container_name "$target_env")
 
   # 捕获目标容器日志（如果容器存在）
   docker logs "$target_container" > deploy-failure-container.log 2>&1 || true
