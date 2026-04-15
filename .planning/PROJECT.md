@@ -102,6 +102,7 @@ Docker Compose 项目：
 - ✓ 容器双标签体系 — v1.3
 - ✓ Docker Compose 项目分离 — v1.3
 - ✓ Jenkins 宿主机原生安装/卸载 — v1.4
+- ✓ Nginx upstream include 抽离（蓝绿路由基础） — v1.4
 
 ### Active
 
@@ -135,6 +136,7 @@ Docker Compose 项目：
 | Docker Compose 项目分离 | 基础设施与应用独立部署 | ✅ Good |
 | 容器双标签体系 | 按环境和服务组筛选 | ✅ Good |
 | 所有端口 127.0.0.1 绑定 | 仅本地可访问 | ✅ Good |
+| Upstream include 抽离 | 蓝绿部署路由基础 | ✅ Good |
 
 ---
-*Last updated: 2026-04-14 after v1.4 milestone start*
+*Last updated: 2026-04-15 after Phase 20 completion*
