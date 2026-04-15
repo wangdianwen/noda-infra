@@ -137,6 +137,9 @@ Docker Compose 项目：
 | 容器双标签体系 | 按环境和服务组筛选 | ✅ Good |
 | 所有端口 127.0.0.1 绑定 | 仅本地可访问 | ✅ Good |
 | Upstream include 抽离 | 蓝绿部署路由基础 | ✅ Good |
+| Pipeline 备份时效性检查 | 部署前安全网 | ✅ Good |
+| CDN 缓存清除 | 部署后自动刷新 | ✅ Good |
+| 镜像时间阈值清理 | 磁盘空间管理 | ✅ Good |
 
 ---
-*Last updated: 2026-04-15 after Phase 20 completion*
+*Last updated: 2026-04-16 after Phase 24 completion*
