@@ -380,6 +380,8 @@ pipeline_switch() {
   if ! docker exec "$NGINX_CONTAINER" nginx -t; then
     log_error "nginx 配置验证失败，回滚 upstream"
     update_upstream "$active_env"
+    # 尝试 reload 使回滚生效（不检查返回值，nginx 可能本身就有问题）
+    docker exec "$NGINX_CONTAINER" nginx -s reload 2>/dev/null || true
     return 1
   fi
 
