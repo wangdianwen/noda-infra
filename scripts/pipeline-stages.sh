@@ -409,14 +409,21 @@ pipeline_purge_cdn() {
 
   log_info "清除 CDN 缓存 (zone: $CF_ZONE_ID)..."
 
+  # 使用临时文件传递 JSON body，避免凭据出现在命令行参数中
+  local tmp_body
+  tmp_body=$(mktemp)
+  echo '{"purge_everything":true}' > "$tmp_body"
+
   local http_code
   http_code=$(curl -s -o /dev/null -w "%{http_code}" \
     -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
     -H "Authorization: Bearer ${CF_API_TOKEN}" \
     -H "Content-Type: application/json" \
-    --data '{"purge_everything":true}' \
+    -d @"$tmp_body" \
     --connect-timeout 10 \
     --max-time 30 2>/dev/null) || true
+
+  rm -f "$tmp_body"
 
   if [ "$http_code" = "200" ]; then
     log_success "CDN 缓存清除完成"
