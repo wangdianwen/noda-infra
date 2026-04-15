@@ -435,19 +435,19 @@ main "$@"
 - A2：在实现阶段用 `docker compose build` 后 `docker images findclass-ssr` 验证
 - A3：在实现阶段确认 noda-apps 的 git 仓库结构
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **TEST-03 参数与 D-02 不一致**
+1. **TEST-03 参数与 D-02 不一致** — RESOLVED: 以 CONTEXT.md D-02 为准，计划已采用 30 次 x 4 秒 = 120 秒
    - What we know: REQUIREMENTS.md 要求"10 次每次 5 秒"（50 秒），CONTEXT.md D-02 建议"120 秒，30 次 x 4 秒"
    - What's unclear: 哪个参数是最终标准
    - Recommendation: 以 CONTEXT.md D-02 为准（它是对需求的专业修正），实现时使用 30 次 x 4 秒 = 120 秒超时
 
-2. **source manage-containers.sh 的 case 分发问题**
+2. **source manage-containers.sh 的 case 分发问题** — RESOLVED: Plan 22-01 Task 1 实现 BASH_SOURCE guard
    - What we know: `manage-containers.sh` 末尾有 `case "${1:-}" in ... esac`，source 时会执行
    - What's unclear: 最佳解决方式（提取函数文件 vs 条件检测 vs 重构）
    - Recommendation: 在 case 语句前加 `[[ "${BASH_SOURCE[0]}" == "${0}" ]]` 检测（最小改动）
 
-3. **E2E 验证的具体路径**
+3. **E2E 验证的具体路径** — RESOLVED: Plan 22-01 Task 2 采用 nginx 容器内 curl + wget fallback
    - What we know: 需要通过 nginx 验证完整请求链路
    - What's unclear: 用 nginx 容器内 curl 访问容器名（内部路径），还是用宿主机 curl 通过 nginx 访问
    - Recommendation: 用 `docker exec nginx curl http://findclass-ssr-{color}:3001/api/health`（内部路径，不依赖外部网络）
