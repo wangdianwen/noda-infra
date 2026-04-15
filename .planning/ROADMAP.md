@@ -122,7 +122,7 @@ Plans:
   3. 流量切换后通过 nginx 执行 E2E 验证（curl 外部可达性），确认完整请求链路正常
   4. 健康检查或 E2E 验证失败时，流量不切换、旧容器不停，自动保持当前活跃环境
   5. 构建阶段失败时脚本立即中止，不进入部署阶段
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
 - [ ] 22-01: 蓝绿部署主脚本（blue-green-deploy.sh）— 构建 + 启动 + 健康检查 + 切换 + 验证
@@ -138,7 +138,7 @@ Plans:
   3. Test 阶段执行 `pnpm test`，单元测试不通过则 Pipeline 中止，不进入部署
   4. Pipeline 通过手动触发执行（"Build Now" 按钮），不支持自动触发
   5. 部署失败时构建日志和容器日志自动归档到 Jenkins
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
 - [ ] 23-01: Jenkinsfile 骨架 + noda-apps 仓库 Git 配置
@@ -152,7 +152,7 @@ Plans:
   1. Pipeline Pre-flight 阶段检查数据库备份是否在 12 小时内，超过 12 小时则阻止部署并报告原因
   2. 部署成功后 Pipeline 自动调用 Cloudflare API 清除 CDN 缓存（index.html 和静态资源 URL）
   3. Pipeline Cleanup 阶段自动清理超过 7 天的旧 Docker 镜像，释放磁盘空间
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
 - [ ] 24-01: 部署前备份检查 + CDN 缓存清除 + 旧镜像清理脚本集成
@@ -165,7 +165,7 @@ Plans:
   1. deploy-infrastructure-prod.sh 和 deploy-apps-prod.sh 脚本仍然存在且可手动执行，作为紧急回退方案
   2. CLAUDE.md 部署命令章节更新为 Jenkins Pipeline 优先，旧脚本标注为手动回退
   3. ROADMAP.md 和 PROJECT.md 反映 v1.4 里程碑完成状态
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
 - [ ] 25-01: 旧脚本保留标记 + 文档更新 + 里程碑归档
