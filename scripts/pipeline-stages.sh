@@ -167,8 +167,10 @@ cleanup_old_images() {
 # ============================================
 
 # pipeline_preflight - 前置检查
-# 检查 Docker daemon、nginx 容器、noda-network、pnpm
+# 检查 Docker daemon、nginx 容器、noda-network、Node.js、pnpm、noda-apps
+# 参数: $1 = APPS_DIR (可选，默认 $WORKSPACE/noda-apps)
 pipeline_preflight() {
+  local apps_dir="${1:-$WORKSPACE/noda-apps}"
   log_info "前置检查..."
 
   # 检查 Docker daemon
@@ -185,9 +187,48 @@ pipeline_preflight() {
   docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || { log_error "Docker 网络 noda-network 不存在"; return 1; }
   log_info "Docker 网络 noda-network 存在"
 
+  # 检查 Node.js
+  if ! command -v node >/dev/null 2>&1; then
+    log_error "Node.js 未安装"
+    log_error "安装方式: curl -fsSL https://deb.nodesource.com/setup_21.x | sudo -E bash - && sudo apt install -y nodejs"
+    return 1
+  fi
+  log_info "Node.js: $(node --version)"
+
   # 检查 pnpm
   command -v pnpm >/dev/null 2>&1 || { log_error "pnpm 未安装，Test 阶段需要 pnpm"; return 1; }
-  log_info "pnpm 可用"
+  log_info "pnpm: $(pnpm --version)"
+
+  # 检查 noda-apps 目录
+  if [ ! -d "$apps_dir" ]; then
+    log_error "noda-apps 目录不存在: $apps_dir"
+    log_error "请检查 Jenkinsfile Pre-flight stage 的 checkout 配置"
+    return 1
+  fi
+  log_info "noda-apps 目录存在: $apps_dir"
+
+  # 检查 package.json
+  if [ ! -f "$apps_dir/package.json" ]; then
+    log_error "noda-apps/package.json 不存在: $apps_dir/package.json"
+    return 1
+  fi
+  log_info "noda-apps/package.json 存在"
+
+  # 检查 lint 脚本
+  if ! grep -q '"lint"' "$apps_dir/package.json"; then
+    log_error "noda-apps/package.json 缺少 lint 脚本"
+    log_error '请在 package.json 的 scripts 中添加: "lint": "eslint ."'
+    return 1
+  fi
+  log_info "package.json lint 脚本存在"
+
+  # 检查 test 脚本
+  if ! grep -q '"test"' "$apps_dir/package.json"; then
+    log_error "noda-apps/package.json 缺少 test 脚本"
+    log_error '请在 package.json 的 scripts 中添加: "test": "vitest run"'
+    return 1
+  fi
+  log_info "package.json test 脚本存在"
 
   log_success "前置检查全部通过"
 }
