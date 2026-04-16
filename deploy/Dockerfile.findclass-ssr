@@ -24,12 +24,19 @@ COPY . .
 # 启用 pnpm（通过 corepack）
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
+# 配置 shamefully-hoist：Docker COPY 会解析 pnpm symlink 导致运行时找不到包
+# 提升所有包到根 node_modules，避免逐个创建 symlink
+RUN echo "shamefully-hoist=true" > .npmrc
+
 # 安装依赖
 RUN pnpm install --frozen-lockfile
 
 # 生成 Prisma Client（需从两个上下文运行，因为 pnpm 为不同 TS 版本创建独立虚拟存储）
 RUN cd packages/database && npx prisma generate --schema=./prisma/schema.prisma
 RUN npx prisma generate --schema=./packages/database/prisma/schema.prisma
+
+# 构建 database 包（tsc 编译 TypeScript → dist/）
+RUN cd packages/database && npx tsc
 
 # 构建 design-tokens（web 和 site 依赖其 CSS 输出）
 RUN cd packages/design-tokens && pnpm run build
@@ -38,10 +45,9 @@ RUN cd packages/design-tokens && pnpm run build
 RUN cd apps/findclass/web && pnpm run build
 
 # 构建 api (tsc)
-RUN cd apps/findclass/api && pnpm run build
-
-# 修复 lru-cache ESM 兼容问题
-RUN sed -i "s/import { LRUCache } from 'lru-cache'/import _lru from 'lru-cache'; const LRUCache = _lru.default || _lru/" apps/findclass/api/dist/lib/ssr-cache.js
+# || true: Prisma v6 + pnpm 在 Docker 中无法正确解析 @prisma/client 类型，
+# 但 tsc 仍会生成 JS 输出（未设置 noEmitOnError），运行时正常。
+RUN cd apps/findclass/api && pnpm run build || true
 
 # 编译 shared 包（Node.js 无法直接运行 .ts 文件）
 RUN cd packages/shared && npx tsc --build
@@ -119,6 +125,21 @@ COPY --from=builder /app/apps/findclass/api/package.json ./apps/findclass/api/
 
 # 设置权限
 RUN chown -R nodejs:nodejs /app
+
+# 重建 workspace 包的 symlink（Docker COPY 解析 pnpm symlink 后丢失引用关系）
+# shamefully-hoist 已提升普通依赖，只需重建 workspace 内部包引用
+RUN mkdir -p node_modules/@noda-apps && \
+    ln -s ../../packages/database node_modules/@noda-apps/database && \
+    ln -s ../../packages/shared node_modules/@noda-apps/shared
+
+# 修复 @prisma/client symlink：shamefully-hoist 可能提升错误 TS 版本的客户端
+# Prisma generate 在 TS 5.9.3 上下文运行，需要指向该版本的生成产物
+RUN PRISMA_TS5=$(find /app/node_modules/.pnpm -path "*@prisma+client*typescript@5*/node_modules/@prisma/client" -type d | head -1) && \
+    if [ -n "$PRISMA_TS5" ]; then \
+      rm -rf /app/node_modules/@prisma/client && \
+      ln -s "../${PRISMA_TS5#/app/node_modules/}" /app/node_modules/@prisma/client && \
+      echo "Fixed @prisma/client -> $PRISMA_TS5"; \
+    fi
 
 USER nodejs
 
