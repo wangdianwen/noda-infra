@@ -395,7 +395,16 @@ pipeline_deploy() {
   local target_container
   target_container=$(get_container_name "$target_env")
 
-  # 停止旧目标容器
+  # 停止旧的无后缀容器（从单容器模式迁移到蓝绿模式）
+  local legacy_container="findclass-ssr"
+  if [ "$(is_container_running "$legacy_container")" = "true" ] \
+     && [ "$legacy_container" != "$target_container" ]; then
+    log_info "停止旧容器: $legacy_container"
+    docker stop -t 30 "$legacy_container"
+    docker rm "$legacy_container"
+  fi
+
+  # 停止旧目标容器（同色蓝绿容器）
   if [ "$(is_container_running "$target_container")" = "true" ]; then
     log_info "停止旧目标容器: $target_container"
     docker stop -t 30 "$target_container"
