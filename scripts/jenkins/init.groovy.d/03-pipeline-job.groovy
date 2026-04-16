@@ -21,7 +21,7 @@ def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
     <scm class="hudson.plugins.git.GitSCM" plugin="git">
       <userRemoteConfigs>
         <hudson.plugins.git.UserRemoteConfig>
-          <url>git@github.com:dianwenwang/noda-infra.git</url>
+          <url>git@github.com:wangdianwen/noda-infra.git</url>
           <credentialsId>noda-infra-git-credentials</credentialsId>
         </hudson.plugins.git.UserRemoteConfig>
       </userRemoteConfigs>

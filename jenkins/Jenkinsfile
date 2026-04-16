@@ -36,7 +36,7 @@ pipeline {
                         $class: 'GitSCM',
                         branches: [[name: '*/main']],
                         userRemoteConfigs: [[
-                            url: 'git@github.com:dianwenwang/noda-apps.git',
+                            url: 'git@github.com:wangdianwen/noda-apps.git',
                             credentialsId: 'noda-apps-git-credentials'
                         ]]
                     ])
