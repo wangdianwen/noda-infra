@@ -6,7 +6,7 @@
 # 正常部署请使用 Jenkins Pipeline（Build Now -> findclass-deploy）。
 #
 # 原有功能：自动部署并配置基础设施服务
-# 包括：PostgreSQL (Prod/Dev), Keycloak, Nginx, Noda-Ops, Findclass-SSR
+# 包括：PostgreSQL, Keycloak, Nginx, Noda-Ops, Findclass-SSR
 #
 # 此脚本行为不变，可直接手动执行。
 # ============================================
@@ -16,7 +16,7 @@ set -euo pipefail
 # 基础设施部署脚本（生产环境）
 # ============================================
 # 功能：自动部署并配置基础设施服务
-# 包括：PostgreSQL (Prod/Dev), Keycloak, Nginx, Noda-Ops, Findclass-SSR
+# 包括：PostgreSQL, Keycloak, Nginx, Noda-Ops, Findclass-SSR
 # ============================================
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -39,11 +39,10 @@ ROLLBACK_FILE="$ROLLBACK_DIR/images-$(date +%s).txt"
 ROLLBACK_COMPOSE="$ROLLBACK_DIR/docker-compose.rollback.yml"
 
 # 注意：此变量故意不加引号使用，依赖 word splitting 拆分为多个 -f 参数
-COMPOSE_FILES="-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.dev.yml"
+COMPOSE_FILES="-f docker/docker-compose.yml -f docker/docker-compose.prod.yml"
 
 EXPECTED_CONTAINERS=(
   "noda-infra-postgres-prod"
-  "noda-infra-postgres-dev"
   "noda-infra-keycloak-prod"
   "noda-infra-nginx"
   "noda-ops"
@@ -51,7 +50,7 @@ EXPECTED_CONTAINERS=(
 )
 
 # 启动的服务列表（findclass-ssr 需要单独启动，来自 docker-compose.app.yml）
-START_SERVICES="postgres keycloak nginx noda-ops postgres-dev"
+START_SERVICES="postgres keycloak nginx noda-ops"
 
 # ============================================
 # 镜像回滚函数 (D-05)
@@ -84,7 +83,6 @@ save_image_tags() {
 #
 # 容器名到服务名映射（因为 container_name 与 service name 不同）：
 #   noda-infra-postgres-prod  -> postgres
-#   noda-infra-postgres-dev   -> postgres-dev（在 dev overlay 中，跳过）
 #   noda-infra-keycloak-prod  -> keycloak
 #   noda-infra-nginx          -> nginx
 #   noda-ops                  -> noda-ops
@@ -270,7 +268,7 @@ log_info "=========================================="
 log_info "停止现有容器..."
 docker compose $COMPOSE_FILES down
 
-log_info "启动 PostgreSQL, Keycloak, Nginx, Noda-Ops, PostgreSQL-Dev, Findclass-SSR..."
+log_info "启动 PostgreSQL, Keycloak, Nginx, Noda-Ops, Findclass-SSR..."
 docker compose $COMPOSE_FILES up -d $START_SERVICES findclass-ssr
 
 log_success "容器已启动"
@@ -351,7 +349,6 @@ log_success "=========================================="
 log_success "基础设施部署完成！"
 log_success "=========================================="
 log_info "✓ PostgreSQL (Prod): 运行中"
-log_info "✓ PostgreSQL (Dev): 运行中"
 log_info "✓ Keycloak: 运行中（已配置 realm 和 Google OAuth）"
 log_info "✓ Nginx: 运行中"
 log_info "✓ Noda-Ops: 运行中"

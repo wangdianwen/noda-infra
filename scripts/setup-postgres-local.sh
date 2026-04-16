@@ -66,7 +66,7 @@ PostgreSQL 本地开发环境管理脚本
 命令:
   install       安装 postgresql@17 + 配置 brew services + 创建开发数据库
   init-db       创建/重建开发数据库（noda_dev, keycloak_dev）
-  migrate-data  从 Docker postgres-dev 容器迁移数据到本地 PostgreSQL
+  migrate-data  [已废弃] 从 Docker postgres-dev 迁移数据（容器已在 Phase 27 移除）
   status        检查 PostgreSQL 运行状态、版本、数据库列表
   uninstall     卸载 PostgreSQL 并清理数据目录
 
@@ -352,22 +352,32 @@ cmd_migrate_data() {
   fi
   log_success "本地 PostgreSQL 运行中"
 
-  # 前置检查 2: Docker 容器是否运行
+  # 前置检查 2: Docker postgres-dev 容器是否仍存在
   log_info "前置检查: Docker postgres-dev 容器状态"
   local docker_container="noda-infra-postgres-dev"
-  if ! docker ps --format "{{.Names}}" | grep -q "$docker_container"; then
-    log_warn "Docker 容器 ${docker_container} 未运行，无法迁移数据"
-    read -r -p "跳过迁移？[Y/n] " skip_migrate
-    skip_migrate="${skip_migrate:-Y}"
-    if [ "$skip_migrate" = "y" ] || [ "$skip_migrate" = "Y" ]; then
-      log_info "跳过数据迁移"
-      return 0
-    else
-      log_error "请先启动 Docker 容器: docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d postgres-dev"
-      exit 1
-    fi
+
+  if ! docker ps -a --format "{{.Names}}" | grep -q "$docker_container"; then
+    # 容器定义已被移除（Phase 27 清理后 dev.yml 不再定义 postgres-dev）
+    log_warn "postgres-dev 容器已不存在（Phase 27 清理后已移除）"
+    log_info "开发数据应已在本地 PostgreSQL 中，无需从 Docker 迁移"
+    log_info "如需清理残留 Docker volume: docker volume rm noda-infra_postgres_dev_data"
+    log_success "跳过迁移（容器已被移除）"
+    return 0
   fi
-  log_success "Docker 容器 ${docker_container} 运行中"
+
+  if ! docker ps --format "{{.Names}}" | grep -q "$docker_container"; then
+    # 容器存在但未运行（可能是旧部署残留）
+    log_warn "Docker 容器 ${docker_container} 存在但未运行"
+    log_info "尝试启动容器以完成迁移..."
+    docker compose -f docker/docker-compose.yml up -d postgres-dev 2>/dev/null || {
+      log_warn "无法启动容器，开发数据可能已丢失"
+      log_info "建议使用本地 PostgreSQL 重新创建开发数据: bash $0 init-db"
+      return 0
+    }
+    # 等待容器健康
+    sleep 5
+  fi
+  log_success "Docker 容器 ${docker_container} 可用"
 
   # 迁移前状态显示
   log_info "迁移前数据库大小（Docker 容器内）："
