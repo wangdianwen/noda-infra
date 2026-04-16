@@ -1,5 +1,22 @@
 # Milestones
 
+## v1.4 CI/CD 零停机部署 (Shipped: 2026-04-16)
+
+**Phases completed:** 7 phases, 11 plans
+**Timeline:** 3 days (2026-04-14 → 2026-04-16)
+
+**Key accomplishments:**
+
+- Jenkins 宿主机原生安装/卸载脚本（setup-jenkins.sh 7 子命令 + groovy 自动化）
+- Nginx upstream include 抽离（蓝绿路由基础，支持 nginx -s reload 切换）
+- 蓝绿容器管理（manage-containers.sh 8 子命令 + env-findclass-ssr.env 模板）
+- 蓝绿部署核心流程（blue-green-deploy.sh + rollback-findclass.sh，零停机 + 自动回滚）
+- Jenkinsfile 9 阶段 Pipeline + pipeline-stages.sh 函数库（lint/test 质量门禁）
+- Pipeline 增强特性（备份时效性检查 + CDN 缓存清除 + 镜像时间阈值清理）
+- 旧脚本保留为手动回退 + 部署文档更新 + 里程碑归档
+
+---
+
 ## v1.3 安全收敛与分组整理 (Shipped: 2026-04-12)
 
 **Phases completed:** 4 phases, 4 plans, 8 tasks
