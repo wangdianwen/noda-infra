@@ -32,32 +32,6 @@ services:
       retries: 5
 
   # ----------------------------------------
-  # PostgreSQL 开发数据库
-  # ----------------------------------------
-  postgres-dev:
-    image: postgres:17.9
-    container_name: noda-infra-postgres-dev
-    labels:
-      - "noda.service-group=infra"
-      - "noda.environment=dev"
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:5433:5432"
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: noda_dev
-    volumes:
-      - postgres_dev_data:/var/lib/postgresql/data
-    networks:
-      - noda-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ----------------------------------------
   # Nginx 反向代理
   # ----------------------------------------
   nginx:
@@ -130,8 +104,6 @@ services:
 
 volumes:
   postgres_data:
-    driver: local
-  postgres_dev_data:
     driver: local
 
 networks:
