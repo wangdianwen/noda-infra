@@ -174,8 +174,7 @@ noda-ops 容器启动流程：
 |------|--------|------|
 | `docker/docker-compose.yml` | `noda-infra` | 基础配置（所有环境共享），包含全部服务定义 |
 | `docker/docker-compose.prod.yml` | `noda-infra` | 生产环境覆盖（资源限制、SMTP、健康检查） |
-| `docker/docker-compose.dev.yml` | 继承基础 | 开发环境覆盖（开发数据库、端口映射、Keycloak 本地访问） |
-| `docker/docker-compose.dev-standalone.yml` | `noda-dev` | 独立开发数据库（无其他服务） |
+| `docker/docker-compose.dev.yml` | 继承基础 | 开发环境覆盖（端口映射、Keycloak 本地访问） |
 | `docker/docker-compose.simple.yml` | `noda-infra` | 简化版一键部署（硬编码默认值，适合快速测试） |
 | `docker/docker-compose.app.yml` | `noda-apps` | 应用层服务（findclass-ssr 独立构建和部署） |
 
@@ -219,7 +218,6 @@ docker compose -f docker/docker-compose.app.yml up -d
 | `B2_PATH` | `backups/postgres/` | `docker/docker-compose.yml` 第 74 行 |
 | `ALERT_EMAIL` | （空） | `docker/docker-compose.yml` 第 75 行 |
 | `RESEND_API_KEY` | （空） | `docker/docker-compose.app.yml` 第 36 行 |
-| `DEV_POSTGRES_DB` | `noda_dev` | `docker/docker-compose.dev.yml` 第 27 行 |
 
 > **注意**：生产环境的 `POSTGRES_DB` 在 `docker-compose.prod.yml` 第 16 行直接硬编码为 `noda_prod`，不通过环境变量引用。
 
@@ -242,21 +240,14 @@ docker compose -f docker/docker-compose.app.yml up -d
 ### 开发环境
 
 - Docker Compose 项目名：`noda-infra`（基础配置继承）
-- PostgreSQL 数据库名：`noda_dev`（通过 `DEV_POSTGRES_DB` 覆盖，独立容器 `postgres-dev`）
-- PostgreSQL 暴露端口：`5433`（避免与生产环境冲突）
+- PostgreSQL 数据库名：`noda_dev`（本地 PostgreSQL，通过 `bash scripts/setup-postgres-local.sh install` 安装）
+- PostgreSQL 端口：本地 PostgreSQL 使用默认端口 `5432`
 - Nginx 暴露端口：`8081`（避免与 dozzle 冲突）
 - Keycloak hostname：空（允许 `localhost` 访问）
 - Keycloak 代理模式：`none`
 - Keycloak 端口：`8080`（HTTP）、`8443`（HTTPS）、`9000`（管理）
 - Cloudflare Tunnel：禁用（`profiles: [dev]`）
 - findclass-ssr 暴露端口：`3002`
-
-### 独立开发环境
-
-- Docker Compose 项目名：`noda-dev`
-- 仅包含 PostgreSQL 开发数据库（默认用户 `dev_user`，数据库 `noda_dev`）
-- 独立网络：`noda-dev-network`（bridge 驱动）
-- PostgreSQL 端口：`5433`
 
 ### 简化部署环境
 

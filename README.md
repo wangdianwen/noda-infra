@@ -92,8 +92,7 @@ noda-infra/
 │   ├── docker-compose.prod.yml         # 生产环境覆盖
 │   ├── docker-compose.dev.yml          # 开发环境覆盖
 │   ├── docker-compose.app.yml          # 应用服务（findclass-ssr）
-│   ├── docker-compose.simple.yml       # 简化版（无构建服务）
-│   └── docker-compose.dev-standalone.yml  # 独立开发环境（仅数据库）
+│   └── docker-compose.simple.yml       # 简化版（无构建服务）
 ├── scripts/            # 运维脚本
 │   ├── backup/         # 备份与恢复脚本（backup-postgres.sh, restore-postgres.sh）
 │   ├── deploy/         # 部署脚本（deploy-infrastructure-prod.sh, deploy-apps-prod.sh）

@@ -81,12 +81,12 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up 
 bash scripts/deploy/deploy-infrastructure-prod.sh
 
 # 或手动启动
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.dev.yml up -d
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 ```
 
-> 注意：生产部署脚本实际使用三个 compose 文件（base + prod + dev），同时启动基础设施和开发数据库。
+> 注意：生产部署使用双文件模式（base + prod）。
 
-启动的服务包括：PostgreSQL（生产 + 开发）、Keycloak、Nginx、noda-ops、findclass-ssr。
+启动的服务包括：PostgreSQL、Keycloak、Nginx、noda-ops、findclass-ssr。
 
 ### 单独启动应用服务（findclass-ssr）
 
@@ -116,7 +116,6 @@ bash scripts/verify/verify-infrastructure.sh
 
 ```
 noda-infra-postgres-prod   Up X minutes   5432/tcp
-noda-infra-postgres-dev    Up X minutes   5432->5433/tcp
 noda-infra-keycloak-1      Up X minutes   8080/tcp, 9000/tcp
 noda-infra-nginx           Up X minutes   80->8081/tcp (dev) / 80/tcp (prod)
 noda-ops                   Up X minutes
@@ -194,7 +193,6 @@ docker network create noda-network
 
 | 服务 | 开发端口 | 生产端口 |
 |------|----------|----------|
-| PostgreSQL (dev) | 5433 | -- |
 | PostgreSQL (prod) | 不暴露 | 不暴露 |
 | Nginx | 8081 | 80 |
 | findclass-ssr | 3002 | 3001（内部） |

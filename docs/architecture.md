@@ -102,7 +102,6 @@ noda-infra/
 │   ├── docker-compose.prod.yml # 生产环境覆盖
 │   ├── docker-compose.app.yml  # 应用服务独立部署（findclass-ssr）
 │   ├── docker-compose.dev.yml  # 开发环境覆盖
-│   ├── docker-compose.dev-standalone.yml # 独立开发环境（仅 PostgreSQL）
 │   ├── docker-compose.simple.yml # 简化部署方案
 │   ├── services/               # 服务特定配置（postgres 初始化脚本、keycloak 主题）
 │   └── volumes/                # 持久化数据卷（备份文件、历史记录、日志）
@@ -228,9 +227,8 @@ noda-infra/
 |------|------|------|
 | `docker-compose.yml` | 基础配置 | 所有环境共享的服务定义 |
 | `docker-compose.prod.yml` | 生产覆盖 | 资源限制、SMTP、健康检查增强 |
-| `docker-compose.dev.yml` | 开发覆盖 | 开发环境特定配置、额外 dev 数据库 |
+| `docker-compose.dev.yml` | 开发覆盖 | 开发环境特定配置 |
 | `docker-compose.app.yml` | 应用独立部署 | findclass-ssr 独立于基础设施部署，项目名 `noda-apps` |
-| `docker-compose.dev-standalone.yml` | 独立开发环境 | 仅 PostgreSQL 开发数据库，项目名 `noda-dev` |
 | `docker-compose.simple.yml` | 简化部署 | 替代旧架构的精简方案 |
 | `config/environments/.env.example` | 环境变量模板 | 所有可配置变量的文档和默认值 |
 | `config/environments/.env.production.template` | 生产模板 | 生产环境变量占位符 |
