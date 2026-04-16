@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: 开发环境本地化 + 基础设施 CI/CD
 status: executing
-stopped_at: Phase 27 context gathered
-last_updated: "2026-04-16T22:03:22.147Z"
-last_activity: 2026-04-16 -- Phase 27 planning complete
+stopped_at: Completed 27-03-PLAN.md
+last_updated: "2026-04-16T22:18:22.709Z"
+last_activity: 2026-04-16
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 5
-  completed_plans: 1
-  percent: 20
+  completed_plans: 4
+  percent: 80
 ---
 
 # Project State
@@ -22,14 +22,14 @@ See: .planning/PROJECT.md (updated 2026-04-17)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** Phase 26 宿主机 PostgreSQL 安装与配置
+**Current focus:** Phase 27 — docker-compose
 
 ## Current Position
 
-Phase: 27 of 30 (开发容器清理与 docker compose 简化)
-Plan: Not started
+Phase: 27 (docker-compose) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-04-16 -- Phase 27 planning complete
+Last activity: 2026-04-16
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -63,6 +63,8 @@ Recent decisions affecting current work:
 - [v1.5 规划]: 本地 PostgreSQL 替代 Docker dev，Docker 纯线上业务
 - [v1.5 规划]: Keycloak 蓝绿复用 manage-containers.sh 框架
 - [v1.5 规划]: Pipeline 服务白名单排除 postgres（避免循环依赖）
+- [Phase 27]: 独立开发环境段落替换为本地 PostgreSQL 说明（setup-postgres-local.sh）
+- [Phase 27]: 生产部署描述统一更新为双文件模式（base+prod），文档与脚本一致
 
 ### Pending Todos
 
@@ -76,6 +78,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-16T21:49:11.369Z
-Stopped at: Phase 27 context gathered
-Resume file: .planning/phases/27-docker-compose/27-CONTEXT.md
+Last session: 2026-04-16T22:18:22.707Z
+Stopped at: Completed 27-03-PLAN.md
+Resume file: None
