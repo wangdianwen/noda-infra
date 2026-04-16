@@ -161,7 +161,7 @@ Phases execute in numeric order: 26 -> 27 -> 28 -> 29 -> 30
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 26. 宿主机 PostgreSQL 安装与配置 | v1.5 | 1/2 | Complete    | 2026-04-16 |
-| 27. 开发容器清理与 Docker Compose 简化 | v1.5 | 3/3 | Complete   | 2026-04-16 |
+| 27. 开发容器清理与 Docker Compose 简化 | v1.5 | 3/3 | Complete    | 2026-04-16 |
 | 28. Keycloak 蓝绿部署基础设施 | v1.5 | 0/? | Not started | - |
 | 29. 统一基础设施 Jenkins Pipeline | v1.5 | 0/? | Not started | - |
 | 30. 一键开发环境脚本 | v1.5 | 0/? | Not started | - |
