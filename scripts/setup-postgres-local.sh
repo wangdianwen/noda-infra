@@ -66,12 +66,14 @@ PostgreSQL 本地开发环境管理脚本
 命令:
   install       安装 postgresql@17 + 配置 brew services + 创建开发数据库
   init-db       创建/重建开发数据库（noda_dev, keycloak_dev）
+  migrate-data  从 Docker postgres-dev 容器迁移数据到本地 PostgreSQL
   status        检查 PostgreSQL 运行状态、版本、数据库列表
   uninstall     卸载 PostgreSQL 并清理数据目录
 
 示例:
   setup-postgres-local.sh install
   setup-postgres-local.sh init-db
+  setup-postgres-local.sh migrate-data
   setup-postgres-local.sh status
   setup-postgres-local.sh uninstall
 EOF
@@ -333,6 +335,137 @@ cmd_status() {
 }
 
 # ============================================
+# cmd_migrate_data() — 从 Docker postgres-dev 迁移数据到本地 PG
+# ============================================
+cmd_migrate_data() {
+  ensure_brew_env
+
+  log_info "=========================================="
+  log_info "PostgreSQL 数据迁移（Docker → 本地）"
+  log_info "=========================================="
+
+  # 前置检查 1: 本地 PG 是否运行
+  log_info "前置检查: 本地 PostgreSQL 运行状态"
+  if ! pg_isready &>/dev/null; then
+    log_error "本地 PostgreSQL 未运行，请先执行: bash $0 install"
+    exit 1
+  fi
+  log_success "本地 PostgreSQL 运行中"
+
+  # 前置检查 2: Docker 容器是否运行
+  log_info "前置检查: Docker postgres-dev 容器状态"
+  local docker_container="noda-infra-postgres-dev"
+  if ! docker ps --format "{{.Names}}" | grep -q "$docker_container"; then
+    log_warn "Docker 容器 ${docker_container} 未运行，无法迁移数据"
+    read -r -p "跳过迁移？[Y/n] " skip_migrate
+    skip_migrate="${skip_migrate:-Y}"
+    if [ "$skip_migrate" = "y" ] || [ "$skip_migrate" = "Y" ]; then
+      log_info "跳过数据迁移"
+      return 0
+    else
+      log_error "请先启动 Docker 容器: docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up -d postgres-dev"
+      exit 1
+    fi
+  fi
+  log_success "Docker 容器 ${docker_container} 运行中"
+
+  # 迁移前状态显示
+  log_info "迁移前数据库大小（Docker 容器内）："
+  docker exec "$docker_container" psql -U postgres -c \
+    "SELECT datname, pg_size_pretty(pg_database_size(datname)) FROM pg_database WHERE datname IN ('noda_dev', 'keycloak_dev');" \
+    2>/dev/null || log_warn "无法获取 Docker 内数据库大小"
+
+  # 迁移数据库列表
+  local MIGRATE_DATABASES=("noda_dev" "keycloak_dev")
+
+  # 内部函数: 迁移单个数据库
+  migrate_database() {
+    local db_name="$1"
+    local dump_file="/tmp/${db_name}_dump_$$.sql"
+
+    log_info "导出 ${db_name} 从 Docker 容器..."
+
+    # 使用 Docker 容器内的 pg_dump（版本 17.9 完全匹配）
+    if ! docker exec "$docker_container" pg_dump -U postgres -d "$db_name" \
+         --no-owner --no-privileges > "$dump_file" 2>/dev/null; then
+      log_warn "${db_name} 导出失败（数据库可能不存在于 Docker 容器中）"
+      rm -f "$dump_file"
+      return 1
+    fi
+
+    if [ ! -s "$dump_file" ]; then
+      log_error "${db_name} 导出失败（空文件）"
+      rm -f "$dump_file"
+      return 1
+    fi
+
+    log_info "导入 ${db_name} 到本地 PostgreSQL..."
+
+    # 终止所有到该数据库的连接
+    psql -d postgres -c \
+      "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${db_name}' AND pid <> pg_backend_pid();" \
+      2>/dev/null || true
+
+    # 幂等：先删除再重建
+    psql -d postgres -c "DROP DATABASE IF EXISTS ${db_name};" 2>/dev/null || true
+    psql -d postgres -c "CREATE DATABASE ${db_name};"
+
+    # 导入 dump 文件
+    if ! psql -d "$db_name" < "$dump_file" 2>/dev/null; then
+      log_error "${db_name} 导入失败"
+      rm -f "$dump_file"
+      return 1
+    fi
+
+    # 清理临时文件
+    rm -f "$dump_file"
+    log_success "${db_name} 迁移完成"
+    return 0
+  }
+
+  # 执行迁移循环
+  local success_count=0
+  local fail_count=0
+  for db in "${MIGRATE_DATABASES[@]}"; do
+    if migrate_database "$db"; then
+      success_count=$((success_count + 1))
+    else
+      fail_count=$((fail_count + 1))
+    fi
+  done
+
+  # 迁移后验证
+  log_info "迁移后数据验证："
+
+  # noda_dev: 检查 courses 表行数
+  local noda_courses
+  noda_courses=$(psql -d noda_dev -t -c "SELECT count(*) FROM courses;" 2>/dev/null | xargs || echo "0")
+  if [ "$noda_courses" -gt 0 ] 2>/dev/null; then
+    log_success "noda_dev 验证通过（courses 表 ${noda_courses} 行）"
+  else
+    log_warn "noda_dev courses 表为空或不存在（行数: ${noda_courses}）"
+  fi
+
+  # keycloak_dev: 检查表数量
+  local kc_table_count
+  kc_table_count=$(psql -d keycloak_dev -c "\dt" 2>/dev/null | tail -n +3 | head -n -1 | wc -l | xargs || echo "0")
+  if [ "$kc_table_count" -gt 60 ] 2>/dev/null; then
+    log_success "keycloak_dev 验证通过（${kc_table_count} 个表）"
+  else
+    log_warn "keycloak_dev 表数量不足（${kc_table_count} 个，预期 > 60）"
+  fi
+
+  # 迁移摘要
+  log_info "=========================================="
+  if [ "$fail_count" -eq 0 ]; then
+    log_success "迁移完成: ${success_count} 个数据库成功"
+  else
+    log_warn "迁移完成: ${success_count} 个成功, ${fail_count} 个失败"
+  fi
+  log_info "=========================================="
+}
+
+# ============================================
 # cmd_uninstall() — 卸载 PostgreSQL
 # ============================================
 cmd_uninstall() {
@@ -387,9 +520,10 @@ cmd_uninstall() {
 # 子命令分发
 # ============================================
 case "${1:-}" in
-  install)    cmd_install "$@" ;;
-  init-db)    cmd_init_db "$@" ;;
-  status)     cmd_status "$@" ;;
-  uninstall)  cmd_uninstall "$@" ;;
-  *)          usage && exit 1 ;;
+  install)      cmd_install "$@" ;;
+  init-db)      cmd_init_db "$@" ;;
+  migrate-data) cmd_migrate_data "$@" ;;
+  status)       cmd_status "$@" ;;
+  uninstall)    cmd_uninstall "$@" ;;
+  *)            usage && exit 1 ;;
 esac
