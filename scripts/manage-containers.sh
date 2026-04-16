@@ -119,6 +119,23 @@ is_container_running() {
 }
 
 # ============================================
+# 辅助函数: get_host_snippets_dir
+# ============================================
+# 获取 nginx 容器 snippets 目录在宿主机上的实际路径
+# Pipeline workspace 路径和 nginx 挂载路径可能不同
+get_host_snippets_dir() {
+  # 优先从 docker inspect 获取挂载源
+  local host_path
+  host_path=$(docker inspect "$NGINX_CONTAINER" --format '{{range .Mounts}}{{if eq .Destination "/etc/nginx/snippets"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)
+  if [ -n "$host_path" ] && [ -d "$host_path" ]; then
+    echo "$host_path"
+    return
+  fi
+  # 回退到 PROJECT_ROOT 下的路径
+  echo "$PROJECT_ROOT/config/nginx/snippets"
+}
+
+# ============================================
 # 核心函数: run_container
 # ============================================
 # 启动一个蓝绿容器（Phase 22 通过 source 调用此函数）
@@ -179,17 +196,14 @@ update_upstream() {
     server ${container_name}:3001 max_fails=3 fail_timeout=30s;
 }"
 
-  # 优先写入宿主机文件（如果 UPSTREAM_CONF 路径可写）
-  if [ -w "$(dirname "$UPSTREAM_CONF")" ] 2>/dev/null; then
-    local tmp_file="${UPSTREAM_CONF}.tmp.$$"
-    echo "$upstream_content" > "$tmp_file"
-    mv "$tmp_file" "$UPSTREAM_CONF"
-  fi
+  # 写入宿主机文件（nginx volume mount 的源目录）
+  local snippets_dir
+  snippets_dir=$(get_host_snippets_dir)
+  local host_conf="$snippets_dir/upstream-findclass.conf"
 
-  # 同时通过 docker exec 写入容器内（确保容器内配置同步）
-  # 使用 docker cp + mv 避免 echo 中的管道问题
-  local container_path="/etc/nginx/snippets/upstream-findclass.conf"
-  echo "$upstream_content" | docker exec -i "$NGINX_CONTAINER" tee "$container_path" >/dev/null 2>&1 || true
+  local tmp_file="${host_conf}.tmp.$$"
+  echo "$upstream_content" > "$tmp_file"
+  mv "$tmp_file" "$host_conf"
 
   log_info "upstream 已更新: $container_name:3001"
 }
