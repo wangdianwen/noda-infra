@@ -128,15 +128,22 @@ pipeline {
 
         stage('CDN Purge') {
             steps {
-                withCredentials([
-                    string(credentialsId: 'cf-api-token', variable: 'CF_API_TOKEN'),
-                    string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
-                ]) {
-                    sh '''
-                        source scripts/lib/log.sh
-                        source scripts/pipeline-stages.sh
-                        pipeline_purge_cdn
-                    '''
+                script {
+                    // 凭据不存在时优雅跳过
+                    try {
+                        withCredentials([
+                            string(credentialsId: 'cf-api-token', variable: 'CF_API_TOKEN'),
+                            string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
+                        ]) {
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                pipeline_purge_cdn
+                            '''
+                        }
+                    } catch (Exception e) {
+                        echo "CDN Purge 跳过: Cloudflare 凭据未配置 (${e.message})"
+                    }
                 }
             }
         }
