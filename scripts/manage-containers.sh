@@ -175,13 +175,22 @@ update_upstream() {
   local container_name
   container_name=$(get_container_name "$target_env")
 
-  local tmp_file="${UPSTREAM_CONF}.tmp.$$"
-  cat > "$tmp_file" <<EOF
-upstream findclass_backend {
+  local upstream_content="upstream findclass_backend {
     server ${container_name}:3001 max_fails=3 fail_timeout=30s;
-}
-EOF
-  mv "$tmp_file" "$UPSTREAM_CONF"
+}"
+
+  # 优先写入宿主机文件（如果 UPSTREAM_CONF 路径可写）
+  if [ -w "$(dirname "$UPSTREAM_CONF")" ] 2>/dev/null; then
+    local tmp_file="${UPSTREAM_CONF}.tmp.$$"
+    echo "$upstream_content" > "$tmp_file"
+    mv "$tmp_file" "$UPSTREAM_CONF"
+  fi
+
+  # 同时通过 docker exec 写入容器内（确保容器内配置同步）
+  # 使用 docker cp + mv 避免 echo 中的管道问题
+  local container_path="/etc/nginx/snippets/upstream-findclass.conf"
+  echo "$upstream_content" | docker exec -i "$NGINX_CONTAINER" tee "$container_path" >/dev/null 2>&1 || true
+
   log_info "upstream 已更新: $container_name:3001"
 }
 
