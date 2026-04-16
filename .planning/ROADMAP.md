@@ -166,10 +166,10 @@ Plans:
   1. deploy-infrastructure-prod.sh 和 deploy-apps-prod.sh 脚本仍然存在且可手动执行，作为紧急回退方案
   2. CLAUDE.md 部署命令章节更新为 Jenkins Pipeline 优先，旧脚本标注为手动回退
   3. ROADMAP.md 和 PROJECT.md 反映 v1.4 里程碑完成状态
-**Plans**: 2 plans
+**Plans**: 1 plan
 
 Plans:
-- [ ] 25-01: 旧脚本保留标记 + 文档更新 + 里程碑归档
+- [ ] 25-01-PLAN.md -- 旧脚本保留标记 + 文档更新 + 里程碑归档
 
 ## Progress
 
