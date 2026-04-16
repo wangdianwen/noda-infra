@@ -361,8 +361,18 @@ pipeline_build() {
   local git_sha="$2"
 
   log_info "构建镜像..."
-  docker compose -f "$COMPOSE_FILE" build findclass-ssr
-  docker tag findclass-ssr:latest "findclass-ssr:${git_sha}"
+
+  # 使用 docker build 直接构建，避免 compose 文件中其他服务的环境变量要求
+  local dockerfile="$PROJECT_ROOT/deploy/Dockerfile.findclass-ssr"
+  docker build \
+    -t findclass-ssr:latest \
+    -t "findclass-ssr:${git_sha}" \
+    -f "$dockerfile" \
+    --build-arg VITE_KEYCLOAK_URL=https://auth.noda.co.nz \
+    --build-arg VITE_KEYCLOAK_REALM=noda \
+    --build-arg VITE_KEYCLOAK_CLIENT_ID=noda-frontend \
+    "$apps_dir"
+
   log_success "镜像构建完成: findclass-ssr:${git_sha}"
 }
 
