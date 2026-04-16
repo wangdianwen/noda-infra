@@ -3,7 +3,7 @@
 ## Current State
 
 **Last shipped:** v1.4 CI/CD 零停机部署 (2026-04-16)
-**Next focus:** v1.5 开发环境本地化 + 基础设施 CI/CD (Phase 26 complete, Phase 27 next)
+**Next focus:** v1.5 开发环境本地化 + 基础设施 CI/CD (Phase 27 complete, Phase 28 next)
 
 ## Current Milestone: v1.5 开发环境本地化 + 基础设施 CI/CD
 
@@ -124,7 +124,7 @@ Docker Compose 项目：
 
 - ✓ 宿主机 PostgreSQL 安装与配置 (Homebrew) — v1.5 Phase 26
 - [ ] Jenkins H2 → 本地 PostgreSQL 迁移
-- [ ] 移除 postgres-dev / keycloak-dev 容器
+- ✓ 移除 postgres-dev / keycloak-dev 容器 — v1.5 Phase 27
 - [ ] 统一基础设施 Jenkins Pipeline（参数化服务选择）
 - [ ] Keycloak 蓝绿部署（零停机）
 - [ ] 部署前自动备份 + 健康检查 + 回滚 + 人工确认门禁
