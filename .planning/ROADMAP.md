@@ -78,7 +78,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 **Milestone Goal:** 本地 PostgreSQL 替代 Docker 开发数据库，Docker Compose 精简为纯线上业务；同时为基础设施服务创建统一 Jenkins Pipeline
 
-- [ ] **Phase 26: 宿主机 PostgreSQL 安装与配置** -- Homebrew 安装 PostgreSQL 17.9 + 开发数据库初始化
+- [x] **Phase 26: 宿主机 PostgreSQL 安装与配置** -- Homebrew 安装 PostgreSQL 17.9 + 开发数据库初始化 (completed 2026-04-16)
 - [ ] **Phase 27: 开发容器清理与 Docker Compose 简化** -- 移除 dev 容器，精简 compose overlay
 - [ ] **Phase 28: Keycloak 蓝绿部署基础设施** -- Keycloak 蓝绿容器管理 + upstream 切换
 - [ ] **Phase 29: 统一基础设施 Jenkins Pipeline** -- Jenkinsfile.infra 参数化部署基础设施服务
@@ -95,10 +95,10 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
   2. 开发者可通过 `psql -d noda_dev` 和 `psql -d keycloak_dev` 连接到本地开发数据库
   3. 重启电脑后 PostgreSQL 自动启动，无需手动干预
   4. postgres_dev_data Docker volume 中的数据已成功导出并导入到本地 PostgreSQL
-**Plans:** 2 plans
+**Plans:** 1/2 plans complete
 
 Plans:
-- [ ] 26-01-PLAN.md -- 创建 setup-postgres-local.sh 脚本（install/init-db/status/uninstall 子命令）
+- [x] 26-01-PLAN.md -- 创建 setup-postgres-local.sh 脚本（install/init-db/status/uninstall 子命令）
 - [ ] 26-02-PLAN.md -- 添加 migrate-data 子命令（从 Docker volume 迁移数据到本地 PG）
 
 ### Phase 27: 开发容器清理与 Docker Compose 简化
@@ -155,7 +155,7 @@ Phases execute in numeric order: 26 -> 27 -> 28 -> 29 -> 30
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 26. 宿主机 PostgreSQL 安装与配置 | v1.5 | 0/2 | Planning complete | - |
+| 26. 宿主机 PostgreSQL 安装与配置 | v1.5 | 1/2 | Complete    | 2026-04-16 |
 | 27. 开发容器清理与 Docker Compose 简化 | v1.5 | 0/? | Not started | - |
 | 28. Keycloak 蓝绿部署基础设施 | v1.5 | 0/? | Not started | - |
 | 29. 统一基础设施 Jenkins Pipeline | v1.5 | 0/? | Not started | - |
