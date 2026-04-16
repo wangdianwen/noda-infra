@@ -3,7 +3,18 @@
 ## Current State
 
 **Last shipped:** v1.4 CI/CD 零停机部署 (2026-04-16)
-**Next focus:** 待定
+**Next focus:** v1.5 开发环境本地化 + 基础设施 CI/CD
+
+## Current Milestone: v1.5 开发环境本地化 + 基础设施 CI/CD
+
+**Goal:** 本地 PostgreSQL 替代 Docker 开发数据库，Docker Compose 精简为纯线上业务；同时为基础设施服务创建统一 Jenkins Pipeline
+
+**Target features:**
+- 宿主机安装 PostgreSQL (Homebrew)，Jenkins 从 H2 迁移到本地 PG
+- 移除 postgres-dev / keycloak-dev 容器，docker-compose.dev.yml 简化
+- 统一 Jenkinsfile（参数化选择 postgres/keycloak/noda-ops/nginx）
+- Keycloak 蓝绿部署（零停机，nginx upstream 切换）
+- postgres/noda-ops/nginx 自动化滚动替换 + 健康检查 + 回滚 + 人工确认门禁
 
 ## Shipped Milestones
 
@@ -111,7 +122,12 @@ Docker Compose 项目：
 
 ### Active
 
-- [ ] Prisma 7 兼容性迁移
+- [ ] 宿主机 PostgreSQL 安装与配置 (Homebrew)
+- [ ] Jenkins H2 → 本地 PostgreSQL 迁移
+- [ ] 移除 postgres-dev / keycloak-dev 容器
+- [ ] 统一基础设施 Jenkins Pipeline（参数化服务选择）
+- [ ] Keycloak 蓝绿部署（零停机）
+- [ ] 部署前自动备份 + 健康检查 + 回滚 + 人工确认门禁
 
 ### Out of Scope
 
@@ -120,6 +136,8 @@ Docker Compose 项目：
 | Docker Compose profiles | overlay 模式已满足需求 |
 | 网络隔离（prod/dev 分离网络） | 标签分组已满足管理需求 |
 | Prisma 7 迁移 | 依赖 noda-apps 仓库变更 |
+| skykiwi-crawler Pipeline | 单次任务容器，手动触发足够 |
+| 本地安装 Keycloak | 开发环境直接用生产 Keycloak 测试 |
 
 ## Key Decisions
 
@@ -143,6 +161,25 @@ Docker Compose 项目：
 | 蓝绿容器 docker run 管理 | 避免与 compose 冲突 | ✅ Good |
 | Pipeline 手动触发 | 生产环境安全控制 | ✅ Good |
 | Jenkinsfile Declarative Pipeline | 可读性和可维护性 | ✅ Good |
+| 本地 PostgreSQL 替代 Docker dev | 开发环境与生产分离，Docker 纯线上业务 | — v1.5 |
+| Jenkins 迁移到本地 PG | 数据更安全、可备份，消除 H2 风险 | — v1.5 |
+
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
 
 ---
-*Last updated: 2026-04-16 after v1.4 milestone completion*
+*Last updated: 2026-04-17 after v1.5 milestone planning started*
