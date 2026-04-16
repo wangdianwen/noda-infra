@@ -110,7 +110,12 @@ Plans:
   2. deploy-infrastructure-prod.sh 的 EXPECTED_CONTAINERS 和 START_SERVICES 列表不再包含 dev 服务
   3. docker-compose.dev-standalone.yml 已移除或合并，不存在孤立的 compose 文件
   4. 现有生产服务（postgres-prod、keycloak、nginx、noda-ops）部署不受影响
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 27-01-PLAN.md -- 清理 Docker Compose 配置文件（移除 dev 服务定义 + 删除 dev-standalone.yml）
+- [ ] 27-02-PLAN.md -- 更新部署脚本和本地 PG 脚本（移除 dev 引用 + 兼容性处理）
+- [ ] 27-03-PLAN.md -- 同步更新文档（移除 dev 容器过时引用）
 
 ### Phase 28: Keycloak 蓝绿部署基础设施
 **Goal**: Keycloak 服务支持蓝绿零停机部署，管理员可通过 nginx upstream 切换在 blue/green 容器间平滑切换流量
@@ -156,7 +161,7 @@ Phases execute in numeric order: 26 -> 27 -> 28 -> 29 -> 30
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 26. 宿主机 PostgreSQL 安装与配置 | v1.5 | 1/2 | Complete    | 2026-04-16 |
-| 27. 开发容器清理与 Docker Compose 简化 | v1.5 | 0/? | Not started | - |
+| 27. 开发容器清理与 Docker Compose 简化 | v1.5 | 0/3 | Planned | - |
 | 28. Keycloak 蓝绿部署基础设施 | v1.5 | 0/? | Not started | - |
 | 29. 统一基础设施 Jenkins Pipeline | v1.5 | 0/? | Not started | - |
 | 30. 一键开发环境脚本 | v1.5 | 0/? | Not started | - |
