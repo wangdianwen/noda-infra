@@ -37,3 +37,4 @@ config/keys/
 !config/secrets.sops.yaml
 config/secrets.local.yaml
 .env.backup
+config/nginx/snippets/upstream-findclass.conf
