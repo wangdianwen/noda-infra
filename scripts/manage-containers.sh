@@ -65,11 +65,20 @@ get_inactive_env() {
 # 参数：$1 = env (blue 或 green)
 set_active_env() {
   local env="$1"
-  sudo mkdir -p "$(dirname "$ACTIVE_ENV_FILE")"
-  local tmp_file
-  tmp_file="$(dirname "$ACTIVE_ENV_FILE")/.active-env.tmp.$$"
-  echo "$env" | sudo tee "$tmp_file" > /dev/null
-  sudo mv "$tmp_file" "$ACTIVE_ENV_FILE"
+  local dir
+  dir="$(dirname "$ACTIVE_ENV_FILE")"
+  local tmp_file="${dir}/.active-env.tmp.$$"
+
+  # 优先尝试直接写入（无 sudo），失败时回退到 sudo（生产 Linux 环境）
+  if [ -w "$dir" ] 2>/dev/null; then
+    echo "$env" > "$tmp_file" && mv "$tmp_file" "$ACTIVE_ENV_FILE"
+  elif [ -w "$ACTIVE_ENV_FILE" ] 2>/dev/null; then
+    echo "$env" > "$tmp_file" && mv "$tmp_file" "$ACTIVE_ENV_FILE"
+  else
+    sudo mkdir -p "$dir"
+    echo "$env" | sudo tee "$tmp_file" > /dev/null
+    sudo mv "$tmp_file" "$ACTIVE_ENV_FILE"
+  fi
   log_info "活跃环境已更新: $env"
 }
 
