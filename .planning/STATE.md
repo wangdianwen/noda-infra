@@ -1,10 +1,9 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.4
-milestone_name: CI/CD 零停机部署
-status: completed
-stopped_at: Phase 25 complete
-last_updated: "2026-04-16T00:50:00.000Z"
+milestone: v1.0
+milestone_name: milestone
+status: Milestone v1.4 shipped
+last_updated: "2026-04-16T01:01:51.414Z"
 last_activity: 2026-04-16
 progress:
   total_phases: 7
@@ -27,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-14)
 ## Current Position
 
 Phase: 25
-Plan: 01 (complete)
+Plan: Not started
 Status: Milestone v1.4 shipped
 Last activity: 2026-04-16
 

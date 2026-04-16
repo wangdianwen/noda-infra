@@ -189,4 +189,4 @@ Phases execute in numeric order: 19 -> 20 -> 21 -> 22 -> 23 -> 24 -> 25
 | 22. 蓝绿部署核心流程 | v1.4 | 2/2 | Complete | 2026-04-15 |
 | 23. Pipeline 集成与测试门禁 | v1.4 | 2/2 | Complete    | 2026-04-15 |
 | 24. Pipeline 增强特性 | v1.4 | 2/2 | Complete    | 2026-04-15 |
-| 25. 清理与迁移 | v1.4 | 1/1 | Complete | 2026-04-16 |
+| 25. 清理与迁移 | v1.4 | 1/1 | Complete    | 2026-04-16 |
