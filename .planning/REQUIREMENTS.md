@@ -71,35 +71,35 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LOCALPG-01 | — | Pending |
-| LOCALPG-02 | — | Pending |
-| LOCALPG-03 | — | Pending |
-| LOCALPG-04 | — | Pending |
-| CLEANUP-01 | — | Pending |
-| CLEANUP-02 | — | Pending |
-| CLEANUP-03 | — | Pending |
-| CLEANUP-04 | — | Pending |
-| CLEANUP-05 | — | Pending |
-| PIPELINE-01 | — | Pending |
-| PIPELINE-02 | — | Pending |
-| PIPELINE-03 | — | Pending |
-| PIPELINE-04 | — | Pending |
-| PIPELINE-05 | — | Pending |
-| PIPELINE-06 | — | Pending |
-| PIPELINE-07 | — | Pending |
-| KCBLUE-01 | — | Pending |
-| KCBLUE-02 | — | Pending |
-| KCBLUE-03 | — | Pending |
-| KCBLUE-04 | — | Pending |
-| DEVEX-01 | — | Pending |
-| DEVEX-02 | — | Pending |
-| DEVEX-03 | — | Pending |
+| LOCALPG-01 | Phase 26 | Pending |
+| LOCALPG-02 | Phase 26 | Pending |
+| LOCALPG-03 | Phase 26 | Pending |
+| LOCALPG-04 | Phase 26 | Pending |
+| CLEANUP-01 | Phase 27 | Pending |
+| CLEANUP-02 | Phase 27 | Pending |
+| CLEANUP-03 | Phase 27 | Pending |
+| CLEANUP-04 | Phase 27 | Pending |
+| CLEANUP-05 | Phase 27 | Pending |
+| KCBLUE-01 | Phase 28 | Pending |
+| KCBLUE-02 | Phase 28 | Pending |
+| KCBLUE-03 | Phase 28 | Pending |
+| KCBLUE-04 | Phase 28 | Pending |
+| PIPELINE-01 | Phase 29 | Pending |
+| PIPELINE-02 | Phase 29 | Pending |
+| PIPELINE-03 | Phase 29 | Pending |
+| PIPELINE-04 | Phase 29 | Pending |
+| PIPELINE-05 | Phase 29 | Pending |
+| PIPELINE-06 | Phase 29 | Pending |
+| PIPELINE-07 | Phase 29 | Pending |
+| DEVEX-01 | Phase 30 | Pending |
+| DEVEX-02 | Phase 30 | Pending |
+| DEVEX-03 | Phase 30 | Pending |
 
 **Coverage:**
 - v1.5 requirements: 23 total
-- Mapped to phases: 0
-- Unmapped: 23 ⚠️
+- Mapped to phases: 23
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-17*
-*Last updated: 2026-04-17 after initial definition*
+*Last updated: 2026-04-17 after roadmap creation*

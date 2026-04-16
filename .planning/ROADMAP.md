@@ -7,11 +7,12 @@
 - **v1.2 基础设施修复与整合** -- Phases 10-14 (shipped 2026-04-11) -- [详情](milestones/v1.2-ROADMAP.md)
 - **v1.3 安全收敛与分组整理** -- Phases 15-18 (shipped 2026-04-12) -- [详情](milestones/v1.3-ROADMAP.md)
 - **v1.4 CI/CD 零停机部署** -- Phases 19-25 (shipped 2026-04-16) -- [详情](milestones/v1.4-ROADMAP.md)
+- **v1.5 开发环境本地化 + 基础设施 CI/CD** -- Phases 26-30 (in progress)
 
 ## Phases
 
 **Phase Numbering:**
-- Integer phases (1-25): Planned milestone work
+- Integer phases (1-30): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
 Decimal phases appear between their surrounding integers in numeric order.
@@ -59,7 +60,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 <details>
 <summary>v1.4 CI/CD 零停机部署 (Phases 19-25) -- SHIPPED 2026-04-16</summary>
 
-### ✅ v1.4 CI/CD 零停机部署 (Shipped 2026-04-16)
+### v1.4 CI/CD 零停机部署 (Shipped 2026-04-16)
 
 **Milestone Goal:** Jenkins + 蓝绿部署实现编译失败不 down 站，自动回滚保护
 
@@ -73,120 +74,85 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 </details>
 
+### v1.5 开发环境本地化 + 基础设施 CI/CD (In Progress)
+
+**Milestone Goal:** 本地 PostgreSQL 替代 Docker 开发数据库，Docker Compose 精简为纯线上业务；同时为基础设施服务创建统一 Jenkins Pipeline
+
+- [ ] **Phase 26: 宿主机 PostgreSQL 安装与配置** -- Homebrew 安装 PostgreSQL 17.9 + 开发数据库初始化
+- [ ] **Phase 27: 开发容器清理与 Docker Compose 简化** -- 移除 dev 容器，精简 compose overlay
+- [ ] **Phase 28: Keycloak 蓝绿部署基础设施** -- Keycloak 蓝绿容器管理 + upstream 切换
+- [ ] **Phase 29: 统一基础设施 Jenkins Pipeline** -- Jenkinsfile.infra 参数化部署基础设施服务
+- [ ] **Phase 30: 一键开发环境脚本** -- setup-dev.sh 幂等安装开发环境
+
 ## Phase Details
 
-### Phase 19: Jenkins 安装与基础配置
-**Goal**: 管理员可以在宿主机上安装、启动、获取初始密码、卸载 Jenkins，Jenkins 可直接操作 Docker
-**Depends on**: Phase 18（前一里程碑，基础设施就绪）
-**Requirements**: JENK-01, JENK-02, JENK-03, JENK-04
+### Phase 26: 宿主机 PostgreSQL 安装与配置
+**Goal**: 开发者可以在宿主机上运行与生产版本完全一致的 PostgreSQL 17.9，本地开发和数据导出不再依赖 Docker 容器
+**Depends on**: Phase 25（前一里程碑已完成）
+**Requirements**: LOCALPG-01, LOCALPG-02, LOCALPG-03, LOCALPG-04
 **Success Criteria** (what must be TRUE):
-  1. 管理员运行 `setup-jenkins.sh install` 后 Jenkins 服务启动，systemctl status jenkins 显示 active (running)
-  2. Jenkins 用户可以通过 `docker ps` 列出当前运行的容器（已在 docker 组中）
-  3. 管理员可从日志或文件中获取初始管理员密码并完成首次登录
-  4. 管理员运行 `setup-jenkins.sh uninstall` 后 Jenkins 进程消失、相关文件全部清除
-**Plans**: 2 plans
+  1. 开发者运行 `brew services list` 可见 postgresql@17 状态为 started，版本为 17.9
+  2. 开发者可通过 `psql -d noda_dev` 和 `psql -d keycloak_dev` 连接到本地开发数据库
+  3. 重启电脑后 PostgreSQL 自动启动，无需手动干预
+  4. postgres_dev_data Docker volume 中的数据已成功导出并导入到本地 PostgreSQL
+**Plans**: TBD
 
-Plans:
-- [x] 19-01-PLAN.md -- setup-jenkins.sh 主脚本（7 个子命令：install/uninstall/status/show-password/restart/upgrade/reset-password）
-- [x] 19-02-PLAN.md -- Jenkins init.groovy.d 自动化脚本（管理员/插件/安全/Pipeline 作业）+ 管理员凭据模板
-
-### Phase 20: Nginx 蓝绿路由基础
-**Goal**: nginx 的 findclass upstream 定义从 default.conf 抽离到独立 include 文件，Pipeline 可通过重写该文件 + reload 切换流量指向
-**Depends on**: Phase 19（按顺序执行，避免并行部署冲突）
-**Requirements**: BLUE-02
+### Phase 27: 开发容器清理与 Docker Compose 简化
+**Goal**: docker-compose.dev.yml 不再包含数据库和认证服务，Docker Compose overlay 仅保留生产部署必需配置
+**Depends on**: Phase 26（本地 PostgreSQL 就绪，可替代 dev 容器）
+**Requirements**: CLEANUP-01, CLEANUP-02, CLEANUP-03, CLEANUP-04, CLEANUP-05
 **Success Criteria** (what must be TRUE):
-  1. nginx 配置中 findclass 的 upstream 通过 `include snippets/upstream-findclass.conf` 引用
-  2. 手动修改 include 文件内容后执行 `nginx -s reload`，流量无中断地指向新的后端地址
-  3. class.noda.co.nz 现有访问不受影响（变更前后功能等价）
-**Plans**: 1 plan
+  1. `docker compose -f docker-compose.yml -f docker-compose.dev.yml config` 输出中不包含 postgres-dev 和 keycloak-dev 服务
+  2. deploy-infrastructure-prod.sh 的 EXPECTED_CONTAINERS 和 START_SERVICES 列表不再包含 dev 服务
+  3. docker-compose.dev-standalone.yml 已移除或合并，不存在孤立的 compose 文件
+  4. 现有生产服务（postgres-prod、keycloak、nginx、noda-ops）部署不受影响
+**Plans**: TBD
 
-Plans:
-- [x] 20-01-PLAN.md -- 抽离三个 upstream include 文件 + 验证 nginx reload 切换
-
-### Phase 21: 蓝绿容器管理
-**Goal**: blue 和 green 两个 findclass-ssr 容器可以独立启停，通过状态文件追踪当前活跃环境
-**Depends on**: Phase 20（nginx 已支持 upstream 动态切换）
-**Requirements**: BLUE-01, BLUE-03, BLUE-04, BLUE-05
+### Phase 28: Keycloak 蓝绿部署基础设施
+**Goal**: Keycloak 服务支持蓝绿零停机部署，管理员可通过 nginx upstream 切换在 blue/green 容器间平滑切换流量
+**Depends on**: Phase 25（v1.4 蓝绿框架已验证，独立于 Phase 26/27）
+**Requirements**: KCBLUE-01, KCBLUE-02, KCBLUE-03, KCBLUE-04
 **Success Criteria** (what must be TRUE):
-  1. 同一时刻存在 blue 和 green 两个 findclass-ssr 容器，均在 noda-network 网络上运行
-  2. `/opt/noda/active-env` 文件内容为 `blue` 或 `green`，准确反映当前活跃环境
-  3. 蓝绿容器通过 `docker run` 启动和管理（不通过 docker-compose.yml）
-  4. nginx 可通过容器名 DNS 解析访问 blue 和 green 容器
-**Plans**: 1 plan
+  1. keycloak-blue 和 keycloak-green 两个容器可独立创建和启动，共享 keycloak_db 数据库
+  2. nginx 配置中 Keycloak upstream 通过 `include snippets/upstream-keycloak.conf` 引用，修改后 `nginx -s reload` 切换流量
+  3. `/opt/noda/active-env-keycloak` 状态文件准确反映当前活跃的 Keycloak 环境（blue 或 green）
+  4. manage-containers.sh 支持 Keycloak 蓝绿容器的 create/start/stop/switch 操作
+  5. auth.noda.co.nz 在蓝绿切换期间保持可访问（零停机）
+**Plans**: TBD
 
-Plans:
-- [x] 21-01-PLAN.md -- manage-containers.sh 蓝绿容器管理脚本（8 个子命令）+ env-findclass-ssr.env 环境变量文件
-
-### Phase 22: 蓝绿部署核心流程
-**Goal**: 管理员可通过脚本执行完整的蓝绿部署流程，包括构建新镜像、启动目标容器、健康检查、切换流量、验证、回滚
-**Depends on**: Phase 21（蓝绿容器管理基础设施就绪）
-**Requirements**: PIPE-02, PIPE-03, TEST-03, TEST-04, TEST-05
+### Phase 29: 统一基础设施 Jenkins Pipeline
+**Goal**: 管理员可在 Jenkins 中选择目标基础设施服务（keycloak/nginx/noda-ops），Pipeline 自动执行备份、部署、健康检查和回滚
+**Depends on**: Phase 28（Keycloak 蓝绿框架就绪）
+**Requirements**: PIPELINE-01, PIPELINE-02, PIPELINE-03, PIPELINE-04, PIPELINE-05, PIPELINE-06, PIPELINE-07
 **Success Criteria** (what must be TRUE):
-  1. 每次构建的镜像携带 Git SHA 短哈希标签（如 `findclass-ssr:abc1234`），不再使用 latest
-  2. 新容器启动后自动执行 HTTP 健康检查（直接 curl 容器内部端点），最多重试 10 次每次间隔 5 秒
-  3. 流量切换后通过 nginx 执行 E2E 验证（curl 外部可达性），确认完整请求链路正常
-  4. 健康检查或 E2E 验证失败时，流量不切换、旧容器不停，自动保持当前活跃环境
-  5. 构建阶段失败时脚本立即中止，不进入部署阶段
-**Plans**: 2 plans
+  1. Jenkins 中存在 `infra-deploy` Pipeline 任务，可通过下拉菜单选择 keycloak/nginx/noda-ops 服务
+  2. Pipeline 部署 keycloak 前自动执行 pg_dump 全量备份，备份失败则中止部署
+  3. 每个服务使用匹配的部署策略：keycloak=蓝绿零停机、nginx=重建替换、noda-ops=重建替换
+  4. 部署后自动执行服务专属健康检查（keycloak: HTTP /health/ready、nginx: HTTP 200、noda-ops: 容器 running）
+  5. 健康检查失败时自动回滚到部署前状态（Keycloak 切回旧容器）
+  6. 重启 PostgreSQL 等高风险操作前 Pipeline 暂停等待人工确认
+**Plans**: TBD
 
-Plans:
-- [x] 22-01: 蓝绿部署主脚本（blue-green-deploy.sh）-- 构建 + 启动 + 健康检查 + 切换 + 验证
-- [x] 22-02: 回滚脚本（rollback-findclass.sh）-- 紧急手动回滚
-
-### Phase 23: Pipeline 集成与测试门禁
-**Goal**: 管理员可在 Jenkins 中手动触发 Pipeline，自动执行 lint + 单元测试 + 蓝绿部署全流程，构建日志在失败时自动归档
-**Depends on**: Phase 22（蓝绿部署脚本验证通过）
-**Requirements**: PIPE-01, PIPE-04, PIPE-05, TEST-01, TEST-02
+### Phase 30: 一键开发环境脚本
+**Goal**: 新开发者运行一个命令即可搭建完整的本地开发环境（PostgreSQL + 数据库初始化 + 配置）
+**Depends on**: Phase 26（宿主机 PG 安装流程已验证）, Phase 27（dev 容器已清理）
+**Requirements**: DEVEX-01, DEVEX-02, DEVEX-03
 **Success Criteria** (what must be TRUE):
-  1. Jenkins Pipeline 按 Pre-flight -> Build -> Test -> Deploy -> Health Check -> Switch -> Verify -> Cleanup 八阶段执行
-  2. Test 阶段执行 `pnpm lint`，lint 不通过则 Pipeline 中止，不进入部署
-  3. Test 阶段执行 `pnpm test`，单元测试不通过则 Pipeline 中止，不进入部署
-  4. Pipeline 通过手动触发执行（"Build Now" 按钮），不支持自动触发
-  5. 部署失败时构建日志和容器日志自动归档到 Jenkins
-**Plans**: 2 plans
-
-Plans:
-- [x] 23-01-PLAN.md -- pipeline-stages.sh 阶段函数库 + Jenkinsfile 八阶段 Pipeline + 03-pipeline-job.groovy SCM 模式
-- [x] 23-02-PLAN.md -- Pre-flight 环境检查增强 + lint/test 质量门禁强化 + 人工验证
-
-### Phase 24: Pipeline 增强特性
-**Goal**: Pipeline 在部署前检查备份时效性，部署后自动清除 CDN 缓存和旧镜像，提升部署安全性和磁盘空间管理
-**Depends on**: Phase 23（Pipeline 基础流程可用）
-**Requirements**: ENH-01, ENH-02, ENH-03
-**Success Criteria** (what must be TRUE):
-  1. Pipeline Pre-flight 阶段检查数据库备份是否在 12 小时内，超过 12 小时则阻止部署并报告原因
-  2. 部署成功后 Pipeline 自动调用 Cloudflare API 清除 CDN 缓存（index.html 和静态资源 URL）
-  3. Pipeline Cleanup 阶段自动清理超过 7 天的旧 Docker 镜像，释放磁盘空间
-**Plans**: 2 plans
-
-Plans:
-- [x] 24-01-PLAN.md -- pipeline-stages.sh 三项增强函数（check_backup_freshness + pipeline_purge_cdn + cleanup_old_images 时间阈值重写）
-- [x] 24-02-PLAN.md -- Jenkinsfile 新增 CDN Purge stage（9 阶段 Pipeline）
-
-### Phase 25: 清理与迁移
-**Goal**: 旧部署脚本保留为手动回退入口，部署文档更新反映新的 CI/CD 流程
-**Depends on**: Phase 24（Pipeline 增强特性就绪）
-**Requirements**: ENH-04
-**Success Criteria** (what must be TRUE):
-  1. deploy-infrastructure-prod.sh 和 deploy-apps-prod.sh 脚本仍然存在且可手动执行，作为紧急回退方案
-  2. CLAUDE.md 部署命令章节更新为 Jenkins Pipeline 优先，旧脚本标注为手动回退
-  3. ROADMAP.md 和 PROJECT.md 反映 v1.4 里程碑完成状态
-**Plans**: 1 plan
-
-Plans:
-- [x] 25-01-PLAN.md -- 旧脚本保留标记 + 文档更新 + 里程碑归档
+  1. 开发者运行 `bash setup-dev.sh` 后自动完成 Homebrew PostgreSQL 安装、数据库创建、用户配置
+  2. 脚本重复运行不会破坏已有数据或覆盖已有配置（幂等性）
+  3. 脚本在 Apple Silicon (/opt/homebrew) 和 Intel (/usr/local) Mac 上均可正常工作
+**Plans**: TBD
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 19 -> 20 -> 21 -> 22 -> 23 -> 24 -> 25
+Phases execute in numeric order: 26 -> 27 -> 28 -> 29 -> 30
+（Phase 28 可与 Phase 26/27 并行执行）
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 19. Jenkins 安装与基础配置 | v1.4 | 2/2 | Complete    | 2026-04-14 |
-| 20. Nginx 蓝绿路由基础 | v1.4 | 1/1 | Complete | 2026-04-15 |
-| 21. 蓝绿容器管理 | v1.4 | 1/1 | Complete    | 2026-04-15 |
-| 22. 蓝绿部署核心流程 | v1.4 | 2/2 | Complete | 2026-04-15 |
-| 23. Pipeline 集成与测试门禁 | v1.4 | 2/2 | Complete    | 2026-04-15 |
-| 24. Pipeline 增强特性 | v1.4 | 2/2 | Complete    | 2026-04-15 |
-| 25. 清理与迁移 | v1.4 | 1/1 | Complete    | 2026-04-16 |
+| 26. 宿主机 PostgreSQL 安装与配置 | v1.5 | 0/? | Not started | - |
+| 27. 开发容器清理与 Docker Compose 简化 | v1.5 | 0/? | Not started | - |
+| 28. Keycloak 蓝绿部署基础设施 | v1.5 | 0/? | Not started | - |
+| 29. 统一基础设施 Jenkins Pipeline | v1.5 | 0/? | Not started | - |
+| 30. 一键开发环境脚本 | v1.5 | 0/? | Not started | - |

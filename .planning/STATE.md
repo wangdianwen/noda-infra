@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: "开发环境本地化 + 基础设施 CI/CD"
-status: Defining requirements
-last_updated: "2026-04-17T12:00:00.000Z"
+status: Roadmap created
+last_updated: "2026-04-17T14:00:00.000Z"
 last_activity: 2026-04-17
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,16 +21,16 @@ See: .planning/PROJECT.md (updated 2026-04-17)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** v1.5 开发环境本地化 + 基础设施 CI/CD — 需求定义中
+**Current focus:** Phase 26 宿主机 PostgreSQL 安装与配置
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-04-17 — Milestone v1.5 started
+Phase: 26 of 30 (宿主机 PostgreSQL 安装与配置)
+Plan: 0 of ? in current phase
+Status: Ready to plan
+Last activity: 2026-04-17 -- v1.5 Roadmap 创建完成
 
-Progress: [          ] 0%
+Progress: [░░░░░░░░░░] 0%
 
 ## Previous Milestones
 
@@ -56,10 +56,12 @@ Progress: [          ] 0%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- Phase 20: Nginx upstream 从 default.conf 抽离到独立 include 文件，支持蓝绿切换
-- Phase 21: 蓝绿容器通过 docker run 独立管理，不通过 compose（compose 仅用于 build）
-- Phase 22: 活跃环境状态通过 /opt/noda/active-env 文件追踪
-- Phase 23: Pipeline 使用 Declarative Pipeline 手动触发，核心逻辑在 bash 脚本中
+- [v1.4]: 蓝绿容器通过 docker run 管理（非 compose），避免冲突
+- [v1.4]: Pipeline 手动触发，生产环境安全控制
+- [v1.4]: Declarative Pipeline，可读性和可维护性优先
+- [v1.5 规划]: 本地 PostgreSQL 替代 Docker dev，Docker 纯线上业务
+- [v1.5 规划]: Keycloak 蓝绿复用 manage-containers.sh 框架
+- [v1.5 规划]: Pipeline 服务白名单排除 postgres（避免循环依赖）
 
 ### Pending Todos
 
@@ -67,4 +69,12 @@ None yet.
 
 ### Blockers/Concerns
 
-- findclass-ssr Prisma 7 兼容性待处理（Out of Scope for v1.5）
+- [Phase 29]: 基础设施 Pipeline 循环依赖风险 -- Pipeline 重启 PostgreSQL 会导致 Jenkins 断连，需排除 postgres 从 Pipeline 服务白名单
+- [Phase 28]: Keycloak 蓝绿切换会话丢失 -- Infinispan 会话在 JVM 内存中，切换后用户被登出，需在维护窗口执行
+- [Phase 27]: postgres_dev_data Docker volume 中的开发数据需先迁移再移除容器
+
+## Session Continuity
+
+Last session: 2026-04-17
+Stopped at: Roadmap 创建完成，等待 Phase 26 规划
+Resume file: None
