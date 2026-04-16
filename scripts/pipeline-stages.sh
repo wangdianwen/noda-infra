@@ -493,8 +493,29 @@ pipeline_purge_cdn() {
   return 0
 }
 
-# pipeline_cleanup - 清理旧镜像
+# pipeline_cleanup - 停掉非活跃容器 + 清理旧镜像
 pipeline_cleanup() {
+  # 停掉非活跃容器，降低资源消耗
+  local active_env
+  active_env=$(get_active_env)
+  local inactive_env
+  if [ "$active_env" = "blue" ]; then
+    inactive_env="green"
+  else
+    inactive_env="blue"
+  fi
+  local inactive_container
+  inactive_container=$(get_container_name "$inactive_env")
+
+  if [ "$(is_container_running "$inactive_container")" = "true" ]; then
+    log_info "停止非活跃容器: $inactive_container"
+    docker stop -t 10 "$inactive_container"
+    docker rm "$inactive_container"
+    log_success "非活跃容器已清理: $inactive_container"
+  else
+    log_info "无非活跃容器需要清理"
+  fi
+
   cleanup_old_images
 }
 
