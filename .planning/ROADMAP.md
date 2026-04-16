@@ -6,7 +6,7 @@
 - **v1.1 基础设施现代化** -- 29 commits (shipped 2026-04-11) -- [详情](milestones/v1.1-MILESTONE.md)
 - **v1.2 基础设施修复与整合** -- Phases 10-14 (shipped 2026-04-11) -- [详情](milestones/v1.2-ROADMAP.md)
 - **v1.3 安全收敛与分组整理** -- Phases 15-18 (shipped 2026-04-12)
-- **v1.4 CI/CD 零停机部署** -- Phases 19-25 (in progress)
+- **v1.4 CI/CD 零停机部署** -- Phases 19-25 (shipped 2026-04-16)
 
 ## Phases
 
@@ -56,7 +56,10 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 </details>
 
-### v1.4 CI/CD 零停机部署 (In Progress)
+<details>
+<summary>v1.4 CI/CD 零停机部署 (Phases 19-25) -- SHIPPED 2026-04-16</summary>
+
+### ✅ v1.4 CI/CD 零停机部署 (Shipped 2026-04-16)
 
 **Milestone Goal:** Jenkins + 蓝绿部署实现编译失败不 down 站，自动回滚保护
 
@@ -64,9 +67,11 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [x] **Phase 20: Nginx 蓝绿路由基础** -- 将 upstream 定义抽离为独立 include 文件，支持动态切换 (completed 2026-04-15)
 - [x] **Phase 21: 蓝绿容器管理** -- docker run 独立管理蓝绿容器，状态文件追踪活跃环境 (completed 2026-04-15)
 - [x] **Phase 22: 蓝绿部署核心流程** -- 完整的蓝绿部署脚本（容器启停 + 健康检查 + nginx 切换 + 回滚） (completed 2026-04-15)
-- [x] **Phase 23: Pipeline 集成与测试门禁** -- Jenkinsfile 八阶段 Pipeline + lint/test 质量门禁 (completed 2026-04-15)
+- [x] **Phase 23: Pipeline 集成与测试门禁** -- Jenkinsfile 九阶段 Pipeline + lint/test 质量门禁 (completed 2026-04-15)
 - [x] **Phase 24: Pipeline 增强特性** -- 部署前备份检查 + CDN 缓存清除 + 镜像清理 (completed 2026-04-15)
-- [ ] **Phase 25: 清理与迁移** -- 旧脚本保留为手动回退 + CLAUDE.md 文档更新
+- [x] **Phase 25: 清理与迁移** -- 旧脚本保留为手动回退 + 文档更新 + 里程碑归档 (completed 2026-04-16)
+
+</details>
 
 ## Phase Details
 
@@ -169,7 +174,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 25-01-PLAN.md -- 旧脚本保留标记 + 文档更新 + 里程碑归档
+- [x] 25-01-PLAN.md -- 旧脚本保留标记 + 文档更新 + 里程碑归档
 
 ## Progress
 
@@ -184,4 +189,4 @@ Phases execute in numeric order: 19 -> 20 -> 21 -> 22 -> 23 -> 24 -> 25
 | 22. 蓝绿部署核心流程 | v1.4 | 2/2 | Complete | 2026-04-15 |
 | 23. Pipeline 集成与测试门禁 | v1.4 | 2/2 | Complete    | 2026-04-15 |
 | 24. Pipeline 增强特性 | v1.4 | 2/2 | Complete    | 2026-04-15 |
-| 25. 清理与迁移 | v1.4 | 0/1 | Not started | - |
+| 25. 清理与迁移 | v1.4 | 1/1 | Complete | 2026-04-16 |

@@ -130,15 +130,37 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 
 ## 部署命令
 
+### 主要部署方式：Jenkins Pipeline
+
+通过 Jenkins UI 手动触发蓝绿部署 Pipeline：
+
+1. 浏览器访问 Jenkins（默认 http://\<server-ip\>:8888）
+2. 点击 `findclass-deploy` 任务
+3. 点击 "Build Now" 按钮
+4. Pipeline 自动执行 9 阶段：Pre-flight -> Build -> Test -> Deploy -> Health Check -> Switch -> Verify -> CDN Purge -> Cleanup
+5. 查看 Stage View 确认各阶段状态
+
+### 紧急回退：手动部署脚本
+
+Jenkins 不可用时，可使用旧部署脚本手动部署：
+
 ```bash
 # 全量部署（基础设施 + 应用）
 bash scripts/deploy/deploy-infrastructure-prod.sh
 
 # 仅部署应用（findclass-ssr）
 bash scripts/deploy/deploy-apps-prod.sh
+```
 
-# 查看状态（只读，允许直接使用）
+### 查看状态（只读，允许直接使用）
+
+```bash
+# Docker Compose 容器状态
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.dev.yml ps
+
+# 蓝绿容器状态
+cat /opt/noda/active-env  # 当前活跃环境（blue/green）
+docker ps --filter name=findclass-ssr  # 蓝绿容器列表
 ```
 
 <!-- GSD:project-start source:PROJECT.md -->

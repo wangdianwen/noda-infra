@@ -1,23 +1,23 @@
 # Noda 基础设施项目
 
-## Current Milestone: v1.4 CI/CD 零停机部署
-
-**Goal:** Jenkins + 蓝绿部署实现编译失败不 down 站，自动回滚保护
-
-**Target features:**
-- Jenkins 原生安装/卸载脚本（宿主机运行，直接操作 Docker）
-- 现有部署脚本迁移为 Jenkins Pipeline
-- 蓝绿部署：新容器启动成功 → 健康检查通过 → 切换流量 → 旧容器下线
-- Pipeline 集成 lint + 单元测试，不通过不上线
-- 上线后 HTTP E2E 健康检查，失败自动回滚到旧容器
-- 手动触发部署
-
 ## Current State
 
-**Last shipped:** v1.3 安全收敛与分组整理 (2026-04-12)
-**Next focus:** v1.4 CI/CD 零停机部署
+**Last shipped:** v1.4 CI/CD 零停机部署 (2026-04-16)
+**Next focus:** 待定
 
 ## Shipped Milestones
+
+### v1.4 CI/CD 零停机部署 ✅ (2026-04-16)
+
+7 phases, 11 plans, 95 commits, 89 files changed (+15,967/-1,511 LOC)
+
+- Jenkins 宿主机原生安装/卸载脚本（setup-jenkins.sh 7 子命令 + groovy 自动化）
+- Nginx upstream include 抽离（蓝绿路由基础，支持 nginx -s reload 切换）
+- 蓝绿容器管理（manage-containers.sh 8 子命令 + env-findclass-ssr.env 模板）
+- 蓝绿部署核心流程（blue-green-deploy.sh + rollback-findclass.sh，零停机 + 自动回滚）
+- Jenkinsfile 9 阶段 Pipeline + pipeline-stages.sh 函数库（lint/test 质量门禁）
+- Pipeline 增强特性（备份时效性检查 + CDN 缓存清除 + 镜像时间阈值清理）
+- 旧脚本保留为手动回退 + 部署文档更新 + 里程碑归档
 
 ### v1.3 安全收敛与分组整理 ✅ (2026-04-12)
 
@@ -103,14 +103,14 @@ Docker Compose 项目：
 - ✓ Docker Compose 项目分离 — v1.3
 - ✓ Jenkins 宿主机原生安装/卸载 — v1.4
 - ✓ Nginx upstream include 抽离（蓝绿路由基础） — v1.4
+- ✓ 现有部署脚本迁移为 Jenkins Pipeline — v1.4
+- ✓ findclass-ssr 蓝绿部署（零停机） — v1.4
+- ✓ Pipeline lint + 单元测试门禁 — v1.4
+- ✓ 上线后 HTTP E2E 健康检查 — v1.4
+- ✓ 验证失败自动回滚 — v1.4
 
 ### Active
 
-- [ ] 现有部署脚本迁移为 Jenkins Pipeline
-- [ ] findclass-ssr 蓝绿部署（零停机）
-- [ ] Pipeline lint + 单元测试门禁
-- [ ] 上线后 HTTP E2E 健康检查
-- [ ] 验证失败自动回滚
 - [ ] Prisma 7 兼容性迁移
 
 ### Out of Scope
@@ -140,6 +140,9 @@ Docker Compose 项目：
 | Pipeline 备份时效性检查 | 部署前安全网 | ✅ Good |
 | CDN 缓存清除 | 部署后自动刷新 | ✅ Good |
 | 镜像时间阈值清理 | 磁盘空间管理 | ✅ Good |
+| 蓝绿容器 docker run 管理 | 避免与 compose 冲突 | ✅ Good |
+| Pipeline 手动触发 | 生产环境安全控制 | ✅ Good |
+| Jenkinsfile Declarative Pipeline | 可读性和可维护性 | ✅ Good |
 
 ---
-*Last updated: 2026-04-16 after Phase 24 completion*
+*Last updated: 2026-04-16 after v1.4 milestone completion*

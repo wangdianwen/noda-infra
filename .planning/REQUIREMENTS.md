@@ -41,7 +41,7 @@
 - [ ] **ENH-01**: Pipeline Pre-flight 阶段检查数据库备份是否在 12 小时内，不满足则阻止部署
 - [ ] **ENH-02**: 部署成功后自动调用 Cloudflare API 清除 CDN 缓存（index.html 和静态资源）
 - [ ] **ENH-03**: Pipeline Cleanup 阶段自动清理超过 7 天的旧 Docker 镜像，防止磁盘空间耗尽
-- [ ] **ENH-04**: 现有部署脚本（deploy-infrastructure-prod.sh、deploy-apps-prod.sh）保留为手动回退方案
+- [x] **ENH-04**: 现有部署脚本（deploy-infrastructure-prod.sh、deploy-apps-prod.sh）保留为手动回退方案
 
 ## Future Requirements
 
@@ -95,7 +95,7 @@
 | ENH-01 | Phase 24 | Pending |
 | ENH-02 | Phase 24 | Pending |
 | ENH-03 | Phase 24 | Pending |
-| ENH-04 | Phase 25 | Pending |
+| ENH-04 | Phase 25 | Complete |
 
 **Coverage:**
 - v1.4 requirements: 23 total
@@ -104,4 +104,4 @@
 
 ---
 *Requirements defined: 2026-04-14*
-*Last updated: 2026-04-14 after roadmap creation*
+*Last updated: 2026-04-16 after Phase 25 completion*

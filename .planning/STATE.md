@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: CI/CD 零停机部署
-status: executing
-stopped_at: Phase 25 context gathered
-last_updated: "2026-04-16T00:29:41.369Z"
-last_activity: 2026-04-15
+status: completed
+stopped_at: Phase 25 complete
+last_updated: "2026-04-16T00:50:00.000Z"
+last_activity: 2026-04-16
 progress:
   total_phases: 7
-  completed_phases: 6
-  total_plans: 10
-  completed_plans: 10
+  completed_phases: 7
+  total_plans: 11
+  completed_plans: 11
   percent: 100
 ---
 
@@ -22,15 +22,14 @@ See: .planning/PROJECT.md (updated 2026-04-14)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current milestone:** v1.4 CI/CD 零停机部署
-**Current focus:** Phase 23 — Pipeline 集成与测试门禁
+**Current focus:** Phase 25 — 清理与迁移（已完成）
 
 ## Current Position
 
 Phase: 25
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-04-15
+Plan: 01 (complete)
+Status: Milestone v1.4 shipped
+Last activity: 2026-04-16
 
 Progress: [██████████] 100%
 
@@ -79,8 +78,13 @@ None yet.
 - 健康检查超时阈值需根据 findclass-ssr 实际冷启动时间调优（Phase 22 实测）
 - findclass-ssr Prisma 7 兼容性待处理（Out of Scope for v1.4）
 
+## Milestone Complete
+
+v1.4 CI/CD 零停机部署 -- shipped 2026-04-16
+7 phases, 11 plans, 95 commits, 89 files changed
+
 ## Session Continuity
 
-Last session: 2026-04-16T00:29:41.367Z
-Stopped at: Phase 25 context gathered
-Resume file: .planning/phases/25-cleanup-migration/25-CONTEXT.md
+Last session: 2026-04-16
+Summary: v1.4 里程碑归档完成 — 旧脚本标记为手动回退 + 部署文档更新
+Next: 规划 v1.5 或处理生产环境问题
