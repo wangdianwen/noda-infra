@@ -38,3 +38,4 @@ config/keys/
 config/secrets.local.yaml
 .env.backup
 config/nginx/snippets/upstream-findclass.conf
+config/nginx/snippets/upstream-noda-site.conf

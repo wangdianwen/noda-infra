@@ -15,14 +15,24 @@ source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/lib/health.sh"
 
 # ============================================
-# 常量
+# 常量（通过环境变量覆盖，支持多服务蓝绿部署）
 # ============================================
-ACTIVE_ENV_FILE="/opt/noda/active-env"
+# 服务参数
+SERVICE_NAME="${SERVICE_NAME:-findclass-ssr}"
+SERVICE_PORT="${SERVICE_PORT:-3001}"
+UPSTREAM_NAME="${UPSTREAM_NAME:-findclass_backend}"
+HEALTH_PATH="${HEALTH_PATH:-/api/health}"
+
+# 状态文件（每个服务独立）
+ACTIVE_ENV_FILE="${ACTIVE_ENV_FILE:-/opt/noda/active-env}"
+
+# 固定常量
 NGINX_CONTAINER="noda-infra-nginx"
-UPSTREAM_CONF="$PROJECT_ROOT/config/nginx/snippets/upstream-findclass.conf"
-ENV_TEMPLATE="$PROJECT_ROOT/docker/env-findclass-ssr.env"
+# UPSTREAM_CONF: nginx upstream 配置文件路径（findclass-ssr 用 upstream-findclass.conf，不是 upstream-findclass-ssr.conf）
+UPSTREAM_CONF="${UPSTREAM_CONF:-$PROJECT_ROOT/config/nginx/snippets/upstream-findclass.conf}"
+ENV_TEMPLATE="$PROJECT_ROOT/docker/env-${SERVICE_NAME}.env"
 NETWORK_NAME="noda-network"
-IMAGE_NAME="findclass-ssr"
+IMAGE_NAME="${SERVICE_NAME}"
 
 # ============================================
 # 辅助函数
@@ -102,10 +112,10 @@ prepare_env_file() {
 
 # get_container_name - 获取容器名
 # 参数：$1 = env
-# 返回：findclass-ssr-{blue|green}
+# 返回：{SERVICE_NAME}-{blue|green}
 get_container_name() {
   local env="$1"
-  echo "findclass-ssr-${env}"
+  echo "${SERVICE_NAME}-${env}"
 }
 
 # is_container_running - 检查容器是否在运行
@@ -140,14 +150,22 @@ get_host_snippets_dir() {
 # ============================================
 # 启动一个蓝绿容器（Phase 22 通过 source 调用此函数）
 # 参数：$1 = env (blue 或 green), $2 = image (镜像名)
+# 环境变量控制：
+#   SERVICE_NAME  - 服务名（默认 findclass-ssr）
+#   SERVICE_PORT  - 服务端口（默认 3001）
+#   HEALTH_PATH   - 健康检查路径（默认 /api/health）
+#   ENV_TEMPLATE  - env 模板文件路径（不存在则跳过 env-file）
 run_container() {
   local env="$1"
   local image="$2"
   local container_name
   container_name=$(get_container_name "$env")
 
-  local env_file
-  env_file=$(prepare_env_file "$env")
+  # 如果有 env 模板文件，准备临时 env 文件（noda-site 等纯静态服务无 env 模板）
+  local tmp_env_file=""
+  if [ -f "${ENV_TEMPLATE:-}" ]; then
+    tmp_env_file=$(prepare_env_file "$env")
+  fi
 
   log_info "启动容器: $container_name (镜像: $image)"
 
@@ -166,13 +184,13 @@ run_container() {
     --log-driver json-file \
     --log-opt max-size=10m \
     --log-opt max-file=3 \
-    --env-file "$env_file" \
+    ${tmp_env_file:+--env-file "$tmp_env_file"} \
     --label noda.service-group=apps \
     --label noda.environment=prod \
     --label "noda.blue-green=${env}" \
     --label com.docker.compose.project=noda-apps \
-    --label com.docker.compose.service=findclass-ssr \
-    --health-cmd "wget --quiet --tries=1 --spider http://localhost:3001/api/health || exit 1" \
+    --label "com.docker.compose.service=${SERVICE_NAME}" \
+    --health-cmd "wget --quiet --tries=1 --spider http://localhost:${SERVICE_PORT}${HEALTH_PATH} || exit 1" \
     --health-interval 30s \
     --health-timeout 10s \
     --health-retries 3 \
@@ -182,26 +200,31 @@ run_container() {
   log_success "容器 $container_name 已启动"
 
   # 清理临时 env 文件
-  rm -f "$env_file"
+  rm -f "$tmp_env_file"
 }
 
 # ============================================
 # update_upstream - 更新 nginx upstream 配置
 # ============================================
 # 参数：$1 = target env (blue 或 green)
+# 环境变量控制：
+#   UPSTREAM_NAME - nginx upstream 块名称（默认 findclass_backend）
+#   SERVICE_PORT  - 服务端口（默认 3001）
 update_upstream() {
   local target_env="$1"
   local container_name
   container_name=$(get_container_name "$target_env")
 
-  local upstream_content="upstream findclass_backend {
-    server ${container_name}:3001 max_fails=3 fail_timeout=30s;
+  local upstream_content="upstream ${UPSTREAM_NAME} {
+    server ${container_name}:${SERVICE_PORT} max_fails=3 fail_timeout=30s;
 }"
 
   # 写入宿主机文件（nginx volume mount 的源目录）
   local snippets_dir
   snippets_dir=$(get_host_snippets_dir)
-  local host_conf="$snippets_dir/upstream-findclass.conf"
+  local upstream_basename
+  upstream_basename=$(basename "$UPSTREAM_CONF")
+  local host_conf="$snippets_dir/$upstream_basename"
 
   local tmp_file="${host_conf}.tmp.$$"
   echo "$upstream_content" > "$tmp_file"
@@ -231,11 +254,11 @@ cmd_init() {
   log_info "初始化蓝绿部署架构"
   log_info "=========================================="
 
-  # 步骤 1：检测 compose 管理的 findclass-ssr 容器
+  # 步骤 1：检测 compose 管理的旧容器（无后缀）
   local current_image=""
-  if docker inspect findclass-ssr &>/dev/null; then
-    current_image=$(docker inspect --format='{{.Config.Image}}' findclass-ssr 2>/dev/null || echo "")
-    log_info "检测到 compose 容器 findclass-ssr (镜像: ${current_image:-未知})"
+  if docker inspect "$SERVICE_NAME" &>/dev/null; then
+    current_image=$(docker inspect --format='{{.Config.Image}}' "$SERVICE_NAME" 2>/dev/null || echo "")
+    log_info "检测到 compose 容器 $SERVICE_NAME (镜像: ${current_image:-未知})"
   fi
 
   # 步骤 2：如果没有 compose 容器，检查是否已初始化
@@ -247,8 +270,8 @@ cmd_init() {
       log_info "如需重新初始化，请先手动停止所有蓝绿容器"
       exit 0
     else
-      log_error "未找到 compose 容器 findclass-ssr，且未检测到蓝绿架构状态"
-      log_info "请先使用 docker compose 部署 findclass-ssr 服务"
+      log_error "未找到 compose 容器 $SERVICE_NAME，且未检测到蓝绿架构状态"
+      log_info "请先使用 docker compose 部署 $SERVICE_NAME 服务"
       exit 1
     fi
   fi
@@ -263,8 +286,8 @@ cmd_init() {
 
   # 步骤 4：停止 compose 容器
   log_info "步骤 4/10: 停止 compose 容器"
-  docker stop findclass-ssr
-  docker rm findclass-ssr
+  docker stop "$SERVICE_NAME"
+  docker rm "$SERVICE_NAME"
   log_success "compose 容器已停止并移除"
 
   # 步骤 5：启动 blue 容器
@@ -273,7 +296,7 @@ cmd_init() {
 
   # 步骤 6：等待健康检查
   log_info "步骤 6/10: 等待健康检查"
-  if ! wait_container_healthy "findclass-ssr-blue" 120; then
+  if ! wait_container_healthy "${SERVICE_NAME}-blue" 120; then
     log_error "blue 容器健康检查失败"
     exit 1
   fi
@@ -296,7 +319,7 @@ cmd_init() {
   log_success "蓝绿架构初始化完成"
   log_success "=========================================="
   log_info "活跃环境: blue"
-  log_info "容器: findclass-ssr-blue"
+  log_info "容器: ${SERVICE_NAME}-blue"
   log_info "镜像: $current_image"
 }
 
@@ -535,8 +558,8 @@ cmd_switch() {
 # usage - 显示帮助信息
 # ============================================
 usage() {
-  cat <<'EOF'
-蓝绿容器管理脚本
+  cat <<EOF
+蓝绿容器管理脚本（服务: ${SERVICE_NAME}）
 
 用法: manage-containers.sh <命令> [参数]
 
@@ -549,13 +572,22 @@ usage() {
   logs <blue|green> [参数]  查看容器日志（支持 --tail, --follow 等）
   switch <blue|green>       切换活跃环境（流量切换）
 
+环境变量:
+  SERVICE_NAME   服务名（默认 findclass-ssr）
+  SERVICE_PORT   服务端口（默认 3001）
+  UPSTREAM_NAME  nginx upstream 名称（默认 findclass_backend）
+  HEALTH_PATH    健康检查路径（默认 /api/health）
+  ACTIVE_ENV_FILE 活跃环境状态文件（默认 /opt/noda/active-env）
+
 示例:
   manage-containers.sh init
   manage-containers.sh start blue
-  manage-containers.sh start green findclass-ssr:v2
+  manage-containers.sh start green ${SERVICE_NAME}:v2
   manage-containers.sh status
   manage-containers.sh logs blue --tail 100 -f
   manage-containers.sh switch green
+
+  SERVICE_NAME=noda-site SERVICE_PORT=3000 manage-containers.sh status
 EOF
 }
 

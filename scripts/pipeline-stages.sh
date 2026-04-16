@@ -116,7 +116,7 @@ http_health_check() {
   while [ $attempt -lt $max_retries ]; do
     attempt=$((attempt + 1))
 
-    if docker exec "$container" wget --quiet --tries=1 --spider "http://localhost:3001/api/health" 2>/dev/null; then
+    if docker exec "$container" wget --quiet --tries=1 --spider "http://localhost:${SERVICE_PORT:-3001}${HEALTH_PATH:-/api/health}" 2>/dev/null; then
       log_success "$container — HTTP 健康检查通过 (第 ${attempt}/${max_retries} 次)"
       return 0
     fi
@@ -168,7 +168,7 @@ e2e_verify() {
       local http_code
       http_code=$(docker exec "$NGINX_CONTAINER" \
         curl -s -o /dev/null -w "%{http_code}" \
-        "http://${container_name}:3001/api/health" 2>/dev/null || echo "000")
+        "http://${container_name}:${SERVICE_PORT:-3001}${HEALTH_PATH:-/api/health}" 2>/dev/null || echo "000")
 
       if [ "$http_code" = "200" ]; then
         result=0
@@ -176,7 +176,7 @@ e2e_verify() {
     else
       if docker exec "$NGINX_CONTAINER" \
         wget --quiet --tries=1 --spider \
-        "http://${container_name}:3001/api/health" 2>/dev/null; then
+        "http://${container_name}:${SERVICE_PORT:-3001}${HEALTH_PATH:-/api/health}" 2>/dev/null; then
         result=0
       fi
     fi
@@ -218,8 +218,9 @@ cleanup_old_images() {
   fi
 
   # 1. 清理带 Git SHA 标签的旧镜像（排除 latest，per D-14）
+  local service="${SERVICE_NAME:-findclass-ssr}"
   local sha_tags
-  sha_tags=$(docker images findclass-ssr --format '{{.Tag}}' \
+  sha_tags=$(docker images "$service" --format '{{.Tag}}' \
     | grep -v '^latest$' \
     | grep -v '^<none>' || true)
 
@@ -227,7 +228,7 @@ cleanup_old_images() {
   for tag in $sha_tags; do
     # 使用 docker inspect 获取 ISO 8601 创建时间（per RESEARCH: docker images CreatedAt 格式不稳定）
     local created_iso
-    created_iso=$(docker inspect --format '{{.Created}}' "findclass-ssr:${tag}" 2>/dev/null || echo "")
+    created_iso=$(docker inspect --format '{{.Created}}' "${service}:${tag}" 2>/dev/null || echo "")
 
     if [ -z "$created_iso" ]; then
       continue
@@ -256,8 +257,8 @@ cleanup_old_images() {
       else
         image_date=$(date -d "@$image_epoch" +"%Y-%m-%d")
       fi
-      log_info "  删除 findclass-ssr:${tag} ($image_date)"
-      docker rmi "findclass-ssr:${tag}" 2>/dev/null || true
+      log_info "  删除 ${service}:${tag} ($image_date)"
+      docker rmi "${service}:${tag}" 2>/dev/null || true
       deleted=$((deleted + 1))
     fi
   done
@@ -282,7 +283,8 @@ cleanup_old_images() {
 # ============================================
 
 # pipeline_preflight - 前置检查
-# 检查 Docker daemon、nginx 容器、noda-network、Node.js、pnpm、noda-apps
+# 检查 Docker daemon、nginx 容器、noda-network
+# findclass-ssr 额外检查 Node.js、pnpm、package.json、lint、test
 # 参数: $1 = APPS_DIR (可选，默认 $WORKSPACE/noda-apps)
 pipeline_preflight() {
   local apps_dir="${1:-$WORKSPACE/noda-apps}"
@@ -302,18 +304,6 @@ pipeline_preflight() {
   docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || { log_error "Docker 网络 noda-network 不存在"; return 1; }
   log_info "Docker 网络 noda-network 存在"
 
-  # 检查 Node.js
-  if ! command -v node >/dev/null 2>&1; then
-    log_error "Node.js 未安装"
-    log_error "安装方式: curl -fsSL https://deb.nodesource.com/setup_21.x | sudo -E bash - && sudo apt install -y nodejs"
-    return 1
-  fi
-  log_info "Node.js: $(node --version)"
-
-  # 检查 pnpm
-  command -v pnpm >/dev/null 2>&1 || { log_error "pnpm 未安装，Test 阶段需要 pnpm"; return 1; }
-  log_info "pnpm: $(pnpm --version)"
-
   # 检查 noda-apps 目录
   if [ ! -d "$apps_dir" ]; then
     log_error "noda-apps 目录不存在: $apps_dir"
@@ -322,33 +312,44 @@ pipeline_preflight() {
   fi
   log_info "noda-apps 目录存在: $apps_dir"
 
-  # 检查 package.json
-  if [ ! -f "$apps_dir/package.json" ]; then
-    log_error "noda-apps/package.json 不存在: $apps_dir/package.json"
-    return 1
-  fi
-  log_info "noda-apps/package.json 存在"
+  local service="${SERVICE_NAME:-findclass-ssr}"
 
-  # 检查 lint 脚本
-  if ! grep -q '"lint"' "$apps_dir/package.json"; then
-    log_error "noda-apps/package.json 缺少 lint 脚本"
-    log_error '请在 package.json 的 scripts 中添加: "lint": "eslint ."'
-    return 1
-  fi
-  log_info "package.json lint 脚本存在"
+  if [ "$service" = "findclass-ssr" ]; then
+    # findclass-ssr 专用检查：Node.js、pnpm、package.json、lint、test、备份
+    if ! command -v node >/dev/null 2>&1; then
+      log_error "Node.js 未安装"; return 1
+    fi
+    log_info "Node.js: $(node --version)"
 
-  # 检查 test 脚本
-  if ! grep -q '"test"' "$apps_dir/package.json"; then
-    log_error "noda-apps/package.json 缺少 test 脚本"
-    log_error '请在 package.json 的 scripts 中添加: "test": "vitest run"'
-    return 1
-  fi
-  log_info "package.json test 脚本存在"
+    command -v pnpm >/dev/null 2>&1 || { log_error "pnpm 未安装，Test 阶段需要 pnpm"; return 1; }
+    log_info "pnpm: $(pnpm --version)"
 
-  # 备份时效性检查（D-01, D-19: 放在所有其他检查之后）
-  # 本地开发环境可能无生产备份，降级为警告
-  if ! check_backup_freshness; then
-    log_warn "备份检查未通过，继续部署（生产环境应调查备份状态）"
+    if [ ! -f "$apps_dir/package.json" ]; then
+      log_error "noda-apps/package.json 不存在: $apps_dir/package.json"; return 1
+    fi
+    log_info "noda-apps/package.json 存在"
+
+    if ! grep -q '"lint"' "$apps_dir/package.json"; then
+      log_error "noda-apps/package.json 缺少 lint 脚本"; return 1
+    fi
+    log_info "package.json lint 脚本存在"
+
+    if ! grep -q '"test"' "$apps_dir/package.json"; then
+      log_error "noda-apps/package.json 缺少 test 脚本"; return 1
+    fi
+    log_info "package.json test 脚本存在"
+
+    # 备份时效性检查（本地开发环境降级为警告）
+    if ! check_backup_freshness; then
+      log_warn "备份检查未通过，继续部署（生产环境应调查备份状态）"
+    fi
+  else
+    # 其他服务（noda-site 等）：检查 Dockerfile 存在
+    local dockerfile="${DOCKERFILE:-$PROJECT_ROOT/deploy/Dockerfile.${service}}"
+    if [ ! -f "$dockerfile" ]; then
+      log_error "Dockerfile 不存在: $dockerfile"; return 1
+    fi
+    log_info "Dockerfile 存在: $dockerfile"
   fi
 
   log_success "前置检查全部通过"
@@ -356,24 +357,37 @@ pipeline_preflight() {
 
 # pipeline_build - 构建镜像
 # 参数: $1 = APPS_DIR (noda-apps 目录), $2 = GIT_SHA
+# 环境变量控制：
+#   SERVICE_NAME - 镜像名（默认 findclass-ssr）
+#   DOCKERFILE   - Dockerfile 路径（默认 deploy/Dockerfile.findclass-ssr）
 pipeline_build() {
   local apps_dir="$1"
   local git_sha="$2"
 
+  local service="${SERVICE_NAME:-findclass-ssr}"
+  local dockerfile="${DOCKERFILE:-$PROJECT_ROOT/deploy/Dockerfile.findclass-ssr}"
+
   log_info "构建镜像..."
 
   # 使用 docker build 直接构建，避免 compose 文件中其他服务的环境变量要求
-  local dockerfile="$PROJECT_ROOT/deploy/Dockerfile.findclass-ssr"
-  docker build \
-    -t findclass-ssr:latest \
-    -t "findclass-ssr:${git_sha}" \
-    -f "$dockerfile" \
-    --build-arg VITE_KEYCLOAK_URL=https://auth.noda.co.nz \
-    --build-arg VITE_KEYCLOAK_REALM=noda \
-    --build-arg VITE_KEYCLOAK_CLIENT_ID=noda-frontend \
-    "$apps_dir"
+  if [ "$service" = "findclass-ssr" ]; then
+    docker build \
+      -t "${service}:latest" \
+      -t "${service}:${git_sha}" \
+      -f "$dockerfile" \
+      --build-arg VITE_KEYCLOAK_URL=https://auth.noda.co.nz \
+      --build-arg VITE_KEYCLOAK_REALM=noda \
+      --build-arg VITE_KEYCLOAK_CLIENT_ID=noda-frontend \
+      "$apps_dir"
+  else
+    docker build \
+      -t "${service}:latest" \
+      -t "${service}:${git_sha}" \
+      -f "$dockerfile" \
+      "$apps_dir"
+  fi
 
-  log_success "镜像构建完成: findclass-ssr:${git_sha}"
+  log_success "镜像构建完成: ${service}:${git_sha}"
 }
 
 # pipeline_test - 安装依赖（lint/test 由 Jenkinsfile 独立 sh 步骤调用）
@@ -389,14 +403,17 @@ pipeline_test() {
 
 # pipeline_deploy - 部署新容器到目标环境
 # 参数: $1 = TARGET_ENV (blue/green), $2 = GIT_SHA
+# 环境变量控制：
+#   SERVICE_NAME - 服务名（默认 findclass-ssr）
 pipeline_deploy() {
   local target_env="$1"
   local git_sha="$2"
+  local service="${SERVICE_NAME:-findclass-ssr}"
   local target_container
   target_container=$(get_container_name "$target_env")
 
   # 停止旧的无后缀容器（从单容器模式迁移到蓝绿模式）
-  local legacy_container="findclass-ssr"
+  local legacy_container="$service"
   if [ "$(is_container_running "$legacy_container")" = "true" ] \
      && [ "$legacy_container" != "$target_container" ]; then
     log_info "停止旧容器: $legacy_container"
@@ -412,8 +429,8 @@ pipeline_deploy() {
   fi
 
   # 启动新容器
-  run_container "$target_env" "findclass-ssr:${git_sha}"
-  log_success "部署完成: $target_container (findclass-ssr:${git_sha})"
+  run_container "$target_env" "${service}:${git_sha}"
+  log_success "部署完成: $target_container (${service}:${git_sha})"
 }
 
 # pipeline_health_check - HTTP 健康检查

@@ -1,0 +1,172 @@
+#!/usr/bin/env groovy
+// Noda Site 蓝绿部署 Pipeline
+// 8 阶段: Pre-flight -> Build -> Deploy -> Health Check -> Switch -> Verify -> CDN Purge -> Cleanup
+// 手动触发（无自动触发配置）
+// 与 Jenkinsfile 相同流程，参数化为 noda-site 服务
+
+pipeline {
+    agent any
+
+    environment {
+        PROJECT_ROOT = "${WORKSPACE}"
+        // 服务参数（覆盖 manage-containers.sh 和 pipeline-stages.sh 的默认值）
+        SERVICE_NAME = "noda-site"
+        SERVICE_PORT = "3000"
+        UPSTREAM_NAME = "noda_site_backend"
+        HEALTH_PATH = "/"
+        ACTIVE_ENV_FILE = "/opt/noda/active-env-noda-site"
+        DOCKERFILE = "deploy/Dockerfile.noda-site"
+        UPSTREAM_CONF = "${WORKSPACE}/config/nginx/snippets/upstream-noda-site.conf"
+        // 蓝绿状态
+        ACTIVE_ENV = sh(
+            script: 'cat /opt/noda/active-env-noda-site 2>/dev/null || echo blue',
+            returnStdout: true
+        ).trim()
+        TARGET_ENV = "${env.ACTIVE_ENV == 'blue' ? 'green' : 'blue'}"
+    }
+
+    options {
+        // 禁止并发构建，防止两个 Pipeline 同时操作蓝绿容器
+        disableConcurrentBuilds()
+        // 保留最近 20 次构建日志
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timestamps()
+    }
+
+    // 注意：无 triggers 块 — 仅通过 "Build Now" 手动触发
+
+    stages {
+        stage('Pre-flight') {
+            steps {
+                // checkout noda-apps 仓库到子目录
+                dir('noda-apps') {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: '*/main']],
+                        userRemoteConfigs: [[
+                            url: 'git@github.com:wangdianwen/noda-apps.git',
+                            credentialsId: 'noda-apps-git-credentials'
+                        ]]
+                    ])
+                }
+                // 获取 noda-apps 的 Git SHA
+                script {
+                    env.GIT_SHA = sh(
+                        script: 'git -C noda-apps rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                }
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_preflight "$WORKSPACE/noda-apps"
+                '''
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_build "$WORKSPACE/noda-apps" "$GIT_SHA"
+                '''
+            }
+        }
+
+        // 无 Test 阶段 — noda-site 是纯静态站点，无源码测试
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_deploy "$TARGET_ENV" "$GIT_SHA"
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_health_check "$TARGET_ENV"
+                '''
+            }
+        }
+
+        stage('Switch') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_switch "$TARGET_ENV" "$ACTIVE_ENV"
+                '''
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_verify "$TARGET_ENV"
+                '''
+            }
+        }
+
+        stage('CDN Purge') {
+            steps {
+                script {
+                    // 凭据不存在时优雅跳过
+                    try {
+                        withCredentials([
+                            string(credentialsId: 'cf-api-token', variable: 'CF_API_TOKEN'),
+                            string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
+                        ]) {
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                pipeline_purge_cdn
+                            '''
+                        }
+                    } catch (Exception e) {
+                        echo "CDN Purge 跳过: Cloudflare 凭据未配置 (${e.message})"
+                    }
+                }
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_cleanup
+                '''
+            }
+        }
+    }
+
+    post {
+        failure {
+            script {
+                // 检查 TARGET_ENV 是否已定义（可能 Pre-flight 就失败了）
+                if (env.TARGET_ENV && env.TARGET_ENV != 'null') {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        pipeline_failure_cleanup "$TARGET_ENV"
+                    '''
+                    archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
+                } else {
+                    echo 'Pipeline 在 TARGET_ENV 设置前失败，跳过日志归档'
+                }
+            }
+        }
+        success {
+            echo "部署成功: ${env.TARGET_ENV} 现在是活跃环境 (镜像: noda-site:${env.GIT_SHA})"
+        }
+    }
+}
