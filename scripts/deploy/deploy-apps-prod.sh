@@ -1,8 +1,14 @@
 #!/bin/bash
 # ============================================
-# 部署应用服务到生产环境
-# findclass-ssr: 重新构建镜像 + 部署
+# 手动回退部署脚本（应用服务）
+# ============================================
+# NOTE: 此脚本作为 Jenkins Pipeline 不可用时的紧急回退方案保留。
+# 正常部署请使用 Jenkins Pipeline（Build Now -> findclass-deploy）。
+#
+# 原有功能：部署 findclass-ssr 应用服务（重新构建镜像 + 部署）
 # 使用独立的 docker-compose.app.yml（name: noda-apps）
+#
+# 此脚本行为不变，可直接手动执行。
 # ============================================
 
 set -euo pipefail
