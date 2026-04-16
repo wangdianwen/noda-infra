@@ -1,433 +1,327 @@
-# Feature Research: Noda v1.4 CI/CD 零停机部署
+# Feature Landscape
 
-**Domain:** Jenkins CI/CD Pipeline + Docker Compose 蓝绿部署
-**Researched:** 2026-04-14
-**Confidence:** HIGH（基于项目代码库深度分析 + Jenkins pipeline 社区最佳实践）
+**Domain:** 基础设施运维 -- 本地开发环境 + 基础设施 CI/CD Pipeline 扩展
+**Researched:** 2026-04-17
+**Confidence:** MEDIUM-HIGH（基于代码库深度分析 + 领域知识）
+**Supersedes:** v1.4 FEATURES.md（CI/CD 零停机部署，已全部实现）
 
 ---
 
-## Feature Landscape
+## Table Stakes
 
-### Table Stakes（部署流水线必须具备）
-
-缺少这些特性 = 部署流程不可靠、不安全、不可回退。这些是"编译失败不 down 站"承诺的基石。
+缺少会让系统不完整、不安全或不符合项目架构方向的功能。
 
 | # | Feature | Why Expected | Complexity | Notes |
-|---|---------|-------------|------------|-------|
-| T1 | **Pipeline 阶段化（Build -> Test -> Deploy -> Verify）** | 没有 stage 划分的 pipeline 无法做阶段级失败处理和回滚，等于手动部署的脚本化复刻 | LOW | Jenkins Declarative Pipeline 原生支持 `stages`，用 `post { failure {} }` 捕获每阶段失败 |
-| T2 | **镜像 Git SHA 标签** | 部署后无法追溯"线上跑的是哪个 commit" = 回滚盲目、审计断裂 | LOW | `docker build -t findclass-ssr:${GIT_COMMIT:0:12} .`，替换当前 `image: findclass-ssr:latest` |
-| T3 | **构建失败阻止部署** | 当前 `deploy-apps-prod.sh` 先 build 再 up，build 失败脚本退出但无结构化记录 | LOW | Jenkins 天然支持：`sh 'docker compose build'` 失败 → stage 失败 → pipeline 中止 |
-| T4 | **HTTP 健康检查验证** | 当前只做 Docker 容器级健康检查（`wget localhost:3001/api/health`），不验证外部可达性 | MEDIUM | 需要 curl 通过 nginx 访问 `http://localhost/health`（或 Cloudflare 外部 URL），验证完整链路 |
-| T5 | **自动回滚** | 当前 `deploy-apps-prod.sh` 有 `rollback_app()` 但仅保存镜像 digest，回滚需要 compose override | MEDIUM | 蓝绿模式下回滚更简单：不切换流量即可，旧容器仍在运行 |
-| T6 | **部署前数据库备份** | 当前 `deploy-infrastructure-prod.sh` 有 `check_recent_backup()` 逻辑，应用部署也应继承 | LOW | 直接复用 `scripts/lib/health.sh` 中的备份检查逻辑 |
-| T7 | **Jenkins 宿主机原生安装/卸载脚本** | Jenkins 是新组件，必须有干净的安装和完全卸载能力，不留残留 | LOW | apt/brew install + systemd/launchd 管理，JENKINS_HOME 独立目录 |
+|---|---------|--------------|------------|-------|
+| T1 | **宿主机 PostgreSQL 安装与配置** | 开发环境用 Docker 跑开发数据库是反模式（启动慢、资源浪费、端口冲突）；项目目标是 Docker Compose 精简为纯线上业务 | Low | Homebrew `brew install postgresql@17`，版本与生产对齐；需要创建 `noda_dev`、`keycloak_dev`、`jenkins` 三个数据库和对应用户 |
+| T2 | **Jenkins H2 → 本地 PG 迁移** | H2 是嵌入式数据库，Jenkins 官方文档明确标注 "not recommended for production"；数据丢失风险高，不支持并发访问；项目核心价值 "数据库永不丢失" 应覆盖 Jenkins 数据 | Med | 需要停止 Jenkins、创建 PG 数据库和用户、配置 JDBC 连接、验证；项目已有 `init-databases.sh` 模式可复用 |
+| T3 | **移除 postgres-dev / keycloak-dev 容器** | `docker-compose.dev.yml` 中 5433 端口的 postgres-dev 和 18080 端口的 keycloak-dev 占用资源；本地 PG 安装后完全多余；与 "Docker 纯线上业务" 目标矛盾 | Low | 删除 `docker-compose.dev.yml` 中的两个服务定义；`init-dev/*.sql` 逻辑迁移到本地 PG 初始化脚本 |
+| T4 | **统一基础设施 Pipeline** | 当前只有应用层 Pipeline（findclass-ssr、noda-site），基础设施变更完全手动 `deploy-infrastructure-prod.sh`；这是运维自动化的核心缺失 | Med | 参考 `Jenkinsfile` 的 9 阶段结构，`choice` 参数选择服务；参数化分发到服务特定逻辑 |
+| T5 | **Keycloak 蓝绿部署** | 生产环境 Keycloak 升级/重启当前会导致认证中断（`deploy-infrastructure-prod.sh` 先 `down` 再 `up`）；蓝绿是零停机的标准做法，项目已在 findclass-ssr/noda-site 上验证可行 | High | 复用 findclass-ssr 蓝绿框架（manage-containers.sh + upstream include 切换），但 Keycloak 有 session 状态和 schema migration 需要特殊处理 |
+| T6 | **部署前自动备份 + 健康检查 + 回滚** | 基础设施 Pipeline 的核心安全网；`deploy-infrastructure-prod.sh` 已实现但 Pipeline 中缺失；与核心价值 "数据库永不丢失" 对齐 | Low | 复用 `check_backup_freshness()`、`wait_container_healthy()`、`http_health_check()` |
+| T7 | **人工确认门禁** | 基础设施变更风险高（尤其是 Keycloak/PostgreSQL），必须有人确认再执行不可逆操作 | Low | Jenkins `input` 步骤，与现有 Pipeline 模式一致 |
 
-### Differentiators（提升部署安全性和开发体验）
+## Differentiators
 
-这些不是必须的，但能显著降低部署风险、提升团队信心。
+提升运维效率和系统可靠性的增值功能。
 
 | # | Feature | Value Proposition | Complexity | Notes |
 |---|---------|-------------------|------------|-------|
-| D1 | **蓝绿部署（零停机切换）** | 当前部署是 `--force-recreate`：先停旧容器再启新容器，存在停机窗口（30-60s SSR 冷启动）。蓝绿模式消除停机 | HIGH | 需要：双容器命名、nginx upstream 动态切换、状态文件追踪活跃环境。这是 v1.4 的核心价值 |
-| D2 | **Lint + 单元测试门禁** | 编译错误在构建阶段就暴露，不进入部署流程 | MEDIUM | noda-apps 仓库集成 eslint/prettier + vitest，pipeline 中 `sh 'pnpm lint && pnpm test'` |
-| D3 | **Pipeline 构建产物归档** | 失败时保留构建日志、容器日志，便于事后分析 | LOW | Jenkins `archiveArtifacts` + `docker compose logs` 捕获 |
-| D4 | **手动触发 + 参数化** | 不做自动 CI 触发（单服务器不需要），支持 `BUILD_ID` 参数指定构建版本 | LOW | Jenkins `parameters { string(name: 'BUILD_ID') }` 或 `pipelineTriggers` 手动触发 |
-| D5 | **部署通知（成功/失败）** | 部署结果主动通知，不需要手动检查 Jenkins UI | MEDIUM | 可集成邮件/Slack/Discord webhook。初始版本可用 Jenkins 内置邮件通知 |
-| D6 | **Cloudflare CDN 缓存清除** | 部署后静态资源 hash 变了但 index.html 被 CDN 缓存，用户看到旧版本 | MEDIUM | Cloudflare API `POST /zones/{id}/purge_cache`，需要 CF API Token |
+| D1 | **本地开发环境一键安装脚本** | 新开发者或新机器上 5 分钟搭建完整开发环境（PG + Node.js + pnpm + 环境变量 + 数据库初始化），降低上手门槛 | Med | 类似 `setup-jenkins.sh` 的子命令模式；需要检测 macOS/Linux 差异、检测已安装组件、幂等操作 |
+| D2 | **服务特定的 Pipeline 阶段智能分发** | 不同基础设施服务有不同的更新策略（postgres 需要 dump/restore 测试，keycloak 需要蓝绿切换，nginx 只需 reload），参数化 Pipeline 需要智能分发避免巨型 if-else | Med | `when` 条件基于 `params.SERVICE_NAME` 选择执行路径；用函数分发模式，每个服务一个 `pipeline_deploy_<service>()` 函数 |
+| D3 | **开发数据库种子数据自动化** | 本地 PG 初始化时自动创建表结构和测试数据，开发者无需手动操作 | Low | 复用现有 `init-dev/02-seed-data.sql`，但需要等 Prisma migration 先执行；脚本应检测表是否存在再插入 |
+| D4 | **Jenkins PG 数据纳入 B2 备份体系** | Jenkins 迁移到 PG 后，Jenkins 数据应纳入现有的自动备份流程，避免成为盲区 | Low | `backup-postgres.sh` 中添加 jenkins 数据库到备份列表；恢复脚本同步更新 |
+| D5 | **Pipeline 服务状态仪表板** | Jenkins Stage View 中展示所有基础设施服务状态，替代手动 `docker ps` | Low | Pipeline preflight 阶段输出结构化状态信息；Jenkins 内置 stage view 已足够 |
 
-### Anti-Features（明确不做的特性）
+## Anti-Features
 
-这些看起来合理，但在单服务器 Docker Compose 环境下是过度设计或会引入不必要复杂度。
+明确不构建的功能。
 
-| # | Anti-Feature | Why Requested | Why Problematic | Alternative |
-|---|-------------|--------------|-----------------|-------------|
-| A1 | **Jenkins 容器化部署** | "所有东西都该在 Docker 里" | Jenkins 需要 `docker.sock` 访问来管理其他容器，容器化后 Docker-in-Docker 安全风险大；项目只有一台服务器，Jenkins 直接操作宿主机 Docker 最简单 | 宿主机原生安装 Jenkins，直接访问 `/var/run/docker.sock` |
-| A2 | **多节点 Agent 分布式构建** | "Jenkins 最佳实践是 controller/agent 分离" | 只有一台服务器，分 controller/agent 增加网络配置复杂度，无性能收益 | 单节点 `agent any`，所有构建在 Jenkins 所在服务器执行 |
-| A3 | **自动 Git push/webhook 触发部署** | "代码推送自动部署" | 单服务器生产环境，自动部署风险高于手动触发。代码 push 后可能需要协调数据库迁移、配置变更 | 手动触发 Jenkins Job，保留人工审批环节 |
-| A4 | **Kubernetes 编排** | "生产就该用 K8s" | 项目只有 7 个容器，K8s 引入 etcd、control plane、RBAC 等复杂度，运维成本 10x | Docker Compose + blue-green nginx 切换，足够可靠 |
-| A5 | **Canary 发布 / 金丝雀部署** | "渐进式发布更安全" | 单服务器无法分流百分比流量，需要负载均衡器支持。蓝绿部署已经提供"全量验证再切换"的安全保障 | 蓝绿部署：新版本 100% 验证通过后再切换 |
-| A6 | **镜像仓库（Docker Registry）** | "构建镜像应该推到 registry" | 单服务器场景，镜像构建和使用在同一台机器，`docker build` 的本地镜像即可。自建 registry 增加存储和维护负担 | 本地镜像 + Git SHA 标签追踪，`docker images` 管理 |
-| A7 | **蓝绿切换用外部 KV 存储（Consul/etcd）** | "状态文件不可靠" | 引入新分布式组件只为存一个 active_color 状态，过度设计 | 文件 `/opt/noda/active-env` 追踪活跃环境，简单可靠，Jenkins 重启不影响 |
-
----
+| # | Anti-Feature | Why Avoid | What to Do Instead |
+|---|-------------|-----------|-------------------|
+| A1 | **外部 Infinispan 集群** | 项目是单服务器架构，引入 Infinispan 集群是过度工程化；Keycloak 用户量小，session 丢失的影响极低 | 接受 Keycloak 切换时短暂 session 丢失（用户重新登录一次）；在 Pipeline Switch 阶段添加警告日志 |
+| A2 | **Docker Compose profiles** | 项目已使用 overlay 模式（base + dev + prod），profiles 是另一套机制，混用增加复杂度 | 继续使用 overlay 模式；移除 dev 容器后 docker-compose.dev.yml 简化为仅 nginx 开发配置 |
+| A3 | **PostgreSQL 主从复制** | 单服务器架构不需要复制；增加运维复杂度 | 依赖 B2 备份 + 本地备份恢复机制 |
+| A4 | **Jenkins Shared Libraries** | 项目只有 3-4 个 Pipeline（findclass-ssr、noda-site、infra），Shared Libraries 是过度抽象 | 直接在 Jenkinsfile 中写逻辑，通过 `source scripts/pipeline-stages.sh` 复用函数 |
+| A5 | **动态服务发现（Extended Choice Parameter 插件）** | 自动检测可部署服务列表需要额外 Jenkins 插件，增加依赖 | 使用原生 `choice` 参数静态列出 4 个服务 |
+| A6 | **本地 Keycloak 安装** | 开发环境直接用生产 Keycloak 测试，本地安装 Keycloak 增加维护成本 | PROJECT.md 已明确列为 Out of Scope |
+| A7 | **PostgreSQL 蓝绿部署** | 数据库状态在 Docker volume 上，蓝绿无意义（两个容器挂同一个卷 = 同一个数据库） | 滚动更新（停止 → 备份 → 启动新版本）+ 备份恢复机制；短暂停机可接受 |
+| A8 | **Jenkins Configuration as Code (JCasC)** | 单服务器单一 Jenkinsfile 场景下，JCasC 配置比手动初始化更复杂 | 保持 groovy init 脚本自动化 + 手动 UI 配置 |
 
 ## Feature Dependencies
 
-```
-[T1: Pipeline 阶段化]
-    └──required-by──> [T5: 自动回滚]（回滚需要 post-failure hook）
-    └──required-by──> [T4: HTTP 健康检查]（检查是独立 stage）
-    └──required-by──> [T3: 构建失败阻止部署]（阶段划分天然阻止）
-
-[T2: 镜像 Git SHA 标签]
-    └──required-by──> [D1: 蓝绿部署]（蓝绿需要区分新旧镜像版本）
-    └──required-by──> [T5: 自动回滚]（回滚需要知道回滚到哪个镜像）
-
-[T7: Jenkins 安装脚本]
-    └──required-by──> [所有其他特性]（Jenkins 是所有 pipeline 的基础）
-
-[D1: 蓝绿部署]
-    ├──requires──> [T2: 镜像 Git SHA 标签]（区分新旧版本）
-    ├──requires──> [T4: HTTP 健康检查]（切换前验证新环境）
-    ├──requires──> [T5: 自动回滚]（验证失败不切换 = 自动保留旧环境）
-    └──requires──> [Nginx upstream 切换机制]（流量切换基础设施）
-
-[D2: Lint + 测试门禁]
-    └──requires──> [T1: Pipeline 阶段化]（lint/test 是独立 stage）
-    └──requires──> [noda-apps 仓库测试配置]（前置条件）
-
-[D6: CDN 缓存清除]
-    └──requires──> [T1: Pipeline 阶段化]（部署后 stage 执行清除）
-    └──requires──> [Cloudflare API Token]（凭证配置）
-
-[A3: 自动触发] ──conflicts──> [D4: 手动触发]（互斥选择，选手动）
-```
-
-### Dependency Notes
-
-- **T1 (Pipeline 阶段化) 是所有其他特性的基础：** Jenkins Declarative Pipeline 的 `stages` + `post` 是其他特性挂载的骨架。没有它，回滚、健康检查、测试门禁都无法结构化实现。
-- **T2 (Git SHA 标签) 是蓝绿部署的前提：** 蓝绿需要明确区分"新镜像"和"旧镜像"。当前 `findclass-ssr:latest` 标签无法区分版本。SHA 标签让 `findclass-ssr:abc1234` 和 `findclass-ssr:def5678` 共存。
-- **D1 (蓝绿) 依赖链最长：** 需要 T2 + T4 + T5 + nginx 改造。这意味着蓝绿是最后实现的特性。
-- **T7 (Jenkins 安装) 必须最先完成：** 没有 Jenkins 实例，所有 pipeline 特性无法开发和测试。
-
----
-
-## MVP Definition
-
-### Launch With（v1.4）
-
-最小可行 CI/CD -- 手动触发、构建验证、零停机部署、自动回滚。
-
-- [ ] **T7: Jenkins 宿主机安装/卸载脚本** -- 没有 Jenkins 就没有 pipeline
-- [ ] **T1: Pipeline 阶段化** -- Build -> Test -> Deploy -> Verify 四阶段骨架
-- [ ] **T2: 镜像 Git SHA 标签** -- 版本可追溯，蓝绿的基础
-- [ ] **T3: 构建失败阻止部署** -- Jenkins 天然支持，`sh` 失败即中止
-- [ ] **T6: 部署前数据库备份** -- 复用现有备份逻辑
-- [ ] **D1: 蓝绿部署** -- v1.4 核心价值，零停机切换
-- [ ] **T4: HTTP 健康检查** -- 蓝绿切换前的验证门槛
-- [ ] **T5: 自动回滚** -- 蓝绿模式下等于"不切换流量"，最简实现
-
-### Add After Validation（v1.4.x）
-
-核心 pipeline 稳定后追加的增强。
-
-- [ ] **D2: Lint + 单元测试门禁** -- 需要 noda-apps 仓库配合配置测试框架
-- [ ] **D3: 构建产物归档** -- Jenkins `archiveArtifacts` + 失败时容器日志
-- [ ] **D4: 参数化构建** -- 支持指定 BUILD_ID 或分支名
-- [ ] **D6: Cloudflare CDN 缓存清除** -- 需要配置 CF API Token
-
-### Future Consideration（v2+）
-
-有明确需求时再考虑。
-
-- [ ] **D5: 部署通知** -- 多人协作时才有价值，当前单人维护不需要
-- [ ] **多环境 pipeline（dev/staging/prod）** -- 当前 dev 环境是按需手动启动
-- [ ] **Pipeline as Code（Jenkinsfile in noda-apps repo）** -- 需要 noda-apps 仓库配置 Jenkins 多分支 pipeline
-- [ ] **基础设施服务的蓝绿部署** -- PostgreSQL/Keycloak 有状态，蓝绿复杂度远高于无状态应用
-
----
-
-## Feature Prioritization Matrix
-
-| Feature | User Value | Implementation Cost | Priority | Rationale |
-|---------|-----------|---------------------|----------|-----------|
-| T7: Jenkins 安装 | HIGH | LOW | P1 | 所有 pipeline 的基础，必须最先完成 |
-| T1: Pipeline 阶段化 | HIGH | LOW | P1 | Jenkins Declarative Pipeline 骨架，成本极低 |
-| T2: Git SHA 标签 | HIGH | LOW | P1 | 一行 Dockerfile/build 参数变更 |
-| T3: 构建失败阻止部署 | HIGH | LOW | P1 | Jenkins 天然支持，无需额外代码 |
-| T6: 部署前备份 | MEDIUM | LOW | P1 | 复用现有脚本，成本极低 |
-| D1: 蓝绿部署 | HIGH | HIGH | P1 | 核心价值但复杂度高，需要 nginx 改造 + 双容器管理 |
-| T4: HTTP 健康检查 | HIGH | MEDIUM | P1 | 蓝绿的前提条件，需要设计检查策略 |
-| T5: 自动回滚 | HIGH | MEDIUM | P1 | 蓝绿模式下"不切换"即回滚，但仍需结构化实现 |
-| D2: Lint + 测试 | MEDIUM | MEDIUM | P2 | 需要 noda-apps 仓库配合，依赖外部仓库变更 |
-| D3: 产物归档 | MEDIUM | LOW | P2 | Jenkins 内置功能，配置即可 |
-| D4: 参数化构建 | LOW | LOW | P2 | Jenkins `parameters` 块，简单但非紧急 |
-| D6: CDN 缓存清除 | MEDIUM | MEDIUM | P2 | 需要额外 API Token 配置和 Cloudflare API 集成 |
-| D5: 部署通知 | LOW | MEDIUM | P3 | 单人维护场景价值低 |
-
----
-
-## Competitor Feature Analysis
-
-对比同类单服务器 Docker 部署方案的特征覆盖。
-
-| Feature | 通用 Jenkins Pipeline | GitHub Actions self-hosted | CapRover / Dokku | Noda 方案 |
-|---------|----------------------|--------------------------|-------------------|-----------|
-| 蓝绿部署 | 需自行实现 | 需自行实现 | 内置（但黑盒） | 自行实现，基于 nginx upstream 切换 |
-| 自动回滚 | `post { failure }` | `if: failure()` | 有但不可控 | `post { failure }` + 保留旧容器 |
-| 健康检查 | 自行脚本 | 自行脚本 | 内置 | HTTP E2E curl 检查 |
-| 零停机 | 需自行实现 | 需自行实现 | 内置 | nginx upstream reload（毫秒级切换） |
-| 版本追溯 | Git tag + image tag | Git SHA | Git deploy | Git SHA 镜像标签 |
-| 基础设施管理 | 无（只管应用） | 无 | 无 | 复用现有部署脚本 |
-| 复杂度 | 中（需写 Jenkinsfile） | 低（YAML） | 低（平台抽象） | 中（透明可控） |
-
-**选择 Jenkins 的理由：** 项目已有 bash 部署脚本和 Docker Compose 基础设施管理，Jenkins 是最小侵入的选择 -- 把现有脚本包装进 pipeline stages，而不是重写整个部署流程。GitHub Actions 需要自托管 runner（等于另一个 Jenkins），CapRover/Dokku 要求迁移到它们的抽象层（放弃现有 Docker Compose 配置）。
-
----
-
-## 蓝绿部署架构详细分析
-
-### 当前部署模式（有停机）
+依赖关系决定实现顺序。
 
 ```
-deploy-apps-prod.sh 执行流程:
-  1. 验证基础设施
-  2. 保存当前镜像 digest
-  3. docker compose build findclass-ssr
-  4. docker compose up -d --force-recreate findclass-ssr  ← 停机点！
-     - 停止旧容器 -> 启动新容器 -> 等待健康检查（60s start_period）
-  5. 健康检查通过 / 失败回滚
+[T1: 宿主机 PG 安装]
+    |
+    +--> [T2: Jenkins H2 → PG 迁移]（依赖本地 PG 可用 + jenkins 数据库已创建）
+    |
+    +--> [T3: 移除 postgres-dev 容器]（依赖本地 PG 替代开发数据库）
+    |      |
+    |      +--> [T3b: 移除 keycloak-dev 容器]（依赖 postgres-dev 移除，keycloak-dev 连接 postgres-dev）
+    |
+    +--> [D3: 种子数据自动化]（依赖本地 PG 初始化流程稳定）
+    |
+    +--> [D4: Jenkins PG 备份]（依赖 T2 完成）
+
+[蓝绿部署框架]（已存在: manage-containers.sh + upstream include）
+    |
+    +--> [T5: Keycloak 蓝绿部署]
+    |      |
+    |      +--> [upstream-keycloak.conf 动态切换]（类似 upstream-findclass.conf）
+    |      +--> [env-keycloak.env 模板]（类似 env-findclass-ssr.env）
+    |      +--> [ACTIVE_ENV_FILE=/opt/noda/active-env-keycloak]
+    |
+    +--> [T4: 统一基础设施 Pipeline]
+           |
+           +--> [T6: 备份检查 + 健康检查 + 回滚]（复用现有函数）
+           +--> [T7: 人工确认门禁]（Jenkins input 步骤）
+           +--> [D2: 服务特定阶段分发]（when 条件 + 函数分发）
+
+[D1: 一键安装脚本]（独立，可在任何时间点完成，依赖 T1 流程稳定）
 ```
 
-**停机窗口：** `--force-recreate` 导致旧容器停止后、新容器健康前，nginx upstream 中 findclass-ssr 不可达。用户看到 502 错误页。
+### 关键依赖链
 
-### 蓝绿部署模式（零停机）
+1. **T1 → T2**：Jenkins 迁移必须等 PG 安装完成并验证
+2. **T1 → T3**：本地 PG 替代 postgres-dev 后才能安全移除容器
+3. **T3 → T3b**：keycloak-dev 的 `depends_on: postgres-dev`，必须同时或先移除 postgres-dev
+4. **upstream-keycloak → T5**：需要 `upstream-keycloak.conf` 切换机制（类似 upstream-findclass.conf）
+5. **T5 + T4**：Keycloak 蓝绿是基础设施 Pipeline 的一个子流程
+6. **T2 → D4**：Jenkins 迁移到 PG 后才能纳入备份体系
 
-```
-新部署流程:
-  1. 读取活跃环境状态文件: /opt/noda/active-env (内容: "blue" 或 "green")
-  2. 确定目标环境: 如果活跃是 blue，目标是 green，反之亦然
-  3. 构建镜像: docker build -t findclass-ssr:{SHA} .
-  4. 启动目标容器: docker run --name findclass-ssr-green -p 3002:3001 findclass-ssr:{SHA}
-  5. 等待目标容器健康: 检查 localhost:3002/api/health
-  6. HTTP E2E 验证: curl http://localhost:3002/ 完整页面响应
-  7. 切换 nginx upstream: 将 findclass_backend 指向 green:3001
-  8. nginx -s reload (graceful, 毫秒级)
-  9. 更新状态文件: echo "green" > /opt/noda/active-env
-  10. 停止旧容器: docker stop findclass-ssr-blue
+### 并行化机会
 
-  失败时（步骤 5-6 失败）:
-  - 不执行步骤 7-10
-  - 删除失败的 green 容器
-  - blue 容器持续运行，用户无感知
-```
+- T1（PG 安装）和 upstream-keycloak 抽离可以并行
+- T3（移除 dev 容器）和 T5（Keycloak 蓝绿准备）可以并行
+- D1（一键脚本）独立于所有其他 Feature
 
-### Nginx 切换机制
+## 各 Feature 详细分析
 
-**当前 nginx 配置（需要改造）：**
-```nginx
-upstream findclass_backend {
-    server findclass-ssr:3001 max_fails=3 fail_timeout=30s;
-}
-```
+### T1: 宿主机 PostgreSQL 安装与配置
 
-**蓝绿模式需要：**
-```nginx
-# 方案 A: include 文件切换（推荐）
-# nginx/conf.d/default.conf
-upstream findclass_backend {
-    include /etc/nginx/conf.d/findclass-upstream.conf;
-}
+**当前状态：** 生产 PG 在 Docker 容器 `noda-infra-postgres-prod` 中（postgres:17.9），开发 PG 在 `noda-infra-postgres-dev` 容器中（端口 5433）。
 
-# findclass-upstream.conf (由 pipeline 更新)
-server findclass-ssr-green:3001 max_fails=3 fail_timeout=30s;
-```
+**需要的数据库和用户：**
 
-**方案 A 选择理由：** `include` 文件 + `nginx -s reload` 是最简单可靠的方式。不需要引入 Consul Template、lua-nginx-module 或 Traefik 等新依赖。
+| 数据库 | 用途 | 认证方式 |
+|--------|------|---------|
+| `noda_dev` | 开发环境应用数据库（findclass-ssr / Prisma） | trust（本地）或 md5 |
+| `keycloak_dev` | Keycloak 开发数据库（实际可能不需要，因为 keycloak-dev 也被移除） | trust（本地） |
+| `jenkins` | Jenkins CI/CD 数据（替代 H2） | md5（密码认证） |
 
-### Docker Compose 蓝绿适配
+**关键决策：**
+- 本地 PG 监听 `localhost:5432`（默认端口），不与 Docker 容器冲突（Docker 容器在内部网络，端口不暴露到宿主机）
+- 生产 PG 继续在 Docker 容器中运行，完全隔离
+- 开发环境用 trust 认证（无需密码），Jenkins 用 md5 认证
 
-**关键决策：蓝绿容器不通过 docker-compose.yml 管理**
+**Complexity: Low** -- Homebrew 安装标准化，数据库创建脚本可复用 `init-databases.sh` 模式。
 
-理由：
-1. docker-compose.yml 的 `container_name: findclass-ssr` 是唯一的，无法同时运行两个同名容器
-2. 蓝绿需要两个容器共存（findclass-ssr-blue + findclass-ssr-green），compose 不天然支持
-3. Jenkins pipeline 直接用 `docker run` 启动目标容器，绕过 compose 的命名限制
+### T2: Jenkins H2 → 本地 PostgreSQL 迁移
 
-**compose 文件的角色变化：**
-- docker-compose.app.yml 中的 `findclass-ssr` 服务定义变为"初始部署"和"回退参考"
-- 蓝绿部署由 Jenkins pipeline 直接管理容器生命周期
-- compose 仍用于 `build` 阶段的镜像构建
+**当前状态：** Jenkins LTS 安装在宿主机（`/var/lib/jenkins`），使用默认 H2 嵌入式数据库。
 
-### 端口分配
+**迁移路径：**
+1. 停止 Jenkins 服务 (`sudo systemctl stop jenkins`)
+2. 备份 `$JENKINS_HOME` 目录
+3. 在本地 PG 中创建 `jenkins` 数据库和用户
+4. 下载 PostgreSQL JDBC 驱动到 `$JENKINS_HOME/lib/`
+5. 修改 Jenkins 数据库配置（通过 `JAVA_OPTS` 系统属性或 `jenkins.model.JenkinsLocationConfiguration.xml`）
+6. 启动 Jenkins，验证功能正常
 
-| 容器 | 内部端口 | 宿主机端口 | 备注 |
-|------|---------|-----------|------|
-| findclass-ssr-blue | 3001 | 3001（Docker 网络） | Docker 内部网络访问，不映射到宿主机 |
-| findclass-ssr-green | 3001 | 3002（Docker 网络） | Docker 内部网络访问，不映射到宿主机 |
-| nginx | 80 | 80 | 通过 Docker 内部网络访问 blue:3001 或 green:3001 |
+**停机时间：** 5-15 分钟。Jenkins 非关键服务，可接受。
 
-**注意：** blue 和 green 容器都在 `noda-network` 上。nginx 通过 Docker DNS 解析 `findclass-ssr-blue` 和 `findclass-ssr-green` 服务名。端口 3001 是容器内部端口，两个容器各自独立。
+**数据风险：** Jenkins 大部分配置存储在 XML 文件中（`$JENKINS_HOME/*.xml`、`jobs/` 目录），不在 H2 数据库中。H2 主要存储 fingerprint 和部分 Plugin 数据。对于新建的 Jenkins 实例（v1.4 刚安装），H2 中几乎没有需要迁移的数据。
 
----
+**Complexity: Med** -- 操作步骤清晰但需要验证 Jenkins 所有功能正常。
 
-## Health Check 策略
+**Confidence: MEDIUM** -- Jenkins H2 到 PG 迁移的具体配置项需要参考 Jenkins 当前版本的文档确认。
 
-### 两层健康检查
+### T3: 移除 postgres-dev / keycloak-dev 容器
 
-| 层 | 检查方式 | 目的 | 失败后果 |
-|----|---------|------|---------|
-| L1: 容器级 | Docker healthcheck（已在 compose 中配置） | 确认容器进程健康 | 容器标记为 unhealthy |
-| L2: HTTP E2E | curl 通过 nginx 访问外部 URL | 确认完整请求链路可达 | 阻止流量切换 |
+**当前状态（docker-compose.dev.yml）：**
+- `postgres-dev`：端口 5433，init-dev 脚本创建 noda_dev、keycloak_dev、findclass_dev
+- `keycloak-dev`：端口 18080/19000，`depends_on: postgres-dev`，使用 `start-dev` 模式
 
-### L2 E2E 检查详细设计
+**影响矩阵：**
 
-```bash
-# 检查新容器直接可达（绕过 nginx）
-curl -sf http://localhost:3001/api/health -o /dev/null
+| 依赖方 | 影响 | 解决方案 |
+|--------|------|---------|
+| 本地开发 PG 连接（5433 端口） | 端口不再存在 | 改为连接 localhost:5432（本地 PG） |
+| keycloak-dev 容器 | 整个容器被移除 | 开发环境用生产 Keycloak（auth.noda.co.nz），PROJECT.md 已列为 Out of Scope |
+| `docker-compose.dev-standalone.yml` | 引用 postgres-dev | 同步移除或标记废弃 |
+| `deploy-infrastructure-prod.sh` | EXPECTED_CONTAINERS 和 START_SERVICES 引用 postgres-dev | 移除引用 |
+| 种子数据脚本 `init-dev/*.sql` | 不再被 Docker 自动执行 | 迁移到本地 PG 初始化脚本 |
 
-# 检查新容器通过 nginx 可达（如果 nginx 已切换）
-# 注意：蓝绿模式下，切换前 nginx 指向旧容器
-# 所以 E2E 检查分两步：
+**保留的 dev.yml 内容：** `nginx` 开发配置（端口 8081）和 `keycloak` 生产容器的开发覆盖（环境变量覆盖）应保留，不依赖 postgres-dev。
 
-# Step 1: 直接检查新容器健康
-curl -sf http://findclass-ssr-green:3001/api/health
+**Complexity: Low** -- 主要是删除配置 + 更新引用。
 
-# Step 2: 切换后验证（nginx reload 后）
-# 等待 2 秒让 nginx worker 完成切换
-sleep 2
-curl -sf http://localhost/health -H "Host: class.noda.co.nz"
-```
+### T4: 统一基础设施 Pipeline
 
-**重试策略：** 最多重试 10 次，每次间隔 5 秒，总超时 50 秒。覆盖 findclass-ssr 的 60 秒 `start_period`。
+**当前状态：** 两个应用 Pipeline（`Jenkinsfile` for findclass-ssr，`Jenkinsfile.noda-site` for noda-site），基础设施通过 `deploy-infrastructure-prod.sh` 手动执行。
 
----
+**目标：** `jenkins/Jenkinsfile.infra`，通过 `choice` 参数选择服务。
 
-## Pipeline Stage 详细设计
+**参数设计：**
 
 ```groovy
-pipeline {
-    agent any
-
-    environment {
-        GIT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-        ACTIVE_ENV = sh(script: 'cat /opt/noda/active-env 2>/dev/null || echo blue', returnStdout: true).trim()
-        TARGET_ENV = "${env.ACTIVE_ENV == 'blue' ? 'green' : 'blue'}"
-    }
-
-    stages {
-        stage('Pre-flight') {
-            steps {
-                // 验证基础设施服务健康
-                sh 'bash scripts/verify/verify-infrastructure.sh'
-                // 验证数据库备份足够新
-                sh 'bash scripts/lib/backup-check.sh'
-            }
-        }
-
-        stage('Build') {
-            steps {
-                // 构建镜像，打 Git SHA 标签
-                sh "docker build -t findclass-ssr:${GIT_SHA} -f deploy/Dockerfile.findclass-ssr ../noda-apps"
-            }
-        }
-
-        stage('Test') {
-            steps {
-                // 未来: lint + 单元测试
-                // sh 'docker run --rm findclass-ssr:${GIT_SHA} pnpm test'
-                echo 'Test stage placeholder (v1.4.x: add lint + unit test)'
-            }
-        }
-
-        stage('Deploy Target') {
-            steps {
-                // 启动目标环境容器（不影响活跃环境）
-                sh """
-                    docker run -d \
-                        --name findclass-ssr-${TARGET_ENV} \
-                        --network noda-network \
-                        -e NODE_ENV=production \
-                        -e DATABASE_URL=... \
-                        findclass-ssr:${GIT_SHA}
-                """
-            }
-        }
-
-        stage('Health Check') {
-            steps {
-                // 等待目标容器健康
-                sh """
-                    for i in \$(seq 1 10); do
-                        if curl -sf http://findclass-ssr-${TARGET_ENV}:3001/api/health; then
-                            echo "Target healthy"
-                            exit 0
-                        fi
-                        sleep 5
-                    done
-                    echo "Health check failed"
-                    exit 1
-                """
-            }
-        }
-
-        stage('Switch Traffic') {
-            steps {
-                // 更新 nginx upstream 指向目标容器
-                sh """
-                    echo 'server findclass-ssr-${TARGET_ENV}:3001 max_fails=3 fail_timeout=30s;' \
-                        > /opt/noda/findclass-upstream.conf
-                    docker exec noda-infra-nginx nginx -s reload
-                """
-                // 更新活跃环境状态
-                sh "echo ${TARGET_ENV} > /opt/noda/active-env"
-            }
-        }
-
-        stage('Post-switch Verify') {
-            steps {
-                // 切换后 E2E 验证
-                sh 'curl -sf http://localhost/health -H "Host: class.noda.co.nz"'
-            }
-        }
-
-        stage('Cleanup Old') {
-            steps {
-                // 停止并移除旧容器
-                sh "docker stop findclass-ssr-${ACTIVE_ENV} || true"
-                sh "docker rm findclass-ssr-${ACTIVE_ENV} || true"
-                // 清理旧镜像
-                sh 'docker image prune -f --filter "until=168h"'
-            }
-        }
-    }
-
-    post {
-        failure {
-            // 清理失败的目标容器（活跃环境未受影响）
-            sh "docker rm -f findclass-ssr-${TARGET_ENV} || true"
-            // 捕获日志
-            sh "docker logs findclass-ssr-${TARGET_ENV} > deployment-failure.log 2>&1 || true"
-            archiveArtifacts artifacts: 'deployment-failure.log', allowEmptyArchive: true
-        }
-        success {
-            echo "Deployment successful: ${TARGET_ENV} is now active (image: ${GIT_SHA})"
-        }
-    }
+parameters {
+    choice(name: 'SERVICE',
+           choices: ['keycloak', 'postgres', 'nginx', 'noda-ops'],
+           description: '选择要部署的基础设施服务')
+    booleanParam(name: 'SKIP_BACKUP', defaultValue: false,
+                 description: '跳过部署前备份检查（仅在确认备份充足时使用）')
 }
 ```
 
----
+**服务特定阶段差异：**
 
-## 现有脚本迁移映射
+| 阶段 | postgres | keycloak | nginx | noda-ops |
+|------|----------|----------|-------|----------|
+| Pre-flight | 备份检查 + PG 连通性 | 备份检查 + 当前 Keycloak 健康 | 备份检查 + nginx 配置验证 | 备份检查 + noda-ops 容器存在 |
+| Deploy | `docker compose up -d --force-recreate --no-deps` | 蓝绿：新容器启动 → 健康检查 → upstream 切换 | `docker compose up -d --force-recreate --no-deps` + reload | `docker compose up -d --force-recreate --no-deps` |
+| Health Check | `pg_isready` via `docker exec` | HTTP 8080 TCP 检查 | HTTP 80 端口可达 | PG 连通性检查 |
+| Verify | SQL 查询（`SELECT 1`） | 登录页 HTTP 200 | 反向代理正常 | 备份脚本可执行 |
+| Switch | N/A（滚动更新） | upstream 切换 + nginx reload | N/A（已 reload） | N/A（滚动更新） |
+| Rollback | 回退到之前镜像 digest | 回退 upstream + 停新容器 | 回退到之前镜像 | 回退到之前镜像 |
 
-| 现有脚本步骤 | Jenkins Pipeline Stage | 变更 |
-|------------|----------------------|------|
-| `verify-infrastructure.sh` | Pre-flight | 无变更，直接调用 |
-| `save_app_image_tags()` | Pre-flight | 蓝绿模式下不需要，旧容器保留直到切换成功 |
-| `docker compose build` | Build | 改为 `docker build -t findclass-ssr:${SHA}` |
-| `docker compose up --force-recreate` | Deploy Target | 改为 `docker run` 启动目标环境容器 |
-| `wait_container_healthy()` | Health Check | 改为直接 curl 目标容器 |
-| 无 | Switch Traffic（新增） | nginx upstream 切换 + reload |
-| 无 | Post-switch Verify（新增） | 通过 nginx 验证完整链路 |
-| 无 | Cleanup Old（新增） | 停止旧容器 |
-| `rollback_app()` | post { failure } | 蓝绿模式：删除失败容器即可，无需 compose overlay |
+**注意：** postgres、nginx、noda-ops 使用滚动更新（有短暂停机）。只有 Keycloak 使用蓝绿部署（零停机）。这是合理的权衡 -- postgres 不可蓝绿（数据库状态在卷上），nginx 停机极短（reload 秒级），noda-ops 非面向用户。
 
----
+**Complexity: Med** -- Pipeline 结构清晰，服务特定逻辑需要仔细实现。
+
+### T5: Keycloak 蓝绿部署
+
+**当前状态：** Keycloak 生产容器 `noda-infra-keycloak-prod`，upstream 硬编码 `keycloak:8080`。
+
+**架构调整：**
+
+1. **upstream-keycloak.conf 动态化**（当前内容：`server keycloak:8080`）：
+   ```
+   upstream keycloak_backend {
+       server keycloak-blue:8080 max_fails=3 fail_timeout=30s;
+   }
+   ```
+
+2. **manage-containers.sh 参数化复用**（已支持）：
+   ```bash
+   SERVICE_NAME=keycloak \
+   SERVICE_PORT=8080 \
+   UPSTREAM_NAME=keycloak_backend \
+   HEALTH_PATH=/health \
+   ACTIVE_ENV_FILE=/opt/noda/active-env-keycloak \
+   UPSTREAM_CONF=config/nginx/snippets/upstream-keycloak.conf \
+   scripts/manage-containers.sh init
+   ```
+
+3. **env-keycloak.env 模板**（大量环境变量）：
+   ```
+   KC_DB=postgres
+   KC_DB_URL=jdbc:postgresql://postgres:5432/keycloak
+   KC_DB_USERNAME=${POSTGRES_USER}
+   KC_DB_PASSWORD=${POSTGRES_PASSWORD}
+   KC_HOSTNAME=https://auth.noda.co.nz
+   KC_PROXY=edge
+   KC_PROXY_HEADERS=xforwarded
+   # ... SMTP 等配置
+   ```
+
+**Session 处理策略：**
+
+| 方案 | 复杂度 | 用户体验 | 推荐 |
+|------|--------|---------|------|
+| 接受 session 丢失 | Low | 切换时活跃用户需重新登录 | 推荐 |
+| 外部 Infinispan 集群 | High | 完全无感 | 过度工程化 |
+| JDBC-based session persistence | Med | 数据库 IO 延迟增加 | 不值得 |
+
+**结论：** 单服务器 + 小用户量，接受 session 丢失。Pipeline Switch 阶段记录警告日志。
+
+**数据库共享风险：**
+- 蓝绿两个容器共享同一个 PostgreSQL `keycloak` 数据库
+- Keycloak 启动时自动执行 schema migration
+- **风险：** 新版本 schema migration 可能不兼容旧版本
+- **缓解：** 部署前备份数据库，回滚时恢复备份；先启动新容器完成 migration，验证通过后再切换
+
+**Complexity: High** -- session 管理、schema migration、大量环境变量配置、模板文件管理。
+
+**Confidence: MEDIUM** -- Keycloak schema migration 在共享数据库上的行为需要实际测试验证。
+
+### T7: 人工确认门禁
+
+**放置位置：**
+
+| 服务 | 门禁位置 | 理由 |
+|------|---------|------|
+| postgres | Deploy 之前 | 数据库变更不可逆，必须确认备份可用 |
+| keycloak | Switch 之前 | 切换后活跃用户 session 丢失，需要确认 |
+| nginx | Deploy 之前 | 反向代理中断影响所有服务 |
+| noda-ops | 无门禁 | 备份服务变更影响小 |
+
+**实现：** Jenkins `input` 步骤，超时 30 分钟自动中止。
+
+**Complexity: Low** -- Jenkins 原生支持。
+
+### D1: 本地开发环境一键安装脚本
+
+**需要的组件：**
+
+| 组件 | macOS | Linux | 验证 |
+|------|-------|-------|------|
+| PostgreSQL 17 | `brew install postgresql@17` | `sudo apt install postgresql-17` | `psql --version` |
+| Node.js 21+ | `brew install node` | nodesource apt | `node --version` |
+| pnpm | `npm install -g pnpm` | `npm install -g pnpm` | `pnpm --version` |
+| 数据库初始化 | SQL 脚本 | SQL 脚本 | `\l` |
+| 环境变量 | 生成 `.env` | 生成 `.env` | 连接测试 |
+
+**脚本结构（参考 setup-jenkins.sh）：**
+
+```
+setup-dev-env.sh install     # 安装所有依赖（幂等）
+setup-dev-env.sh init-db     # 初始化本地数据库
+setup-dev-env.sh status      # 检查所有组件状态
+setup-dev-env.sh reset       # 重置开发数据库（危险操作，需确认）
+```
+
+**Complexity: Med** -- macOS/Linux 差异处理和幂等性逻辑需要仔细设计。
+
+## MVP Recommendation
+
+**Phase 1 优先（基础设施层，解除 dev 容器依赖）：**
+1. T1: 宿主机 PostgreSQL 安装与配置
+2. T2: Jenkins H2 → PG 迁移
+3. T3: 移除 postgres-dev / keycloak-dev 容器
+
+**Phase 2 优先（Pipeline 层，运维自动化）：**
+4. T4: 统一基础设施 Pipeline
+5. T5: Keycloak 蓝绿部署
+
+**Phase 3 优先（开发者体验层）：**
+6. D1: 一键安装脚本
+
+**Defer（后续 milestone）：**
+- Keycloak session 持久化：用户量小，过度工程化
+- Jenkins PG 备份恢复演练
+- PostgreSQL 蓝绿部署：无意义（状态在卷上）
+- 基础设施自动触发部署：手动触发已满足需求
 
 ## Sources
 
-- 项目代码库：`scripts/deploy/deploy-apps-prod.sh`（当前部署流程）
-- 项目代码库：`scripts/deploy/deploy-infrastructure-prod.sh`（基础设施部署流程，回滚逻辑参考）
-- 项目代码库：`scripts/lib/health.sh`（健康检查工具函数）
-- 项目代码库：`docker/docker-compose.app.yml`（应用服务定义）
-- 项目代码库：`config/nginx/conf.d/default.conf`（nginx 反向代理配置，upstream 定义）
-- Jenkins Declarative Pipeline 官方文档：`stages`、`post`、`environment` 语法
-- Jenkins Docker Pipeline 插件：`docker.build()`、`docker.withServer()` API
-- Docker Compose v2：`docker compose` CLI（项目已使用）
-- Nginx upstream 切换：`include` 指令 + `nginx -s reload` graceful reload
-- 蓝绿部署模式：Nginx blog "Blue-Green Deployments" 社区实践
+- 项目代码库分析（HIGH confidence）：
+  - `docker/docker-compose.yml`、`docker/docker-compose.dev.yml`、`docker/docker-compose.prod.yml`、`docker/docker-compose.app.yml`
+  - `scripts/manage-containers.sh`（蓝绿容器管理，支持多服务参数化）
+  - `scripts/pipeline-stages.sh`（Pipeline 阶段函数库）
+  - `scripts/setup-jenkins.sh`（Jenkins 安装脚本，可复用模式）
+  - `jenkins/Jenkinsfile`、`jenkins/Jenkinsfile.noda-site`（现有 Pipeline 结构）
+  - `config/nginx/snippets/upstream-keycloak.conf`（当前硬编码 upstream）
+  - `config/nginx/snippets/upstream-findclass.conf`（蓝绿 upstream 切换参考）
+  - `docker/services/postgres/init-dev/01-create-databases.sql`、`02-seed-data.sql`（开发数据库初始化）
+  - `scripts/init-databases.sh`（数据库创建脚本模式）
+  - `scripts/deploy/deploy-infrastructure-prod.sh`（当前手动部署流程）
+- Jenkins H2 to PG 迁移：Jenkins 官方文档 + 社区实践，MEDIUM confidence
+- Keycloak Infinispan session 管理：Keycloak 26.x 文档，MEDIUM confidence
+- Homebrew PostgreSQL 安装：标准化流程，HIGH confidence
 
 ---
-*Feature research for: Noda v1.4 CI/CD 零停机部署*
-*Researched: 2026-04-14*
+*Feature research for: Noda v1.5 开发环境本地化 + 基础设施 CI/CD*
+*Researched: 2026-04-17*

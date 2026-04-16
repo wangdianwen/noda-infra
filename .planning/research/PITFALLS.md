@@ -1,190 +1,227 @@
-# Domain Pitfalls: Noda v1.4 CI/CD 零停机蓝绿部署
+# Domain Pitfalls: Noda v1.5 开发环境本地化 + 基础设施 CI/CD
 
-**Domain:** Jenkins + Docker Compose 蓝绿部署（单服务器环境）
-**Researched:** 2026-04-14
-**Confidence:** MEDIUM（项目代码库深度分析 + 训练知识 + 社区最佳实践；Web 搜索遭遇限流，部分结论未经在线验证）
+**Domain:** Docker Compose 基础设施项目 — 添加本地开发环境、Jenkins H2 迁移、Keycloak 蓝绿部署、统一基础设施 Pipeline
+**Researched:** 2026-04-17
+**Confidence:** MEDIUM（项目代码库深度分析 + 训练知识；WebSearch API 不可用，部分结论未经在线验证）
 
 ---
 
 ## Critical Pitfalls
 
-### Pitfall 1: Docker Socket 挂载导致容器逃逸
+### Pitfall 1: Jenkins H2 迁移到 PostgreSQL — 静默数据丢失
 
 **What goes wrong:**
-Jenkins 容器挂载 `/var/run/docker.sock` 以执行 `docker compose build/up`。任何 Pipeline 脚本都可以通过 `docker run -v /:/hostRoot` 获取宿主机 root 权限，读取 `/etc/shadow`、SSH 密钥、`.env` 文件中的所有凭证。
+Jenkins 从嵌入式 H2 数据库迁移到 PostgreSQL 时，构建历史、Pipeline 定义、凭据、插件配置可能部分丢失。最危险的是"静默丢失"——迁移显示成功，但某些插件的自定义表或大字段（如构建日志 XML）未被完整迁移，直到数天后用户发现数据缺失。
 
 **Why it happens:**
-Jenkins 在 Docker 中运行、又要控制 Docker，最"简单"的做法就是挂载 socket。教程和博客大量使用这种模式，不提安全后果。项目 PROJECT.md 明确说"Jenkins 宿主机原生安装"就是为了避免这个问题。
+- H2 和 PostgreSQL 的类型系统不同：H2 的 `CLOB` 映射到 PostgreSQL 的 `TEXT` 时可能截断；`BOOLEAN` 表示方式不同（H2 用整数，PG 用布尔）
+- Jenkins 插件可以创建自定义数据库表，官方迁移脚本不覆盖第三方插件表
+- H2 对外键约束更宽松，违反约束的行在导入 PG 时被静默丢弃
+- 如果迁移期间 Jenkins 未完全停止，H2 文件可能处于不一致状态
 
 **How to avoid:**
-Jenkins 原生安装在宿主机上（不使用 Docker 容器），直接操作 Docker daemon。这消除了 socket 挂载的安全问题，同时简化了 Docker Compose 调用（无需处理容器内 docker CLI 的上下文路径问题）。
+1. **迁移前**：完整备份 `JENKINS_HOME`（含 `db.bak` 目录中的 H2 文件）
+2. **迁移前**：记录关键表的行数（`build`、`job`、`credential` 等），迁移后逐表对比
+3. **迁移时**：必须先停止 Jenkins（`systemctl stop jenkins`），确认进程完全退出
+4. **迁移后**：启动 Jenkins 前验证 JDBC 连接、字符编码（必须是 `UTF8`）、时区设置
+5. **回滚计划**：保留 H2 文件至少一周，确保可以回退
 
 **Warning signs:**
-- Jenkins 安装方案出现 `docker run -v /var/run/docker.sock:/var/run/docker.sock`
-- Jenkinsfile 中出现 `docker.inside {}` 或 `docker.image().inside {}` 模式
-- 任何 docker-compose.yml 中出现 `/var/run/docker.sock` 卷映射
+- Jenkins 启动日志中出现 `DataConversionException` 或 `SchemaException`
+- 构建历史数量少于迁移前
+- Pipeline 定义丢失或变回默认值
+- 凭据列表为空
 
 **Phase to address:**
-Phase 1（Jenkins 安装）。一旦选择了容器化安装，后续所有安全加固都是补丁。
+Phase 1（宿主机 PostgreSQL 安装 + Jenkins 迁移）。这是整个里程碑的基础——如果迁移失败，后续所有依赖 Jenkins 数据库的功能都会受影响。
 
 ---
 
-### Pitfall 2: 蓝绿容器端口冲突
+### Pitfall 2: Homebrew PostgreSQL 版本与 Docker PostgreSQL 版本不匹配
 
 **What goes wrong:**
-当前 findclass-ssr 使用固定容器名 `findclass-ssr` 和固定内部端口 3001。蓝绿部署需要同时运行两个实例（如 `findclass-blue` 和 `findclass-green`），但 nginx upstream 硬编码了 `findclass-ssr:3001`。如果直接用 Docker Compose 启动两个同 image 不同名的服务，nginx 不会自动发现新服务。
+宿主机通过 Homebrew 安装的 PostgreSQL 版本（如 17.x）与 Docker 中运行的 PostgreSQL 版本（当前 `postgres:17.9`）看起来主版本号相同，但 `pg_dump`/`pg_restore` 工具的次版本差异可能导致备份不兼容。更关键的是：Jenkins 使用 JDBC 驱动连接 PostgreSQL，如果 Homebrew 升级了 PostgreSQL 但 Jenkins 的 PostgreSQL JDBC 驱动版本不匹配，连接可能静默失败或数据损坏。
 
 **Why it happens:**
-Docker Compose 的服务发现依赖服务名（DNS）。当前架构中 nginx upstream 指向固定服务名 `findclass-ssr`。蓝绿切换需要 nginx 从 `findclass-blue` 切换到 `findclass-green`（或反过来），但 nginx 配置中没有这种动态能力。
+- Homebrew 的 PostgreSQL 版本跟随 Homebrew formula，可能比 Docker 固定版本（`postgres:17.9`）更新
+- `pg_dump 17.9` 产出的备份无法被 `pg_restore 16.x` 恢复（跨大版本不兼容）
+- Jenkins 的 PostgreSQL 插件自带的 JDBC 驱动版本（如 `42.x.x`）必须与 PostgreSQL 服务端版本兼容
+- 项目当前 Docker 中使用 `postgres:17.9`，但 Jenkins 的 JDBC 驱动可能只测试过 16.x
 
 **How to avoid:**
-两种可行方案：
-
-**方案 A（推荐，简单）：** 单一服务名 + 替换容器
-- 保持 `findclass-ssr` 作为唯一服务名
-- 先构建新镜像，停掉旧容器，启动新容器（名字相同）
-- 不是真正的蓝绿，但配合 nginx `proxy_next_upstream` 和 `fail_timeout=0`（即时故障转移）可以实现极短中断
-- 好处：不修改 nginx 配置，不修改 Docker Compose 服务定义
-
-**方案 B（真正蓝绿）：** 两个服务名 + nginx upstream 切换
-- 定义 `findclass-blue` 和 `findclass-green` 两个服务
-- nginx upstream 通过 `include` 引用动态生成的配置文件
-- 切换时修改 include 文件 + `nginx -s reload`
-- 好处：零停机，新容器完全启动后再切换
+1. **锁定 Homebrew PostgreSQL 版本**：使用 `brew install postgresql@17` 而非 `brew install postgresql`，确保与 Docker 版本匹配
+2. **验证 JDBC 驱动兼容性**：迁移前测试 Jenkins 的 PostgreSQL 插件与本地 PG 的连接
+3. **统一工具链**：确保 `pg_dump`/`psql` 的客户端版本与服务器端版本一致（`psql --version` vs `SELECT version()`）
+4. **文档化版本矩阵**：在 STACK.md 中明确 Homebrew PG 版本、Docker PG 版本、JDBC 驱动版本的对应关系
 
 **Warning signs:**
-- docker-compose.app.yml 中 `container_name: findclass-ssr` 是固定值
-- nginx `upstream findclass_backend` 硬编码 `server findclass-ssr:3001`
-- 健康检查 `wget http://localhost:3001/api/health` 假设端口固定
+- `pg_dump` 报 `aborting because of server version mismatch`
+- Jenkins 日志出现 `org.postgresql.util.PSQLException: Protocol error`
+- `psql` 客户端连接时出现 `major version differs` 警告
 
 **Phase to address:**
-Phase 2（Pipeline 迁移）。在编写 Jenkinsfile 之前必须确定蓝绿策略，否则 Pipeline 逻辑无法设计。
+Phase 1（宿主机 PostgreSQL 安装）。安装时必须锁定版本，不然后续所有数据库操作都可能出问题。
 
 ---
 
-### Pitfall 3: 数据库迁移破坏蓝绿共存
+### Pitfall 3: 移除 postgres-dev / keycloak-dev 容器破坏现有开发工作流
 
 **What goes wrong:**
-蓝绿部署的核心假设是两个版本可以同时运行。如果新版本包含数据库 schema 变更（如 `DROP COLUMN`、`RENAME TABLE`），旧版本会立即崩溃，因为它期望的列/表已经不存在。这导致回滚不可能。
+项目当前 `docker-compose.dev.yml` 定义了 `postgres-dev`（端口 5433）和 `keycloak-dev`（端口 18080）作为开发环境容器。移除这些容器后，开发者的本地应用配置（如 `.env` 中的数据库连接字符串）会立即失效。如果有开发数据沉淀在 `postgres_dev_data` Docker volume 中，移除容器后这些数据可能无法恢复。
 
 **Why it happens:**
-Prisma migrate 通常在应用启动前运行。蓝绿部署时，新容器启动时运行迁移，立即修改了共享数据库。旧容器还在运行但 schema 已不兼容。如果新版本有问题需要回滚，数据库已经被修改，旧版本的迁移回滚可能无法安全执行。
+- `docker-compose.dev.yml` 的 `postgres-dev` 容器有独立的 Docker volume `postgres_dev_data`，包含开发用的种子数据和测试数据
+- `keycloak-dev` 的 `start-dev` 模式提供了与生产环境隔离的 Keycloak 测试实例（不需要 HTTPS、不设 hostname 限制）
+- 开发者本地的环境变量、IDE 数据库连接配置可能硬编码了 `localhost:5433`
+- 移除容器后，需要重新配置所有本地开发工具指向宿主机 PostgreSQL
 
 **How to avoid:**
-1. **Expand-Contract 模式**：只做加法迁移（ADD COLUMN、CREATE TABLE），不做破坏性迁移（DROP、RENAME）。破坏性操作延后到下一版本，此时旧容器已完全下线。
-2. **迁移与部署分离**：在 Jenkins Pipeline 中，数据库迁移作为独立阶段执行，不与应用启动耦合。迁移先于部署运行，且必须确保向后兼容。
-3. **Prisma 约束**：当前项目使用 Prisma 6.x，`prisma migrate deploy` 只执行 forward 迁移。这实际上符合蓝绿最佳实践（不做回滚迁移），但需要在 Pipeline 中正确处理。
+1. **数据迁移脚本**：在移除容器前，编写脚本将 `postgres_dev_data` volume 中的数据导出并导入到宿主机 PostgreSQL 的开发数据库中
+2. **端口映射过渡**：宿主机 PostgreSQL 的开发数据库监听 `localhost:5433`（与旧容器端口一致），减少开发者配置变更
+3. **文档化迁移步骤**：明确列出需要修改的本地配置文件（`.env`、IDE 配置等）
+4. **保留 keycloak-dev 的替代方案**：由于本地不安装 Keycloak（PROJECT.md Out of Scope），需要明确开发者如何测试认证流程（如使用生产 Keycloak 的测试 realm）
+5. **分阶段移除**：先让宿主机 PostgreSQL 可用，验证开发流程正常后再移除 Docker 容器
 
 **Warning signs:**
-- `schema.prisma` 中删除了字段或重命名了表
-- Pipeline 中迁移和应用启动在同一个步骤中执行
-- 没有迁移兼容性检查（新 schema 是否被旧代码兼容）
+- 开发者报告本地应用无法连接数据库
+- `docker compose -f docker-compose.dev.yml up` 报服务未定义
+- CI/CD Pipeline 中引用 `postgres-dev` 的步骤失败
 
 **Phase to address:**
-Phase 2（Pipeline 迁移）。Pipeline 的阶段设计必须明确迁移的执行时机和兼容性检查。
+Phase 2（移除 dev 容器）。必须在宿主机 PostgreSQL 完全就绪后才能执行，不能并行。
 
 ---
 
-### Pitfall 4: 健康检查假阳性/假阴性
+### Pitfall 4: Keycloak 蓝绿部署的数据库 Schema 冲突
 
 **What goes wrong:**
-当前健康检查 `wget --spider http://localhost:3001/api/health` 是 TCP 层面的探活。但在蓝绿切换场景中，容器 "healthy" 不等于 "应用就绪"：
-- **假阳性**：容器启动了，端口在监听，但应用还在做 Prisma Client 初始化/缓存预热，第一个请求会超时
-- **假阴性**：`start_period: 60s` 太短，Node.js SSR 构建加载慢时健康检查过早判定为 unhealthy
+Keycloak 在启动时通过 Liquibase 自动执行数据库 schema 迁移。蓝绿部署时，如果新旧版本共享同一个 PostgreSQL 数据库（当前架构中 `KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak`），新版本启动时会尝试升级 schema。如果升级引入了破坏性变更（如删除列、修改约束），旧版本 Keycloak 会立即崩溃。
+
+更具体的场景：Keycloak 26.2.3 的蓝绿部署中，新旧容器版本相同，所以 schema 冲突风险较低。但当 Keycloak 升级版本时（如 26.2.3 -> 27.x），这个问题是致命的。
 
 **Why it happens:**
-Docker 健康检查设计用于判断容器是否需要重启，不设计用于判断应用是否可以接收生产流量。蓝绿切换需要一个更强的"就绪检查"（readiness probe），而不仅仅是"存活检查"（liveness probe）。
+- Keycloak 使用 Liquibase 管理数据库 schema，`start` 命令自动运行迁移
+- 同一个 `keycloak` 数据库被新旧两个容器共享（当前 `docker-compose.yml` 配置）
+- 即使版本相同，两个实例同时写入同一数据库可能导致 Liquibase 锁冲突
+- Keycloak 的 Infinispan 缓存默认使用嵌入式模式（本地内存），两个实例的缓存不同步
 
 **How to avoid:**
-1. **区分两层检查**：
-   - Docker HEALTHCHECK：用于容器编排（是否需要重启），保持现有配置
-   - Jenkins Pipeline 就绪检查：用于流量切换决策，必须做 HTTP E2E 检查（不仅仅是 TCP）
-2. **就绪检查必须验证**：
-   - HTTP 200 响应（不是 TCP connect）
-   - 响应时间在合理范围内（如 < 2s）
-   - 如果是 SSR 服务，验证一个实际页面可以渲染（如 `curl -s -o /dev/null -w "%{http_code}" http://localhost:3001/`）
-3. **检查间隔要足够长**：新容器启动后等待 `start_period` + 至少 2 个 `interval`，确保应用完全初始化
+1. **同版本蓝绿可行**：当前场景（26.2.3 -> 26.2.3）不涉及 schema 变更，蓝绿共存安全
+2. **Liquibase 锁处理**：确保旧容器完全停止后再启动新容器（当前 findclass-ssr 的蓝绿模式已经是"停旧启新"，但 Keycloak 可能需要"先启新再停旧"以实现零停机）
+3. **升级版本的策略**：当 Keycloak 需要升级时，必须先手动运行 schema 迁移（`kc.sh update`），确认迁移成功后再做蓝绿部署
+4. **数据库连接池监控**：蓝绿切换期间，两个实例同时连接数据库可能导致连接数翻倍，需确认 PostgreSQL `max_connections` 足够
 
 **Warning signs:**
-- 切换流量后 nginx 返回 502/504
-- 切换后第一个用户请求明显变慢（冷启动）
-- Pipeline 中用 `sleep 30` 代替真正的健康检查
+- Keycloak 启动日志出现 `Liquibase lock wait timeout`
+- Keycloak 日志出现 `ERROR: column xxx does not exist`（schema 不兼容）
+- PostgreSQL 连接数接近 `max_connections` 限制
+- 用户登录后 session 在切换后丢失
 
 **Phase to address:**
-Phase 3（蓝绿部署实现）。就绪检查是蓝绿切换的核心条件，必须在流量切换前实现。
+Phase 4（Keycloak 蓝绿部署）。必须在统一基础设施 Pipeline 完成后再实现，因为 Keycloak 蓝绿需要 Pipeline 框架支持。
 
 ---
 
-### Pitfall 5: Jenkins Pipeline 部分失败状态不一致
+### Pitfall 5: Keycloak 蓝绿部署的会话丢失
 
 **What goes wrong:**
-蓝绿部署 Pipeline 通常有 5-6 个阶段：构建 -> 启动新容器 -> 健康检查 -> 切换流量 -> 停止旧容器 -> 清理。如果在第 3 阶段（健康检查）失败，Pipeline 可能已经构建了新镜像但没清理；如果第 4 阶段（切换流量）失败，nginx 可能指向不健康的容器。
+Keycloak 将用户会话存储在嵌入式 Infinispan 缓存中（本地内存，非持久化）。蓝绿切换时，用户的登录会话存储在旧容器内存中，新容器无法访问。切换后所有已登录用户被强制登出，需要重新登录。如果正在 OAuth 流程中的用户（如 Google 登录回调）被切换到新容器，认证流程会中断。
 
 **Why it happens:**
-Jenkins Pipeline 的 `post` 块只有 `always`、`success`、`failure` 三种状态。如果 Pipeline 在流量切换阶段中断（如 Jenkins 重启、节点断连），没有一个明确的"回滚到已知安全状态"机制。旧容器可能已被停止但新容器未通过健康检查，导致服务完全不可用。
+- 当前 Keycloak 配置使用默认的嵌入式 Infinispan（`start` 模式，非 HA）
+- 会话数据只存在于单个 JVM 的堆内存中
+- nginx 切换 upstream 后，所有请求（包括活跃的 OAuth 回调）立即路由到新容器
+- Keycloak 的 `AUTH_SESSION_ID` cookie 指向旧容器的会话，新容器不认识
 
 **How to avoid:**
-1. **状态文件跟踪**：在宿主机维护一个 `/opt/noda/active-color` 文件，记录当前活跃的是 blue 还是 green。Pipeline 的每个阶段读写这个文件，断点恢复时可以判断当前状态。
-2. **幂等操作**：每个阶段的操作必须幂等。例如"启动新容器"阶段应该先检查容器是否已经在运行。
-3. **回滚阶段必须在 failure 中触发**：
-   ```groovy
-   post {
-       failure {
-           // 读取状态文件，判断回滚策略
-           // 如果流量已切换 -> 切回旧容器
-           // 如果流量未切换 -> 确保旧容器仍在运行
-       }
-   }
-   ```
-4. **不要在流量切换后立即停止旧容器**：保留旧容器运行至少 5 分钟（观察期），确认新版本稳定后再清理。
+1. **维护窗口切换**：在低流量时段（凌晨）执行 Keycloak 蓝绿切换，减少活跃会话数量
+2. **切换前通知**：Pipeline 中添加人工确认门禁，运维人员确认当前无活跃用户
+3. **观察期**：新容器启动后不立即切换，先让新容器预热（连接数据库、加载缓存），再执行 nginx 切换
+4. **长期方案（超出 v1.5 范围）**：配置 Keycloak 使用外部 Infinispan 或数据库持久化会话，实现真正的 HA
+5. **认证流程保护**：切换前检查 Keycloak 的活跃会话数（通过 Management API），超过阈值则拒绝切换
 
 **Warning signs:**
-- Pipeline 中没有 `post { failure { ... } }` 块
-- 回滚逻辑只在最后一步，不在每个关键阶段之后
-- 没有状态跟踪文件，Pipeline 重跑时无法判断当前状态
-- 旧容器在流量切换后立即被 `docker compose down`
+- 切换后 auth.noda.co.nz 返回 `session_not_found` 错误
+- 用户报告被登出
+- OAuth 回调返回 `invalid_code` 或 `cookie_not_found`
 
 **Phase to address:**
-Phase 3（蓝绿部署实现）。Pipeline 的回滚和状态管理是整个蓝绿策略的保底机制。
+Phase 4（Keycloak 蓝绿部署）。会话处理策略必须在 Pipeline 设计阶段确定。
 
 ---
 
-### Pitfall 6: 磁盘空间耗尽导致构建失败
+### Pitfall 6: 基础设施 Pipeline 重启 Pipeline 自身依赖的服务（循环依赖）
 
 **What goes wrong:**
-每次 Jenkins 构建会创建新的 Docker 镜像层。蓝绿部署意味着同时存在两个版本的镜像。在单服务器上，旧镜像不被清理会快速填满磁盘。一旦磁盘满，Docker 构建失败，`docker compose up` 失败，甚至 PostgreSQL 的 WAL 日志无法写入导致数据库崩溃。
+统一基础设施 Pipeline 管理所有服务（postgres、keycloak、noda-ops、nginx）的部署。当 Pipeline 需要重启 PostgreSQL 时，Jenkins 自身也在使用 PostgreSQL（迁移后）。如果 PostgreSQL 重启导致连接中断，Jenkins Pipeline 会失去数据库连接，Pipeline 状态无法更新，最终导致 Pipeline 卡死或失败。更严重的场景：Pipeline 重启 nginx 后，如果 nginx 不恢复，外部访问（包括运维人员通过 Cloudflare 访问 Jenkins）可能中断。
 
 **Why it happens:**
-Docker 镜像层是增量的。每次 `pnpm install` + `tsc` + `vite build` 的产出都被缓存在 Docker 构建缓存中。findclass-ssr 的多阶段构建（Dockerfile.findclass-ssr）每层约 200-500MB，加上 pnpm store 和 node_modules，单次构建可能产生 1-2GB 的新数据。每周部署 2-3 次，一个月后磁盘增长 10-15GB。
+- Jenkins H2 -> PG 迁移后，Jenkins 与 PostgreSQL 建立了硬依赖
+- 统一基础设施 Pipeline 的参数化设计允许选择任意服务部署
+- PostgreSQL 容器重启时，Jenkins 的数据库连接会断开，Pipeline 执行器可能卡住
+- Nginx 是所有外部流量的入口，重启 nginx 会短暂中断所有服务（包括 Cloudflare Tunnel 的健康检查）
 
 **How to avoid:**
-1. **Pipeline 末尾加清理步骤**：
+1. **PostgreSQL 部署策略**：禁止 Pipeline 重启 Docker 中的 PostgreSQL（因为 Jenkins 依赖它）。PostgreSQL 的维护（版本升级、配置变更）只能手动执行。
+2. **Pipeline 服务分类**：
+   - **安全重启**：keycloak、noda-ops（Jenkins 不依赖）
+   - **条件重启**：nginx（需确认 Jenkins 不在执行 Pipeline）
+   - **禁止 Pipeline 重启**：postgres（Jenkins 数据库，手动维护）
+3. **nginx 滚动更新**：使用 `nginx -s reload` 而非重启容器（当前架构已支持）
+4. **Pipeline 自保护**：在 Pipeline Pre-flight 阶段检查是否有其他 Pipeline 正在运行（`disableConcurrentBuilds` 已配置，但基础设施 Pipeline 和应用 Pipeline 是不同作业）
+5. **Jenkins 本地 PG 连接韧性**：配置 Jenkins 数据库连接池的重试策略，允许短暂断连
+
+**Warning signs:**
+- Pipeline 执行中途状态变为 `not_built` 或 `aborted`
+- Jenkins 日志出现 `org.postgresql.util.PSQLException: Connection refused`
+- PostgreSQL 重启后 Jenkins Web UI 无响应
+
+**Phase to address:**
+Phase 3（统一基础设施 Pipeline）。Pipeline 设计时必须明确哪些服务可以被 Pipeline 安全管理。
+
+---
+
+### Pitfall 7: 本地开发一键安装脚本的幂等性问题
+
+**What goes wrong:**
+一键安装脚本（`setup-local-dev.sh`）需要安装 Homebrew PostgreSQL、配置数据库、创建开发用户和数据库、设置开机自启。如果脚本被多次运行（开发者迭代调试安装过程），非幂等操作会导致问题：数据库已存在时报错、用户已创建时报错、端口被占用时启动失败。更严重的是，Apple Silicon（M1/M2/M3/M4）和 Intel Mac 的 Homebrew 路径不同（`/opt/homebrew` vs `/usr/local`），脚本在一种架构上测试通过后可能在另一种架构上完全失败。
+
+**Why it happens:**
+- `createdb` 在数据库已存在时返回错误（非零退出码），导致 `set -e` 脚本中断
+- `brew services start postgresql@17` 在服务已运行时的行为与首次启动不同
+- Apple Silicon 的 Homebrew 安装路径不同，`PATH` 设置也不同
+- PostgreSQL 的 `pg_hba.conf` 和 `postgresql.conf` 配置文件路径在 Homebrew 和 Docker 之间完全不同
+- 开发者可能已有旧版 PostgreSQL（如 14.x）在运行，新安装的 17.x 会导致端口冲突
+
+**How to avoid:**
+1. **幂等检查函数**：每个操作前先检查是否已完成
    ```bash
-   # 清理悬空镜像（无标签的旧构建层）
-   docker image prune -f
-   # 清理超过 7 天的构建缓存
-   docker builder prune -f --filter "until=168h"
+   # 幂等创建数据库
+   createdb noda_dev 2>/dev/null || echo "数据库已存在，跳过"
    ```
-2. **只保留最近 N 个版本的镜像**：
+2. **架构检测**：
    ```bash
-   # 保留最近 2 个版本的 findclass-ssr 镜像
-   docker images findclass-ssr --format '{{.ID}}' | tail -n +3 | xargs -r docker rmi
+   ARCH=$(uname -m)
+   if [ "$ARCH" = "arm64" ]; then
+       HOMEBREW_PREFIX="/opt/homebrew"
+   else
+       HOMEBREW_PREFIX="/usr/local"
+   fi
+   eval "$($HOMEBREW_PREFIX/bin/brew shellenv)"
    ```
-3. **定期全量清理 cron**：
-   ```bash
-   # 每周日凌晨执行
-   0 3 * * 0 docker system prune -af --filter "until=168h" --volumes
-   ```
-4. **磁盘监控**：在 noda-ops 的健康检查中加入磁盘空间检查（`df -h / | tail -1 | awk '{print $5}' | sed 's/%//'`），超过 85% 时告警。
+3. **端口冲突检测**：安装前检查 5432/5433 端口是否被占用
+4. **版本检测**：检查已安装的 PostgreSQL 版本，如果已有 17.x 则跳过安装
+5. **配置文件模板**：使用模板生成 `pg_hba.conf` 和 `postgresql.conf`，每次运行覆盖（而非追加）
+6. **回滚机制**：提供 `setup-local-dev.sh uninstall` 命令清理所有安装产物
 
 **Warning signs:**
-- `docker compose build` 报 `no space left on device`
-- Jenkins workspace 目录 `/var/lib/jenkins/workspace/` 超过 10GB
-- `docker system df` 显示 Reclaimable > 50%
-- PostgreSQL 日志出现 `could not write to file` 错误
+- 脚本第二次运行报 `database "noda_dev" already exists` 然后退出
+- Intel Mac 上报 `brew: command not found`（PATH 未正确设置）
+- `pg_isready` 返回成功但 `psql` 连接被拒（`pg_hba.conf` 配置错误）
+- Homebrew PostgreSQL 启动后无法创建 socket 文件（`/tmp` 目录权限问题）
 
 **Phase to address:**
-Phase 2（Pipeline 迁移）。清理步骤必须在第一个 Pipeline 中就包含，不能延后。
+Phase 5（本地开发一键安装脚本）。但幂等性原则应在脚本设计的第一行代码就贯彻。
 
 ---
 
@@ -192,12 +229,12 @@ Phase 2（Pipeline 迁移）。清理步骤必须在第一个 Pipeline 中就包
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Jenkins 容器化 + Docker socket 挂载 | 快速搭建，一条命令启动 | 完整的宿主机 root 权限暴露，Pipeline 脚本可执行任意 docker 命令 | 绝不可接受 |
-| Pipeline 中 `sleep 30` 代替健康检查 | 简单，"大多数情况够用" | 新版本启动慢时假通过，启动快时浪费时间 | 仅在 POC 阶段 |
-| 不做镜像清理 | 少写代码，构建更快 | 磁盘耗尽导致全服务宕机 | 绝不可接受 |
-| 固定 blue/green 服务名 | 简化 Docker Compose | 每次 Jenkinsfile 都要知道"哪个是活跃的"，配置与状态耦合 | 可接受（配合状态文件） |
-| 跳过数据库迁移兼容性检查 | 部署更快 | 无法回滚的数据库 schema 变更导致全服务不可用 | 仅在无 schema 变更时 |
-| Jenkins 全局凭证用明文环境变量 | 配置简单 | 任何 Pipeline 可以读取所有凭证 | 仅在开发环境 |
+| Jenkins H2 不迁移，继续使用嵌入式数据库 | 零风险，无迁移工作 | H2 不支持并发写入、无备份机制、数据损坏时无法恢复 | 绝不可接受（PROJECT.md 明确要求迁移） |
+| Keycloak 蓝绿跳过会话持久化 | 不引入外部缓存组件 | 每次部署强制所有用户重新登录 | 可接受（当前用户量小，可在维护窗口切换） |
+| 一键安装脚本不用 brew bundle | 少维护一个 Brewfile | 脚本维护成本随包数量增长 | 仅在包少于 5 个时 |
+| Keycloak 部署时不做版本兼容性检查 | Pipeline 更简单 | Keycloak 升级时蓝绿部署会导致旧实例崩溃 | 仅在同版本重新部署时（当前场景） |
+| PostgreSQL 部署通过 Pipeline 自动化 | 减少 DBA 手动操作 | Pipeline 重启 PG 会导致 Jenkins 自身断连 | 绝不可接受——PG 维护必须手动 |
+| 跳过 dev 容器数据迁移 | 节省迁移脚本开发时间 | 开发者丢失测试数据 | 绝不可接受（开发体验） |
 
 ---
 
@@ -205,12 +242,13 @@ Phase 2（Pipeline 迁移）。清理步骤必须在第一个 Pipeline 中就包
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| Jenkins -> Docker Compose | Jenkins workspace 路径与 docker-compose.yml 中的相对路径不匹配（如 `context: ../../noda-apps`） | Jenkins Pipeline 使用绝对路径，或通过 `dir()` 切换到正确的工作目录 |
-| Jenkins -> Nginx reload | `docker exec nginx nginx -s reload` 在 nginx 配置有语法错误时静默失败 | 先执行 `docker exec nginx nginx -t`，确认配置正确后再 reload |
-| Jenkins -> Docker build | Docker Compose 使用 BuildKit 缓存，Dockerfile 修改未生效 | 关键修改后使用 `docker build --no-cache`，或 Pipeline 中明确 `--no-cache` 参数 |
-| Jenkins -> GitHub | SSH key 权限问题导致 git clone 失败 | Jenkins 宿主机上配置 deploy key，确保 `~jenkins/.ssh/` 权限正确 |
-| Jenkins -> .env 文件 | Jenkins 环境与 docker compose 的 `.env` 文件不同步 | 使用 sops 解密后注入，不维护两套凭证 |
-| Jenkins -> Cloudflare | 部署后忘记清除 CDN 缓存，用户看到旧版本 | Pipeline 最后一步调用 Cloudflare API 清除缓存（`/client/v4/zones/{id}/purge_cache`） |
+| Jenkins -> 本地 PostgreSQL | JDBC URL 使用 `localhost` 而非 `127.0.0.1`，导致 IPv6 解析问题 | 使用 `jdbc:postgresql://127.0.0.1:5432/jenkins` 明确 IPv4 |
+| Jenkins -> PostgreSQL 连接池 | 使用默认连接池大小（100），与 PostgreSQL 的 `max_connections` 冲突 | 配置 Jenkins 连接池大小（如 `maxActive=20`），确保不超过 PG 限制 |
+| Homebrew PG -> Docker PG | 用 Homebrew 的 `pg_dump` 备份 Docker 中的数据库，版本不匹配导致备份无法恢复 | 使用 Docker 内的 `pg_dump`：`docker exec postgres-prod pg_dump ...` |
+| 本地 PG -> Keycloak 蓝绿 | Keycloak 新旧容器同时连接 PG，连接数翻倍 | 确认 PG `max_connections` 至少为（Keycloak 默认池 * 2 + Jenkins + 余量） |
+| 本地 PG -> noda-ops 备份 | 备份脚本硬编码了 Docker 内部主机名 `noda-infra-postgres-prod` | 备份脚本继续使用 Docker 网络内部主机名，本地 PG 仅用于 Jenkins |
+| 一键脚本 -> macOS 系统版本 | 脚本使用 `launchctl` API 在不同 macOS 版本上行为不同 | 使用 `brew services` 管理自动启动，不直接操作 `launchctl` |
+| 一键脚本 -> Docker Desktop | 脚本假设 Docker Desktop 已安装并运行 | 安装前检查 `docker info` 是否可用，提供安装 Docker Desktop 的指引 |
 
 ---
 
@@ -218,11 +256,11 @@ Phase 2（Pipeline 迁移）。清理步骤必须在第一个 Pipeline 中就包
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| 同时构建两个蓝绿镜像 | 构建时间翻倍，内存不足 OOM | 只构建目标颜色，不同时构建 | 2GB 以下内存服务器 |
-| Docker BuildKit 缓存膨胀 | `docker system df` 显示 Build Cache 占用超过 50% | 定期 `docker builder prune` | 每次构建 |
-| Jenkins workspace 积累 | `/var/lib/jenkins/workspace/` 超过 5GB | Pipeline 中 `cleanWs()` 或 `dir('target') { deleteDir() }` | 每周 |
-| 大量旧镜像 | `docker images` 列表有几十个 `<none>` 标签 | Pipeline 末尾 `docker image prune -f` | 每次构建 |
-| Prisma generate 在每次构建中 | 构建时间增加 30-60 秒 | Docker 构建缓存层优化，依赖不变时跳过 | 每次 build |
+| Jenkins + PG 在同一台服务器 | PostgreSQL 写入延迟增加，Jenkins 构建变慢 | 配置 PG 的 `shared_buffers` 和 `work_mem` 适配服务器内存 | Jenkins 同时执行多个构建时 |
+| Keycloak 蓝绿双容器同时运行 | 内存使用翻倍（每个 512MB-1GB），触发 OOM | 确保 Keycloak 蓝绿不是同时运行模式——先启新再停旧，而非同时运行 | 服务器可用内存 < 2GB 时 |
+| 本地 PG 的 `fsync` 开启 | 开发环境每次事务提交都刷盘，INSERT 批量操作很慢 | 开发环境的 PG 可关闭 `fsync`（`postgresql.conf: fsync=off`），但生产绝不可关闭 | 批量种子数据导入时 |
+| Jenkins Pipeline `dir()` 嵌套 | `dir('noda-apps') { sh '...' }` 在大 workspace 中遍历慢 | 使用绝对路径代替 `dir()` | workspace 超过 1GB 时 |
+| Homebrew PG 的 `shared_buffers` 默认值太低 | 默认 128MB，Jenkins 查询构建历史时全表扫描 | 根据服务器内存调整（推荐 25% 总内存） | 构建历史超过 1000 条时 |
 
 ---
 
@@ -230,26 +268,27 @@ Phase 2（Pipeline 迁移）。清理步骤必须在第一个 Pipeline 中就包
 
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| Jenkins 容器挂载 Docker socket | 完整的宿主机 root 权限暴露 | Jenkins 原生安装（PROJECT.md 已明确） |
-| Jenkins Web UI 无认证或弱密码 | 任何人可触发部署、读取凭证 | 启用安全领域（Security Realm），使用 Matrix Authorization，强密码 |
-| Jenkinsfile 中明文写入凭证 | Pipeline 代码泄露即泄露所有凭证 | 使用 Jenkins Credentials Store + `withCredentials` 块 |
-| Jenkins SSH 私钥放在 workspace | 构建产物中包含私钥 | 使用 `sshagent` 步骤，不写入文件系统 |
-| 未限制 Jenkins 执行器数量 | 并发构建耗尽服务器资源（内存/CPU/磁盘） | 限制执行器数量为 1-2（单服务器场景） |
-| Jenkins 未配置 CSRF 保护 | CSRF 攻击可触发任意构建 | 启用 "Prevent Cross Site Request Forgery exploits" |
-| 旧容器未清理 | 旧容器可能仍有活跃连接，暴露攻击面 | 蓝绿切换后设置合理观察期再清理（如 5 分钟） |
+| 本地 PG 监听 `0.0.0.0` | 局域网内任何设备可访问数据库 | 配置 `listen_addresses = 'localhost'`，`pg_hba.conf` 只允许本地连接 |
+| Jenkins PG 用户使用 `postgres` 超级用户 | Jenkins Pipeline 错误可能 DROP 生产数据库 | 为 Jenkins 创建专用用户（`jenkins_db`），只授权访问 `jenkins` 数据库 |
+| 开发环境 `.env` 提交到 Git | 数据库密码泄露 | `.gitignore` 中排除 `.env`，提供 `.env.example` 模板 |
+| 一键脚本使用 `curl | bash` 模式 | 供应链攻击风险 | 脚本存储在项目仓库中，通过 `git clone` + `bash` 执行 |
+| 移除 dev 容器后忘记清理 Docker volumes | `postgres_dev_data` 卷中可能包含敏感测试数据 | 脚本化 volume 清理，并在移除文档中明确列出 |
+| Keycloak 蓝绿切换时旧容器未完全停止 | 旧容器可能仍接受请求，导致数据不一致 | 切换后等待 `stop_grace_period` + 验证旧容器已退出 |
 
 ---
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **蓝绿部署:** 实现了容器切换但 nginx upstream 没有更新 -- 验证 `docker exec nginx nginx -T | grep upstream` 指向新容器
-- [ ] **健康检查:** 容器 Docker HEALTHCHECK 通过但应用未就绪 -- 验证 HTTP E2E 检查（`curl -sf http://localhost:3001/`），不仅仅是 TCP connect
-- [ ] **回滚:** Pipeline 有回滚步骤但回滚后 nginx 仍指向失败的容器 -- 验证回滚逻辑包含 nginx upstream 切换
-- [ ] **清理:** Pipeline 有 `docker image prune` 但只清理悬空镜像，未清理旧版本镜像 -- 验证 `docker images` 中无超过 2 个版本的同一镜像
-- [ ] **凭证:** Jenkins 可以触发构建但 `.env` 文件中凭证与 Jenkins Credentials 不同步 -- 验证 sops 解密流程在 Jenkins 环境中正确工作
-- [ ] **日志:** 蓝绿切换成功但没有审计记录 -- 验证 Jenkins build log 记录了切换前后状态
-- [ ] **Cloudflare 缓存:** 部署成功但用户看到旧版本 -- 验证 Pipeline 最后一步调用 Cloudflare purge cache API
-- [ ] **构建缓存:** Dockerfile 修改后构建使用了缓存层 -- 验证关键修改使用 `--no-cache` 参数
+- [ ] **Jenkins PG 迁移:** Jenkins 启动正常但构建历史不完整 -- 验证构建数量：对比迁移前后 `SELECT COUNT(*) FROM builds;`
+- [ ] **Jenkins PG 迁移:** Pipeline 作业存在但凭据丢失 -- 验证 `withCredentials` 步骤能正确解析所有凭据
+- [ ] **本地 PG 安装:** PostgreSQL 运行但 Jenkins 无法连接 -- 验证 `pg_hba.conf` 允许本地 TCP 连接（不只是 Unix socket）
+- [ ] **本地 PG 安装:** PostgreSQL 运行但开机不自启 -- 重启电脑后验证 `brew services list` 显示 `postgresql@17 started`
+- [ ] **dev 容器移除:** `docker compose -f dev.yml config` 无报错但网络引用断裂 -- 验证所有服务的 `depends_on` 仍然有效
+- [ ] **Keycloak 蓝绿:** nginx 切换成功但旧容器未清理 -- 验证 `docker ps` 中只有一个 Keycloak 容器
+- [ ] **Keycloak 蓝绿:** 切换后用户可登录但会话不持久 -- 验证 Keycloak 的 `AUTH_SESSION_ID` cookie 在切换后仍有效
+- [ ] **基础设施 Pipeline:** Pipeline 可触发但回滚逻辑未测试 -- 手动触发一次故意失败的部署，验证回滚步骤执行正确
+- [ ] **一键安装:** 脚本成功但 PostgreSQL 配置未优化 -- 验证 `shared_buffers`、`work_mem` 已根据服务器内存调整
+- [ ] **一键安装:** 脚本在 Apple Silicon 上通过但 Intel 上失败（或反过来）-- 两种架构都验证
 
 ---
 
@@ -257,12 +296,13 @@ Phase 2（Pipeline 迁移）。清理步骤必须在第一个 Pipeline 中就包
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Docker socket 暴露 | HIGH（需重建 Jenkins 环境） | 1. 停止 Jenkins 容器 2. 审计是否有可疑 docker 操作 3. 重新安装为原生 4. 轮换所有凭证 |
-| 蓝绿切换失败（流量指向不健康容器） | MEDIUM（分钟级恢复） | 1. `docker exec nginx nginx -t` 检查配置 2. 手动切回旧 upstream 配置 3. `docker exec nginx nginx -s reload` 4. 确认旧容器仍在运行 |
-| 数据库迁移不兼容 | HIGH（可能无法回滚） | 1. 停止新容器 2. 检查迁移是否可逆 3. 如果不可逆，保持新版本运行并紧急修复 4. 如果可逆，运行回滚迁移 + 恢复旧容器 |
-| 磁盘空间耗尽 | MEDIUM（需要手动清理） | 1. `docker system df` 定位占用 2. `docker system prune -af --volumes` 清理 3. 如果 postgres 数据卷受影响，从 B2 备份恢复 |
-| Jenkins Pipeline 中断 | LOW（重新触发） | 1. 检查状态文件确定当前阶段 2. 手动确认旧容器状态 3. 重新触发 Pipeline（幂等设计会跳过已完成阶段） |
-| 健康检查假阳性导致切换到未就绪容器 | MEDIUM（短暂服务降级） | 1. nginx `proxy_next_upstream` 会自动故障转移回旧容器（如果仍在运行） 2. 如果旧容器已停止，手动重启旧容器并切回 |
+| Jenkins H2 -> PG 迁移数据丢失 | HIGH（可能无法完整恢复） | 1. 停止 Jenkins 2. 恢复 `JENKINS_HOME` 备份 3. 切回 H2 配置 4. 启动 Jenkins 验证 5. 重新规划迁移 |
+| Homebrew PG 版本不匹配 | LOW（安装正确版本） | 1. `brew uninstall postgresql` 2. `brew install postgresql@17` 3. 验证版本匹配 |
+| dev 容器移除后开发数据丢失 | MEDIUM（需重新种子） | 1. 从 `postgres_dev_data` volume 导出：`docker run --rm -v postgres_dev_data:/data busybox tar czf - -C /data .` 2. 导入到本地 PG 3. 如果 volume 已删除，使用种子脚本重新初始化 |
+| Keycloak 蓝绿导致用户登出 | LOW（用户重新登录） | 1. 无需恢复操作 2. 告知用户重新登录 3. 长期方案：配置会话持久化 |
+| Pipeline 重启 PostgreSQL 导致 Jenkins 卡死 | HIGH（需手动介入） | 1. 等待 PostgreSQL 容器恢复运行 2. 重启 Jenkins 服务：`systemctl restart jenkins` 3. 检查 Pipeline 状态 4. 如果 Pipeline 卡死，使用 Jenkins Script Console 中止 |
+| 一键脚本在错误架构上运行 | MEDIUM（需清理残留） | 1. `brew uninstall postgresql` 2. 清理数据目录：`rm -rf /opt/homebrew/var/postgresql@17` 3. 用正确架构的脚本重新安装 |
+| Keycloak Liquibase 锁冲突 | LOW（清除锁记录） | 1. 连接 keycloak 数据库 2. `DELETE FROM databasechangeloglock WHERE locked = true;` 3. 重启 Keycloak 容器 |
 
 ---
 
@@ -270,33 +310,49 @@ Phase 2（Pipeline 迁移）。清理步骤必须在第一个 Pipeline 中就包
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| Docker socket 挂载 | Phase 1: Jenkins 安装 | Jenkins 运行在宿主机，不在 Docker 容器中 |
-| 蓝绿容器端口冲突 | Phase 2: Pipeline 迁移 | nginx upstream 可动态切换，两个实例可共存 |
-| 数据库迁移不兼容 | Phase 2: Pipeline 迁移 | Pipeline 中迁移与应用启动分离，迁移向后兼容 |
-| 健康检查假阳性/假阴性 | Phase 3: 蓝绿部署 | 就绪检查为 HTTP E2E，不仅仅是 TCP connect |
-| Pipeline 部分失败 | Phase 3: 蓝绿部署 | 有状态文件 + 幂等操作 + failure 回滚逻辑 |
-| 磁盘空间耗尽 | Phase 2: Pipeline 迁移 | Pipeline 末尾有清理步骤 + 定期 cron 清理 |
-| Nginx 配置语法错误 | Phase 3: 蓝绿部署 | 切换前执行 `nginx -t`，失败不执行 reload |
-| Cloudflare 缓存未清除 | Phase 3: 蓝绿部署 | Pipeline 最后一步调用 purge cache API |
-| Jenkins 安全配置缺失 | Phase 1: Jenkins 安装 | Web UI 有认证、CSRF 启用、凭证使用 Credentials Store |
+| Jenkins H2 -> PG 数据丢失 | Phase 1: 宿主机 PG + 迁移 | 迁移前后构建历史条数一致、凭据可读取 |
+| Homebrew PG 版本不匹配 | Phase 1: 宿主机 PG 安装 | `psql --version` 与 Docker PG 版本主版本号一致 |
+| dev 容器移除破坏工作流 | Phase 2: 移除 dev 容器 | 移除后本地应用可连接宿主机 PG |
+| Keycloak DB Schema 冲突 | Phase 4: Keycloak 蓝绿 | 新旧容器可交替连接同一数据库无报错 |
+| Keycloak 会话丢失 | Phase 4: Keycloak 蓝绿 | 切换后活跃用户的会话仍有效（或接受在维护窗口切换） |
+| Pipeline 循环依赖 | Phase 3: 基础设施 Pipeline | Pipeline 服务白名单不包含 postgres |
+| 一键脚本非幂等 | Phase 5: 一键安装脚本 | 脚本连续运行 3 次不报错 |
+| PG 连接池耗尽 | Phase 4: Keycloak 蓝绿 | 蓝绿切换期间 `pg_stat_activity` 连接数在安全范围内 |
+| Jenkins PG 连接配置错误 | Phase 1: 迁移 | Jenkins 启动日志无 `PSQLException` |
+| dev 数据未迁移 | Phase 2: 移除 dev 容器 | 本地 PG 的 `noda_dev` 数据库有完整的种子数据 |
+
+---
+
+## Phase-Specific Warnings
+
+| Phase | Likely Pitfall | Mitigation |
+|-------|---------------|------------|
+| Phase 1: 宿主机 PG 安装 | macOS 权限问题导致 PG 无法启动 | 使用 `brew services` 管理，不手动创建数据目录 |
+| Phase 1: Jenkins 迁移 | JDBC 驱动版本与 PG 服务端不兼容 | 先测试 JDBC 连接，再执行迁移 |
+| Phase 2: 移除 dev 容器 | docker-compose.dev.yml 中其他服务（如 nginx dev 端口 8081）也受影响 | 逐个服务验证，不要批量移除 |
+| Phase 3: 统一 Pipeline | Pipeline 参数化导致误操作（如错误地重启了 postgres） | 服务白名单 + 危险操作二次确认 |
+| Phase 4: Keycloak 蓝绿 | 复用 findclass-ssr 的蓝绿脚本但不调整 Keycloak 特定参数 | Keycloak 的 `SERVICE_PORT`、`HEALTH_PATH`、`UPSTREAM_NAME` 必须独立配置 |
+| Phase 5: 一键安装 | Apple Silicon 的 Rosetta 依赖未安装 | 脚本中检测并安装 Rosetta 2 |
+| 全局: 回归测试 | 任何阶段修改 docker-compose.yml 导致生产配置被意外修改 | 修改后运行 `docker compose -f base -f prod config` 验证生产配置完整性 |
 
 ---
 
 ## Sources
 
-- 项目代码库：`docker/docker-compose.app.yml`（findclass-ssr 服务定义、健康检查配置）
-- 项目代码库：`deploy/Dockerfile.findclass-ssr`（多阶段构建、构建缓存分析）
-- 项目代码库：`config/nginx/conf.d/default.conf`（upstream 硬编码、切换机制）
-- 项目代码库：`scripts/deploy/deploy-apps-prod.sh`（现有部署流程、回滚逻辑）
-- 项目代码库：`scripts/lib/health.sh`（健康检查实现细节）
-- `.planning/PROJECT.md`（v1.4 目标：Jenkins 宿主机原生安装）
-- Docker 官方文档：`docker system prune`、`docker image prune`、BuildKit 缓存
-- Jenkins 官方文档：Pipeline `post` 块、Credentials Store、CSRF 保护
-- Nginx 官方文档：`nginx -s reload` 平滑重载机制
-- Prisma 文档：`prisma migrate deploy`（只执行 forward 迁移）
-- 社区最佳实践：蓝绿部署 Expand-Contract 模式
+- 项目代码库：`docker/docker-compose.yml`（PostgreSQL/Keycloak 服务定义、环境变量）
+- 项目代码库：`docker/docker-compose.dev.yml`（postgres-dev/keycloak-dev 配置、端口映射）
+- 项目代码库：`docker/docker-compose.prod.yml`（生产环境安全加固配置）
+- 项目代码库：`scripts/setup-jenkins.sh`（Jenkins 安装脚本、端口配置、systemd override）
+- 项目代码库：`scripts/manage-containers.sh`（蓝绿容器管理、upstream 切换逻辑）
+- 项目代码库：`scripts/pipeline-stages.sh`（Pipeline 阶段函数、健康检查、构建流程）
+- 项目代码库：`jenkins/Jenkinsfile`（现有 Pipeline 定义、阶段结构）
+- 项目代码库：`config/nginx/snippets/upstream-keycloak.conf`（Keycloak upstream 当前配置）
+- 项目代码库：`scripts/init-databases.sh`（数据库初始化脚本）
+- `.planning/PROJECT.md`（v1.5 目标、技术栈、架构图）
+- Jenkins 官方文档：PostgreSQL 数据库配置、H2 迁移指南
+- Keycloak 官方文档：数据库配置、Liquibase 迁移、HA 模式
+- Homebrew 文档：PostgreSQL formula、`brew services` 命令、Apple Silicon 路径
 
 ---
-
-*Pitfalls research for: Noda v1.4 CI/CD 零停机蓝绿部署*
-*Researched: 2026-04-14*
+*Pitfalls research for: Noda v1.5 开发环境本地化 + 基础设施 CI/CD*
+*Researched: 2026-04-17*

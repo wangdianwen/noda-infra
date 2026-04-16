@@ -1,171 +1,172 @@
 # Project Research Summary
 
-**Project:** Noda v1.4 CI/CD 零停机部署
-**Domain:** Jenkins CI/CD + Docker Compose 蓝绿部署（单服务器基础设施）
-**Researched:** 2026-04-14
-**Confidence:** HIGH
+**Project:** Noda v1.5 开发环境本地化 + 基础设施 CI/CD
+**Domain:** 单服务器 Docker Compose 基础设施运维 -- Jenkins CI/CD 蓝绿部署扩展
+**Researched:** 2026-04-17
+**Confidence:** MEDIUM-HIGH
 
 ## Executive Summary
 
-本项目为现有的 Docker Compose 单服务器基础设施（PostgreSQL、Keycloak、Nginx、findclass-ssr）添加 Jenkins CI/CD 流水线和蓝绿部署能力。核心目标是消除当前 `docker compose up --force-recreate` 带来的 30-60 秒停机窗口，实现零停机部署。研究结论明确：Jenkins 宿主机原生安装（非容器化）+ Nginx upstream include 文件切换 + Docker `docker run` 独立管理蓝绿容器，是单服务器场景下最简洁可靠的方案。
+Noda v1.5 是一个基础设施运维里程碑，目标是将开发环境数据库从 Docker 容器迁移到宿主机 PostgreSQL，并为基础设施服务（Keycloak、PostgreSQL、nginx、noda-ops）建立统一的 Jenkins CI/CD Pipeline。项目的核心模式已由 v1.4 验证：蓝绿部署通过 Nginx upstream include 切换实现零停机，`manage-containers.sh` + `pipeline-stages.sh` 通过环境变量参数化支持任意服务的蓝绿管理。v1.5 的主要工作是将这套模式从应用层扩展到基础设施层。
 
-推荐的技术路径分五步递进：Jenkins 安装 -> Nginx 配置重构 -> 蓝绿核心脚本 -> Pipeline 集成 -> 清理与文档。每个步骤独立可验证，前一步失败不阻塞回退。关键约束是所有蓝绿操作仅限于无状态应用容器（findclass-ssr），基础设施服务（PostgreSQL、Keycloak、Nginx）保持现有 compose 部署方式不变。
+**重要发现：Jenkins 不使用 H2 数据库存储核心数据。** STACK.md 研究确认 Jenkins 2.x 的所有核心数据（jobs、builds、config、credentials）使用 XML + XStream 序列化存储在 `$JENKINS_HOME` 文件系统中。H2 只是嵌入式数据库驱动插件（安装率 0.043%），Jenkins 核心不依赖它。因此 PROJECT.md 中的 "Jenkins H2 -> PG 迁移" 需要重新定义：不是数据库迁移，而是安装 PostgreSQL 插件实现 fingerprint/build records 的外部存储 + 将 `$JENKINS_HOME` 纳入 B2 备份体系。这个认知修正直接影响 Phase 2 的范围和复杂度。
 
-主要风险集中在三个领域：(1) 蓝绿切换时 Nginx 配置语法错误导致全站不可用，需通过 `nginx -t` 前置验证 + 原子写文件防止；(2) Docker 镜像累积导致磁盘耗尽，Pipeline 必须内置清理步骤；(3) 数据库迁移破坏蓝绿共存，需采用 Expand-Contract 模式确保向后兼容。三层回滚机制（健康检查失败不切换 -> E2E 验证失败自动切回 -> 手动紧急回滚脚本）覆盖所有故障场景。
+主要风险集中在三个方面：（1）Keycloak 蓝绿部署的数据库 schema 冲突（同版本安全，跨版本致命）；（2）基础设施 Pipeline 的循环依赖问题（Pipeline 重启 PostgreSQL 会导致 Jenkins 自身断连）；（3）移除 dev 容器可能破坏现有开发工作流。三个风险都有明确的缓解方案，但需要在 Roadmap 阶段安排中体现。
 
 ## Key Findings
 
 ### Recommended Stack
 
-Jenkins LTS 2.541.x 宿主机原生安装，通过 systemd 管理，直接访问 Docker socket。配合 Nginx upstream include 文件切换实现蓝绿流量路由。核心部署逻辑放在 bash 脚本中，Jenkinsfile 仅编排调用，保证可手动执行。所有结论基于项目代码库深度分析和 Jenkins/Nginx 官方文档，置信度高。
+宿主机安装 Homebrew PostgreSQL 17（与 Docker 生产 postgres:17.9 版本一致），用于 Jenkins 持久化和本地开发数据库。基础设施 Pipeline 复用 v1.4 已验证的参数化 Jenkinsfile 模式，通过 `choice` 参数选择服务。Keycloak 蓝绿部署复用 `manage-containers.sh` 框架，共享同一 PostgreSQL 数据库。
 
 **Core technologies:**
-- **Jenkins LTS 2.541.3:** CI/CD 控制器，Declarative Pipeline 语法，宿主机原生安装避免 Docker-in-Docker 安全风险
-- **OpenJDK 21 (Temurin):** Jenkins 运行时，LTS 2.541.x 支持 Java 17/21/25，Java 21 是当前最优选择
-- **Nginx upstream include 切换:** 蓝绿流量路由，通过重写 include 文件 + `nginx -s reload` 实现毫秒级零停机切换
-- **Docker `docker run` 独立管理:** 蓝绿容器脱离 compose 生命周期管理，实现独立启停控制；compose 仅用于 `docker compose build`
-- **Bash 部署脚本:** 核心部署逻辑（`blue-green-deploy.sh`），Jenkinsfile 仅编排调用，可脱离 Jenkins 独立执行
+- **PostgreSQL 17 (Homebrew):** 宿主机开发数据库 + Jenkins 数据存储 -- 与 Docker 生产版本完全一致，pg_dump 无兼容问题
+- **Jenkinsfile.infra:** 基础设施统一 Pipeline -- 参数化选择服务，复用 pipeline-stages.sh 函数库
+- **Keycloak 蓝绿部署:** 复用 manage-containers.sh + upstream-keycloak.conf 动态切换 -- 与 findclass-ssr/noda-site 模式一致
+- **setup-dev.sh:** 一键开发环境安装 -- Homebrew + 数据库初始化 + 环境变量配置
+
+**Critical version requirements:**
+- 必须使用 `brew install postgresql@17`（非 `brew install postgresql`，后者安装 18.x）
+- Jenkins 2.541.3 要求 Java 17/21/25；2.555.1+ 仅支持 Java 21/25
 
 ### Expected Features
 
-研究将特性分为三层：Table Stakes（部署流程不可靠不安全则缺少的必备项）、Differentiators（显著提升部署安全性的增强项）、Anti-Features（单服务器场景下的过度设计，明确不做）。
-
 **Must have (table stakes):**
-- **Pipeline 阶段化 (T1):** Build -> Test -> Deploy -> Verify 四阶段骨架，Jenkins Declarative Pipeline 原生支持
-- **镜像 Git SHA 标签 (T2):** 版本可追溯，蓝绿区分新旧镜像的基础，替换当前 `findclass-ssr:latest`
-- **构建失败阻止部署 (T3):** Jenkins 天然支持，`sh` 步骤失败即中止 Pipeline
-- **HTTP E2E 健康检查 (T4):** 切换前验证新容器 + 切换后验证完整链路，不仅仅是 Docker HEALTHCHECK
-- **自动回滚 (T5):** 蓝绿模式下等于"不切换流量"，旧容器持续运行；三层回滚覆盖所有场景
-- **Jenkins 宿主机安装/卸载脚本 (T7):** 干净的安装和完全卸载能力，是所有 Pipeline 特性的基础
+- **宿主机 PostgreSQL 安装与配置 (T1)** -- 开发环境用 Docker 跑数据库是反模式，版本必须与生产对齐
+- **Jenkins 数据存储优化 (T2, 重新定义)** -- 安装 PostgreSQL 插件 + $JENKINS_HOME 备份策略，不是传统意义的数据库迁移
+- **移除 postgres-dev / keycloak-dev 容器 (T3)** -- 本地 PG 替代后完全多余
+- **统一基础设施 Pipeline (T4)** -- 当前基础设施完全手动部署，是运维自动化的核心缺失
+- **Keycloak 蓝绿部署 (T5)** -- 生产环境 Keycloak 重启导致认证中断，蓝绿是零停机标准做法
+- **部署前备份 + 健康检查 + 回滚 (T6)** -- 基础设施 Pipeline 的安全网
+- **人工确认门禁 (T7)** -- 基础设施变更不可逆，必须有人确认
 
 **Should have (competitive):**
-- **蓝绿部署零停机切换 (D1):** v1.4 核心价值，消除 30-60 秒停机窗口，复杂度最高
-- **Lint + 单元测试门禁 (D2):** 需要 noda-apps 仓库配合，v1.4.x 追加
-- **Cloudflare CDN 缓存清除 (D6):** 部署后用户看到新版本，需要 CF API Token 配置
+- **一键安装脚本 (D1)** -- 5 分钟搭建完整开发环境
+- **服务特定 Pipeline 阶段分发 (D2)** -- 不同服务不同部署策略
+- **开发数据库种子数据自动化 (D3)** -- 本地 PG 初始化时自动创建测试数据
+- **Jenkins PG 备份纳入 B2 (D4)** -- 避免成为备份盲区
 
 **Defer (v2+):**
-- **部署通知 (D5):** 单人维护场景价值低
-- **多环境 Pipeline (dev/staging/prod):** 当前 dev 环境按需手动启动
-- **基础设施服务蓝绿:** PostgreSQL/Keycloak 有状态，复杂度远高于无状态应用
+- Keycloak session 持久化 -- 用户量小，过度工程化
+- PostgreSQL 蓝绿部署 -- 数据库状态在卷上，无意义
+- Jenkins Configuration as Code (JCasC) -- 单服务器场景手动配置足够
 
 ### Architecture Approach
 
-蓝绿部署采用"构建与运行分离"模式：`docker compose build` 仅用于构建镜像，`docker run` 独立管理蓝绿容器生命周期。Nginx 通过 `include` 文件引用 upstream 定义，Pipeline 通过原子写文件 + `nginx -s reload` 实现流量切换。状态文件 `/var/lib/noda-deploy/current_color` 追踪活跃颜色。基础设施服务（PostgreSQL、Keycloak、Nginx、noda-ops）保持现有 compose 部署不变。
+v1.5 引入三层架构：宿主机层（PostgreSQL + Jenkins）处理持久化和 CI/CD；Docker 层（postgres-prod、keycloak、nginx、noda-ops）处理生产服务；蓝绿管理层（manage-containers.sh + upstream include）处理零停机部署。新增的 `Jenkinsfile.infra` 通过参数化复用现有 `pipeline-stages.sh`，与 `Jenkinsfile`/`Jenkinsfile.noda-site` 保持一致的模式。Keycloak 蓝绿部署遵循与 findclass-ssr 完全相同的路径：env 模板 + docker run 容器 + upstream 切换 + 状态文件。
 
 **Major components:**
-1. **Jenkins (宿主机 systemd):** CI/CD 编排，Pipeline 管理，直接操作 Docker socket
-2. **蓝绿部署脚本 (`blue-green-deploy.sh`):** 核心部署逻辑，包括容器启停、健康检查、nginx 切换、状态管理
-3. **Nginx upstream include 文件 (`upstream-findclass.conf`):** 流量路由入口，Pipeline 动态生成和切换
-4. **蓝绿状态文件 (`/var/lib/noda-deploy/current_color`):** 纯文本记录活跃颜色，Pipeline 各阶段读写
-5. **Jenkinsfile:** Pipeline 骨架，仅编排 stage 调用，不包含复杂逻辑
+1. **宿主机 PostgreSQL (Homebrew, port 5432)** -- jenkins_db + noda_dev，与 Docker 层隔离
+2. **Jenkinsfile.infra** -- 参数化 Pipeline，支持 postgres/keycloak/nginx/noda-ops 四种服务
+3. **Keycloak 蓝绿容器 (keycloak-blue/keycloak-green)** -- docker run 管理，共享 Docker postgres-prod 中的 keycloak_db
+4. **setup-dev.sh** -- 一键安装开发环境，幂等设计
 
 ### Critical Pitfalls
 
-1. **Docker Socket 挂载导致容器逃逸:** Jenkins 必须宿主机原生安装，绝不使用 Docker 容器运行 + socket 挂载模式。这是安全底线，Phase 1 就要正确决策。
-2. **蓝绿切换 Nginx 配置语法错误:** 切换前必须执行 `docker exec nginx nginx -t` 验证配置，失败则不执行 reload。使用原子写（写临时文件 + mv）防止配置文件损坏。
-3. **健康检查假阳性:** Docker HEALTHCHECK 通过不等于应用就绪。必须做 HTTP E2E 检查（curl 返回 200 + 响应时间合理），不仅仅是 TCP connect。
-4. **Pipeline 部分失败状态不一致:** 维护状态文件追踪活跃颜色，每个阶段操作必须幂等，`post { failure }` 中根据状态文件判断回滚策略。旧容器在 E2E 验证通过后才删除。
-5. **磁盘空间耗尽:** Pipeline 末尾必须有清理步骤（`docker image prune` + `docker builder prune`），定期 cron 清理，磁盘监控超过 85% 告警。
+1. **Jenkins 数据迁移理解偏差** -- STACK.md 确认 Jenkins 核心数据存储在文件系统（XML + XStream），不使用 H2 数据库。所谓 "H2 -> PG 迁移" 实际上是安装 PostgreSQL 插件用于 fingerprint 外置存储 + 文件系统备份策略优化。需要修正 FEATURES.md 和 ARCHITECTURE.md 中基于 "H2 迁移" 假设的复杂度评估。
+2. **基础设施 Pipeline 循环依赖** -- Jenkins 迁移到 PG 后，Pipeline 重启 PostgreSQL 会导致 Jenkins 自身断连。解决方案：禁止 Pipeline 管理 PostgreSQL（手动维护），Pipeline 服务白名单中排除 postgres。
+3. **Keycloak 蓝绿部署的 Schema 冲突** -- 同版本（26.2.3）蓝绿安全（schema 不变），但跨版本升级时新容器会执行 Liquibase 迁移导致旧容器崩溃。蓝绿部署仅适用于配置变更，版本升级必须用滚动替换。
+4. **Keycloak 会话丢失** -- Infinispan 会话在 JVM 内存中，蓝绿切换后所有活跃用户被强制登出。接受此风险（用户量小），在维护窗口切换。
+5. **移除 dev 容器破坏开发工作流** -- postgres-dev 的 Docker volume 中可能有开发数据，移除前需要迁移脚本。keycloak-dev 移除后开发者需要用生产 Keycloak 测试。
 
 ## Implications for Roadmap
 
-Based on research, suggested phase structure:
+基于研究，建议以下阶段结构。每个阶段的排序基于依赖关系和风险递增原则。
 
-### Phase 1: Jenkins 安装与基础配置
-**Rationale:** Jenkins 是所有 Pipeline 特性的基础，必须最先安装验证。独立于应用逻辑，风险最低。
-**Delivers:** 可运行的 Jenkins 实例，可访问 Docker，Pipeline Job 骨架
-**Addresses:** T7 (Jenkins 安装脚本), T1 (Pipeline 阶段化骨架)
-**Avoids:** Pitfall 1 (Docker Socket 安全) -- 宿主机原生安装
-**Research flag:** 标准模式，Jenkins 官方安装文档覆盖完整，无需额外研究
+### Phase 1: 宿主机 PostgreSQL 安装与配置
+**Rationale:** 所有后续功能的基础依赖。T2（Jenkins PG 配置）、T3（移除 dev 容器）都要求宿主机 PG 先就绪。纯新增操作，不影响现有服务。
+**Delivers:** 运行中的 Homebrew PostgreSQL 17，包含 jenkins_db 和 noda_dev 数据库
+**Addresses:** T1（宿主机 PG 安装）
+**Avoids:** Pitfall 2（版本不匹配）-- 锁定 postgresql@17
 
-### Phase 2: Nginx 配置重构
-**Rationale:** 蓝绿部署依赖 Nginx upstream 动态切换，需要先将 upstream 定义从 `default.conf` 抽离到独立 include 文件。这是蓝绿的流量路由基础设施。
-**Delivers:** `upstream-findclass.conf` include 文件，nginx reload 验证通过，现有流量不受影响
-**Addresses:** 蓝绿部署的 Nginx 基础改造
-**Avoids:** Pitfall 2 (蓝绿容器端口冲突) -- upstream 指向可动态切换的容器名
-**Research flag:** 标准模式，Nginx include + reload 是成熟方案
+### Phase 2: Jenkins 数据存储优化（重新定义）
+**Rationale:** 紧跟 Phase 1，因为 Jenkins 是宿主机 PG 的主要消费者。但基于 STACK.md 的发现，这不是传统的数据库迁移，而是安装 PostgreSQL 插件 + 备份策略优化，复杂度低于原计划。
+**Delivers:** Jenkins 使用本地 PG 存储部分数据 + $JENKINS_HOME 纳入 B2 备份
+**Addresses:** T2（重新定义为 Jenkins PG 插件配置 + 备份策略）
+**Avoids:** Pitfall 1（数据丢失）-- 完整备份 $JENKINS_HOME，保留回滚方案
 
-### Phase 3: 蓝绿部署核心脚本
-**Rationale:** 核心部署逻辑（容器启停、健康检查、nginx 切换、状态管理）先在 bash 脚本中实现并手动验证，再集成到 Jenkins。降低调试复杂度。
-**Delivers:** `blue-green-deploy.sh` + `rollback-findclass.sh`，手动测试蓝绿切换和回滚正常工作
-**Addresses:** T2 (Git SHA 标签), T4 (HTTP 健康检查), T5 (自动回滚), D1 (蓝绿部署核心)
-**Uses:** Docker `docker run` 独立管理容器，Nginx upstream include 切换，状态文件
-**Avoids:** Pitfall 3 (数据库迁移兼容), Pitfall 4 (健康检查假阳性), Pitfall 5 (Pipeline 部分失败)
-**Research flag:** 需要研究 -- 健康检查策略（重试次数、超时、E2E 验证 URL）需要在实际环境中调优
+### Phase 3: 移除 postgres-dev / keycloak-dev 容器
+**Rationale:** 依赖 Phase 1 宿主机 PG 替代开发数据库。必须在本地开发流程验证通过后再移除。
+**Delivers:** 简化的 docker-compose.dev.yml（仅保留 nginx 开发配置）
+**Addresses:** T3（移除 dev 容器）+ D3（种子数据迁移到本地 PG）
+**Avoids:** Pitfall 3（破坏开发工作流）-- 先验证本地 PG 可替代，再移除容器
 
-### Phase 4: Jenkins Pipeline 集成
-**Rationale:** 核心部署逻辑验证通过后，包装进 Jenkinsfile 实现自动化。包括完整的 stage 编排、E2E 健康检查、自动回滚。
-**Delivers:** 可运行的 Jenkins Pipeline，手动触发 -> 零停机部署 -> 自动回滚
-**Addresses:** T1 (Pipeline 阶段化), T3 (构建失败阻止部署), T6 (部署前备份)
-**Uses:** Jenkins Declarative Pipeline, `post { failure }` 回滚
-**Avoids:** Pitfall 5 (Pipeline 部分失败) -- 状态文件 + 幂等操作 + failure 回滚
-**Research flag:** 标准模式，Jenkins Declarative Pipeline 文档覆盖完整
+### Phase 4: Keycloak 蓝绿部署基础设施
+**Rationale:** 与 PG 迁移无关，可独立进行。但需要在 Pipeline 框架之前完成，因为 Pipeline 要集成 Keycloak 蓝绿逻辑。这是 v1.5 最复杂的单个功能。
+**Delivers:** keycloak-blue/green 容器 + upstream-keycloak.conf 动态切换 + env-keycloak.env 模板
+**Addresses:** T5（Keycloak 蓝绿部署）
+**Avoids:** Pitfall 4（Schema 冲突）-- 同版本蓝绿安全；Pitfall 5（会话丢失）-- 维护窗口切换
 
-### Phase 5: 清理、迁移与文档
-**Rationale:** 部署流程稳定后，迁移环境变量管理、添加镜像清理步骤、保留旧脚本作为备选入口、更新文档。
-**Delivers:** 完整的 CI/CD 系统，镜像清理机制，文档更新
-**Addresses:** 磁盘空间管理，现有脚本迁移映射，CLAUDE.md 部署文档更新
-**Avoids:** Pitfall 6 (磁盘空间耗尽) -- Pipeline 末尾清理 + 定期 cron
-**Research flag:** 标准模式
+### Phase 5: 统一基础设施 Pipeline
+**Rationale:** 依赖 Phase 4（Keycloak 蓝绿基础设施已就绪）。所有部署策略（蓝绿/滚动替换）在 Pipeline 中统一编排。
+**Delivers:** Jenkinsfile.infra + pipeline-stages.sh 扩展 + Jenkins Job 配置
+**Addresses:** T4（统一 Pipeline）+ T6（备份检查/健康检查/回滚）+ T7（人工确认门禁）+ D2（服务分发）
+**Avoids:** Pitfall 6（循环依赖）-- Pipeline 服务白名单排除 postgres
+
+### Phase 6: 一键开发环境脚本
+**Rationale:** 独立于核心功能，但整合了前面所有变更（宿主机 PG、移除 dev 容器）。放在最后可以确保脚本反映最终状态。
+**Delivers:** setup-dev.sh（install/init-db/status/reset 子命令）
+**Addresses:** D1（一键安装）
+**Avoids:** Pitfall 7（非幂等）-- 架构检测 + 幂等检查函数
 
 ### Phase Ordering Rationale
 
-- **依赖关系驱动：** Jenkins (Phase 1) -> Nginx 改造 (Phase 2) -> 蓝绿脚本 (Phase 3) -> Pipeline 集成 (Phase 4)，每一步依赖前一步的产出
-- **风险递进：** 先做独立的基础设施变更（Jenkins 安装），再做应用层改造（Nginx/蓝绿），最后做流程集成（Pipeline）
-- **可回退性：** Phase 1-2 都不影响现有部署流程，Phase 3 手动验证通过后才进入 Phase 4 自动化，任何阶段失败都可以安全回退
-- **蓝绿脚本先于 Pipeline：** 核心 bash 脚本可脱离 Jenkins 独立调试和执行，比在 Jenkinsfile (Groovy) 中调试更高效
+1. **Phase 1 是所有 PG 相关功能的前置条件** -- T2、T3 都依赖宿主机 PG
+2. **Phase 2 紧跟 Phase 1** -- Jenkins 是宿主机 PG 的第一个消费者，迁移后才能验证 PG 稳定性
+3. **Phase 3 在 Phase 1 之后** -- 需要宿主机 PG 替代 postgres-dev 的开发数据库功能
+4. **Phase 4 可与 Phase 2/3 并行** -- Keycloak 蓝绿与 PG 迁移无关
+5. **Phase 5 在 Phase 4 之后** -- Pipeline 需要所有部署策略已验证
+6. **Phase 6 最后** -- 开发环境脚本整合所有变更
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 3:** 健康检查策略需要根据实际 findclass-ssr 冷启动时间调优（重试间隔、超时阈值、E2E 验证 URL）
-- **Phase 3:** 环境变量从 `config/secrets.sops.yaml` 到 `docker run` 的传递方案需要设计
-- **Phase 4:** Jenkins 与 GitHub SSH 集成（deploy key 配置、workspace 路径映射）需要实际调试
+- **Phase 2:** Jenkins PostgreSQL 插件的具体配置方式需要验证。STACK.md 确认 Jenkins 不使用 H2 存储核心数据，但 "安装 PG 插件改善存储" 的具体操作步骤需要参考 Jenkins 官方文档确认。研究显示两种可能路径：简单路径（仅安装插件 + JDBC 配置）和复杂路径（JCasC + 远程存储插件）。需要在 Plan 阶段确认。
+- **Phase 4:** Keycloak 蓝绿容器启动参数（15+ 环境变量）和 Infinispan 缓存行为需要实际测试验证。研究推荐 "同版本 start 模式 + 短暂共存" 方案，但缓存集群的具体行为（如连接数翻倍、schema migration 锁）需要在测试环境中观察。
+- **Phase 5:** Pipeline 参数化分发（不同服务不同策略）的 Jenkinsfile 结构需要设计。虽然 v1.4 已有参数化模式（findclass-ssr/noda-site），但基础设施服务有本质区别（有状态/无状态、蓝绿/滚动），需要在 Plan 阶段确定分发策略。
 
 Phases with standard patterns (skip research-phase):
-- **Phase 1:** Jenkins 宿主机安装，官方文档完整覆盖
-- **Phase 2:** Nginx include + reload，成熟的标准模式
-- **Phase 5:** 镜像清理 + 文档更新，无需研究
+- **Phase 1:** Homebrew PostgreSQL 安装是标准化流程，文档充分
+- **Phase 3:** Docker Compose 文件编辑和数据迁移，模式清晰
+- **Phase 6:** 一键安装脚本，参考现有 setup-jenkins.sh 模式
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Jenkins LTS + Nginx upstream 切换 + Docker run，官方文档 + 社区最佳实践充分验证 |
-| Features | HIGH | 特性列表基于项目代码库深度分析，依赖关系和优先级明确 |
-| Architecture | HIGH | 组件边界清晰，数据流完整，反模式已识别。基于项目现有代码的直接分析 |
-| Pitfalls | MEDIUM | 6 个 Critical Pitfalls 基于代码分析和训练知识，Web 搜索遭遇限流，部分结论未经在线验证（特别是磁盘空间增长估算、健康检查超时阈值） |
+| Stack | HIGH | Homebrew PG 安装、Jenkins 文件系统存储、Keycloak 版本兼容性均有官方文档验证 |
+| Features | MEDIUM | T2（Jenkins H2 -> PG）的定义需要重新评估。FEATURES.md 基于错误的 "H2 数据库迁移" 假设，需要根据 STACK.md 的发现修正范围和复杂度 |
+| Architecture | HIGH | 基于项目代码库完整分析，蓝绿框架已在 v1.4 验证，扩展模式清晰 |
+| Pitfalls | MEDIUM | Pitfall 1（Jenkins H2 迁移数据丢失）基于错误的假设需要降级或重写；Pitfall 6（循环依赖）是真实且严重的问题；其他 Pitfall 基于项目代码库分析，可靠性高 |
 
-**Overall confidence:** HIGH
+**Overall confidence:** MEDIUM-HIGH
 
 ### Gaps to Address
 
-- **健康检查超时调优：** 研究建议 90s 超时 + 5s 间隔（最多 18 次重试），但实际 findclass-ssr 冷启动时间需要 Phase 3 实测确认
-- **环境变量传递方案：** 从 sops 加密文件到 `docker run -e` 的传递链路需要在 Phase 3 设计和验证
-- **Jenkins 端口冲突：** Jenkins 默认 8080 端口与 Keycloak 内部端口冲突（虽然 Keycloak 不暴露外部端口），需要在 Phase 1 确认是否需要修改 Jenkins 端口
-- **noda-site 蓝绿扩展：** 当前仅 findclass-ssr 纳入蓝绿，noda-site 的蓝绿部署模式需要单独评估
+- **Jenkins PG 集成范围待确认:** STACK.md 确认 Jenkins 核心数据不使用 H2，但 PROJECT.md 的 "Jenkins H2 -> PG 迁移" 需求仍列在 Active 中。需要在 Roadmap 规划前与用户确认：是简化为 "安装 PG 插件 + 备份策略优化"（推荐），还是坚持某种形式的数据库集成。这直接影响 Phase 2 的范围。
+- **Jenkins PostgreSQL 插件的实际价值:** 安装率仅 1.76%，Jenkins 社区对此插件的讨论较少。需要确认安装此插件后具体改善什么（fingerprint 存储？build records？），还是仅仅将 $JENKINS_HOME 备份到 B2 就足够。
+- **Keycloak 蓝绿的 findclass-ssr 联动:** findclass-ssr 的 `KEYCLOAK_INTERNAL_URL` 当前硬编码为 `http://noda-infra-keycloak-prod:8080`。Keycloak 蓝绿后容器名变为 `keycloak-{color}`，需要同步更新 findclass-ssr 的环境变量。ARCHITECTURE.md 提到了这个问题但未给出最终方案。
+- **本地开发数据库选择:** ARCHITECTURE.md 推荐本地开发应用连接 Docker postgres-prod（方案 A），但这要求 Docker 容器必须运行。是否需要为开发环境提供纯宿主机方案（方案 B）需要确认。
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- 项目代码库：`docker/docker-compose.app.yml`, `docker/docker-compose.yml`, `docker/docker-compose.prod.yml` -- 现有服务定义、网络配置、健康检查
-- 项目代码库：`config/nginx/conf.d/default.conf`, `config/nginx/nginx.conf` -- upstream 定义、include 机制验证
-- 项目代码库：`scripts/deploy/deploy-apps-prod.sh`, `scripts/deploy/deploy-infrastructure-prod.sh` -- 现有部署流程、回滚逻辑
-- 项目代码库：`scripts/lib/health.sh`, `deploy/Dockerfile.findclass-ssr` -- 健康检查实现、构建流程
-- Jenkins 官方文档：LTS 安装、Declarative Pipeline、Credentials Store、systemd 管理
-- Jenkins Pipeline Plugin (workflow-aggregator) -- 89.7% 安装率，Declarative Pipeline 标配
-- Nginx 官方文档：`nginx -s reload` 平滑重载机制，零停机原理
+- 项目代码库: `docker/docker-compose.yml`, `docker/docker-compose.dev.yml`, `config/nginx/snippets/upstream-keycloak.conf`, `scripts/manage-containers.sh`, `scripts/pipeline-stages.sh`, `jenkins/Jenkinsfile`, `jenkins/Jenkinsfile.noda-site` -- 架构和集成点分析
+- [Jenkins Persistence Documentation](https://www.jenkins.io/doc/developer/persistence/) -- 确认 Jenkins 使用文件系统存储（XML + XStream），不使用 H2
+- [Jenkins H2 Database Plugin](https://plugins.jenkins.io/database-h2/) -- 安装率 0.043%，仅作为 database 插件的 H2 驱动
+- [Homebrew postgresql@17 Formula](https://formulae.brew.sh/formula/postgresql@17) -- 版本 17.9，支持 Apple Silicon
+- [Keycloak Configuration](https://www.keycloak.org/server/configuration) -- 生产模式配置、Infinispan 缓存行为
+- [Keycloak Database Configuration](https://www.keycloak.org/server/db) -- PostgreSQL 14-18 支持
 
 ### Secondary (MEDIUM confidence)
-- Jenkins Pipeline 最佳实践 -- 使用 `sh` 步骤而非 Groovy 逻辑
-- Docker BuildKit 缓存管理 -- `docker builder prune` 清理策略
-- 蓝绿部署 Expand-Contract 模式 -- 数据库迁移兼容性最佳实践
-- Prisma `migrate deploy` -- 只执行 forward 迁移，与蓝绿回滚策略的关系
+- Jenkins PostgreSQL 插件配置方式 -- 训练数据，未经在线文档验证
+- Keycloak Infinispan 多实例行为 -- Keycloak 文档描述，实际行为需测试验证
+- Jenkins H2 到 PG 迁移的具体步骤 -- 社区实践，Jenkins 官方无正式迁移指南
 
 ### Tertiary (LOW confidence)
-- 磁盘空间增长估算 -- 基于构建层大小推断，需实际监控验证
-- Cloudflare API 缓存清除 -- 未深入研究 API 细节，Phase 5 前需补充
+- Jenkins database-postgresql 插件的具体功能和限制 -- 安装率 1.76%，文档稀少
+- Apple Silicon 与 Intel Mac 在 PostgreSQL Homebrew 安装上的差异 -- 推断自 Homebrew 通用行为
 
 ---
-*Research completed: 2026-04-14*
+*Research completed: 2026-04-17*
 *Ready for roadmap: yes*
