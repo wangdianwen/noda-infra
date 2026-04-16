@@ -170,7 +170,7 @@ run_container() {
     --label noda.service-group=apps \
     --label noda.environment=prod \
     --label "noda.blue-green=${env}" \
-    --label com.docker.compose.project=noda-infra \
+    --label com.docker.compose.project=noda-apps \
     --label com.docker.compose.service=findclass-ssr \
     --health-cmd "wget --quiet --tries=1 --spider http://localhost:3001/api/health || exit 1" \
     --health-interval 30s \
