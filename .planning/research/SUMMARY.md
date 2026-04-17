@@ -1,171 +1,170 @@
 # Project Research Summary
 
-**Project:** Noda v1.5 开发环境本地化 + 基础设施 CI/CD
-**Domain:** 单服务器 Docker Compose 基础设施运维 -- Jenkins CI/CD 蓝绿部署扩展
+**Project:** Noda v1.6 -- Jenkins Pipeline 强制执行（Docker 权限收敛 + 操作审计）
+**Domain:** 单服务器 Linux 权限模型，Docker 访问控制，CI/CD 强制执行
 **Researched:** 2026-04-17
-**Confidence:** MEDIUM-HIGH
+**Confidence:** HIGH
 
 ## Executive Summary
 
-Noda v1.5 是一个基础设施运维里程碑，目标是将开发环境数据库从 Docker 容器迁移到宿主机 PostgreSQL，并为基础设施服务（Keycloak、PostgreSQL、nginx、noda-ops）建立统一的 Jenkins CI/CD Pipeline。项目的核心模式已由 v1.4 验证：蓝绿部署通过 Nginx upstream include 切换实现零停机，`manage-containers.sh` + `pipeline-stages.sh` 通过环境变量参数化支持任意服务的蓝绿管理。v1.5 的主要工作是将这套模式从应用层扩展到基础设施层。
+Noda v1.6 的核心目标是实现"所有容器部署只能通过 Jenkins Pipeline 完成"的强制执行机制。研究结论是：不需要引入任何新的软件包或第三方工具。所需机制全部基于 Linux 标准权限模型 -- Docker socket 属组收敛、文件权限锁定（chown/chmod）、sudoers 白名单、auditd 内核审计。这些是 Debian/Ubuntu 自带的标准组件，已有 20+ 年成熟历史。
 
-**重要发现：Jenkins 不使用 H2 数据库存储核心数据。** STACK.md 研究确认 Jenkins 2.x 的所有核心数据（jobs、builds、config、credentials）使用 XML + XStream 序列化存储在 `$JENKINS_HOME` 文件系统中。H2 只是嵌入式数据库驱动插件（安装率 0.043%），Jenkins 核心不依赖它。因此 PROJECT.md 中的 "Jenkins H2 -> PG 迁移" 需要重新定义：不是数据库迁移，而是安装 PostgreSQL 插件实现 fingerprint/build records 的外部存储 + 将 `$JENKINS_HOME` 纳入 B2 备份体系。这个认知修正直接影响 Phase 2 的范围和复杂度。
+推荐的实现路径是：将 Docker socket 属组从 `docker` 改为 `jenkins`（通过 systemd override 持久化），同时从 docker 组移除非 jenkins 用户。这样 Jenkins Pipeline 的所有 docker 命令无需任何代码修改即可继续工作，而其他用户直接执行 docker 命令会被拒绝。配合 sudoers 白名单为管理员保留只读调试能力，通过 break-glass 脚本为紧急部署提供受控替代路径。
 
-主要风险集中在三个方面：（1）Keycloak 蓝绿部署的数据库 schema 冲突（同版本安全，跨版本致命）；（2）基础设施 Pipeline 的循环依赖问题（Pipeline 重启 PostgreSQL 会导致 Jenkins 自身断连）；（3）移除 dev 容器可能破坏现有开发工作流。三个风险都有明确的缓解方案，但需要在 Roadmap 阶段安排中体现。
+关键风险集中在三个方面：(1) 权限收敛后 Jenkins 服务重启导致组缓存不一致，必须在每次权限变更后重启 Jenkins 并验证；(2) 蓝绿部署的 nginx upstream 文件写入权限必须同步调整，否则 Pipeline 在 Switch 阶段失败；(3) 紧急回退路径必须与权限收敛同步就绪，否则生产故障时无法手动恢复。
 
 ## Key Findings
 
 ### Recommended Stack
 
-宿主机安装 Homebrew PostgreSQL 17（与 Docker 生产 postgres:17.9 版本一致），用于 Jenkins 持久化和本地开发数据库。基础设施 Pipeline 复用 v1.4 已验证的参数化 Jenkinsfile 模式，通过 `choice` 参数选择服务。Keycloak 蓝绿部署复用 `manage-containers.sh` 框架，共享同一 PostgreSQL 数据库。
+全部基于 Linux 系统自带组件，零外部依赖。
 
-**Core technologies:**
-- **PostgreSQL 17 (Homebrew):** 宿主机开发数据库 + Jenkins 数据存储 -- 与 Docker 生产版本完全一致，pg_dump 无兼容问题
-- **Jenkinsfile.infra:** 基础设施统一 Pipeline -- 参数化选择服务，复用 pipeline-stages.sh 函数库
-- **Keycloak 蓝绿部署:** 复用 manage-containers.sh + upstream-keycloak.conf 动态切换 -- 与 findclass-ssr/noda-site 模式一致
-- **setup-dev.sh:** 一键开发环境安装 -- Homebrew + 数据库初始化 + 环境变量配置
-
-**Critical version requirements:**
-- 必须使用 `brew install postgresql@17`（非 `brew install postgresql`，后者安装 18.x）
-- Jenkins 2.541.3 要求 Java 17/21/25；2.555.1+ 仅支持 Java 21/25
+**核心机制：**
+- Docker socket 属组收敛：`chown root:jenkins /var/run/docker.sock` + systemd override -- 直接控制谁能访问 Docker
+- 文件权限锁定：`chown root:jenkins` + `chmod 750` -- 限制部署脚本仅 jenkins 可执行
+- sudoers 白名单：`/etc/sudoers.d/noda-docker` -- 管理员只读 docker 命令 + break-glass 紧急部署
+- auditd 内核审计：`/etc/audit/rules.d/noda-docker.rules` -- 记录所有 docker 命令执行，不可绕过
+- Jenkins Audit Trail 插件（436.vc0d1e79fc5a_3）：应用层审计，记录 Pipeline 触发和配置变更
+- Matrix Authorization Strategy 插件（3.2.9, 91% 安装率）：Jenkins 权限矩阵细化
 
 ### Expected Features
 
-**Must have (table stakes):**
-- **宿主机 PostgreSQL 安装与配置 (T1)** -- 开发环境用 Docker 跑数据库是反模式，版本必须与生产对齐
-- **Jenkins 数据存储优化 (T2, 重新定义)** -- 安装 PostgreSQL 插件 + $JENKINS_HOME 备份策略，不是传统意义的数据库迁移
-- **移除 postgres-dev / keycloak-dev 容器 (T3)** -- 本地 PG 替代后完全多余
-- **统一基础设施 Pipeline (T4)** -- 当前基础设施完全手动部署，是运维自动化的核心缺失
-- **Keycloak 蓝绿部署 (T5)** -- 生产环境 Keycloak 重启导致认证中断，蓝绿是零停机标准做法
-- **部署前备份 + 健康检查 + 回滚 (T6)** -- 基础设施 Pipeline 的安全网
-- **人工确认门禁 (T7)** -- 基础设施变更不可逆，必须有人确认
+**Must have（table stakes）：**
+- T1: Docker 组权限收敛 -- 移除非 jenkins 用户的 docker 组权限，确保只有 jenkins + root 可执行 docker 命令
+- T2: 部署脚本权限锁定 -- deploy 脚本改为 750 root:jenkins，确保只有 jenkins 可执行
+- T3: 操作系统级 Docker 命令审计 -- auditd 监控 docker.sock 读写，记录谁在什么时候执行了什么
+- T4: Jenkins Pipeline 操作审计 -- Audit Trail 插件记录 Jenkins 内部操作
+- T5: Jenkins 权限矩阵细化 -- Matrix Auth 插件限制非管理员的 Job 配置和 Script Console 访问
 
-**Should have (competitive):**
-- **一键安装脚本 (D1)** -- 5 分钟搭建完整开发环境
-- **服务特定 Pipeline 阶段分发 (D2)** -- 不同服务不同部署策略
-- **开发数据库种子数据自动化 (D3)** -- 本地 PG 初始化时自动创建测试数据
-- **Jenkins PG 备份纳入 B2 (D4)** -- 避免成为备份盲区
+**Should have（differentiators）：**
+- D1: Break-Glass 紧急访问机制文档化 -- 权限收敛后必须同步提供紧急替代方案
+- D2: 部署脚本 Break-Glass Wrapper -- 自动记录紧急访问日志
+- D3: auditd 日志轮转配置 -- 防止磁盘溢出
+- D5: 定期权限审查提醒 -- 防止权限配置随时间漂移
 
-**Defer (v2+):**
-- Keycloak session 持久化 -- 用户量小，过度工程化
-- PostgreSQL 蓝绿部署 -- 数据库状态在卷上，无意义
-- Jenkins Configuration as Code (JCasC) -- 单服务器场景手动配置足够
+**Defer（v1.7+）：**
+- D4: Jenkins H2 -> PostgreSQL 迁移 -- 从 PROJECT.md 继承的遗留需求，与权限收敛逻辑独立
 
 ### Architecture Approach
 
-v1.5 引入三层架构：宿主机层（PostgreSQL + Jenkins）处理持久化和 CI/CD；Docker 层（postgres-prod、keycloak、nginx、noda-ops）处理生产服务；蓝绿管理层（manage-containers.sh + upstream include）处理零停机部署。新增的 `Jenkinsfile.infra` 通过参数化复用现有 `pipeline-stages.sh`，与 `Jenkinsfile`/`Jenkinsfile.noda-site` 保持一致的模式。Keycloak 蓝绿部署遵循与 findclass-ssr 完全相同的路径：env 模板 + docker run 容器 + upstream 切换 + 状态文件。
+采用"Docker socket 属组收敛 + sudoers 白名单"方案（方案 A），不使用 Rootless Docker 或 Docker Socket Proxy。核心设计是将 `/var/run/docker.sock` 的属组从 `docker` 改为 `jenkins`，通过 systemd ExecStartPost override 确保持久化。
 
 **Major components:**
-1. **宿主机 PostgreSQL (Homebrew, port 5432)** -- jenkins_db + noda_dev，与 Docker 层隔离
-2. **Jenkinsfile.infra** -- 参数化 Pipeline，支持 postgres/keycloak/nginx/noda-ops 四种服务
-3. **Keycloak 蓝绿容器 (keycloak-blue/keycloak-green)** -- docker run 管理，共享 Docker postgres-prod 中的 keycloak_db
-4. **setup-dev.sh** -- 一键安装开发环境，幂等设计
+1. **systemd override** (`/etc/systemd/system/docker.service.d/socket-permissions.conf`) -- Docker 重启后自动恢复 socket 权限为 root:jenkins
+2. **sudoers 白名单** (`/etc/sudoers.d/noda-docker`) -- Cmnd_Alias 定义只读命令集合，管理员通过 sudo 调试；break-glass 紧急入口需密码
+3. **break-glass 脚本** (`/usr/local/bin/noda-emergency-deploy.sh`) -- 紧急部署受控入口，验证 Jenkins 不可用后记录审计日志，以 root 执行部署
+4. **auditd 规则** (`/etc/audit/rules.d/noda-docker.rules`) -- 内核级审计 docker-cmd、docker-socket、deploy-scripts、break-glass 等事件
+5. **权限收敛执行脚本** (`scripts/setup-docker-permissions.sh`) -- 一键 apply/verify/rollback/status
+
+**关键架构决策：**
+- jenkins 用户通过 socket 属组（而非 docker 组）获得 Docker 访问 -- Pipeline 零代码修改
+- Jenkins workspace 中 checkout 的脚本属主为 jenkins -- 仓库文件权限仅限制手动执行，两者互不干扰
+- noda-ops 容器内备份不受宿主机权限影响 -- 容器内 cron 不依赖宿主机 docker 权限
+- 保留 docker 组但清空成员 -- Docker 安装/更新需要 docker 组存在
 
 ### Critical Pitfalls
 
-1. **Jenkins 数据迁移理解偏差** -- STACK.md 确认 Jenkins 核心数据存储在文件系统（XML + XStream），不使用 H2 数据库。所谓 "H2 -> PG 迁移" 实际上是安装 PostgreSQL 插件用于 fingerprint 外置存储 + 文件系统备份策略优化。需要修正 FEATURES.md 和 ARCHITECTURE.md 中基于 "H2 迁移" 假设的复杂度评估。
-2. **基础设施 Pipeline 循环依赖** -- Jenkins 迁移到 PG 后，Pipeline 重启 PostgreSQL 会导致 Jenkins 自身断连。解决方案：禁止 Pipeline 管理 PostgreSQL（手动维护），Pipeline 服务白名单中排除 postgres。
-3. **Keycloak 蓝绿部署的 Schema 冲突** -- 同版本（26.2.3）蓝绿安全（schema 不变），但跨版本升级时新容器会执行 Liquibase 迁移导致旧容器崩溃。蓝绿部署仅适用于配置变更，版本升级必须用滚动替换。
-4. **Keycloak 会话丢失** -- Infinispan 会话在 JVM 内存中，蓝绿切换后所有活跃用户被强制登出。接受此风险（用户量小），在维护窗口切换。
-5. **移除 dev 容器破坏开发工作流** -- postgres-dev 的 Docker volume 中可能有开发数据，移除前需要迁移脚本。keycloak-dev 移除后开发者需要用生产 Keycloak 测试。
+1. **完全锁定后无法紧急恢复** -- 必须在权限收敛前先建立 break-glass 紧急路径（sudoers 白名单 + 封条机制），否则 Jenkins 宕机时无恢复手段。建议分阶段锁定，先观察一周无问题后再收紧
+2. **Linux 组变更不立即生效** -- `gpasswd -d` 或 `usermod` 后已运行的进程使用旧的组缓存。必须 `systemctl restart jenkins` 后才能生效。验证方法：`cat /proc/$(pgrep -f jenkins.war)/status | grep Groups`
+3. **Docker 重启后 socket 权限恢复** -- 不配置 systemd override 的话，下次 Docker 重启 socket 恢复为 root:docker 660，jenkins 失去访问权，所有 Pipeline 失败。这是整个方案最关键的持久化点
+4. **蓝绿部署 upstream 文件写入权限** -- `config/nginx/snippets/` 目录和 `/opt/noda/active-env*` 文件必须 jenkins 可写（root:jenkins 660/770），否则蓝绿切换的 Switch 阶段失败
+5. **sudoers 通配符权限提升** -- `NOPASSWD: /usr/bin/docker *` 等于给 root shell。只授权特定脚本路径和只读命令，脚本内部验证参数
 
 ## Implications for Roadmap
 
-基于研究，建议以下阶段结构。每个阶段的排序基于依赖关系和风险递增原则。
+基于研究，建议 4 个 Phase 的结构。
 
-### Phase 1: 宿主机 PostgreSQL 安装与配置
-**Rationale:** 所有后续功能的基础依赖。T2（Jenkins PG 配置）、T3（移除 dev 容器）都要求宿主机 PG 先就绪。纯新增操作，不影响现有服务。
-**Delivers:** 运行中的 Homebrew PostgreSQL 17，包含 jenkins_db 和 noda_dev 数据库
-**Addresses:** T1（宿主机 PG 安装）
-**Avoids:** Pitfall 2（版本不匹配）-- 锁定 postgresql@17
+### Phase 1: Docker Socket 权限收敛 + 文件权限锁定
+**Rationale:** socket 权限收敛是整个 v1.6 的基础。文件权限锁定与 socket 收敛必须同步 -- 没有 socket 收敛，脚本锁定无意义（用户可以直接 docker compose）；没有脚本锁定，socket 收敛不完整（用户可以手动执行部署脚本）。两者一起完成并验证 Jenkins Pipeline 完整可用。
+**Delivers:** Docker 访问仅限 jenkins 用户；systemd override 持久化；部署脚本仅 jenkins 可执行；nginx snippets 和 /opt/noda 状态文件权限就绪
+**Addresses:** T1（Docker 组权限收敛）、T2（部署脚本权限锁定）
+**Avoids:** Pitfall 3（Docker 重启 socket 恢复）-- systemd override 持久化；Pitfall 4（upstream 写入权限）-- 同步调整文件权限；Pitfall 6（组缓存）-- 变更后重启 Jenkins 并验证
+**验证:** `sudo -u jenkins docker ps` 成功；`sudo -u admin docker ps` 失败；`ls -la scripts/deploy/*.sh` 显示 root:jenkins 750；完整 Pipeline 端到端通过
 
-### Phase 2: Jenkins 数据存储优化（重新定义）
-**Rationale:** 紧跟 Phase 1，因为 Jenkins 是宿主机 PG 的主要消费者。但基于 STACK.md 的发现，这不是传统的数据库迁移，而是安装 PostgreSQL 插件 + 备份策略优化，复杂度低于原计划。
-**Delivers:** Jenkins 使用本地 PG 存储部分数据 + $JENKINS_HOME 纳入 B2 备份
-**Addresses:** T2（重新定义为 Jenkins PG 插件配置 + 备份策略）
-**Avoids:** Pitfall 1（数据丢失）-- 完整备份 $JENKINS_HOME，保留回滚方案
+### Phase 2: sudoers 白名单 + Break-Glass 机制
+**Rationale:** Phase 1 锁定了正常路径后，必须同步提供受控的替代路径。sudoers 白名单为管理员保留调试能力（只读 docker 命令），break-glass 脚本为紧急部署提供审计记录的入口。两者必须一起交付 -- 没有 break-glass 的权限锁定是危险的。
+**Delivers:** 管理员只读 docker 命令（sudo docker ps/logs/inspect）；紧急部署入口脚本（验证 Jenkins 不可用 + 记录审计日志）；封条机制
+**Addresses:** D1（Break-Glass 文档化）、D2（Wrapper 脚本）
+**Uses:** sudoers Cmnd_Alias 白名单、break-glass 封条文件、syslog 审计记录
+**Avoids:** Pitfall 1（锁定后无法恢复）-- break-glass 提供紧急路径；Pitfall 5（sudoers 通配符）-- 只授权特定命令
+**验证:** `sudo docker ps` 成功；`sudo docker run` 被拒绝；break-glass 脚本在 Jenkins 运行时拒绝执行；break-glass 脚本在 Jenkins 不可用时记录日志并执行部署
 
-### Phase 3: 移除 postgres-dev / keycloak-dev 容器
-**Rationale:** 依赖 Phase 1 宿主机 PG 替代开发数据库。必须在本地开发流程验证通过后再移除。
-**Delivers:** 简化的 docker-compose.dev.yml（仅保留 nginx 开发配置）
-**Addresses:** T3（移除 dev 容器）+ D3（种子数据迁移到本地 PG）
-**Avoids:** Pitfall 3（破坏开发工作流）-- 先验证本地 PG 可替代，再移除容器
+### Phase 3: 审计日志系统
+**Rationale:** 审计是监控层，与权限控制正交。auditd 覆盖操作系统层（谁执行了 docker 命令），Audit Trail 插件覆盖 Jenkins 层（谁触发了 Pipeline）。两层互补：正常路径通过 Audit Trail 追踪，绕过路径通过 auditd 发现。可以与 Phase 1-2 并行实施，但建议在权限模型稳定后再配置。
+**Delivers:** Docker 命令内核级审计日志；Jenkins 操作审计日志；日志轮转配置防止磁盘溢出
+**Addresses:** T3（auditd 审计）、T4（Jenkins Audit Trail）、D3（日志轮转）
+**Uses:** auditd 规则、Jenkins Audit Trail 插件（File logger）、logrotate
+**Avoids:** Pitfall 7（审计日志磁盘满）-- 配置 max_log_file + num_logs + logrotate
+**验证:** `ausearch -k docker-cmd` 返回结果；`aureport -x -i` 显示可读的操作报告；Jenkins audit log 文件存在并记录构建事件
 
-### Phase 4: Keycloak 蓝绿部署基础设施
-**Rationale:** 与 PG 迁移无关，可独立进行。但需要在 Pipeline 框架之前完成，因为 Pipeline 要集成 Keycloak 蓝绿逻辑。这是 v1.5 最复杂的单个功能。
-**Delivers:** keycloak-blue/green 容器 + upstream-keycloak.conf 动态切换 + env-keycloak.env 模板
-**Addresses:** T5（Keycloak 蓝绿部署）
-**Avoids:** Pitfall 4（Schema 冲突）-- 同版本蓝绿安全；Pitfall 5（会话丢失）-- 维护窗口切换
-
-### Phase 5: 统一基础设施 Pipeline
-**Rationale:** 依赖 Phase 4（Keycloak 蓝绿基础设施已就绪）。所有部署策略（蓝绿/滚动替换）在 Pipeline 中统一编排。
-**Delivers:** Jenkinsfile.infra + pipeline-stages.sh 扩展 + Jenkins Job 配置
-**Addresses:** T4（统一 Pipeline）+ T6（备份检查/健康检查/回滚）+ T7（人工确认门禁）+ D2（服务分发）
-**Avoids:** Pitfall 6（循环依赖）-- Pipeline 服务白名单排除 postgres
-
-### Phase 6: 一键开发环境脚本
-**Rationale:** 独立于核心功能，但整合了前面所有变更（宿主机 PG、移除 dev 容器）。放在最后可以确保脚本反映最终状态。
-**Delivers:** setup-dev.sh（install/init-db/status/reset 子命令）
-**Addresses:** D1（一键安装）
-**Avoids:** Pitfall 7（非幂等）-- 架构检测 + 幂等检查函数
+### Phase 4: Jenkins 权限矩阵 + 统一管理脚本
+**Rationale:** Jenkins 内部权限控制是细粒度增强。Matrix Auth 插件限制非管理员只能触发 Job 而不能修改配置或访问 Script Console。统一管理脚本整合所有权限配置，提供 apply/verify/rollback/status 四个子命令，确保权限配置可重复执行和可回滚。
+**Delivers:** Jenkins 权限矩阵（管理员全权限/普通用户只触发/匿名禁止）；setup-docker-permissions.sh 统一脚本；setup-jenkins.sh 同步更新
+**Addresses:** T5（Jenkins 权限矩阵）、D5（权限审查提醒）
+**Uses:** Matrix Authorization Strategy 插件
+**验证:** 普通用户只能触发 Job 不能修改配置；`setup-docker-permissions.sh verify` 全部 PASS；`setup-jenkins.sh uninstall && install` 产生正确权限配置
 
 ### Phase Ordering Rationale
 
-1. **Phase 1 是所有 PG 相关功能的前置条件** -- T2、T3 都依赖宿主机 PG
-2. **Phase 2 紧跟 Phase 1** -- Jenkins 是宿主机 PG 的第一个消费者，迁移后才能验证 PG 稳定性
-3. **Phase 3 在 Phase 1 之后** -- 需要宿主机 PG 替代 postgres-dev 的开发数据库功能
-4. **Phase 4 可与 Phase 2/3 并行** -- Keycloak 蓝绿与 PG 迁移无关
-5. **Phase 5 在 Phase 4 之后** -- Pipeline 需要所有部署策略已验证
-6. **Phase 6 最后** -- 开发环境脚本整合所有变更
+1. **Phase 1 是基础：** socket 权限 + 文件权限是所有其他措施的前提。没有它，sudoers 无意义（用户可以直接 docker compose），审计不完整（所有人都有 docker 权限）
+2. **Phase 2 紧随 Phase 1：** 锁定正常路径后必须立即提供替代路径。先锁定再建 break-glass 会有无法手动部署的风险窗口
+3. **Phase 3 可并行但建议靠后：** 审计技术上独立，但权限模型稳定后配置更准确
+4. **Phase 4 最后：** Jenkins 权限矩阵是锦上添花；统一管理脚本需要所有配置就绪后才能编写
 
 ### Research Flags
 
 Phases likely needing deeper research during planning:
-- **Phase 2:** Jenkins PostgreSQL 插件的具体配置方式需要验证。STACK.md 确认 Jenkins 不使用 H2 存储核心数据，但 "安装 PG 插件改善存储" 的具体操作步骤需要参考 Jenkins 官方文档确认。研究显示两种可能路径：简单路径（仅安装插件 + JDBC 配置）和复杂路径（JCasC + 远程存储插件）。需要在 Plan 阶段确认。
-- **Phase 4:** Keycloak 蓝绿容器启动参数（15+ 环境变量）和 Infinispan 缓存行为需要实际测试验证。研究推荐 "同版本 start 模式 + 短暂共存" 方案，但缓存集群的具体行为（如连接数翻倍、schema migration 锁）需要在测试环境中观察。
-- **Phase 5:** Pipeline 参数化分发（不同服务不同策略）的 Jenkinsfile 结构需要设计。虽然 v1.4 已有参数化模式（findclass-ssr/noda-site），但基础设施服务有本质区别（有状态/无状态、蓝绿/滚动），需要在 Plan 阶段确定分发策略。
+- **Phase 1:** 需要在生产服务器上确认当前 docker 组成员和 socket 权限实际状态（`getent group docker`、`ls -la /var/run/docker.sock`）。研究基于代码分析而非实际服务器状态。同时需要确认 jenkins 用户 UID（影响 auditd auid 过滤）和 Docker compose 插件的实际安装路径
+- **Phase 2:** sudoers 规则需要在生产环境验证语法（`visudo -c`）。不同 Linux 发行版的 sudo 版本可能影响 Defaults 语法兼容性（特别是 `log_output` 和 `iolog_dir`）
 
 Phases with standard patterns (skip research-phase):
-- **Phase 1:** Homebrew PostgreSQL 安装是标准化流程，文档充分
-- **Phase 3:** Docker Compose 文件编辑和数据迁移，模式清晰
-- **Phase 6:** 一键安装脚本，参考现有 setup-jenkins.sh 模式
+- **Phase 3:** auditd 规则配置和 Jenkins 插件安装是标准操作，文档充分
+- **Phase 4:** Matrix Auth 插件配置是标准 Jenkins 管理操作，91% 安装率说明模式成熟
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Homebrew PG 安装、Jenkins 文件系统存储、Keycloak 版本兼容性均有官方文档验证 |
-| Features | MEDIUM | T2（Jenkins H2 -> PG）的定义需要重新评估。FEATURES.md 基于错误的 "H2 数据库迁移" 假设，需要根据 STACK.md 的发现修正范围和复杂度 |
-| Architecture | HIGH | 基于项目代码库完整分析，蓝绿框架已在 v1.4 验证，扩展模式清晰 |
-| Pitfalls | MEDIUM | Pitfall 1（Jenkins H2 迁移数据丢失）基于错误的假设需要降级或重写；Pitfall 6（循环依赖）是真实且严重的问题；其他 Pitfall 基于项目代码库分析，可靠性高 |
+| Stack | HIGH | 全部基于 Linux 标准机制（gpasswd、chown/chmod、auditd、sudoers），无第三方依赖，20+ 年成熟历史 |
+| Features | HIGH | 基于项目代码库 28 个脚本的深度审计，所有集成点已识别；Jenkins 插件基于官方文档和安装率验证 |
+| Architecture | HIGH | 方案 A（socket 属组收敛）在架构研究中与 Rootless Docker、纯 sudoers、Docker 授权插件全面对比，结论有明确依据 |
+| Pitfalls | HIGH | 基于项目代码完整分析（28 个 docker 命令脚本）+ Linux/Docker 权限模型确定性知识；Pitfall-to-Phase 映射完整 |
 
-**Overall confidence:** MEDIUM-HIGH
+**Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Jenkins PG 集成范围待确认:** STACK.md 确认 Jenkins 核心数据不使用 H2，但 PROJECT.md 的 "Jenkins H2 -> PG 迁移" 需求仍列在 Active 中。需要在 Roadmap 规划前与用户确认：是简化为 "安装 PG 插件 + 备份策略优化"（推荐），还是坚持某种形式的数据库集成。这直接影响 Phase 2 的范围。
-- **Jenkins PostgreSQL 插件的实际价值:** 安装率仅 1.76%，Jenkins 社区对此插件的讨论较少。需要确认安装此插件后具体改善什么（fingerprint 存储？build records？），还是仅仅将 $JENKINS_HOME 备份到 B2 就足够。
-- **Keycloak 蓝绿的 findclass-ssr 联动:** findclass-ssr 的 `KEYCLOAK_INTERNAL_URL` 当前硬编码为 `http://noda-infra-keycloak-prod:8080`。Keycloak 蓝绿后容器名变为 `keycloak-{color}`，需要同步更新 findclass-ssr 的环境变量。ARCHITECTURE.md 提到了这个问题但未给出最终方案。
-- **本地开发数据库选择:** ARCHITECTURE.md 推荐本地开发应用连接 Docker postgres-prod（方案 A），但这要求 Docker 容器必须运行。是否需要为开发环境提供纯宿主机方案（方案 B）需要确认。
+- **生产服务器实际状态未知：** 当前 docker 组成员、socket 权限、auditd 安装状态等需要通过 SSH 确认。建议 Phase 1 开始前在服务器上运行状态快照命令（`getent group docker`、`ls -la /var/run/docker.sock`、`systemctl status auditd`）
+- **jenkins 用户 UID 确认：** 研究假设 jenkins UID 为 1001，实际可能不同。auditd 规则中的 auid 过滤需要使用实际 UID
+- **Docker compose 插件路径：** sudoers 规则和 auditd 规则中需要引用 docker compose 路径。不同安装方式路径不同：`/usr/libexec/docker/cli-plugins/docker-compose`（apt）vs `/usr/local/bin/docker-compose`（手动）。需要 `which docker` 和 `docker compose version` 确认
+- **Jenkins workspace vs 仓库路径：** Pipeline 实际执行路径需要确认。如果 Jenkins 直接 checkout 到 `/opt/noda-infra/`，文件权限设计需调整；如果使用 workspace，则仓库权限和 workspace 权限互不干扰
+- **setup-jenkins.sh 同步更新：** 权限模型变更后安装脚本必须同步更新（第 160 行 `usermod -aG docker jenkins` 需要修改为 socket 属组方式），否则重新安装会回退到旧的权限模型
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- 项目代码库: `docker/docker-compose.yml`, `docker/docker-compose.dev.yml`, `config/nginx/snippets/upstream-keycloak.conf`, `scripts/manage-containers.sh`, `scripts/pipeline-stages.sh`, `jenkins/Jenkinsfile`, `jenkins/Jenkinsfile.noda-site` -- 架构和集成点分析
-- [Jenkins Persistence Documentation](https://www.jenkins.io/doc/developer/persistence/) -- 确认 Jenkins 使用文件系统存储（XML + XStream），不使用 H2
-- [Jenkins H2 Database Plugin](https://plugins.jenkins.io/database-h2/) -- 安装率 0.043%，仅作为 database 插件的 H2 驱动
-- [Homebrew postgresql@17 Formula](https://formulae.brew.sh/formula/postgresql@17) -- 版本 17.9，支持 Apple Silicon
-- [Keycloak Configuration](https://www.keycloak.org/server/configuration) -- 生产模式配置、Infinispan 缓存行为
-- [Keycloak Database Configuration](https://www.keycloak.org/server/db) -- PostgreSQL 14-18 支持
+- 项目代码库：28 个使用 docker 命令的脚本完整审计
+  - `scripts/setup-jenkins.sh`（Jenkins 安装逻辑、docker 组配置第 160 行）
+  - `scripts/manage-containers.sh`（蓝绿容器管理、set_active_env()、update_upstream()）
+  - `scripts/pipeline-stages.sh`（Pipeline 阶段函数）
+  - `scripts/blue-green-deploy.sh`（蓝绿部署逻辑）
+  - `scripts/deploy/deploy-infrastructure-prod.sh`（基础设施部署）
+  - `scripts/deploy/deploy-apps-prod.sh`（应用部署）
+  - `scripts/backup/lib/health.sh`（宿主机 docker exec 调用）
+  - `jenkins/Jenkinsfile` / `Jenkinsfile.infra` / `Jenkinsfile.noda-site` / `Jenkinsfile.keycloak`
+  - `docker/docker-compose.yml` / `docker-compose.app.yml`
+  - `config/nginx/snippets/upstream-*.conf`
+- [Docker Engine Security](https://docs.docker.com/engine/security/) -- Docker 官方安全文档，确认 auditd 监控 docker.sock 的推荐方式
+- [Jenkins Audit Trail Plugin](https://plugins.jenkins.io/audit-trail/) -- 版本 436.vc0d1e79fc5a_3，官方插件文档
+- [Jenkins Matrix Authorization Plugin](https://plugins.jenkins.io/matrix-auth/) -- 版本 3.2.9，91% 安装率
+- [Linux auditd Documentation](https://linux.die.net/man/8/auditd) -- 审计框架配置和规则语法
+- [sudoers man page](https://linux.die.net/man/5/sudoers) -- Cmnd_Alias、Defaults 语法
+- [systemd override 机制](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html) -- ExecStartPost 钩子
 
 ### Secondary (MEDIUM confidence)
-- Jenkins PostgreSQL 插件配置方式 -- 训练数据，未经在线文档验证
-- Keycloak Infinispan 多实例行为 -- Keycloak 文档描述，实际行为需测试验证
-- Jenkins H2 到 PG 迁移的具体步骤 -- 社区实践，Jenkins 官方无正式迁移指南
-
-### Tertiary (LOW confidence)
-- Jenkins database-postgresql 插件的具体功能和限制 -- 安装率 1.76%，文档稀少
-- Apple Silicon 与 Intel Mac 在 PostgreSQL Homebrew 安装上的差异 -- 推断自 Homebrew 通用行为
+- [CIS Benchmark Linux](https://www.cisecurity.org/cis-benchmarks/) -- auditd 配置最佳实践
+- [Ubuntu auditd Guide](https://ubuntu.com/server/docs/security-the-audit-daemon) -- Ubuntu 官方指南
+- Docker socket 属组方案在生产环境的具体实践 -- 基于社区最佳实践，未经本项目验证
 
 ---
 *Research completed: 2026-04-17*

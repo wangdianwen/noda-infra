@@ -1,82 +1,83 @@
-# Architecture Research: v1.5 开发环境本地化 + 基础设施 CI/CD
+# Architecture Research: v1.6 Docker 权限收敛 + Jenkins Pipeline 强制执行
 
-**Domain:** 单服务器 Docker Compose 基础设施，Jenkins CI/CD 蓝绿部署
+**Domain:** 单服务器 Linux 权限模型，Docker 访问控制，CI/CD 强制执行
 **Researched:** 2026-04-17
-**Confidence:** HIGH（基于项目代码库完整分析 + 现有架构文档）
+**Confidence:** HIGH（基于项目代码库完整分析 + Linux/Docker 安全实践）
 
 ---
 
 ## 一、系统总览
 
-### 1.1 当前架构（v1.4 已交付）
+### 1.1 当前权限模型（v1.5 已交付）
 
 ```
-浏览器 → Cloudflare CDN → Cloudflare Tunnel (noda-ops) → nginx:80
-                                                          │
-                            ┌─────────────────────────────┼──────────────────────┐
-                            │                             │                      │
-                  class.noda.co.nz             auth.noda.co.nz           noda.co.nz
-                            │                             │                      │
-                    findclass_backend              keycloak_backend        noda_site_backend
-                            │                             │                      │
-                  findclass-ssr-{color}:3001     keycloak:8080            noda-site-{color}:3000
-                  （蓝绿 docker run）            （compose 单容器）        （蓝绿 docker run）
-
-宿主机:
-  Jenkins (systemd, port 8888) — H2 内嵌数据库
-  PostgreSQL 17.9 — 仅 Docker 容器内运行
-
-Docker Compose 项目：
-  noda-infra  — postgres, keycloak, nginx, noda-ops（compose 管理）
-  noda-apps   — findclass-ssr, noda-site（docker run 蓝绿管理）
-  共享网络：noda-network (external)
+宿主机 Linux (Debian/Ubuntu)
+┌──────────────────────────────────────────────────────────────┐
+│                                                               │
+│  用户/组:                                                     │
+│  ├── root                ← 全权限                            │
+│  ├── jenkins:docker      ← jenkins 用户，docker 组成员        │
+│  └── admin:docker        ← 管理员用户，docker 组成员          │
+│                                                               │
+│  Docker Socket:                                               │
+│  /var/run/docker.sock  root:docker  660                      │
+│                                                               │
+│  脚本权限:                                                    │
+│  scripts/deploy/*.sh   755  ← 任何用户可执行                 │
+│  scripts/*.sh           755  ← 任何用户可执行                │
+│  config/nginx/snippets/ 644  ← 任何用户可读                  │
+│                                                               │
+│  问题:                                                        │
+│  1. docker 组任何成员 = 完整 root 等价权限                    │
+│  2. 任何 SSH 登录用户可直接 docker compose up/down            │
+│  3. 任何用户可直接运行部署脚本                                │
+│  4. 无操作审计日志                                            │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 目标架构（v1.5）
+**核心安全问题：** `docker` 组等价于 `root`。任何 `docker` 组成员可以 `docker run -v /:/host` 获取宿主机完全控制权。当前 `admin` 用户（或其他用户）在 `docker` 组中，可以绕过 Jenkins 直接执行部署操作。
+
+### 1.2 目标权限模型（v1.6）
 
 ```
-浏览器 → Cloudflare CDN → Cloudflare Tunnel (noda-ops) → nginx:80
-                                                          │
-                            ┌─────────────────────────────┼──────────────────────┐
-                            │                             │                      │
-                  class.noda.co.nz             auth.noda.co.nz           noda.co.nz
-                            │                             │                      │
-                    findclass_backend          keycloak_backend          noda_site_backend
-                            │                             │                      │
-                  findclass-ssr-{color}:3001   keycloak-{color}:8080    noda-site-{color}:3000
-                  （蓝绿 docker run）          （蓝绿 docker run）       （蓝绿 docker run）
-                                                        ↑ 新增
-
-宿主机:
-  Jenkins (systemd, port 8888)
-    └── 连接 → 宿主机 PostgreSQL (Homebrew, port 5432)
-                ├── jenkins_db     ← Jenkins 数据库（替代 H2）
-                ├── noda_dev       ← 本地开发数据库
-                └── （直接备份，更安全）
-
-Docker 容器 PostgreSQL（生产）:
-                ├── noda_prod       ← findclass-ssr 生产数据
-                └── keycloak_db     ← Keycloak 生产数据
-
-  无 postgres-dev 容器   ← 移除
-  无 keycloak-dev 容器   ← 移除
-  无 docker-compose.dev.yml ← 大幅简化/移除
+宿主机 Linux (Debian/Ubuntu)
+┌──────────────────────────────────────────────────────────────┐
+│                                                               │
+│  用户/组:                                                     │
+│  ├── root                ← 全权限（sudoers 保护）            │
+│  ├── jenkins:jenkins     ← docker 访问仅限 jenkins           │
+│  │   └── Docker Socket 访问: 是（通过白名单机制）            │
+│  └── admin:admin         ← 日常管理，无直接 docker 访问      │
+│      └── 只读 docker 命令通过 sudo 白名单                    │
+│      └── 紧急部署通过 break-glass 机制                       │
+│                                                               │
+│  Docker Socket:                                               │
+│  /var/run/docker.sock  root:jenkins  660  ← 仅 jenkins 可访问│
+│                                                               │
+│  脚本权限:                                                    │
+│  scripts/deploy/*.sh   750 root:jenkins  ← 仅 jenkins 可执行│
+│  scripts/pipeline-stages.sh  750 root:jenkins                │
+│  config/nginx/snippets/ 640 root:jenkins  ← 仅 jenkins 可写 │
+│                                                               │
+│  审计:                                                        │
+│  auditd → 记录所有 docker 命令执行                            │
+│  sudoers → 记录所有 sudo 操作                                 │
+│  /var/log/noda-audit/ → 部署操作日志                         │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### 1.3 变更范围总览
 
 | 变更类型 | 组件 | 影响 |
 |----------|------|------|
-| **新增** | 宿主机 PostgreSQL (Homebrew) | Jenkins + 本地开发数据库 |
-| **新增** | Jenkinsfile.infra | 基础设施统一 Pipeline |
-| **新增** | Keycloak 蓝绿部署 | upstream-keycloak.conf 动态切换 |
-| **新增** | setup-dev.sh | 一键开发环境安装 |
-| **修改** | Jenkins H2 → PG 迁移 | Jenkins 配置变更 |
-| **修改** | pipeline-stages.sh | 参数化支持基础设施服务 |
-| **修改** | manage-containers.sh | Keycloak 蓝绿容器管理 |
-| **移除** | postgres-dev 容器 | docker-compose.dev.yml |
-| **移除** | keycloak-dev 容器 | docker-compose.dev.yml |
-| **移除/简化** | docker-compose.dev.yml | 大幅裁剪或完全移除 |
+| **新增** | Docker socket 权限收敛脚本 | 限制 docker.sock 仅 jenkins 可访问 |
+| **新增** | sudoers 白名单文件 | admin 用户只读 docker + break-glass |
+| **新增** | auditd 规则文件 | 记录所有 docker/sudo 操作 |
+| **新增** | 权限收敛执行脚本 (`scripts/setup-docker-permissions.sh`) | 一键应用所有权限变更 |
+| **修改** | `setup-jenkins.sh` | 调整 docker 组配置逻辑 |
+| **修改** | deploy 脚本文件权限 | 750 root:jenkins |
+| **修改** | nginx snippets 目录权限 | 640/750 root:jenkins |
+| **修改** | `/opt/noda/` 状态文件权限 | root:jenkins 可写 |
 
 ---
 
@@ -84,735 +85,813 @@ Docker 容器 PostgreSQL（生产）:
 
 ### 2.1 新增组件
 
-| 组件 | 职责 | 运行位置 | 与现有系统集成点 |
-|------|------|---------|----------------|
-| 宿主机 PostgreSQL | Jenkins 持久化 + 本地开发数据库 | 宿主机 (Homebrew) | Jenkins JDBC 连接；本地开发工具直连 |
-| Jenkinsfile.infra | 基础设施服务统一部署 Pipeline | Jenkins agent | 调用 pipeline-stages.sh + manage-containers.sh |
-| keycloak-{color} 蓝绿容器 | Keycloak 零停机部署 | Docker (docker run) | noda-network；nginx upstream 切换 |
-| setup-dev.sh | 一键配置开发环境 | 宿主机 | 安装 Homebrew PG、创建数据库、配置 Jenkins |
+| 组件 | 职责 | 实现方式 |
+|------|------|---------|
+| Docker socket 权限规则 | 限制 docker.sock 访问仅限 jenkins 用户 | udev 规则 或 systemd override |
+| sudoers 白名单 (`/etc/sudoers.d/noda-docker`) | 定义哪些用户可以执行哪些 docker/sudo 命令 | sudoers 配置文件 |
+| auditd Docker 规则 (`/etc/audit/rules.d/noda-docker.rules`) | 审计所有 docker 命令执行 | auditd 规则文件 |
+| `scripts/setup-docker-permissions.sh` | 一键应用/验证/回滚所有权限配置 | bash 脚本 |
+| break-glass 封条文件 (`/opt/noda/.break-glass-sealed`) | 记录紧急部署封条状态和时间戳 | 空文件 + 时间戳 |
 
 ### 2.2 修改组件
 
 | 组件 | 修改内容 | 修改范围 |
 |------|---------|---------|
-| `pipeline-stages.sh` | 添加 `pipeline_infra_deploy`、`pipeline_infra_health_check` 等函数 | 中等 — 新增函数，不修改现有函数 |
-| `manage-containers.sh` | Keycloak 服务参数支持（端口 8080、健康检查方式不同） | 小 — 已有 SERVICE_PORT/HEALTH_PATH 参数化 |
-| `upstream-keycloak.conf` | 从静态 `keycloak:8080` 改为动态 `keycloak-{color}:8080` | 小 — 格式与 findclass/noda-site 一致 |
-| `docker-compose.dev.yml` | 移除 postgres-dev、keycloak-dev 定义 | 中等 — 大量删除 |
-| `docker-compose.yml` | keycloak 服务保持定义（作为蓝绿 init 来源） | 小 — 可能微调 |
+| `scripts/setup-jenkins.sh` | `cmd_install` 中 `usermod -aG docker jenkins` 改为 socket 权限分配 | 小 — 约 5 行 |
+| `scripts/deploy/deploy-apps-prod.sh` | 文件权限改为 `750 root:jenkins` | 无代码变更 |
+| `scripts/deploy/deploy-infrastructure-prod.sh` | 文件权限改为 `750 root:jenkins` | 无代码变更 |
+| `scripts/pipeline-stages.sh` | 文件权限改为 `750 root:jenkins` | 无代码变更 |
+| `scripts/manage-containers.sh` | 文件权限改为 `750 root:jenkins` | 无代码变更 |
+| `scripts/blue-green-deploy.sh` | 文件权限改为 `750 root:jenkins` | 无代码变更 |
+| `config/nginx/snippets/` | 目录权限改为 `750 root:jenkins`，文件权限 `640` | 无代码变更 |
+| `/opt/noda/` 状态文件 | 文件权限改为 `660 root:jenkins` | 无代码变更 |
 
 ### 2.3 不变组件
 
 | 组件 | 理由 |
 |------|------|
-| `docker-compose.app.yml` | 应用服务（findclass-ssr, noda-site）配置不变 |
-| `docker-compose.prod.yml` | 生产 overlay 不变（Keycloak 生产配置保持） |
-| `Jenkinsfile`（findclass-ssr） | 现有 Pipeline 不变 |
-| `Jenkinsfile.noda-site` | 现有 Pipeline 不变 |
-| `nginx/conf.d/default.conf` | server blocks 不变，`proxy_pass http://keycloak_backend` 引用不变 |
-| `scripts/lib/health.sh` | 通用健康检查函数不变 |
-| `scripts/lib/log.sh` | 日志函数不变 |
+| `jenkins/Jenkinsfile` | Pipeline 代码不变，通过 jenkins 用户执行 |
+| `jenkins/Jenkinsfile.noda-site` | 同上 |
+| `jenkins/Jenkinsfile.infra` | 同上 |
+| `scripts/lib/log.sh` | 通用日志库，所有用户可读 |
+| `scripts/lib/health.sh` | 通用健康检查库，所有用户可读 |
+| `docker/docker-compose.yml` | Compose 配置不变 |
+| `docker/docker-compose.prod.yml` | 同上 |
 
 ---
 
-## 三、集成点详细分析
+## 三、架构决策：Docker 访问控制方案选择
 
-### 3.1 本地 PostgreSQL + Jenkins 连接
+### 3.1 方案对比
 
-**现状：** Jenkins 使用内嵌 H2 数据库（文件存储在 `/var/lib/jenkins/`）。
+| 方案 | 安全性 | 复杂度 | 与 Jenkins 兼容性 | break-glass 难度 |
+|------|--------|--------|------------------|-----------------|
+| **A. docker.sock 属主改为 jenkins** | HIGH | LOW | 完美 | 中等（sudo） |
+| B. Rootless Docker | HIGHEST | HIGH | 需要大量适配 | 复杂 |
+| C. sudoers 全量控制 | MEDIUM | MEDIUM | 需要 sudo 前缀 | 简单 |
+| D. Docker 授权插件 | HIGH | HIGH | 需要插件配置 | 复杂 |
 
-**目标：** Jenkins 连接宿主机 PostgreSQL。
+### 3.2 推荐方案：A. docker.sock 属主改为 jenkins + sudoers 白名单
 
-**网络拓扑：**
+**核心思路：** 不使用 `docker` 组，而是让 `jenkins` 用户直接拥有 Docker socket 的组访问权。
 
-```
-宿主机进程空间
-┌───────────────────────────────────────────────────┐
-│  Jenkins (systemd, port 8888)                      │
-│    └── JDBC → localhost:5432/jenkins_db            │
-│                                                     │
-│  PostgreSQL (Homebrew, port 5432)                   │
-│    ├── jenkins_db  ← Jenkins 持久化                │
-│    └── noda_dev    ← 本地开发用                     │
-│                                                     │
-│  Docker Engine                                      │
-│    ├── noda-network (bridge)                        │
-│    │   ├── noda-infra-postgres-prod:5432 (容器内)  │
-│    │   ├── noda-infra-keycloak-{color}:8080        │
-│    │   └── ...                                     │
-│    └── 宿主机 PG 不在 Docker 网络内               │
-└───────────────────────────────────────────────────┘
-```
+**为什么不用 Rootless Docker：**
+1. 现有 `docker-compose.yml` 已经假设 rootful Docker（端口映射、网络模式等）
+2. Rootless Docker 的 `--privileged`、某些网络功能受限
+3. 迁移成本高（所有 Compose 文件、所有 docker run 命令都需要测试）
+4. 单服务器场景下，Rootless Docker 的安全优势主要体现在容器逃逸后，但本项目的攻击面很小
 
-**关键设计决策：宿主机 PostgreSQL 不加入 Docker 网络。**
+**为什么不用纯 sudoers 方案：**
+1. Jenkins Pipeline 中的 `sh` 步骤执行大量 docker 命令，每个都加 `sudo` 前缀改动面大
+2. 环境变量不会通过 sudo 传递（需要 `--preserve-env` 配置）
+3. `docker compose` 命令涉及复杂的子进程调用，sudoers 规则难以精确覆盖
 
-理由：
-1. Jenkins 运行在宿主机，通过 `localhost:5432` 直接连接最简单
-2. Docker 容器内的服务（findclass-ssr）不需要访问宿主机 PG — 它们连 Docker 容器内的 postgres-prod
-3. 避免 Docker 网络配置复杂化（宿主机 PG 加入 bridge 网络需要额外配置）
-
-**Jenkins 连接配置（`/etc/default/jenkins` 或 systemd override）：**
+**方案 A 的实现：**
 
 ```bash
-# Jenkins 启动参数添加
-JAVA_OPTS="-Djenkins.model.Jenkins.loadAgentPlugins=false"
-# 实际数据库切换需要安装 database 插件或通过 JCasC 配置
+# 1. 从 docker 组移除所有非必要用户
+sudo gpasswd -d admin docker 2>/dev/null || true
+
+# 2. jenkins 也不在 docker 组（改为直接 socket 访问）
+sudo gpasswd -d jenkins docker 2>/dev/null || true
+
+# 3. 创建专用组 jenkins-docker（可选）或直接修改 socket 属组
+# 方案 A1: 直接让 jenkins 拥有 socket
+sudo chown root:jenkins /var/run/docker.sock
+sudo chmod 660 /var/run/docker.sock
+
+# 方案 A2: 使用 systemd override 确保 Docker 重启后权限不变
+# /etc/systemd/system/docker.service.d/override.conf
+[Service]
+ExecStartPost=/bin/chown root:jenkins /var/run/docker.sock
+ExecStartPost=/bin/chmod 660 /var/run/docker.sock
 ```
 
-**重要说明：** Jenkins 的数据存储模型以文件系统（XML + JSON）为主，H2 仅用于部分插件和 fingerprint。所谓 "Jenkins H2 → PG 迁移" 在 Jenkins 2.x 中实际是指：
-1. 安装 PostgreSQL 插件（用于 fingerprint 和 build records 外置存储）
-2. 部分 Jenkins 数据（credentials、build history）仍在文件系统中
-3. 真正的 Jenkins 元数据迁移到 PG 需要额外的数据库插件配置
+**systemd override 是关键** — Docker 重启后会重新创建 socket 文件，恢复默认的 `root:docker 660`。必须在 `ExecStartPost` 中覆盖。
 
-**需确认：** 项目描述的 "Jenkins 从 H2 迁移到本地 PG" 具体指什么。如果仅是让 Jenkins 的 fingerprint/build records 存到 PG（推荐），操作较简单。如果要让所有 Jenkins 数据（jobs、config）也存到 PG，这需要 Jenkins Configuration as Code (JCasC) + 远程存储插件，复杂度显著增加。
+### 3.3 sudoers 白名单设计
 
-### 3.2 移除 postgres-dev / keycloak-dev
+**原则：** 非 jenkins 用户不能直接执行 docker 命令，但通过 sudo 可以执行只读命令（用于调试）。紧急部署需要 break-glass 机制。
 
-**现状：**
+```bash
+# /etc/sudoers.d/noda-docker
+# 由 root 管理，权限 440
 
-```
-docker-compose.dev.yml 定义：
-├── postgres-dev     — 端口 127.0.0.1:5433:5432，连接 noda-network
-├── keycloak-dev     — 端口 127.0.0.1:18080:8080，连接 postgres-dev
-└── nginx dev 覆盖   — 端口 8081:80
-```
+# ============================================
+# 只读 docker 命令 — 所有 admin 组用户可执行
+# ============================================
+Cmnd_Alias DOCKER_READ = \
+    /usr/bin/docker ps, \
+    /usr/bin/docker ps *, \
+    /usr/bin/docker images, \
+    /usr/bin/docker images *, \
+    /usr/bin/docker logs, \
+    /usr/bin/docker logs *, \
+    /usr/bin/docker inspect, \
+    /usr/bin/docker inspect *, \
+    /usr/bin/docker top *, \
+    /usr/bin/docker stats, \
+    /usr/bin/docker stats *, \
+    /usr/bin/docker compose ps, \
+    /usr/bin/docker compose ps *, \
+    /usr/bin/docker compose logs, \
+    /usr/bin/docker compose logs *, \
+    /usr/bin/docker compose config, \
+    /usr/bin/docker compose config *
 
-**目标：**
+%admin ALL=(root) NOPASSWD: DOCKER_READ
 
-```
-docker-compose.dev.yml:
-├── postgres-dev     → 移除（本地开发用宿主机 PG）
-├── keycloak-dev     → 移除（开发环境直接连生产 Keycloak）
-└── nginx dev 覆盖   → 保留（可能仍需要本地端口映射）
-```
+# ============================================
+# Break-glass: 紧急部署 — 需要密码，记录审计日志
+# ============================================
+Cmnd_Alias DOCKER_DEPLOY = \
+    /usr/local/bin/noda-emergency-deploy.sh
 
-**影响分析：**
+%admin ALL=(root) PASSWD: DOCKER_DEPLOY
 
-| 依赖 postgres-dev 的组件 | 移除后如何工作 |
-|-------------------------|---------------|
-| keycloak-dev 的数据库 | keycloak-dev 本身也被移除，无需处理 |
-| 本地开发工具（如 Prisma Studio） | 连接宿主机 PG 的 noda_dev 数据库 |
-| findclass-ssr 本地开发 | 连接宿主机 PG 的 noda_dev 或 Docker 容器的 postgres-prod |
+# ============================================
+# 部署脚本直接执行 — 禁止
+# ============================================
+# 无条目 = 默认拒绝
+# scripts/deploy/*.sh 通过文件权限（750 root:jenkins）限制
 
-**关键：** `docker-compose.dev.yml` 中 nginx 的 dev overlay（端口 8081:80）可能仍需要保留，取决于本地开发流程。但如果本地开发不再需要 Docker nginx（开发直接 `pnpm dev`），则整个 dev overlay 可以移除。
-
-**网络影响：** 移除 postgres-dev 和 keycloak-dev 不影响 noda-network。这两个容器虽然是网络成员，但移除后 noda-network 中剩余的服务（postgres-prod, keycloak-prod, nginx, noda-ops）完全自洽。
-
-### 3.3 统一基础设施 Pipeline（Jenkinsfile.infra）
-
-**现状：** 两个独立 Jenkinsfile 处理应用部署：
-- `jenkins/Jenkinsfile` — findclass-ssr 蓝绿部署（9 阶段）
-- `jenkins/Jenkinsfile.noda-site` — noda-site 蓝绿部署（8 阶段）
-
-两者都通过 `source scripts/pipeline-stages.sh` 调用共享函数。
-
-**目标：** 新增 `jenkins/Jenkinsfile.infra`，支持通过参数选择部署哪个基础设施服务。
-
-**参数化设计：**
-
-```
-Jenkinsfile.infra 参数：
-├── SERVICE (choice): postgres | keycloak | noda-ops | nginx
-├── ACTION (choice): deploy | restart | stop
-└── CONFIRM (boolean): 人工确认门禁（默认 true）
+# ============================================
+# sudo 审计日志
+# ============================================
+Defaults log_output
+Defaults iolog_dir=/var/log/sudo-io/%{user}/%{tsout}
+Defaults!/usr/bin/docker*: iolog_dir=/var/log/sudo-io/docker/%{user}
 ```
 
-**与现有 pipeline-stages.sh 的关系：**
+### 3.4 Break-Glass 紧急部署机制
 
-现有 `pipeline-stages.sh` 的函数已经高度参数化（通过环境变量 `SERVICE_NAME`, `SERVICE_PORT`, `UPSTREAM_NAME` 等）。基础设施 Pipeline 需要新增的函数：
+**场景：** Jenkins 不可用（服务宕机、磁盘满、Java 崩溃等），需要紧急手动部署。
 
-| 函数 | 用途 | 适用的基础设施服务 |
-|------|------|------------------|
-| `pipeline_infra_preflight` | 检查基础设施服务前置条件 | 所有 |
-| `pipeline_infra_deploy` | docker compose up 重建服务 | postgres, noda-ops, nginx |
-| `pipeline_infra_health_check` | 健康检查（compose 管理的容器） | 所有 |
-| `pipeline_infra_backup` | 部署前自动备份（仅 postgres） | postgres |
-| `pipeline_infra_rollback` | 回滚到之前状态 | 所有 |
-| `pipeline_keycloak_deploy` | Keycloak 蓝绿部署（docker run） | keycloak |
+**设计：**
 
-**基础设施服务部署策略差异：**
+```bash
+#!/bin/bash
+# /usr/local/bin/noda-emergency-deploy.sh
+# 紧急部署入口 — 必须通过 sudo 执行
+# 触发时记录封条状态、时间戳、操作者
 
-| 服务 | 部署方式 | 有状态 | 停机容忍 | 特殊处理 |
-|------|---------|--------|---------|---------|
-| postgres | docker compose up --force-recreate | 有状态（数据卷） | 不容忍 | 部署前必须备份 + 验证 |
-| keycloak | docker run 蓝绿 | 有状态（DB 在 postgres 中） | 零停机 | upstream 切换 |
-| nginx | docker compose up --force-recreate | 无状态 | 极短（reload 期间） | reload 前验证配置 |
-| noda-ops | docker compose up --force-recreate | 无状态 | 容忍（Tunnel 自动重连） | 无 |
+set -euo pipefail
 
-**参数化 pipeline-stages.sh 的方式：**
+SEAL_FILE="/opt/noda/.break-glass-sealed"
+AUDIT_LOG="/var/log/noda-audit/break-glass.log"
 
-现有代码已经通过环境变量实现了参数化。例如 `Jenkinsfile.noda-site` 通过设置 `SERVICE_NAME=noda-site` 等变量复用了 `pipeline-stages.sh` 的所有函数。基础设施 Pipeline 可以用同样的方式：
+# 记录封条打破
+log_break_glass() {
+  local operator="${SUDO_USER:-$USER}"
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  mkdir -p "$(dirname "$AUDIT_LOG")"
+  echo "[${timestamp}] BREAK-GLASS operator=${operator} command=$*" >> "$AUDIT_LOG"
+  logger -p auth.alert -t noda-break-glass "Emergency deploy by ${operator}: $*"
+}
 
-```groovy
-// Jenkinsfile.infra 中的 Keycloak 部署 stage
-environment {
-    SERVICE_NAME = "keycloak"
-    SERVICE_PORT = "8080"
-    UPSTREAM_NAME = "keycloak_backend"
-    HEALTH_PATH = "/health/ready"
-    ACTIVE_ENV_FILE = "/opt/noda/active-env-keycloak"
-    UPSTREAM_CONF = "${WORKSPACE}/config/nginx/snippets/upstream-keycloak.conf"
-    DOCKERFILE = "keycloak"  // 标记为基础设施服务，不需要构建
+# 验证 Jenkins 确实不可用（防止滥用）
+check_jenkins_down() {
+  if curl -sf "http://localhost:8888/login" > /dev/null 2>&1; then
+    echo "ERROR: Jenkins is responding. Use Jenkins Pipeline instead." >&2
+    echo "If you believe this is an error, document the reason and use --force." >&2
+    exit 1
+  fi
+}
+
+case "${1:-}" in
+  --force)
+    shift
+    log_break_glass "$@" "(forced)"
+    ;;
+  *)
+    check_jenkins_down
+    log_break_glass "$@"
+    ;;
+esac
+
+# 将 jenkins 用户加入 docker 组临时（本次会话）
+# 注意：这只是让当前 sudo 会话有效，不影响系统长期配置
+exec "$@"
+```
+
+**封条文件 (`/opt/noda/.break-glass-sealed`)：**
+- 存在 = 封条完整（未被打破）
+- 删除/修改时间戳 = 封条被打破过
+- 部署完成后由脚本重新创建
+
+**Break-glass 工作流：**
+
+```
+1. 管理员发现 Jenkins 不可用
+2. 管理员执行: sudo noda-emergency-deploy.sh bash scripts/deploy/deploy-apps-prod.sh
+3. 脚本验证 Jenkins 确实不可用
+4. 脚本记录审计日志 (operator + timestamp + command)
+5. 脚本临时恢复 jenkins 用户的 docker 访问（或以 root 执行部署脚本）
+6. 部署完成
+7. 管理员恢复 Jenkins 并调查根因
+8. 管理员检查 /var/log/noda-audit/break-glass.log 确认操作
+9. 管理员重新创建封条文件
+```
+
+---
+
+## 四、审计日志架构
+
+### 4.1 auditd 规则
+
+```bash
+# /etc/audit/rules.d/noda-docker.rules
+
+# 记录所有 docker 命令执行
+-a always,exit -F path=/usr/bin/docker -F perm=x -F auid>=1000 -F auid!=4294967295 -k docker-cmd
+
+# 记录 docker socket 访问
+-w /var/run/docker.sock -p rwxa -k docker-socket
+
+# 记录 docker compose 命令
+-a always,exit -F path=/usr/libexec/docker/cli-plugins/docker-compose -F perm=x -F auid>=1000 -F auid!=4294967295 -k docker-compose-cmd
+
+# 记录部署脚本执行
+-w /opt/noda-infra/scripts/deploy -p x -k deploy-scripts
+
+# 记录 nginx 配置修改
+-w /opt/noda-infra/config/nginx -p wa -k nginx-config
+
+# 记录 break-glass 使用
+-w /usr/local/bin/noda-emergency-deploy.sh -p x -k break-glass
+
+# 记录 sudoers 文件修改
+-w /etc/sudoers.d/ -p wa -k sudoers-modification
+```
+
+### 4.2 日志查询
+
+```bash
+# 查看所有 docker 命令（最近 24 小时）
+ausearch -k docker-cmd -ts yesterday | aureport -x --interpret
+
+# 查看谁在什么时候执行了 docker 命令
+ausearch -k docker-cmd --interpret | grep "auid"
+
+# 查看 break-glass 使用记录
+ausearch -k break-glass --interpret
+
+# 查看部署脚本执行记录
+ausearch -k deploy-scripts --interpret | aureport -x
+
+# 查看 docker socket 异常访问
+ausearch -k docker-socket -sc open -sv no  # 仅失败的访问（说明有人尝试未授权访问）
+```
+
+### 4.3 审计日志轮转
+
+```bash
+# /etc/logrotate.d/noda-audit
+/var/log/noda-audit/*.log {
+    daily
+    rotate 30
+    compress
+    missingok
+    notifempty
+    create 0640 root root
 }
 ```
 
-### 3.4 Keycloak 蓝绿部署
+---
 
-**这是 v1.5 最复杂的集成点。**
+## 五、文件权限矩阵
 
-**现状：**
+### 5.1 需要修改权限的文件
 
-```
-upstream-keycloak.conf（静态）:
-  upstream keycloak_backend {
-      server keycloak:8080 max_fails=3 fail_timeout=30s;
-  }
+| 文件/目录 | 当前权限 | 目标权限 | 目标属主 | 理由 |
+|-----------|---------|---------|---------|------|
+| `/var/run/docker.sock` | `root:docker 660` | `root:jenkins 660` | jenkins 直接访问 Docker |
+| `scripts/deploy/*.sh` | `755 :staff` | `750 root:jenkins` | 仅 jenkins 可执行 |
+| `scripts/pipeline-stages.sh` | `755 :staff` | `750 root:jenkins` | 仅 jenkins 可执行 |
+| `scripts/manage-containers.sh` | `755 :staff` | `750 root:jenkins` | 仅 jenkins 可执行 |
+| `scripts/blue-green-deploy.sh` | `755 :staff` | `750 root:jenkins` | 仅 jenkins 可执行 |
+| `scripts/keycloak-blue-green-deploy.sh` | `755 :staff` | `750 root:jenkins` | 仅 jenkins 可执行 |
+| `scripts/rollback-findclass.sh` | `755 :staff` | `750 root:jenkins` | 仅 jenkins 可执行 |
+| `config/nginx/snippets/` | `755 :staff` | `750 root:jenkins` | upstream 文件仅 jenkins 可写 |
+| `config/nginx/snippets/upstream-*.conf` | `644 :staff` | `640 root:jenkins` | upstream 配置仅 jenkins 可写 |
+| `/opt/noda/active-env*` | `644 root:root` | `660 root:jenkins` | 状态文件 jenkins 可写 |
+| `docker/.env` | `644 :staff` | `640 root:jenkins` | 环境变量含密码 |
+| `docker/env-*.env` | `644 :staff` | `640 root:jenkins` | env 模板含变量 |
+| `config/secrets.sops.yaml` | `644 :staff` | `640 root:jenkins` | 加密密钥 |
 
-keycloak 服务（docker-compose.yml 定义）:
-  container_name: noda-infra-keycloak-prod
-  networks: noda-network (alias: keycloak)
-  depends_on: postgres (service_healthy)
-  command: start
-```
+### 5.2 保持不变权限的文件
 
-**目标：**
+| 文件/目录 | 当前权限 | 理由 |
+|-----------|---------|------|
+| `scripts/lib/log.sh` | `644` | 通用库，所有用户可读（无安全敏感操作） |
+| `scripts/lib/health.sh` | `644` | 通用库，仅调用 docker inspect（只读） |
+| `scripts/setup-jenkins.sh` | `755` | 初始化脚本，需要 root 执行（含 sudo 命令） |
+| `scripts/setup-dev.sh` | `755` | 开发环境脚本 |
+| `scripts/verify/*.sh` | `755` | 验证脚本，只读操作 |
+| `docker/docker-compose*.yml` | `644` | compose 配置文件，需要可读但不可写 |
 
-```
-upstream-keycloak.conf（动态）:
-  upstream keycloak_backend {
-      server keycloak-blue:8080 max_fails=3 fail_timeout=30s;
-  }
-  或
-  upstream keycloak_backend {
-      server keycloak-green:8080 max_fails=3 fail_timeout=30s;
-  }
+### 5.3 Jenkins workspace 文件权限
 
-keycloak 蓝绿容器:
-  keycloak-blue  → docker run, --network-alias keycloak-blue
-  keycloak-green → docker run, --network-alias keycloak-green
-```
+Jenkins Pipeline 执行 `git checkout` 后，workspace 中的文件属主为 `jenkins:jenkins`。这意味着：
 
-**Keycloak 蓝绿部署的核心挑战：数据库 schema 迁移。**
+1. Jenkins 可以直接执行 workspace 中的脚本（`sh 'source scripts/pipeline-stages.sh'`）
+2. 脚本中调用 `docker compose`、`docker run` 等命令直接执行（无需 sudo）
+3. `config/nginx/snippets/` 的修改通过 `update_upstream()` 函数直接写入
 
-Keycloak 在启动时自动运行数据库 schema 迁移（Liquibase）。如果 blue 和 green 容器版本不同，新版本启动时可能修改共享数据库的 schema，导致旧版本崩溃。
+**关键点：** Jenkins workspace 中的文件属主是 `jenkins`，但 `/opt/noda-infra/` 仓库中的部署脚本需要 `root:jenkins` 权限。Jenkins Pipeline 实际执行的是 workspace 中的脚本副本，不是仓库中的原始文件。因此：
 
-**解决方案：同版本配置变更（不涉及版本升级）时，蓝绿安全。**
-
-当前项目的 Keycloak 部署场景是配置变更（hostname、proxy 设置、环境变量），而非版本升级。这意味着：
-- blue 和 green 使用相同的 Keycloak 镜像（26.2.3）
-- 数据库 schema 不会变
-- 两个容器可以安全地连接同一个数据库
-
-**但如果未来要升级 Keycloak 版本，蓝绿部署就会遇到 schema 冲突。** 因此需要记录这个限制。
-
-**Keycloak 蓝绿容器配置：**
-
-```bash
-# manage-containers.sh 已有参数化支持
-SERVICE_NAME=keycloak \
-SERVICE_PORT=8080 \
-UPSTREAM_NAME=keycloak_backend \
-HEALTH_PATH="/health/ready" \
-ACTIVE_ENV_FILE=/opt/noda/active-env-keycloak \
-UPSTREAM_CONF=$PROJECT_ROOT/config/nginx/snippets/upstream-keycloak.conf \
-  manage-containers.sh init
-```
-
-**Keycloak 容器的特殊需求（与 findclass-ssr 不同）：**
-
-| 需求 | findclass-ssr | Keycloak |
-|------|--------------|----------|
-| 数据库连接 | 通过环境变量传入 | 通过环境变量传入 |
-| Dockerfile 构建 | 需要（从 noda-apps 构建） | 不需要（直接使用官方镜像） |
-| 环境变量数量 | 8 个 | 15+ 个（数据库、hostname、proxy、SMTP 等） |
-| 健康检查方式 | wget HTTP 检查 | TCP 检查（`echo > /dev/tcp/localhost/8080`） |
-| 启动时间 | ~30s | ~60s（start_period） |
-| 资源需求 | 512M limit | 1G limit |
-| compose 依赖 | 无 | depends_on postgres:healthy |
-
-**env 模板方案：** 参照 `docker/env-findclass-ssr.env` 模式，创建 `docker/env-keycloak.env`：
-
-```bash
-# docker/env-keycloak.env
-KC_DB=postgres
-KC_DB_URL=jdbc:postgresql://noda-infra-postgres-prod:5432/keycloak_db
-KC_DB_USERNAME=${POSTGRES_USER}
-KC_DB_PASSWORD=${POSTGRES_PASSWORD}
-KC_HTTP_ENABLED=true
-KC_HOSTNAME=https://auth.noda.co.nz
-KC_HOSTNAME_STRICT=false
-KC_PROXY=edge
-KC_PROXY_HEADERS=xforwarded
-KC_HEALTH_ENABLED=true
-KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN_USER}
-KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
-KC_MAIL_HOST=${SMTP_HOST}
-KC_MAIL_PORT=${SMTP_PORT}
-KC_MAIL_FROM=${SMTP_FROM}
-KC_SMTP_AUTH=true
-KC_SMTP_USER=${SMTP_USER}
-KC_SMTP_PASSWORD=${SMTP_PASSWORD}
-KC_SMTP_SSL=false
-KC_SMTP_STARTTLS=true
-```
-
-**状态文件管理：**
-
-```
-/opt/noda/
-├── active-env              ← findclass-ssr 蓝绿状态（已有）
-├── active-env-noda-site    ← noda-site 蓝绿状态（已有）
-└── active-env-keycloak     ← Keycloak 蓝绿状态（新增）
-```
-
-每个服务独立的状态文件，互不干扰。这与 `manage-containers.sh` 的 `ACTIVE_ENV_FILE` 参数化设计完全一致。
-
-### 3.5 一键开发环境设置（setup-dev.sh）
-
-**目标：** 新开发者克隆仓库后运行一个脚本，即可获得完整的本地开发环境。
-
-**脚本结构：**
-
-```
-setup-dev.sh
-├── 1. 检查前置依赖（Homebrew, Docker）
-├── 2. 安装宿主机 PostgreSQL（Homebrew）
-├── 3. 启动 PostgreSQL 服务（brew services start postgresql@17）
-├── 4. 创建本地开发数据库（noda_dev, keycloak_dev）
-├── 5. 复制 .env.example → .env（提示填写密码）
-├── 6. 创建 noda-network（docker network create）
-├── 7. 启动基础设施（docker compose up -d postgres nginx）
-├── 8. 配置 Jenkins 连接本地 PG（可选）
-└── 9. 验证环境就绪
-```
-
-**与现有脚本的关系：**
-
-| 现有脚本 | setup-dev.sh 复用方式 |
-|---------|---------------------|
-| `scripts/setup-jenkins.sh install` | 直接调用（Jenkins 安装） |
-| `scripts/deploy/deploy-infrastructure-prod.sh` | 参考但不同（dev 环境只启动部分服务） |
-| `services/postgres/init/*.sql` | 参考创建数据库（但连接宿主机 PG 而非 Docker PG） |
-
-**关键配置：本地开发环境的数据库选择。**
-
-本地开发时，应用连接哪个 PostgreSQL？
-
-| 方案 | 连接目标 | 优点 | 缺点 |
-|------|---------|------|------|
-| A. 连接 Docker postgres-prod | `noda-infra-postgres-prod:5432` | 数据与生产一致 | Docker 容器必须运行；端口不暴露，需要 docker exec 访问 |
-| B. 连接宿主机 PG | `localhost:5432/noda_dev` | 不依赖 Docker | 需要维护两套数据 |
-| C. 暴露 Docker PG 端口 | `localhost:5433`（dev overlay） | 简单 | 已决定移除 dev overlay |
-
-**推荐方案 A：** 本地开发时，通过 `docker compose up postgres` 启动生产 PostgreSQL 容器（不加 prod overlay），应用容器通过 noda-network 连接。这避免了维护两套数据的问题。
-
-但 Jenkins 的数据库必须用宿主机 PG（Jenkins 在宿主机运行，Docker 网络外的 `noda-infra-postgres-prod` 无法直接从宿主机访问，除非暴露端口）。
-
-**修正方案：** Jenkins 连接宿主机 PG（localhost:5432/jenkins_db），本地开发应用连接 Docker postgres-prod（通过 noda-network），两者各取所需。
+- 仓库文件权限 (`/opt/noda-infra/scripts/`) 用于限制手动执行
+- Jenkins workspace 文件权限由 Git checkout 自动管理
+- 两者互不干扰
 
 ---
 
-## 四、数据流
+## 六、systemd Docker Socket 权限持久化
 
-### 4.1 基础设施 Pipeline 部署流（新增）
+### 6.1 问题
+
+Docker daemon 重启时（`systemctl restart docker`）会重新创建 `/var/run/docker.sock`，恢复默认权限 `root:docker 660`。必须通过 systemd override 确保权限持久。
+
+### 6.2 方案
+
+```ini
+# /etc/systemd/system/docker.service.d/socket-permissions.conf
+[Unit]
+Description=Docker Socket Permission Override for Jenkins
+
+[Service]
+# ExecStartPost 在 Docker daemon 启动后执行
+# 修改 socket 属组为 jenkins（而非默认的 docker）
+ExecStartPost=/bin/sh -c 'chown root:jenkins /var/run/docker.sock && chmod 660 /var/run/docker.sock'
+```
+
+**为什么用 `ExecStartPost` 而非 udev 规则：**
+- Docker socket 不是设备节点，udev 规则不适用
+- `ExecStartPost` 直接在 Docker daemon 启动后执行，时序可靠
+- 可以在 `setup-docker-permissions.sh` 中用 `sudo systemctl daemon-reload` 应用
+
+### 6.3 验证
+
+```bash
+# 应用 override
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+
+# 验证 socket 权限
+ls -la /var/run/docker.sock
+# 期望: srw-rw---- 1 root jenkins 0 ... /var/run/docker.sock
+
+# 验证 jenkins 可以执行 docker 命令
+sudo -u jenkins docker ps
+# 期望: 正常输出容器列表
+
+# 验证 admin 用户不能直接执行 docker 命令
+sudo -u admin docker ps
+# 期望: permission denied
+```
+
+---
+
+## 七、集成点详细分析
+
+### 7.1 Jenkins Pipeline 执行流（权限收敛后）
 
 ```
-开发者手动触发 Jenkins Job "infra-deploy"
-    │  参数: SERVICE=keycloak, ACTION=deploy
+Jenkins (jenkins 用户)
+    │
+    │ git checkout → workspace 文件属主 jenkins:jenkins
+    │
+    │ sh 'source scripts/lib/log.sh'
+    │ sh 'source scripts/pipeline-stages.sh'
+    │     └── pipeline_build()
+    │         └── docker build ...         ← jenkins 直接执行（socket 属组 jenkins）
+    │     └── pipeline_deploy()
+    │         └── docker run ...           ← jenkins 直接执行
+    │         └── run_container()          ← manage-containers.sh 中的函数
+    │             └── docker run -d ...    ← jenkins 直接执行
+    │     └── pipeline_switch()
+    │         └── update_upstream()        ← 写入 config/nginx/snippets/
+    │             └── echo > snippets dir  ← jenkins 可以写（组权限）
+    │         └── docker exec nginx reload ← jenkins 直接执行
+    │
+    │ 无变化！Pipeline 不需要任何代码修改
+```
+
+**结论：** 方案 A 对 Jenkins Pipeline 的影响为零。`jenkins` 用户通过 socket 属组获得 Docker 访问权，Pipeline 中的所有 `docker` 命令无需修改。
+
+### 7.2 手动部署脚本执行流（权限收敛后）
+
+```
+admin 用户 SSH 登录
+    │
+    │ 直接执行 docker compose up    ← REJECTED (admin 不在 socket 属组)
+    │ 直接执行 scripts/deploy/*.sh  ← REJECTED (750 root:jenkins)
+    │
+    │ sudo docker ps                 ← ALLOWED (sudoers 白名单)
+    │ sudo docker logs ...           ← ALLOWED (sudoers 白名单)
+    │
+    │ Jenkins 不可用时:
+    │ sudo noda-emergency-deploy.sh bash scripts/deploy/deploy-apps-prod.sh
+    │   ← ALLOWED (break-glass, 需要 admin 密码, 记录审计日志)
+```
+
+### 7.3 manage-containers.sh 中的 set_active_env() 适配
+
+当前 `set_active_env()` 函数在写入 `/opt/noda/active-env` 时有 sudo 回退逻辑：
+
+```bash
+# 优先尝试直接写入（无 sudo），失败时回退到 sudo
+if [ -w "$dir" ] 2>/dev/null; then
+    echo "$env" > "$tmp_file" && mv "$tmp_file" "$ACTIVE_ENV_FILE"
+elif [ -w "$ACTIVE_ENV_FILE" ] 2>/dev/null; then
+    echo "$env" > "$tmp_file" && mv "$tmp_file" "$ACTIVE_ENV_FILE"
+else
+    sudo mkdir -p "$dir"
+    echo "$env" | sudo tee "$tmp_file" > /dev/null
+    sudo mv "$tmp_file" "$ACTIVE_ENV_FILE"
+fi
+```
+
+权限收敛后，`/opt/noda/` 目录属主为 `root:jenkins`，权限 `770`。jenkins 用户可以直接写入，不需要 sudo 回退。但回退逻辑无害，保留即可。
+
+**但需要注意：** 如果 `/opt/noda/` 不存在，`mkdir -p` 需要 root 权限。在 `setup-docker-permissions.sh` 中应预先创建：
+
+```bash
+sudo mkdir -p /opt/noda
+sudo chown root:jenkins /opt/noda
+sudo chmod 770 /opt/noda
+```
+
+### 7.4 manage-containers.sh 中的 update_upstream() 适配
+
+当前 `update_upstream()` 写入 nginx snippets 目录。权限收敛后，需要确保 jenkins 用户可以写入。
+
+```bash
+# get_host_snippets_dir() 返回的路径需要 jenkins 可写
+# Jenkins workspace 中 checkout 的 snippets 目录属主是 jenkins
+# 但 docker inspect 获取的 Mount.Source 可能指向 /opt/noda-infra/config/nginx/snippets
+```
+
+**分析：** Jenkins Pipeline 在 workspace（`/var/lib/jenkins/workspace/xxx/`）中执行，snippets 目录的路径取决于 Docker Compose 中的 volume 挂载配置。当前 `docker-compose.yml` 中：
+
+```yaml
+volumes:
+  - ../config/nginx/snippets:/etc/nginx/snippets:ro
+```
+
+这意味着 Jenkins 执行 `update_upstream()` 时，写入的是 workspace 中的 `config/nginx/snippets/` 目录（属主 jenkins），而 Docker 容器挂载的是这个目录。所以 jenkins 用户有写权限，不需要修改。
+
+**但如果 Jenkins workspace 使用的是 `/opt/noda-infra/`（直接 checkout 到仓库目录）：** 这时需要确保 `config/nginx/snippets/` 目录 jenkins 可写。目标权限 `750 root:jenkins` 已经覆盖了这个场景。
+
+---
+
+## 八、数据流
+
+### 8.1 权限收敛执行流
+
+```
+执行 scripts/setup-docker-permissions.sh apply
+    │
+    ├── 1. 创建 jenkins-docker 组（可选）或确认 jenkins 用户配置
+    ├── 2. 从 docker 组移除非必要用户
+    ├── 3. 配置 systemd override (docker socket 权限)
+    ├── 4. 重启 Docker daemon
+    ├── 5. 修改文件权限 (deploy scripts → 750 root:jenkins)
+    ├── 6. 修改目录权限 (snippets → 750 root:jenkins)
+    ├── 7. 创建 /opt/noda/ 目录并设置权限
+    ├── 8. 部署 sudoers 白名单
+    ├── 9. 部署 auditd 规则
+    ├── 10. 创建 break-glass 脚本
+    ├── 11. 验证所有权限设置
+    └── 12. 创建封条文件
+```
+
+### 8.2 日常 Jenkins 部署流（无变化）
+
+```
+开发者 → Jenkins UI → Build Now
     │
     ▼
-Jenkins 读取参数 → 确定部署策略
+Jenkins (jenkins 用户)
+    │  1. git checkout
+    │  2. source pipeline-stages.sh
+    │  3. docker build / docker run / docker compose
+    │  4. update_upstream() → 写入 snippets
+    │  5. docker exec nginx -s reload
+    │  6. 审计日志自动记录 (auditd)
     │
-    ├─ SERVICE=postgres ──── compose 滚动替换（有状态）
-    │   │
-    │   ├─ 部署前备份（pg_dump）
-    │   ├─ docker compose up --force-recreate postgres
-    │   ├─ 等待 healthcheck（pg_isready）
-    │   ├─ 人工确认门禁（input 步骤）
-    │   └─ 完成
-    │
-    ├─ SERVICE=keycloak ──── 蓝绿部署（零停机）
-    │   │
-    │   ├─ 读取 active-env-keycloak
-    │   ├─ docker run keycloak-{target_color}
-    │   ├─ 等待 healthcheck（TCP :8080）
-    │   ├─ update upstream-keycloak.conf → nginx reload
-    │   ├─ E2E 验证（curl auth.noda.co.nz/health）
-    │   ├─ 人工确认门禁
-    │   └─ 停止旧容器
-    │
-    ├─ SERVICE=nginx ──────── compose 滚动替换（无状态）
-    │   │
-    │   ├─ nginx -t 验证新配置
-    │   ├─ docker compose up --force-recreate nginx
-    │   ├─ E2E 验证
-    │   └─ 完成
-    │
-    └─ SERVICE=noda-ops ──── compose 滚动替换（无状态）
-        │
-        ├─ docker compose up --force-recreate noda-ops
-        ├─ healthcheck（pg_isready 检查 postgres 连接）
-        └─ 完成
+    ▼
+部署完成
 ```
 
-### 4.2 Jenkins H2 → PG 迁移流（新增）
+### 8.3 紧急手动部署流（break-glass）
 
 ```
-迁移前:
-  Jenkins → H2 文件 (/var/lib/jenkins/db/*.h2.db)
-  备份 → Jenkins home 目录 tar
-
-迁移步骤:
-  1. 安装宿主机 PostgreSQL (Homebrew)
-     └── brew install postgresql@17
-     └── brew services start postgresql@17
-
-  2. 创建 Jenkins 数据库
-     └── createdb jenkins_db
-     └── createuser jenkins
-
-  3. 备份 Jenkins home
-     └── systemctl stop jenkins
-     └── tar czf jenkins-home-backup.tar.gz /var/lib/jenkins/
-
-  4. 安装 Jenkins PostgreSQL 插件
-     └── Jenkins UI → Manage Plugins → 安装 PostgreSQL Plugin
-
-  5. 配置 Jenkins 数据库连接
-     └── Manage Jenkins → System → Database
-     └── JDBC URL: jdbc:postgresql://localhost:5432/jenkins_db
-     └── Driver: org.postgresql.Driver
-
-  6. 重启 Jenkins
-     └── systemctl start jenkins
-
-  7. 验证
-     └── 检查 Jenkins 日志确认连接成功
-     └── 确认 jobs 和 builds 正常
-
-迁移后:
-  Jenkins → localhost:5432/jenkins_db (PostgreSQL)
-  备份 → pg_dump jenkins_db（纳入现有 B2 备份流程）
-```
-
-### 4.3 现有请求路由流（不变）
-
-```
-浏览器 → class.noda.co.nz
-    → Cloudflare CDN → Tunnel → nginx:80
-    → upstream findclass_backend (from upstream-findclass.conf)
-    → findclass-ssr-{color}:3001
-    → 内部连接 noda-infra-postgres-prod:5432/noda_prod
-    → 内部连接 keycloak-{color}:8080（v1.5 蓝绿后）
-
-浏览器 → auth.noda.co.nz
-    → Cloudflare CDN → Tunnel → nginx:80
-    → upstream keycloak_backend (from upstream-keycloak.conf)
-    → keycloak-{color}:8080
-    → 内部连接 postgres:5432/keycloak_db
+admin 用户 → SSH → sudo noda-emergency-deploy.sh ...
+    │
+    ├── 1. 验证 Jenkins 不可用
+    ├── 2. 记录审计日志 (operator + timestamp + command)
+    ├── 3. logger -p auth.alert (系统日志)
+    ├── 4. 以 root 执行部署脚本
+    └── 5. 部署完成后重建封条
 ```
 
 ---
 
-## 五、架构模式
+## 九、架构模式
 
-### Pattern 1: 多服务蓝绿统一框架（已验证，扩展应用）
+### Pattern 1: Socket 属组收敛（核心模式）
 
-**内容：** `manage-containers.sh` + `pipeline-stages.sh` 通过环境变量参数化，支持任意服务的蓝绿部署。
+**内容：** 将 Docker socket 的属组从 `docker` 改为 `jenkins`，直接控制谁能访问 Docker。
 
-**已有验证：** findclass-ssr 和 noda-site 成功复用同一框架。
+**使用条件：** 单服务器，只有一个用户需要 Docker 访问权限。
 
-**扩展到 Keycloak：**
+**权衡：**
+- 优点：实现简单，对现有 Jenkins Pipeline 零影响
+- 优点：不引入额外复杂度（无 rootless、无插件）
+- 缺点：容器逃逸后 jenkins 用户仍然有等效 root 权限（但攻击面很小）
+- 缺点：需要在 Docker 重启后恢复权限（通过 systemd override 解决）
+
+**代码示例：**
+
+```ini
+# /etc/systemd/system/docker.service.d/socket-permissions.conf
+[Service]
+ExecStartPost=/bin/sh -c 'chown root:jenkins /var/run/docker.sock && chmod 660 /var/run/docker.sock'
+```
+
+### Pattern 2: 最小权限 sudoers 白名单
+
+**内容：** 通过 `Cmnd_Alias` 定义只读命令集合，只允许调试操作。
+
+**使用条件：** 需要给管理员提供有限的系统查看能力，但不允许修改。
+
+**权衡：**
+- 优点：精确控制，易于审计
+- 优点：`NOPASSWD` 只读命令方便日常调试
+- 缺点：维护 sudoers 规则需要仔细测试（语法错误会导致 sudo 完全不可用）
+- 缺点：docker compose 的子命令路径可能因安装方式不同而不同
+
+**关键实现细节：**
+
 ```bash
-SERVICE_NAME=keycloak \
-SERVICE_PORT=8080 \
-UPSTREAM_NAME=keycloak_backend \
-HEALTH_PATH="/health/ready" \
-ACTIVE_ENV_FILE=/opt/noda/active-env-keycloak \
-UPSTREAM_CONF=$PROJECT_ROOT/config/nginx/snippets/upstream-keycloak.conf \
-IMAGE_NAME="quay.io/keycloak/keycloak:26.2.3" \
-  manage-containers.sh start blue
+# docker compose 可能是独立二进制文件或 Docker CLI 插件
+# 需要确认路径:
+which docker    # /usr/bin/docker
+docker compose version  # 确认 compose 是 CLI 插件还是独立二进制
+
+# 如果是 CLI 插件，路径是 /usr/libexec/docker/cli-plugins/docker-compose
+# 如果是独立二进制，路径是 /usr/local/bin/docker-compose
 ```
 
-**使用条件：** 无状态或状态在外部（数据库）的服务。
+### Pattern 3: Break-Glass 封条机制
 
-**权衡：** 每个服务需要独立的 env 模板文件和状态文件，但框架代码完全复用。
+**内容：** 紧急部署必须通过专用入口脚本，自动记录审计日志并验证前置条件。
 
-### Pattern 2: 基础设施分层部署（新增）
+**使用条件：** 正常操作路径（Jenkins）不可用时，需要受控的替代路径。
 
-**内容：** 基础设施服务根据有状态性分为不同部署策略：
-- 有状态（postgres）：部署前备份 + compose 滚动替换 + 人工确认
-- 半有状态（keycloak）：蓝绿部署（状态在 postgres 中）
-- 无状态（nginx, noda-ops）：compose 滚动替换
+**权衡：**
+- 优点：紧急情况下不阻塞运维
+- 优点：所有操作有审计记录
+- 缺点：需要手动验证封条状态
+- 缺点：break-glass 脚本本身需要安全保护（`chown root:root`，`chmod 755`，不可修改）
 
-**使用条件：** 混合有状态/无状态服务的基础设施管理。
+### Pattern 4: 多层审计（纵深防御）
 
-**权衡：** 不同策略增加 Pipeline 复杂度，但每种策略都是对应服务的最优解。
+**内容：** 同时使用 auditd（内核级）+ sudo 日志（应用级）+ 应用日志（脚本级）三层审计。
 
-### Pattern 3: 宿主机服务 + Docker 服务分层（新增）
+**使用条件：** 需要完整的操作审计追踪。
 
-**内容：** 将持久化服务（Jenkins DB、开发 DB）放到宿主机，运行时服务放到 Docker。
+**权衡：**
+- 优点：任何绕过单层的尝试都会被其他层捕获
+- 优点：auditd 日志不可篡改（由内核写入）
+- 缺点：日志量增加（需要 logrotate）
+- 缺点：查询需要学习 `ausearch`/`aureport` 命令
+
+---
+
+## 十、反模式
+
+### Anti-Pattern 1: 直接移除 docker 组
+
+**错误做法：** `groupdel docker`，完全移除 docker 组。
+
+**原因：** Docker 安装和更新过程会重新创建 docker 组。如果 docker 组不存在，`apt upgrade docker-ce` 可能失败或创建空的 docker 组。
+
+**正确做法：** 保留 docker 组，但清空其成员。通过 socket 属组控制访问。docker 组存在但无人属于它，等效于禁用。
+
+### Anti-Pattern 2: sudoers 规则过于宽松
+
+**错误做法：**
+```bash
+admin ALL=(root) NOPASSWD: /usr/bin/docker *
+```
+
+**原因：** 通配符 `*` 匹配所有参数。`sudo docker run -v /:/host -it ubuntu bash` 直接给 root shell。
+
+**正确做法：**
+```bash
+# 只读命令不需要参数限制（ps, images, logs 本身是安全的）
+admin ALL=(root) NOPASSWD: /usr/bin/docker ps, /usr/bin/docker images, /usr/bin/docker logs
+# 写入命令完全不允许（不列出 = 默认拒绝）
+```
+
+### Anti-Pattern 3: 文件权限收得太紧
+
+**错误做法：** `scripts/lib/log.sh` 设为 `640 root:jenkins`。
+
+**原因：** log.sh 只包含颜色常量和 echo 函数，无安全敏感操作。如果 admin 用户无法 `source log.sh`，那连 `docker ps` 的彩色输出都会失败（因为 log.sh 被 health.sh 引用）。
+
+**正确做法：** 只有包含 docker 写入操作或部署逻辑的脚本需要限制权限。通用库保持可读。
+
+### Anti-Pattern 4: Break-glass 跳过 Jenkins 健康检查
+
+**错误做法：** break-glass 脚本直接执行部署命令，不检查 Jenkins 是否真的不可用。
+
+**原因：** 管理员可能在 Jenkins 正常运行时也使用 break-glass，绕过 Pipeline 的质量门禁（lint、test、健康检查等）。
+
+**正确做法：** break-glash 脚本必须先验证 Jenkins 不可用。只有加 `--force` 参数才能跳过检查，但仍然记录审计日志。
+
+### Anti-Pattern 5: 忘记处理 Docker 重启后 socket 权限
+
+**错误做法：** 手动 `chown root:jenkins /var/run/docker.sock`，不配置 systemd override。
+
+**原因：** 下次 Docker daemon 重启（系统重启、`systemctl restart docker`、Docker 升级），socket 权限恢复为 `root:docker`，jenkins 用户失去 Docker 访问，所有 Pipeline 开始失败。
+
+**正确做法：** 使用 systemd `ExecStartPost` override 确保每次 Docker 启动后都设置正确权限。
+
+---
+
+## 十一、setup-docker-permissions.sh 脚本设计
+
+### 子命令结构
 
 ```
-宿主机层：
-  PostgreSQL (Homebrew) → jenkins_db, noda_dev（持久化，易备份）
-  Jenkins (systemd) → CI/CD 编排
+setup-docker-permissions.sh <命令>
 
-Docker 层：
-  PostgreSQL (Docker) → noda_prod, keycloak_db（生产数据）
-  Keycloak → 认证服务
-  Nginx → 反向代理
-  noda-ops → 备份 + Tunnel
+命令:
+  apply     — 应用所有权限收敛配置
+  verify    — 验证所有权限配置是否正确
+  rollback  — 回滚到收敛前的状态（恢复 docker 组访问）
+  status    — 显示当前权限状态
 ```
 
-**使用条件：** 单服务器，需要同时运行宿主机服务和容器服务。
+### apply 流程
 
-**权衡：** 两套 PostgreSQL 实例增加运维复杂度，但实现了关注点分离（宿主机 PG 管开发/Jenkins，Docker PG 管生产数据）。
+```
+1. 前置检查（root 执行，Docker 运行中，jenkins 用户存在）
+2. 备份当前状态到 /opt/noda/.permission-backup/
+3. 从 docker 组移除非必要用户
+4. 配置 systemd override
+5. daemon-reload + restart docker
+6. 等待 docker 就绪
+7. 修改文件权限
+8. 部署 sudoers 白名单
+9. 部署 auditd 规则
+10. 创建 break-glass 脚本
+11. 创建 /opt/noda/ 目录结构
+12. 创建封条文件
+13. 验证所有配置
+14. 输出结果摘要
+```
 
-### Pattern 4: 参数化 Jenkinsfile 复用（已验证，扩展应用）
+### verify 流程
 
-**内容：** 通过 Jenkins environment 块设置不同的环境变量，多个 Jenkinsfile 复用同一个 `pipeline-stages.sh`。
+```
+检查项:
+  [PASS/FAIL] docker.sock 属组: root:jenkins
+  [PASS/FAIL] docker.sock 权限: 660
+  [PASS/FAIL] systemd override 存在
+  [PASS/FAIL] docker 组无非必要成员
+  [PASS/FAIL] jenkins 用户可执行 docker ps
+  [PASS/FAIL] admin 用户不可直接执行 docker ps
+  [PASS/FAIL] admin 用户可通过 sudo docker ps
+  [PASS/FAIL] deploy scripts 权限: 750 root:jenkins
+  [PASS/FAIL] nginx snippets 权限: 750 root:jenkins
+  [PASS/FAIL] /opt/noda/ 权限: 770 root:jenkins
+  [PASS/FAIL] sudoers 白名单文件存在且语法正确
+  [PASS/FAIL] auditd 规则已加载
+  [PASS/FAIL] break-glass 脚本存在且可执行
+  [PASS/FAIL] 封条文件存在
+```
 
-**已有验证：** `Jenkinsfile`（findclass-ssr）和 `Jenkinsfile.noda-site` 的结构几乎相同，差异仅在 environment 块。
+### rollback 流程
 
-**扩展到基础设施：** `Jenkinsfile.infra` 可以用 parameters 块动态设置 environment：
-
-```groovy
-parameters {
-    choice(name: 'SERVICE', choices: ['postgres', 'keycloak', 'noda-ops', 'nginx'],
-           description: '选择要部署的基础设施服务')
-}
-environment {
-    SERVICE_NAME = "${params.SERVICE}"
-    // 根据服务类型动态设置其他参数（在 script 块中）
-}
+```
+1. 将 admin 用户重新加入 docker 组
+2. 移除 systemd override
+3. daemon-reload + restart docker
+4. 恢复文件权限为 755
+5. 移除 sudoers 白名单
+6. 移除 auditd 规则
+7. 验证回滚成功
 ```
 
 ---
 
-## 六、反模式
-
-### Anti-Pattern 1: Keycloak 蓝绿 + 版本升级同时进行
-
-**错误做法：** 在蓝绿切换的同时升级 Keycloak 版本（如 26.2.3 → 27.x）。
-
-**原因：** Keycloak 启动时自动运行 Liquibase schema 迁移。新版本的 green 容器启动后修改数据库 schema，可能导致仍在运行的旧版本 blue 容器崩溃。
-
-**正确做法：** 版本升级和配置变更分开进行。蓝绿部署仅用于配置变更（同版本镜像）。版本升级使用 compose 滚动替换（先停旧容器、备份数据库、启动新容器、验证、人工确认）。
-
-### Anti-Pattern 2: 宿主机 PG 和 Docker PG 使用相同端口
-
-**错误做法：** 宿主机 PostgreSQL 监听 5432，同时 Docker postgres-prod 也映射到宿主机 5432。
-
-**原因：** 端口冲突。当前 Docker postgres-prod 不暴露端口（生产安全），但如果未来需要暴露，必须使用不同端口。
-
-**正确做法：** 宿主机 PG 监听 5432（默认），Docker postgres-prod 不暴露端口。需要从宿主机访问生产数据库时，通过 `docker exec` 连接。
-
-### Anti-Pattern 3: 所有基础设施服务都用蓝绿部署
-
-**错误做法：** postgres、nginx、noda-ops 全部用蓝绿模式部署。
-
-**原因：**
-- PostgreSQL 是有状态服务，数据卷只能挂载到一个容器。蓝绿意味着两个 PG 容器，但只有一个能拥有数据卷。
-- Nginx 是流量路由器，蓝绿切换本身依赖它。
-- noda-ops 更新频率极低，蓝绿的复杂度不值得。
-
-**正确做法：** 只有 Keycloak 用蓝绿部署（状态在 postgres 中，容器本身无状态）。其他基础设施服务用 compose 滚动替换。
-
-### Anti-Pattern 4: setup-dev.sh 包含生产凭据
-
-**错误做法：** 在 setup-dev.sh 中硬编码生产数据库密码或 Cloudflare Tunnel token。
-
-**原因：** 开发环境不应该接触生产凭据。
-
-**正确做法：** setup-dev.sh 创建本地数据库时生成本地密码，或提示用户输入。使用 `.env.example` 模板，不包含实际密码。
-
-### Anti-Pattern 5: 修改 docker-compose.yml 移除 keycloak 服务定义
-
-**错误做法：** 把 keycloak 从 `docker-compose.yml` 中删除，完全用 docker run 管理。
-
-**原因：** `docker-compose.yml` 是基础设施的基础定义，保持所有服务的声明有助于理解系统全貌。keycloak 的数据库连接、网络别名等配置在 compose 文件中有完整记录。
-
-**正确做法：** keycloak 保留在 `docker-compose.yml` 中作为声明式定义，但实际运行用 docker run 蓝绿管理（与 findclass-ssr 模式一致）。init 阶段会从 compose 容器迁移到蓝绿容器。
-
----
-
-## 七、网络拓扑变更
-
-### 7.1 当前网络（v1.4）
+## 十二、构建顺序建议
 
 ```
-noda-network (bridge, external)
-├── noda-infra-postgres-prod  (postgres:5432)
-├── noda-infra-keycloak-prod  (keycloak:8080, alias: keycloak)
-├── noda-infra-nginx          (:80)
-├── noda-ops
-├── findclass-ssr-{color}     (:3001)
-├── noda-site-{color}         (:3000)
-└── skykiwi-crawler           (临时)
-
-宿主机进程空间（不在 Docker 网络内）
-├── Jenkins (:8888, H2)
-└── （无 PostgreSQL）
-```
-
-### 7.2 目标网络（v1.5）
-
-```
-noda-network (bridge, external)
-├── noda-infra-postgres-prod  (postgres:5432)
-├── keycloak-{color}          (:8080, 无 alias 或按 color alias)  ← 变更
-├── noda-infra-nginx          (:80)
-├── noda-ops
-├── findclass-ssr-{color}     (:3001)
-├── noda-site-{color}         (:3000)
-└── skykiwi-crawler           (临时)
-
-宿主机进程空间（不在 Docker 网络内）
-├── Jenkins (:8888, → localhost:5432/jenkins_db)  ← 变更
-└── PostgreSQL (Homebrew, :5432)                   ← 新增
-    ├── jenkins_db
-    └── noda_dev
-
-已移除：
-├── postgres-dev              ← 移除
-└── keycloak-dev              ← 移除
-```
-
-**关键变更：Keycloak 网络别名。**
-
-当前 `docker-compose.yml` 中 keycloak 有网络别名 `keycloak`：
-```yaml
-networks:
-  noda-network:
-    aliases:
-      - keycloak
-```
-
-蓝绿部署后，容器名变为 `keycloak-blue` 和 `keycloak-green`。upstream-keycloak.conf 指向容器名（如 findclass 的模式），不再依赖网络别名。
-
-**但现有 findclass-ssr 的 `KEYCLOAK_INTERNAL_URL: http://noda-infra-keycloak-prod:8080` 使用的是容器名，不是别名。** 蓝绿后需要改为 `http://keycloak-{color}:8080`，这需要在 env-findclass-ssr.env 中动态替换。
-
-**解决方案：** findclass-ssr 的 KEYCLOAK_INTERNAL_URL 也可以通过 nginx 反代统一处理：
-- findclass-ssr 连接 `http://noda-infra-nginx/keycloak/` → nginx 内部路由到 keycloak-{color}
-- 或者直接使用容器名，在 env 文件中用变量替换
-
-推荐：保持现有模式，在 env-findclass-ssr.env 中用变量替换。蓝绿切换后更新 env 模板中的 keycloak 容器名。
-
----
-
-## 八、文件变更清单
-
-### 新增文件
-
-| 文件 | 用途 | 依赖 |
-|------|------|------|
-| `jenkins/Jenkinsfile.infra` | 基础设施统一 Pipeline | pipeline-stages.sh |
-| `docker/env-keycloak.env` | Keycloak 环境变量模板 | manage-containers.sh |
-| `scripts/setup-dev.sh` | 一键开发环境设置 | setup-jenkins.sh |
-| `config/nginx/snippets/upstream-keycloak.conf` | Keycloak upstream 动态切换 | nginx reload |
-
-**注意：** `upstream-keycloak.conf` 已存在但内容是静态的，需要改为动态格式（与 upstream-findclass.conf 一致）。
-
-### 修改文件
-
-| 文件 | 修改内容 | 影响范围 |
-|------|---------|---------|
-| `config/nginx/snippets/upstream-keycloak.conf` | 从静态 `keycloak:8080` 改为动态 `keycloak-{color}:8080` | nginx 路由 |
-| `scripts/pipeline-stages.sh` | 新增基础设施部署函数（不修改现有函数） | Pipeline |
-| `docker/docker-compose.dev.yml` | 移除 postgres-dev、keycloak-dev，简化 nginx overlay | 开发环境 |
-| `scripts/setup-jenkins.sh` | 添加 PG 迁移子命令 | Jenkins 管理 |
-| `docker/env-findclass-ssr.env` | KEYCLOAK_INTERNAL_URL 改为动态 | 应用配置 |
-
-### 删除内容（不移除文件，清空内容）
-
-| 文件/内容 | 删除原因 |
-|----------|---------|
-| `docker-compose.dev.yml` 中 postgres-dev 服务定义 | 替代为宿主机 PG |
-| `docker-compose.dev.yml` 中 keycloak-dev 服务定义 | 不再需要独立 dev Keycloak |
-| `docker/volumes/postgres_dev_data`（Docker volume） | postgres-dev 移除后不再需要 |
-
----
-
-## 九、构建顺序建议
-
-```
-Phase 1: 宿主机 PostgreSQL 安装
-  │  brew install postgresql@17
-  │  创建 jenkins_db, noda_dev 数据库
-  │  验证: psql 连接正常
+Phase 1: Docker socket 权限收敛
+  │  配置 systemd override
+  │  从 docker 组移除非必要用户
+  │  重启 Docker 验证权限持久
+  │  验证: jenkins 用户可执行 docker ps
+  │  验证: admin 用户不可执行 docker ps
   │
   ├─ 依赖：无
-  └─ 风险：低（纯新增，不影响现有服务）
+  ├─ 风险：低（jenkins 验证后再移除其他用户）
+  └─ 回滚：移除 override，重启 Docker
 
-Phase 2: Jenkins H2 → PG 迁移
-  │  安装 PostgreSQL 插件
-  │  配置 JDBC 连接
-  │  重启 Jenkins
-  │  验证: Jenkins 正常启动，jobs/builds 完整
+Phase 2: 部署脚本文件权限锁定
+  │  修改 scripts/deploy/*.sh → 750 root:jenkins
+  │  修改 scripts/pipeline-stages.sh → 750 root:jenkins
+  │  修改 scripts/manage-containers.sh → 750 root:jenkins
+  │  修改 config/nginx/snippets/ → 750 root:jenkins
+  │  验证: admin 用户不可直接执行部署脚本
+  │  验证: Jenkins Pipeline 正常运行（不受影响）
   │
-  ├─ 依赖：Phase 1（宿主机 PG 必须先就绪）
-  └─ 风险：中（Jenkins 可能短暂不可用，需要回滚方案）
-  │  回滚方案：恢复 H2 配置，重启 Jenkins
+  ├─ 依赖：Phase 1（jenkins 用户已有 Docker 访问权）
+  ├─ 风险：低（文件权限变更可立即回滚）
+  └─ 回滚：chmod 755 恢复原始权限
 
-Phase 3: 移除 postgres-dev / keycloak-dev
-  │  编辑 docker-compose.dev.yml
-  │  停止并移除旧容器
-  │  清理 Docker volumes
-  │  验证: docker compose config 正确
+Phase 3: sudoers 白名单 + break-glass
+  │  部署 /etc/sudoers.d/noda-docker
+  │  创建 /usr/local/bin/noda-emergency-deploy.sh
+  │  验证: sudo docker ps 正常工作
+  │  验证: sudo docker run 被拒绝
+  │  验证: break-glash 脚本记录审计日志
   │
-  ├─ 依赖：Phase 1（开发数据库迁移到宿主机 PG）
-  └─ 风险：低（仅移除开发环境容器，不影响生产）
+  ├─ 依赖：Phase 1 + 2
+  ├─ 风险：中（sudoers 语法错误会导致 sudo 完全不可用）
+  │  → 必须使用 visudo -f 验证语法后再部署
+  └─ 回滚：删除 /etc/sudoers.d/noda-docker
 
-Phase 4: Keycloak 蓝绿部署基础设施
-  │  创建 docker/env-keycloak.env 模板
-  │  修改 upstream-keycloak.conf 格式
-  │  从 compose 单容器迁移到蓝绿 blue 容器
-  │  验证: auth.noda.co.nz 正常访问
+Phase 4: auditd 审计日志
+  │  部署 /etc/audit/rules.d/noda-docker.rules
+  │  augenrules --load
+  │  验证: ausearch -k docker-cmd 返回结果
+  │  验证: 日志轮转配置正确
   │
-  ├─ 依赖：无（可独立进行）
-  └─ 风险：中（认证服务短暂中断 ~60-90s）
+  ├─ 依赖：无（独立于其他 Phase）
+  ├─ 风险：低（auditd 规则不影响系统功能）
+  └─ 回滚：删除规则文件，augenrules --load
 
-Phase 5: 统一基础设施 Pipeline
-  │  编写 Jenkinsfile.infra
-  │  扩展 pipeline-stages.sh
-  │  配置 Jenkins Job
-  │  测试各服务部署流程
-  │  验证: 完整 Pipeline 端到端运行
+Phase 5: 统一执行脚本 + 验证
+  │  编写 setup-docker-permissions.sh
+  │  集成 apply/verify/rollback/status 子命令
+  │  端到端验证所有功能
+  │  文档更新
   │
-  ├─ 依赖：Phase 4（Keycloak 蓝绿基础设施）
-  └─ 风险：低（Pipeline 变更，不直接修改运行中的服务）
-
-Phase 6: 一键开发环境脚本
-  │  编写 setup-dev.sh
-  │  测试在干净环境下的执行
-  │  验证: 新开发者可以一键配置环境
-  │
-  ├─ 依赖：Phase 1（宿主机 PG 安装逻辑可参考）
-  └─ 风险：低（纯开发体验改善）
+  ├─ 依赖：Phase 1-4 全部完成
+  └─ 风险：低（仅整合已有配置）
 ```
 
 **Phase 排序理由：**
-1. Phase 1 是基础 — 所有其他功能都依赖宿主机 PG
-2. Phase 2 紧跟 Phase 1 — Jenkins 迁移是宿主机 PG 的主要消费者
-3. Phase 3 在 Phase 1 之后 — 需要宿主机 PG 替代 postgres-dev
-4. Phase 4 独立 — Keycloak 蓝绿与 PG 无关，但需要稳定后再接入 Pipeline
-5. Phase 5 在 Phase 4 之后 — Pipeline 需要所有部署策略已验证
-6. Phase 6 最后 — 开发环境脚本整合所有变更
+1. Phase 1 是基础 -- 没有 socket 权限收敛，其他所有措施都是空谈
+2. Phase 2 紧跟 Phase 1 -- 确保 jenkins 能正常工作后再锁定脚本
+3. Phase 3 在 Phase 1+2 之后 -- 先确保正常路径工作，再配置替代路径
+4. Phase 4 独立 -- 审计日志是监控层，不影响操作权限
+5. Phase 5 最后 -- 统一脚本整合所有配置
 
 ---
 
-## 十、可扩展性考虑
+## 十三、与 v1.5 架构的兼容性
 
-| 关注点 | 当前（~10 容器） | 增长（~20 容器） | 大型 |
-|-------|----------------|----------------|------|
-| 部署管理 | 独立 Jenkinsfile | 统一参数化 Pipeline | Shared Library |
-| 蓝绿状态 | 宿主机文件（每服务一个） | 同上 | Consul/etcd |
-| 数据库 | 单 PG 容器 + 宿主机 PG | 同上 | PG 集群 + 读写分离 |
-| Jenkins 存储 | H2 → 单 PG | 单 PG 够用 | PG 集群 |
-| 备份 | 单脚本 pg_dump | 同上 | WAL 归档 + PITR |
+### 13.1 不影响的 v1.5 功能
 
-**当前阶段结论：** 单服务器架构，所有模式都是最简实现。宿主机 PG + Docker PG 的双层模式在单服务器上完全可行。
+| v1.5 功能 | 权限收敛影响 | 理由 |
+|-----------|-------------|------|
+| Jenkins Pipeline（findclass-ssr） | 无影响 | jenkins 用户通过 socket 属组访问 Docker |
+| Jenkins Pipeline（noda-site） | 无影响 | 同上 |
+| Jenkinsfile.infra | 无影响 | 同上 |
+| Keycloak 蓝绿部署 | 无影响 | manage-containers.sh 属于 jenkins 可执行 |
+| 宿主机 PostgreSQL | 无影响 | 与 Docker 权限无关 |
+| 开发环境 setup-dev.sh | 无影响 | 开发环境不受生产权限限制 |
+
+### 13.2 需要注意的集成点
+
+| 集成点 | 注意事项 |
+|--------|---------|
+| `setup-jenkins.sh install` | 步骤 8 需要修改：不再加入 docker 组，改为 socket 属组 |
+| `manage-containers.sh set_active_env()` | sudo 回退逻辑保留但不应触发（/opt/noda/ 属组 jenkins） |
+| `pipeline-stages.sh pipeline_backup_database()` | 备份文件写入 BACKUP_HOST_DIR，需确认 jenkins 有写权限 |
+| `docker compose` volume 挂载 | snippets 目录只读挂载（`:ro`），jenkins 在宿主机端写入，无冲突 |
+
+---
+
+## 十四、可扩展性考虑
+
+| 关注点 | 当前（单服务器，1 admin + 1 jenkins） | 增长（3-5 admin） | 大型 |
+|-------|--------------------------------------|-------------------|------|
+| Docker 访问控制 | socket 属组 | 同上 | Rootless Docker 或 K8s |
+| 部署执行 | Jenkins 专用 | 同上 | 多 Jenkins agent |
+| 审计 | auditd 本地 | 同上 + 日志聚合 | SIEM（ELK/Datadog） |
+| break-glass | 单脚本 + 封条文件 | 密码保险库（Vault） | JIT 临时权限（Teleport） |
+| sudoers 规则 | 单文件 | 按角色拆分多个文件 | LDAP/SSSD 集中管理 |
+
+**当前阶段结论：** 单服务器、少量管理员场景下，socket 属组 + sudoers 白名单 + break-glass 脚本是最佳平衡点。不引入额外依赖，运维复杂度最低。
 
 ---
 
@@ -820,26 +899,19 @@ Phase 6: 一键开发环境脚本
 
 | 来源 | 置信度 | 用途 |
 |------|--------|------|
-| `docker/docker-compose.yml` | HIGH（直接读取） | 基础设施服务定义、keycloak 网络别名 |
-| `docker/docker-compose.dev.yml` | HIGH（直接读取） | postgres-dev、keycloak-dev 定义、要移除的内容 |
-| `docker/docker-compose.app.yml` | HIGH（直接读取） | 应用服务环境变量参考 |
-| `docker/docker-compose.prod.yml` | HIGH（直接读取） | 生产 overlay、Keycloak SMTP 配置 |
-| `config/nginx/conf.d/default.conf` | HIGH（直接读取） | keycloak_backend 引用方式 |
-| `config/nginx/snippets/upstream-keycloak.conf` | HIGH（直接读取） | 当前静态 upstream 格式 |
-| `config/nginx/snippets/upstream-findclass.conf` | HIGH（直接读取） | 蓝绿动态格式参考 |
-| `config/nginx/snippets/upstream-noda-site.conf` | HIGH（直接读取） | 多服务蓝绿验证 |
-| `jenkins/Jenkinsfile` | HIGH（直接读取） | 现有 Pipeline 结构 |
-| `jenkins/Jenkinsfile.noda-site` | HIGH（直接读取） | 参数化 Pipeline 参考 |
-| `scripts/pipeline-stages.sh` | HIGH（直接读取） | 共享函数库、扩展点 |
-| `scripts/manage-containers.sh` | HIGH（直接读取） | 蓝绿容器管理、参数化设计 |
-| `scripts/setup-jenkins.sh` | HIGH（直接读取） | Jenkins 安装逻辑 |
-| `docker/env-findclass-ssr.env` | HIGH（直接读取） | env 模板格式参考 |
-| `services/postgres/init/*.sql` | HIGH（直接读取） | 数据库初始化脚本 |
-| `.planning/PROJECT.md` | HIGH（直接读取） | v1.5 里程碑目标 |
-| Keycloak 数据库迁移机制 | MEDIUM（训练数据） | SPI migration strategy 配置 |
-| Jenkins PostgreSQL 插件 | MEDIUM（训练数据） | 数据库连接配置方式 |
+| `docker/docker-compose.yml` | HIGH（直接读取） | Docker 服务定义、volume 挂载 |
+| `scripts/pipeline-stages.sh` | HIGH（直接读取） | Jenkins Pipeline 函数、docker 命令调用 |
+| `scripts/manage-containers.sh` | HIGH（直接读取） | 蓝绿容器管理、set_active_env()、update_upstream() |
+| `scripts/setup-jenkins.sh` | HIGH（直接读取） | Jenkins 安装逻辑、docker 组配置 |
+| `jenkins/Jenkinsfile` | HIGH（直接读取） | Pipeline 结构、sh 步骤调用 |
+| `config/nginx/snippets/upstream-*.conf` | HIGH（直接读取） | upstream 动态切换文件 |
+| `.planning/PROJECT.md` | HIGH（直接读取） | v1.6 里程碑目标 |
+| Linux sudoers 文档 | HIGH（稳定技术） | Cmnd_Alias 语法、Defaults 日志配置 |
+| Docker socket 安全模型 | HIGH（稳定技术） | docker 组 = root 等价权限 |
+| auditd 规则语法 | HIGH（稳定技术） | audit 规则字段、ausearch/aureport 用法 |
+| systemd override 机制 | HIGH（稳定技术） | ExecStartPost 钩子 |
 
 ---
 
-*Architecture research for: Noda v1.5 开发环境本地化 + 基础设施 CI/CD*
+*Architecture research for: Noda v1.6 Jenkins Pipeline 强制执行 — Docker 权限收敛*
 *Researched: 2026-04-17*
