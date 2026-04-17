@@ -1,9 +1,18 @@
 # Noda 基础设施项目
 
+## Current Milestone: v1.6 Jenkins Pipeline 强制执行
+
+**Goal:** 所有容器只能通过 Jenkins Pipeline 上线，禁止直接 docker compose / shell 脚本部署
+
+**Target features:**
+- Docker 权限收敛：仅 jenkins 用户可执行 docker 命令
+- 部署脚本权限锁定：仅 jenkins 用户可执行 deploy 脚本
+- 操作审计日志（记录谁在什么时候执行了什么）
+
 ## Current State
 
 **Last shipped:** v1.5 开发环境本地化 + 基础设施 CI/CD (2026-04-17)
-**Next focus:** 待规划下一里程碑
+**Active milestone:** v1.6 Jenkins Pipeline 强制执行
 
 ## Shipped Milestones
 
@@ -108,6 +117,9 @@ Docker Compose 项目：
 ### Active
 
 - [ ] Jenkins H2 → 本地 PostgreSQL 迁移
+- [ ] Docker 权限收敛：仅 jenkins 用户可执行 docker 命令
+- [ ] 部署脚本权限锁定：仅 jenkins 用户可执行 deploy 脚本
+- [ ] 操作审计日志
 
 ### Out of Scope
 
@@ -163,4 +175,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-17 after v1.5 milestone completed*
+*Last updated: 2026-04-17 — v1.6 milestone started*
