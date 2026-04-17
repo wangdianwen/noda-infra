@@ -81,7 +81,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [x] **Phase 26: 宿主机 PostgreSQL 安装与配置** -- Homebrew 安装 PostgreSQL 17.9 + 开发数据库初始化 (completed 2026-04-16)
 - [x] **Phase 27: 开发容器清理与 Docker Compose 简化** -- 移除 dev 容器，精简 compose overlay (completed 2026-04-16)
 - [x] **Phase 28: Keycloak 蓝绿部署基础设施** -- Keycloak 蓝绿容器管理 + upstream 切换 (completed 2026-04-17)
-- [ ] **Phase 29: 统一基础设施 Jenkins Pipeline** -- Jenkinsfile.infra 参数化部署基础设施服务
+- [x] **Phase 29: 统一基础设施 Jenkins Pipeline** -- Jenkinsfile.infra 参数化部署基础设施服务 (completed 2026-04-17)
 - [ ] **Phase 30: 一键开发环境脚本** -- setup-dev.sh 幂等安装开发环境
 
 ## Phase Details
@@ -145,12 +145,12 @@ Plans:
   4. 部署后自动执行服务专属健康检查（keycloak: HTTP /health/ready、nginx: HTTP 200、noda-ops: 容器 running、postgres: pg_isready）
   5. 健康检查失败时自动回滚到部署前状态（Keycloak 切回旧容器、nginx/noda-ops 恢复旧镜像）
   6. 重启 PostgreSQL 等高风险操作前 Pipeline 暂停等待人工确认（30 分钟超时）
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [x] 29-01-PLAN.md -- pipeline-stages.sh 基础设施函数（部署/备份/健康检查/回滚）
 - [x] 29-02-PLAN.md -- Jenkinsfile.infra 统一 Pipeline（choice 参数 + 7 阶段 + input 门禁）
-- [ ] 29-03-PLAN.md -- deploy-infrastructure-prod.sh 精简（移除 nginx/noda-ops 逻辑）
+- [x] 29-03-PLAN.md -- deploy-infrastructure-prod.sh 精简（移除 nginx/noda-ops 逻辑）
 
 ### Phase 30: 一键开发环境脚本
 **Goal**: 新开发者运行一个命令即可搭建完整的本地开发环境（PostgreSQL + 数据库初始化 + 配置）
@@ -173,5 +173,5 @@ Phases execute in numeric order: 26 -> 27 -> 28 -> 29 -> 30
 | 26. 宿主机 PostgreSQL 安装与配置 | v1.5 | 1/2 | Complete    | 2026-04-16 |
 | 27. 开发容器清理与 Docker Compose 简化 | v1.5 | 3/3 | Complete    | 2026-04-16 |
 | 28. Keycloak 蓝绿部署基础设施 | v1.5 | 3/3 | Complete    | 2026-04-17 |
-| 29. 统一基础设施 Jenkins Pipeline | v1.5 | 2/3 | In Progress|  |
+| 29. 统一基础设施 Jenkins Pipeline | v1.5 | 3/3 | Complete    | 2026-04-17 |
 | 30. 一键开发环境脚本 | v1.5 | 0/? | Not started | - |
