@@ -209,17 +209,14 @@ get_database_stats() {
   local stats=$(PGPASSWORD=$POSTGRES_PASSWORD psql -h noda-infra-postgres-prod -U postgres -d "$db_name" -t -c "
     SELECT
       (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE') as table_count,
-      (SELECT SUM(row_count)::bigint FROM (
-        SELECT schemaname, tablename, n_live_tup as row_count
-        FROM pg_stat_user_tables
-      ) t) as total_rows,
+      (SELECT COALESCE(SUM(n_live_tup), 0)::bigint FROM pg_stat_user_tables) as total_rows,
       pg_database_size('$db_name') as db_size
  ;" 2>/dev/null)
 
-  # 解析结果并构建 JSON
-  local table_count=$(echo "$stats" | awk '{print $1}')
-  local total_rows=$(echo "$stats" | awk '{print $2}')
-  local db_size=$(echo "$stats" | awk '{print $3}')
+  # 解析结果（psql -t 用 | 分隔列）
+  local table_count=$(echo "$stats" | awk -F'|' '{print $1}' | xargs)
+  local total_rows=$(echo "$stats" | awk -F'|' '{print $2}' | xargs)
+  local db_size=$(echo "$stats" | awk -F'|' '{print $3}' | xargs)
 
   # 处理可能的 NULL 值
   table_count=${table_count:-0}
@@ -263,7 +260,8 @@ get_historical_backup_size() {
      if length > 0 then add / length else 0 end" \
     "$HISTORY_FILE" 2>/dev/null)
 
-  echo "${historical_sizes:-0}"
+  # 转为整数（jq 平均值可能返回浮点数，bash 不支持浮点比较）
+  echo "${historical_sizes:-0}" | cut -d. -f1
 }
 
 # 判断数据量是否异常

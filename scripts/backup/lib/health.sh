@@ -177,8 +177,11 @@ check_disk_space() {
     # 显示各数据库大小（单条 SQL）
     PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -U "$pg_user" \
       -d postgres -t -c \
-      "SELECT datname, pg_database_size(datname) FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres', 'template0', 'template1') ORDER BY datname;" 2>/dev/null | while read -r db_name db_size _; do
+      "SELECT datname, pg_database_size(datname) FROM pg_database WHERE datistemplate = false AND datname NOT IN ('postgres', 'template0', 'template1') ORDER BY datname;" 2>/dev/null | while IFS='|' read -r db_name db_size; do
       [ -z "$db_name" ] && continue
+      db_name=$(echo "$db_name" | xargs)
+      db_size=$(echo "$db_size" | xargs)
+      [ -z "$db_size" ] && continue
       local db_size_mb=$((db_size / 1024 / 1024))
       echo "  - ${db_name}: ${db_size_mb} MB" >&2
     done

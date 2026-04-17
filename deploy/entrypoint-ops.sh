@@ -32,7 +32,13 @@ if [ -n "$POSTGRES_HOST" ] && [ -n "$B2_ACCOUNT_ID" ]; then
   mkdir -p /app/history
 
   # 配置 rclone
-  mkdir -p /home/nodaops/.config/rclone
+  mkdir -p /home/nodaops/.config/rclone 2>/dev/null || {
+    # tmpfs 挂载可能导致权限问题，尝试修复
+    sudo mkdir -p /home/nodaops/.config/rclone 2>/dev/null || true
+  }
+  if [ ! -d /home/nodaops/.config/rclone ]; then
+    echo "⚠ 无法创建 rclone 配置目录，B2 上传可能失败"
+  fi
   export RCLONE_CONFIG=/home/nodaops/.config/rclone/rclone.conf
   cat > /home/nodaops/.config/rclone/rclone.conf <<EOF
 [b2remote]

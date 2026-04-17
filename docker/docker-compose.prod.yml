@@ -144,7 +144,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-      - /home/nodaops
+      - /home/nodaops:uid=100,gid=101,mode=0700
 
 # ============================================
 # 网络定义

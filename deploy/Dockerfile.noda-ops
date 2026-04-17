@@ -37,6 +37,9 @@ WORKDIR /app
 # 创建非 root 用户
 RUN addgroup -S nodaops && adduser -S -G nodaops nodaops
 
+# 修复 crond 权限：dcron 安装后 crond 仅 root 可执行，nodaops 用户需要执行权限
+RUN chmod 755 /usr/sbin/crond
+
 # 复制备份脚本
 COPY scripts/backup/ /app/backup/
 RUN find /app/backup -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
