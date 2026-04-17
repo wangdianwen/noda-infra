@@ -908,11 +908,11 @@ pipeline_infra_rollback() {
       else
         inactive_env="blue"
       fi
-      update_upstream "$active_env"
+      update_upstream "$inactive_env"
       docker exec "$NGINX_CONTAINER" nginx -t
       reload_nginx
-      set_active_env "$active_env"
-      log_success "Keycloak 回滚完成: 切回 $active_env"
+      set_active_env "$inactive_env"
+      log_success "Keycloak 回滚完成: 切回 $inactive_env"
       ;;
     nginx)
       if [ -z "${INFRA_ROLLBACK_IMAGE:-}" ]; then
