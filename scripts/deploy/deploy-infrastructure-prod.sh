@@ -6,7 +6,7 @@
 # 正常部署请使用 Jenkins Pipeline（Build Now -> findclass-deploy）。
 #
 # 原有功能：自动部署并配置基础设施服务
-# 包括：PostgreSQL, Keycloak, Nginx, Noda-Ops, Findclass-SSR
+# 包括：PostgreSQL (Prod/Dev), Keycloak, Nginx, Noda-Ops, Findclass-SSR
 #
 # 此脚本行为不变，可直接手动执行。
 # ============================================
@@ -16,7 +16,8 @@ set -euo pipefail
 # 基础设施部署脚本（生产环境）
 # ============================================
 # 功能：自动部署并配置基础设施服务
-# 包括：PostgreSQL, Keycloak, Nginx, Noda-Ops, Findclass-SSR
+# 包括：PostgreSQL (Prod/Dev), Nginx, Noda-Ops
+# 注意：Keycloak 和 findclass-ssr 已迁移到蓝绿 docker run 管理
 # ============================================
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -39,18 +40,20 @@ ROLLBACK_FILE="$ROLLBACK_DIR/images-$(date +%s).txt"
 ROLLBACK_COMPOSE="$ROLLBACK_DIR/docker-compose.rollback.yml"
 
 # 注意：此变量故意不加引号使用，依赖 word splitting 拆分为多个 -f 参数
-COMPOSE_FILES="-f docker/docker-compose.yml -f docker/docker-compose.prod.yml"
+COMPOSE_FILES="-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.dev.yml"
 
 EXPECTED_CONTAINERS=(
   "noda-infra-postgres-prod"
-  "noda-infra-keycloak-prod"
+  "noda-infra-postgres-dev"
   "noda-infra-nginx"
   "noda-ops"
-  "findclass-ssr"
+  # keycloak 和 findclass-ssr 已迁移到蓝绿 docker run 管理
+  # 不再通过此脚本的健康检查验证
 )
 
-# 启动的服务列表（findclass-ssr 需要单独启动，来自 docker-compose.app.yml）
-START_SERVICES="postgres keycloak nginx noda-ops"
+# 启动的服务列表
+# keycloak 已迁移到蓝绿 docker run 管理，不再通过 compose 启动
+START_SERVICES="postgres nginx noda-ops postgres-dev"
 
 # ============================================
 # 镜像回滚函数 (D-05)
@@ -83,10 +86,10 @@ save_image_tags() {
 #
 # 容器名到服务名映射（因为 container_name 与 service name 不同）：
 #   noda-infra-postgres-prod  -> postgres
-#   noda-infra-keycloak-prod  -> keycloak
+#   noda-infra-postgres-dev   -> postgres-dev（在 dev overlay 中，跳过）
 #   noda-infra-nginx          -> nginx
 #   noda-ops                  -> noda-ops
-#   findclass-ssr             -> findclass-ssr
+# 注意：keycloak 和 findclass-ssr 已迁移到蓝绿 docker run 管理
 rollback_images() {
   if [ ! -f "$ROLLBACK_FILE" ]; then
     log_error "回滚文件不存在: ${ROLLBACK_FILE}"
@@ -97,10 +100,8 @@ rollback_images() {
   container_to_service() {
     case "$1" in
       noda-infra-postgres-prod) echo "postgres" ;;
-      noda-infra-keycloak-prod) echo "keycloak" ;;
       noda-infra-nginx) echo "nginx" ;;
       noda-ops) echo "noda-ops" ;;
-      findclass-ssr) echo "findclass-ssr" ;;
       *) echo "" ;;
     esac
   }
@@ -268,8 +269,8 @@ log_info "=========================================="
 log_info "停止现有容器..."
 docker compose $COMPOSE_FILES down
 
-log_info "启动 PostgreSQL, Keycloak, Nginx, Noda-Ops, Findclass-SSR..."
-docker compose $COMPOSE_FILES up -d $START_SERVICES findclass-ssr
+log_info "启动 PostgreSQL, Nginx, Noda-Ops, PostgreSQL-Dev..."
+docker compose $COMPOSE_FILES up -d $START_SERVICES
 
 log_success "容器已启动"
 
@@ -305,14 +306,10 @@ log_info "=========================================="
 log_info "步骤 6/7: 配置 Keycloak"
 log_info "=========================================="
 
-log_info "配置 realm, client 和 Google OAuth..."
-if ! bash scripts/setup-keycloak-full.sh; then
-  log_error "Keycloak 配置失败"
-  log_info "尝试回滚到上一版本..."
-  rollback_images || true
-  exit 1
-fi
-log_success "Keycloak 配置完成"
+# 注意: Keycloak 配置已由蓝绿部署流程管理
+# 如需重新配置 Keycloak realm/client，请手动执行 setup-keycloak-full.sh
+log_info "Keycloak 已迁移到蓝绿部署模式，跳过 compose 级别的配置"
+log_info "如需手动配置 Keycloak，请执行: bash scripts/setup-keycloak-full.sh"
 
 # ============================================
 # 步骤 7/7: 最终验证（重启次数）
@@ -349,10 +346,11 @@ log_success "=========================================="
 log_success "基础设施部署完成！"
 log_success "=========================================="
 log_info "✓ PostgreSQL (Prod): 运行中"
-log_info "✓ Keycloak: 运行中（已配置 realm 和 Google OAuth）"
+log_info "✓ PostgreSQL (Dev): 运行中"
+log_info "✓ Keycloak: 蓝绿管理（通过 manage-containers.sh 或 Jenkins Pipeline 部署）"
 log_info "✓ Nginx: 运行中"
 log_info "✓ Noda-Ops: 运行中"
-log_info "✓ Findclass-SSR: 运行中"
+log_info "✓ Findclass-SSR: 蓝绿管理（通过 blue-green-deploy.sh 或 Jenkins Pipeline 部署）"
 log_info ""
 log_info "访问地址："
 log_info "  管理控制台: https://auth.noda.co.nz/admin"
