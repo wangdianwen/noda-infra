@@ -3,7 +3,7 @@
 ## Current State
 
 **Last shipped:** v1.4 CI/CD 零停机部署 (2026-04-16)
-**Next focus:** v1.5 开发环境本地化 + 基础设施 CI/CD (Phase 28 complete, Phase 29 next)
+**Next focus:** v1.5 开发环境本地化 + 基础设施 CI/CD (Phase 29 complete, Phase 30 next)
 
 ## Current Milestone: v1.5 开发环境本地化 + 基础设施 CI/CD
 
@@ -125,9 +125,9 @@ Docker Compose 项目：
 - ✓ 宿主机 PostgreSQL 安装与配置 (Homebrew) — v1.5 Phase 26
 - [ ] Jenkins H2 → 本地 PostgreSQL 迁移
 - ✓ 移除 postgres-dev / keycloak-dev 容器 — v1.5 Phase 27
-- [ ] 统一基础设施 Jenkins Pipeline（参数化服务选择）
+- ✓ 统一基础设施 Jenkins Pipeline（参数化服务选择） — v1.5 Phase 29
 - ✓ Keycloak 蓝绿部署（零停机） — v1.5 Phase 28
-- [ ] 部署前自动备份 + 健康检查 + 回滚 + 人工确认门禁
+- ✓ 部署前自动备份 + 健康检查 + 回滚 + 人工确认门禁 — v1.5 Phase 29
 
 ### Out of Scope
 
@@ -182,4 +182,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-17 after v1.5 milestone planning started*
+*Last updated: 2026-04-17 after v1.5 Phase 29 completed*
