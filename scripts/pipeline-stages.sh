@@ -847,6 +847,247 @@ pipeline_deploy_postgres() {
 }
 
 # ============================================
+# 函数: pipeline_infra_health_check
+# ============================================
+# 服务专属健康检查
+# 参数: $1 = SERVICE
+# 返回: 0=健康，1=不健康
+pipeline_infra_health_check() {
+  local service="$1"
+
+  case "$service" in
+    keycloak)
+      # 由 keycloak-blue-green-deploy.sh 内部处理健康检查
+      # 此处做二次验证：检查新容器确实在运行
+      local active_env
+      active_env=$(cat /opt/noda/active-env-keycloak 2>/dev/null || echo "blue")
+      wait_container_healthy "keycloak-${active_env}" 180
+      ;;
+    nginx)
+      # nginx -t 验证配置 + wait_container_healthy
+      docker exec noda-infra-nginx nginx -t
+      wait_container_healthy "noda-infra-nginx" 30
+      ;;
+    noda-ops)
+      # 容器 running 即可（无 HTTP 端点）
+      wait_container_healthy "noda-ops" 60
+      ;;
+    postgres)
+      # pg_isready 验证数据库可连接 + wait_container_healthy
+      docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
+      wait_container_healthy "noda-infra-postgres-prod" 90
+      ;;
+    *)
+      log_error "未知服务: $service"
+      return 1
+      ;;
+  esac
+}
+
+# ============================================
+# 函数: pipeline_infra_rollback
+# ============================================
+# 服务专属回滚
+# 参数: $1 = SERVICE
+# 环境变量: INFRA_ROLLBACK_IMAGE（nginx/noda-ops 回滚镜像 digest）
+#           INFRA_BACKUP_FILE（postgres 回滚备份文件）
+# 返回: 0=回滚成功，1=回滚失败
+pipeline_infra_rollback() {
+  local service="$1"
+
+  log_info "回滚: $service"
+
+  case "$service" in
+    keycloak)
+      # 读取当前活跃环境，切回旧环境
+      local active_env
+      active_env=$(cat /opt/noda/active-env-keycloak 2>/dev/null || echo "blue")
+      local inactive_env
+      if [ "$active_env" = "blue" ]; then
+        inactive_env="green"
+      else
+        inactive_env="blue"
+      fi
+      update_upstream "$active_env"
+      docker exec "$NGINX_CONTAINER" nginx -t
+      reload_nginx
+      set_active_env "$active_env"
+      log_success "Keycloak 回滚完成: 切回 $active_env"
+      ;;
+    nginx)
+      if [ -z "${INFRA_ROLLBACK_IMAGE:-}" ]; then
+        log_error "无回滚镜像信息（INFRA_ROLLBACK_IMAGE 未设置）"
+        return 1
+      fi
+      log_info "回滚 Nginx 到镜像: ${INFRA_ROLLBACK_IMAGE:0:12}..."
+      local rollback_compose
+      rollback_compose=$(mktemp)
+      cat > "$rollback_compose" <<YAML
+# 自动生成的回滚 overlay — 恢复 Nginx 到部署前的镜像
+name: noda-infra
+services:
+  nginx:
+    image: ${INFRA_ROLLBACK_IMAGE}
+YAML
+      docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+        -f "$rollback_compose" up -d --force-recreate --no-deps nginx
+      rm -f "$rollback_compose"
+      log_success "Nginx 回滚完成"
+      ;;
+    noda-ops)
+      if [ -z "${INFRA_ROLLBACK_IMAGE:-}" ]; then
+        log_error "无回滚镜像信息（INFRA_ROLLBACK_IMAGE 未设置）"
+        return 1
+      fi
+      log_info "回滚 noda-ops 到镜像: ${INFRA_ROLLBACK_IMAGE:0:12}..."
+      local rollback_compose
+      rollback_compose=$(mktemp)
+      cat > "$rollback_compose" <<YAML
+# 自动生成的回滚 overlay — 恢复 noda-ops 到部署前的镜像
+name: noda-infra
+services:
+  noda-ops:
+    image: ${INFRA_ROLLBACK_IMAGE}
+YAML
+      docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+        -f "$rollback_compose" up -d --force-recreate --no-deps noda-ops
+      rm -f "$rollback_compose"
+      log_success "noda-ops 回滚完成"
+      ;;
+    postgres)
+      if [ -z "${INFRA_BACKUP_FILE:-}" ]; then
+        log_error "无备份文件（INFRA_BACKUP_FILE 未设置），无法回滚"
+        return 1
+      fi
+      if [ ! -f "$INFRA_BACKUP_FILE" ]; then
+        log_error "备份文件不存在: $INFRA_BACKUP_FILE"
+        return 1
+      fi
+      log_info "从备份恢复 PostgreSQL: $INFRA_BACKUP_FILE"
+      gunzip -c "$INFRA_BACKUP_FILE" | docker exec -i noda-infra-postgres-prod psql -U postgres
+      # 恢复后验证
+      docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
+      log_success "PostgreSQL 恢复完成"
+      ;;
+    *)
+      log_error "未知服务: $service"
+      return 1
+      ;;
+  esac
+}
+
+# ============================================
+# 函数: pipeline_infra_verify
+# ============================================
+# 部署后验证
+# 参数: $1 = SERVICE
+# 返回: 0=验证通过，1=验证失败
+pipeline_infra_verify() {
+  local service="$1"
+
+  case "$service" in
+    keycloak)
+      # 由 keycloak-blue-green-deploy.sh 内部已做 E2E，此处 skip
+      log_info "Keycloak E2E 验证已由蓝绿脚本内部完成"
+      ;;
+    nginx)
+      # 通过 nginx 容器 wget 自身验证
+      docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://localhost/ 2>/dev/null
+      log_success "Nginx E2E 验证通过"
+      ;;
+    noda-ops)
+      # 验证容器运行中
+      local running
+      running=$(docker ps --filter name=noda-ops --filter status=running --format '{{.Names}}')
+      if [ -z "$running" ]; then
+        log_error "noda-ops 容器未运行"
+        return 1
+      fi
+      log_success "noda-ops 验证通过: 容器运行中"
+      ;;
+    postgres)
+      # pg_isready 验证
+      docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
+      log_success "PostgreSQL 验证通过"
+      ;;
+    *)
+      log_error "未知服务: $service"
+      return 1
+      ;;
+  esac
+}
+
+# ============================================
+# 函数: pipeline_infra_cleanup
+# ============================================
+# 部署后清理（备份文件保留）
+# 参数: $1 = SERVICE
+# 返回: 0=成功
+pipeline_infra_cleanup() {
+  local service="$1"
+
+  # 创建备份目录索引（用于审计）
+  ls -la "${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}/infra-pipeline/${service}/" 2>/dev/null || true
+
+  case "$service" in
+    keycloak)
+      # 清理 dangling images（keycloak 使用 SERVICE_IMAGE，不会产生 SHA 标签）
+      cleanup_old_images
+      ;;
+    nginx|noda-ops)
+      log_info "$service 无需额外清理"
+      ;;
+    postgres)
+      # 无额外清理
+      log_info "PostgreSQL 无需额外清理"
+      ;;
+    *)
+      log_info "未知服务: $service，跳过清理"
+      ;;
+  esac
+}
+
+# ============================================
+# 函数: pipeline_infra_failure_cleanup
+# ============================================
+# 部署失败清理（捕获日志 + 尝试自动回滚）
+# 参数: $1 = SERVICE
+# 返回: 0=清理完成
+pipeline_infra_failure_cleanup() {
+  local service="$1"
+
+  # 捕获目标服务容器日志
+  local container_name
+  case "$service" in
+    keycloak)
+      local active_env
+      active_env=$(cat /opt/noda/active-env-keycloak 2>/dev/null || echo "blue")
+      container_name="keycloak-${active_env}"
+      ;;
+    nginx)
+      container_name="noda-infra-nginx"
+      ;;
+    noda-ops)
+      container_name="noda-ops"
+      ;;
+    postgres)
+      container_name="noda-infra-postgres-prod"
+      ;;
+    *)
+      container_name="$service"
+      ;;
+  esac
+
+  docker logs "$container_name" --tail 50 > deploy-failure-infra.log 2>&1 || true
+  docker logs "$NGINX_CONTAINER" --tail 50 > deploy-failure-nginx.log 2>&1 || true
+
+  # 尝试自动回滚
+  pipeline_infra_rollback "$service" || true
+
+  log_info "失败日志已保存"
+}
+
+# ============================================
 # Source guard — 仅允许 source 加载，禁止直接执行
 # ============================================
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
