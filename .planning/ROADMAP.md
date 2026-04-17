@@ -127,7 +127,12 @@ Plans:
   3. `/opt/noda/active-env-keycloak` 状态文件准确反映当前活跃的 Keycloak 环境（blue 或 green）
   4. manage-containers.sh 支持 Keycloak 蓝绿容器的 create/start/stop/switch 操作
   5. auth.noda.co.nz 在蓝绿切换期间保持可访问（零停机）
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 28-01-PLAN.md -- 创建 env-keycloak.env 模板 + upstream 蓝绿配置 + manage-containers.sh Keycloak 适配
+- [ ] 28-02-PLAN.md -- 创建 keycloak-blue-green-deploy.sh 部署脚本 + 更新 deploy-infrastructure-prod.sh
+- [ ] 28-03-PLAN.md -- 创建 Jenkinsfile.keycloak + 扩展 pipeline-stages.sh
 
 ### Phase 29: 统一基础设施 Jenkins Pipeline
 **Goal**: 管理员可在 Jenkins 中选择目标基础设施服务（keycloak/nginx/noda-ops），Pipeline 自动执行备份、部署、健康检查和回滚
@@ -162,6 +167,6 @@ Phases execute in numeric order: 26 -> 27 -> 28 -> 29 -> 30
 |-------|-----------|----------------|--------|-----------|
 | 26. 宿主机 PostgreSQL 安装与配置 | v1.5 | 1/2 | Complete    | 2026-04-16 |
 | 27. 开发容器清理与 Docker Compose 简化 | v1.5 | 3/3 | Complete    | 2026-04-16 |
-| 28. Keycloak 蓝绿部署基础设施 | v1.5 | 0/? | Not started | - |
+| 28. Keycloak 蓝绿部署基础设施 | v1.5 | 0/3 | Planned | - |
 | 29. 统一基础设施 Jenkins Pipeline | v1.5 | 0/? | Not started | - |
 | 30. 一键开发环境脚本 | v1.5 | 0/? | Not started | - |
