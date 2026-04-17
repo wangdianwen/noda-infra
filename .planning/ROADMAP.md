@@ -123,11 +123,11 @@ Plans:
   2. 管理员执行 `sudo docker run/rm/compose up/down/exec` 被拒绝（写入命令不可执行）
   3. Break-Glass 脚本在 Jenkins 正常运行时拒绝执行（防止滥用）
   4. Break-Glass 脚本在 Jenkins 不可用时，验证通过后可执行紧急部署，且操作被记录到审计日志
-**Plans**: 3 plans
+**Plans**: 2 plans
 
 Plans:
-- [ ] 32-01: TBD
-- [ ] 32-02: TBD
+- [ ] 32-01-PLAN.md — sudoers 白名单安装/验证脚本（install-sudoers-whitelist.sh + verify-sudoers-whitelist.sh）
+- [ ] 32-02-PLAN.md — Break-Glass 紧急部署脚本（break-glass.sh: Jenkins 健康检查 + PAM 认证 + 审计日志）
 
 ### Phase 33: 审计日志系统
 **Goal**: 所有 docker 命令执行和 Jenkins Pipeline 操作被完整记录，日志不可篡改且不会占满磁盘
@@ -162,12 +162,11 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 31 → 32 → 33 → 34
-注: Phase 33 技术上可与 Phase 32 并行，但建议顺序执行以降低风险
+Phases execute in numeric order: 31 -> 32 -> 33 -> 34
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 31. Docker Socket 权限收敛 | v1.6 | 3/3 | Complete | 2026-04-18 |
-| 32. sudoers + Break-Glass | v1.6 | 0/? | Not started | - |
+| 32. sudoers + Break-Glass | v1.6 | 0/2 | Planned | - |
 | 33. 审计日志系统 | v1.6 | 0/? | Not started | - |
 | 34. Jenkins 权限矩阵 + 统一脚本 | v1.6 | 0/? | Not started | - |
