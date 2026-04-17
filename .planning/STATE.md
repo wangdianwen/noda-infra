@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: 开发环境本地化 + 基础设施 CI/CD
 status: executing
-stopped_at: Completed 29-01-PLAN.md
-last_updated: "2026-04-17T09:13:14Z"
-last_activity: 2026-04-17 -- Phase 29 Plan 01 completed
+stopped_at: Completed 29-02-PLAN.md
+last_updated: "2026-04-17T09:23:24.139Z"
+last_activity: 2026-04-17
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 11
-  completed_plans: 7
-  percent: 64
+  completed_plans: 9
+  percent: 82
 ---
 
 # Project State
@@ -27,9 +27,9 @@ See: .planning/PROJECT.md (updated 2026-04-17)
 ## Current Position
 
 Phase: 29 (统一基础设施 Jenkins Pipeline) — EXECUTING
-Plan: 2 of 3
-Status: Plan 01 complete, 12 infra pipeline functions added
-Last activity: 2026-04-17 -- Phase 29 Plan 01 completed
+Plan: 3 of 3
+Status: Ready to execute
+Last activity: 2026-04-17
 
 Progress: [███░░░░░░░] 33%
 
@@ -65,6 +65,8 @@ Recent decisions affecting current work:
 - [v1.5 规划]: Pipeline 服务白名单排除 postgres（避免循环依赖）
 - [Phase 27]: 独立开发环境段落替换为本地 PostgreSQL 说明（setup-postgres-local.sh）
 - [Phase 27]: 生产部署描述统一更新为双文件模式（base+prod），文档与脚本一致
+- [Phase 29]: Jenkinsfile.infra 使用 choice 参数 + when 条件化阶段，统一管理 4 种基础设施服务
+- [Phase 29]: 基础设施 Pipeline 不含 CDN Purge/Build/Test 阶段，与 findclass-ssr Pipeline 差异化
 
 ### Pending Todos
 
@@ -78,6 +80,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-17T09:13:14Z
-Stopped at: Completed 29-01-PLAN.md
-Resume file: .planning/phases/29-jenkins-pipeline/29-01-SUMMARY.md
+Last session: 2026-04-17T09:23:24.137Z
+Stopped at: Completed 29-02-PLAN.md
+Resume file: None

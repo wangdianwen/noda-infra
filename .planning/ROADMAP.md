@@ -145,11 +145,11 @@ Plans:
   4. 部署后自动执行服务专属健康检查（keycloak: HTTP /health/ready、nginx: HTTP 200、noda-ops: 容器 running、postgres: pg_isready）
   5. 健康检查失败时自动回滚到部署前状态（Keycloak 切回旧容器、nginx/noda-ops 恢复旧镜像）
   6. 重启 PostgreSQL 等高风险操作前 Pipeline 暂停等待人工确认（30 分钟超时）
-**Plans:** 3 plans
+**Plans:** 2/3 plans executed
 
 Plans:
 - [x] 29-01-PLAN.md -- pipeline-stages.sh 基础设施函数（部署/备份/健康检查/回滚）
-- [ ] 29-02-PLAN.md -- Jenkinsfile.infra 统一 Pipeline（choice 参数 + 7 阶段 + input 门禁）
+- [x] 29-02-PLAN.md -- Jenkinsfile.infra 统一 Pipeline（choice 参数 + 7 阶段 + input 门禁）
 - [ ] 29-03-PLAN.md -- deploy-infrastructure-prod.sh 精简（移除 nginx/noda-ops 逻辑）
 
 ### Phase 30: 一键开发环境脚本
@@ -173,5 +173,5 @@ Phases execute in numeric order: 26 -> 27 -> 28 -> 29 -> 30
 | 26. 宿主机 PostgreSQL 安装与配置 | v1.5 | 1/2 | Complete    | 2026-04-16 |
 | 27. 开发容器清理与 Docker Compose 简化 | v1.5 | 3/3 | Complete    | 2026-04-16 |
 | 28. Keycloak 蓝绿部署基础设施 | v1.5 | 3/3 | Complete    | 2026-04-17 |
-| 29. 统一基础设施 Jenkins Pipeline | v1.5 | 1/3 | In progress | - |
+| 29. 统一基础设施 Jenkins Pipeline | v1.5 | 2/3 | In Progress|  |
 | 30. 一键开发环境脚本 | v1.5 | 0/? | Not started | - |

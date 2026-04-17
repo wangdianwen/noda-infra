@@ -22,13 +22,13 @@
 
 ### 基础设施 Pipeline (PIPELINE)
 
-- [ ] **PIPELINE-01**: 创建 Jenkinsfile.infra，通过 Jenkins choice 参数选择目标服务（postgres/keycloak/nginx/noda-ops）
+- [x] **PIPELINE-01**: 创建 Jenkinsfile.infra，通过 Jenkins choice 参数选择目标服务（postgres/keycloak/nginx/noda-ops）
 - [ ] **PIPELINE-02**: pipeline-stages.sh 新增基础设施服务专用部署函数（pipeline_deploy_postgres / pipeline_deploy_keycloak / pipeline_deploy_nginx / pipeline_deploy_noda_ops）
 - [ ] **PIPELINE-03**: 每个服务使用独立部署策略：postgres=停启+备份恢复、keycloak=蓝绿零停机、nginx=重建、noda-ops=重建
 - [ ] **PIPELINE-04**: 部署 postgres/keycloak 前自动执行 pg_dump 全量备份，备份失败则中止部署
 - [ ] **PIPELINE-05**: 部署后自动执行健康检查（postgres: pg_isready、keycloak: HTTP /health/ready、nginx: HTTP 200、noda-ops: 容器 running）
 - [ ] **PIPELINE-06**: 健康检查失败时自动回滚到部署前状态（恢复备份 / 切回旧容器）
-- [ ] **PIPELINE-07**: 关键操作前设置 Jenkins input 步骤，等待人工确认后才执行（如重启 postgres）
+- [x] **PIPELINE-07**: 关键操作前设置 Jenkins input 步骤，等待人工确认后才执行（如重启 postgres）
 
 ### Keycloak 蓝绿部署 (KCBLUE)
 
@@ -84,13 +84,13 @@
 | KCBLUE-02 | Phase 28 | Pending |
 | KCBLUE-03 | Phase 28 | Pending |
 | KCBLUE-04 | Phase 28 | Pending |
-| PIPELINE-01 | Phase 29 | Pending |
+| PIPELINE-01 | Phase 29 | Complete |
 | PIPELINE-02 | Phase 29 | Pending |
 | PIPELINE-03 | Phase 29 | Pending |
 | PIPELINE-04 | Phase 29 | Pending |
 | PIPELINE-05 | Phase 29 | Pending |
 | PIPELINE-06 | Phase 29 | Pending |
-| PIPELINE-07 | Phase 29 | Pending |
+| PIPELINE-07 | Phase 29 | Complete |
 | DEVEX-01 | Phase 30 | Pending |
 | DEVEX-02 | Phase 30 | Pending |
 | DEVEX-03 | Phase 30 | Pending |
