@@ -3,22 +3,15 @@
 # 手动回退部署脚本（生产环境）
 # ============================================
 # NOTE: 此脚本作为 Jenkins Pipeline 不可用时的紧急回退方案保留。
-# 正常部署请使用 Jenkins Pipeline（Build Now -> findclass-deploy）。
+# 正常部署请使用 Jenkins Pipeline:
+#   - keycloak/nginx/noda-ops: Jenkinsfile.infra (参数化服务选择)
+#   - findclass-ssr: Jenkinsfile (蓝绿部署)
+#   - noda-site: Jenkinsfile.noda-site (蓝绿部署)
 #
-# 原有功能：自动部署并配置基础设施服务
-# 包括：PostgreSQL (Prod/Dev), Keycloak, Nginx, Noda-Ops, Findclass-SSR
-#
-# 此脚本行为不变，可直接手动执行。
+# 此脚本仅部署 postgres（其他服务已迁移到 Pipeline 管理）。
+# Keycloak 和 findclass-ssr 使用蓝绿 docker run 管理。
 # ============================================
 set -euo pipefail
-
-# ============================================
-# 基础设施部署脚本（生产环境）
-# ============================================
-# 功能：自动部署并配置基础设施服务
-# 包括：PostgreSQL (Prod/Dev), Nginx, Noda-Ops
-# 注意：Keycloak 和 findclass-ssr 已迁移到蓝绿 docker run 管理
-# ============================================
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT_ROOT"
@@ -40,20 +33,16 @@ ROLLBACK_FILE="$ROLLBACK_DIR/images-$(date +%s).txt"
 ROLLBACK_COMPOSE="$ROLLBACK_DIR/docker-compose.rollback.yml"
 
 # 注意：此变量故意不加引号使用，依赖 word splitting 拆分为多个 -f 参数
-COMPOSE_FILES="-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.dev.yml"
+COMPOSE_FILES="-f docker/docker-compose.yml -f docker/docker-compose.prod.yml"
 
 EXPECTED_CONTAINERS=(
   "noda-infra-postgres-prod"
-  "noda-infra-postgres-dev"
-  "noda-infra-nginx"
-  "noda-ops"
+  # nginx, noda-ops 已迁移到 Jenkinsfile.infra Pipeline 管理
   # keycloak 和 findclass-ssr 已迁移到蓝绿 docker run 管理
-  # 不再通过此脚本的健康检查验证
 )
 
 # 启动的服务列表
-# keycloak 已迁移到蓝绿 docker run 管理，不再通过 compose 启动
-START_SERVICES="postgres nginx noda-ops postgres-dev"
+START_SERVICES="postgres"
 
 # ============================================
 # 镜像回滚函数 (D-05)
@@ -86,10 +75,7 @@ save_image_tags() {
 #
 # 容器名到服务名映射（因为 container_name 与 service name 不同）：
 #   noda-infra-postgres-prod  -> postgres
-#   noda-infra-postgres-dev   -> postgres-dev（在 dev overlay 中，跳过）
-#   noda-infra-nginx          -> nginx
-#   noda-ops                  -> noda-ops
-# 注意：keycloak 和 findclass-ssr 已迁移到蓝绿 docker run 管理
+# 注意：nginx, noda-ops 已迁移到 Jenkinsfile.infra Pipeline 管理
 rollback_images() {
   if [ ! -f "$ROLLBACK_FILE" ]; then
     log_error "回滚文件不存在: ${ROLLBACK_FILE}"
@@ -100,8 +86,6 @@ rollback_images() {
   container_to_service() {
     case "$1" in
       noda-infra-postgres-prod) echo "postgres" ;;
-      noda-infra-nginx) echo "nginx" ;;
-      noda-ops) echo "noda-ops" ;;
       *) echo "" ;;
     esac
   }
@@ -211,10 +195,10 @@ run_pre_deploy_backup() {
 }
 
 # ============================================
-# 步骤 1/7: 验证环境
+# 步骤 1/5: 验证环境
 # ============================================
 log_info "=========================================="
-log_info "步骤 1/7: 验证环境配置"
+log_info "步骤 1/5: 验证环境配置"
 log_info "=========================================="
 
 if [ ! -f "config/secrets.sops.yaml" ]; then
@@ -235,19 +219,19 @@ fi
 log_success "环境验证通过"
 
 # ============================================
-# 步骤 2/7: 保存当前镜像标签 (D-05)
+# 步骤 2/5: 保存当前镜像标签 (D-05)
 # ============================================
 log_info "=========================================="
-log_info "步骤 2/7: 保存当前镜像标签"
+log_info "步骤 2/5: 保存当前镜像标签"
 log_info "=========================================="
 
 save_image_tags
 
 # ============================================
-# 步骤 3/7: 部署前自动备份 (D-06)
+# 步骤 3/5: 部署前自动备份 (D-06)
 # ============================================
 log_info "=========================================="
-log_info "步骤 3/7: 部署前自动备份"
+log_info "步骤 3/5: 部署前自动备份"
 log_info "=========================================="
 
 if ! check_recent_backup; then
@@ -260,25 +244,25 @@ if ! check_recent_backup; then
 fi
 
 # ============================================
-# 步骤 4/7: 重启容器
+# 步骤 4/5: 重启容器
 # ============================================
 log_info "=========================================="
-log_info "步骤 4/7: 重启容器"
+log_info "步骤 4/5: 重启容器"
 log_info "=========================================="
 
 log_info "停止现有容器..."
 docker compose $COMPOSE_FILES down
 
-log_info "启动 PostgreSQL, Nginx, Noda-Ops, PostgreSQL-Dev..."
+log_info "启动 PostgreSQL..."
 docker compose $COMPOSE_FILES up -d $START_SERVICES
 
 log_success "容器已启动"
 
 # ============================================
-# 步骤 5/7: 等待所有服务健康 + 初始化数据库
+# 步骤 5/5: 等待所有服务健康 + 初始化数据库 + 最终验证
 # ============================================
 log_info "=========================================="
-log_info "步骤 5/7: 等待所有服务健康"
+log_info "步骤 5/5: 等待所有服务健康"
 log_info "=========================================="
 
 HEALTH_TIMEOUT=90
@@ -299,25 +283,7 @@ if ! bash scripts/init-databases.sh; then
 fi
 log_success "数据库初始化完成"
 
-# ============================================
-# 步骤 6/7: 配置 Keycloak
-# ============================================
-log_info "=========================================="
-log_info "步骤 6/7: 配置 Keycloak"
-log_info "=========================================="
-
-# 注意: Keycloak 配置已由蓝绿部署流程管理
-# 如需重新配置 Keycloak realm/client，请手动执行 setup-keycloak-full.sh
-log_info "Keycloak 已迁移到蓝绿部署模式，跳过 compose 级别的配置"
-log_info "如需手动配置 Keycloak，请执行: bash scripts/setup-keycloak-full.sh"
-
-# ============================================
-# 步骤 7/7: 最终验证（重启次数）
-# ============================================
-log_info "=========================================="
-log_info "步骤 7/7: 最终验证"
-log_info "=========================================="
-
+# 最终验证（重启次数）
 RESTART_ISSUES=0
 for container in "${EXPECTED_CONTAINERS[@]}"; do
   RESTARTS=$(docker inspect --format='{{.RestartCount}}' "$container" 2>/dev/null || echo "0")
@@ -346,11 +312,10 @@ log_success "=========================================="
 log_success "基础设施部署完成！"
 log_success "=========================================="
 log_info "✓ PostgreSQL (Prod): 运行中"
-log_info "✓ PostgreSQL (Dev): 运行中"
-log_info "✓ Keycloak: 蓝绿管理（通过 manage-containers.sh 或 Jenkins Pipeline 部署）"
-log_info "✓ Nginx: 运行中"
-log_info "✓ Noda-Ops: 运行中"
-log_info "✓ Findclass-SSR: 蓝绿管理（通过 blue-green-deploy.sh 或 Jenkins Pipeline 部署）"
+log_info "✓ Keycloak: 蓝绿管理（通过 Jenkinsfile.infra 或 manage-containers.sh）"
+log_info "✓ Nginx: compose 管理（通过 Jenkinsfile.infra 或 deploy-infrastructure-prod.sh）"
+log_info "✓ Noda-Ops: compose 管理（通过 Jenkinsfile.infra 或 deploy-infrastructure-prod.sh）"
+log_info "✓ Findclass-SSR: 蓝绿管理（通过 Jenkinsfile 或 blue-green-deploy.sh）"
 log_info ""
 log_info "访问地址："
 log_info "  管理控制台: https://auth.noda.co.nz/admin"
