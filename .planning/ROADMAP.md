@@ -8,11 +8,12 @@
 - **v1.3 安全收敛与分组整理** -- Phases 15-18 (shipped 2026-04-12) -- [详情](milestones/v1.3-ROADMAP.md)
 - **v1.4 CI/CD 零停机部署** -- Phases 19-25 (shipped 2026-04-16) -- [详情](milestones/v1.4-ROADMAP.md)
 - **v1.5 开发环境本地化 + 基础设施 CI/CD** -- Phases 26-30 (shipped 2026-04-17) -- [详情](milestones/v1.5-ROADMAP.md)
+- **v1.6 Jenkins Pipeline 强制执行** -- Phases 31-34 (in progress)
 
 ## Phases
 
 **Phase Numbering:**
-- Integer phases (1-30): Planned milestone work
+- Integer phases (1-34): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
 Decimal phases appear between their surrounding integers in numeric order.
@@ -84,3 +85,88 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [x] **Phase 30: 一键开发环境脚本** -- setup-dev.sh 幂等安装开发环境 (completed 2026-04-17)
 
 </details>
+
+### v1.6 Jenkins Pipeline 强制执行 (In Progress)
+
+**Milestone Goal:** 所有容器只能通过 Jenkins Pipeline 上线，禁止直接 docker compose / shell 脚本部署
+
+- [ ] **Phase 31: Docker Socket 权限收敛 + 文件权限锁定** -- Docker socket 属组收敛到 jenkins，部署脚本仅 jenkins 可执行
+- [ ] **Phase 32: sudoers 白名单 + Break-Glass 紧急机制** -- 管理员只读 docker 命令 + 紧急部署受控入口
+- [ ] **Phase 33: 审计日志系统** -- auditd 内核审计 + Jenkins Audit Trail + 日志轮转
+- [ ] **Phase 34: Jenkins 权限矩阵 + 统一管理脚本** -- Matrix Auth 插件 + setup-docker-permissions.sh 一站式管理
+
+## Phase Details
+
+### Phase 31: Docker Socket 权限收敛 + 文件权限锁定
+**Goal**: 仅 jenkins 用户可通过 Docker socket 执行 docker 命令，部署脚本仅 jenkins 可执行，且权限配置在服务器重启后持久保留
+**Depends on**: Nothing (v1.6 第一个 Phase)
+**Requirements**: PERM-01, PERM-02, PERM-03, PERM-04, PERM-05, JENKINS-01, JENKINS-02
+**Success Criteria** (what must be TRUE):
+  1. `sudo -u jenkins docker ps` 返回容器列表（jenkins 用户可正常执行 docker 命令）
+  2. `sudo -u admin docker ps` 返回 permission denied（非 jenkins 用户无法直接执行 docker 命令）
+  3. 服务器重启或 Docker 服务重启后，Docker socket 属组仍为 root:jenkins（systemd override 持久化）
+  4. 所有 4 个 Jenkins Pipeline（findclass-ssr、noda-site、keycloak、infra）端到端正常运行
+  5. 备份脚本（noda-ops 容器内 + 宿主机 docker exec）正常工作
+**Plans**: TBD
+
+Plans:
+- [ ] 31-01: TBD
+- [ ] 31-02: TBD
+
+### Phase 32: sudoers 白名单 + Break-Glass 紧急机制
+**Goal**: 权限锁定后管理员仍可通过受控路径进行只读调试和紧急部署，所有操作留有审计痕迹
+**Depends on**: Phase 31
+**Requirements**: BREAK-01, BREAK-02, BREAK-03, BREAK-04
+**Success Criteria** (what must be TRUE):
+  1. 管理员可通过 `sudo docker ps/logs/inspect/stats/top` 执行只读调试命令
+  2. 管理员执行 `sudo docker run/rm/compose up/down/exec` 被拒绝（写入命令不可执行）
+  3. Break-Glass 脚本在 Jenkins 正常运行时拒绝执行（防止滥用）
+  4. Break-Glass 脚本在 Jenkins 不可用时，验证通过后可执行紧急部署，且操作被记录到审计日志
+**Plans**: TBD
+
+Plans:
+- [ ] 32-01: TBD
+- [ ] 32-02: TBD
+
+### Phase 33: 审计日志系统
+**Goal**: 所有 docker 命令执行和 Jenkins Pipeline 操作被完整记录，日志不可篡改且不会占满磁盘
+**Depends on**: Phase 31
+**Requirements**: AUDIT-01, AUDIT-02, AUDIT-03, AUDIT-04
+**Success Criteria** (what must be TRUE):
+  1. `ausearch -k docker-cmd` 可查询到所有 docker 命令执行记录（含用户、时间、命令参数）
+  2. auditd 日志文件权限为 root 只读，普通用户无法修改或删除
+  3. Jenkins Audit Trail 插件记录 Pipeline 触发事件（谁在什么时候触发了什么 Job）
+  4. sudo 操作被记录到独立日志文件（通过 sudoers Defaults logfile 配置）
+**Plans**: TBD
+
+Plans:
+- [ ] 33-01: TBD
+- [ ] 33-02: TBD
+
+### Phase 34: Jenkins 权限矩阵 + 统一管理脚本
+**Goal**: Jenkins 内部权限细化（管理员全权限/普通用户只触发），权限配置可通过统一脚本一键 apply/verify/rollback
+**Depends on**: Phase 32, Phase 33
+**Requirements**: JENKINS-03, JENKINS-04
+**Success Criteria** (what must be TRUE):
+  1. 非 admin 用户可以触发 Pipeline 运行但不能修改 Job 配置或访问 Script Console
+  2. `setup-docker-permissions.sh apply` 一键配置所有权限（socket + 文件 + sudoers + auditd）
+  3. `setup-docker-permissions.sh verify` 输出全部 PASS 的权限检查结果
+  4. `setup-docker-permissions.sh rollback` 可恢复到权限收敛前的状态
+**Plans**: TBD
+
+Plans:
+- [ ] 34-01: TBD
+- [ ] 34-02: TBD
+
+## Progress
+
+**Execution Order:**
+Phases execute in numeric order: 31 → 32 → 33 → 34
+注: Phase 33 技术上可与 Phase 32 并行，但建议顺序执行以降低风险
+
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 31. Docker Socket 权限收敛 | v1.6 | 0/? | Not started | - |
+| 32. sudoers + Break-Glass | v1.6 | 0/? | Not started | - |
+| 33. 审计日志系统 | v1.6 | 0/? | Not started | - |
+| 34. Jenkins 权限矩阵 + 统一脚本 | v1.6 | 0/? | Not started | - |

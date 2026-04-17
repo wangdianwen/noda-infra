@@ -59,20 +59,20 @@
 
 | Requirement | Phase | Status |
 |------------|-------|--------|
-| PERM-01 | — | — |
-| PERM-02 | — | — |
-| PERM-03 | — | — |
-| PERM-04 | — | — |
-| PERM-05 | — | — |
-| BREAK-01 | — | — |
-| BREAK-02 | — | — |
-| BREAK-03 | — | — |
-| BREAK-04 | — | — |
-| AUDIT-01 | — | — |
-| AUDIT-02 | — | — |
-| AUDIT-03 | — | — |
-| AUDIT-04 | — | — |
-| JENKINS-01 | — | — |
-| JENKINS-02 | — | — |
-| JENKINS-03 | — | — |
-| JENKINS-04 | — | — |
+| PERM-01 | Phase 31 | Pending |
+| PERM-02 | Phase 31 | Pending |
+| PERM-03 | Phase 31 | Pending |
+| PERM-04 | Phase 31 | Pending |
+| PERM-05 | Phase 34 | Pending |
+| BREAK-01 | Phase 32 | Pending |
+| BREAK-02 | Phase 32 | Pending |
+| BREAK-03 | Phase 32 | Pending |
+| BREAK-04 | Phase 32 | Pending |
+| AUDIT-01 | Phase 33 | Pending |
+| AUDIT-02 | Phase 33 | Pending |
+| AUDIT-03 | Phase 33 | Pending |
+| AUDIT-04 | Phase 33 | Pending |
+| JENKINS-01 | Phase 31 | Pending |
+| JENKINS-02 | Phase 31 | Pending |
+| JENKINS-03 | Phase 34 | Pending |
+| JENKINS-04 | Phase 34 | Pending |
