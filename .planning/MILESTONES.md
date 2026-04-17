@@ -1,5 +1,23 @@
 # Milestones
 
+## v1.5 开发环境本地化 + 基础设施 CI/CD (Shipped: 2026-04-17)
+
+**Phases completed:** 5 phases, 12 plans, 17 tasks
+
+**Key accomplishments:**
+
+- Homebrew postgresql@17 本地管理脚本，4 子命令实现 install/init-db/status/uninstall，含 pg_hba.conf trust 认证自动修正和端口冲突检查
+- 移除 docker-compose.dev.yml 和 simple.yml 中的 postgres-dev/keycloak-dev 服务定义，删除 dev-standalone.yml，保留 nginx/keycloak 开发覆盖
+- deploy-infrastructure-prod.sh 移除 dev overlay 引用改为双文件模式 + migrate-data 废弃兼容处理
+- 更新 README.md 和 4 个文档文件，移除 dev-standalone.yml、postgres-dev、keycloak-dev 的过时引用，引导用户使用本地 PostgreSQL
+- Keycloak 蓝绿部署三大基础组件：env-keycloak.env 环境变量模板、upstream-keycloak.conf 蓝绿切换、manage-containers.sh 参数化适配
+- Keycloak 7 阶段蓝绿部署 Pipeline（无构建模式）+ pipeline-stages.sh 扩展支持官方镜像服务
+- Declarative Pipeline 7 阶段统一基础设施部署，choice 参数选择 4 服务，Backup 条件化 + postgres 30 分钟人工确认门禁
+- deploy-infrastructure-prod.sh 精简为仅 postgres 部署，nginx/noda-ops 迁移到 Jenkinsfile.infra Pipeline 管理
+- 1. [Rule 3 - Blocking] DEVELOPMENT.md 段落结构差异
+
+---
+
 ## v1.4 CI/CD 零停机部署 (Shipped: 2026-04-16)
 
 **Phases completed:** 7 phases, 11 plans
