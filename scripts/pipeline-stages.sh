@@ -622,6 +622,231 @@ pipeline_failure_cleanup() {
 }
 
 # ============================================
+# 基础设施服务 Pipeline 函数
+# ============================================
+# 用于 Jenkinsfile.infra 统一基础设施 Pipeline
+# 支持 4 种服务: keycloak, nginx, noda-ops, postgres
+# 每种服务使用独立的部署/健康检查/回滚策略
+# ============================================
+
+# ============================================
+# 函数: pipeline_infra_preflight
+# ============================================
+# 基础设施服务前置检查（统一入口）
+# 参数: $1 = SERVICE (keycloak/nginx/noda-ops/postgres)
+# 返回: 0=检查通过，1=检查失败
+pipeline_infra_preflight() {
+  local service="$1"
+
+  log_info "基础设施前置检查: $service"
+
+  # 检查 Docker daemon
+  docker info >/dev/null 2>&1 || { log_error "Docker daemon 不可用"; return 1; }
+  log_info "Docker daemon 可用"
+
+  # 检查 nginx 容器
+  if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
+    log_error "nginx 容器未运行"; return 1
+  fi
+  log_info "nginx 容器运行中"
+
+  # 检查 noda-network
+  docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || { log_error "Docker 网络 noda-network 不存在"; return 1; }
+  log_info "Docker 网络 noda-network 存在"
+
+  # 服务专属检查
+  case "$service" in
+    keycloak)
+      if [ -z "${SERVICE_IMAGE:-}" ]; then
+        log_error "SERVICE_IMAGE 未设置（Keycloak 需要指定官方镜像）"
+        return 1
+      fi
+      log_info "Keycloak 镜像: $SERVICE_IMAGE"
+      ;;
+    nginx)
+      # 无额外检查
+      ;;
+    noda-ops)
+      # 无额外检查
+      ;;
+    postgres)
+      # 检查 postgres 容器是否 running
+      if [ "$(is_container_running "noda-infra-postgres-prod")" != "true" ]; then
+        log_error "noda-infra-postgres-prod 容器未运行"; return 1
+      fi
+      log_info "noda-infra-postgres-prod 容器运行中"
+      ;;
+    *)
+      log_error "未知服务: $service"
+      return 1
+      ;;
+  esac
+
+  log_success "前置检查全部通过"
+}
+
+# ============================================
+# 函数: pipeline_backup_database
+# ============================================
+# 部署前自动备份
+# 参数: $1 = SERVICE (keycloak/postgres)
+# 环境变量: BACKUP_HOST_DIR
+# 返回: 0=备份成功或跳过，1=备份失败
+# 导出: INFRA_BACKUP_FILE（备份文件路径）
+pipeline_backup_database() {
+  local service="$1"
+  local backup_dir="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}/infra-pipeline/${service}"
+  local timestamp
+  timestamp=$(date +"%Y%m%d-%H%M%S")
+  local backup_file="${backup_dir}/${timestamp}.sql.gz"
+
+  # nginx/noda-ops 不需要备份
+  if [ "$service" != "keycloak" ] && [ "$service" != "postgres" ]; then
+    log_info "$service 不需要备份（无持久化数据）"
+    return 0
+  fi
+
+  mkdir -p "$backup_dir"
+
+  log_info "部署前备份: $service -> $backup_file"
+
+  if [ "$service" = "keycloak" ]; then
+    docker exec noda-infra-postgres-prod pg_dump -U postgres --clean --if-exists keycloak \
+      | gzip > "$backup_file"
+  elif [ "$service" = "postgres" ]; then
+    docker exec noda-infra-postgres-prod pg_dumpall -U postgres --clean --if-exists \
+      | gzip > "$backup_file"
+  fi
+
+  # 验证备份文件大小 > 1KB
+  local file_size
+  file_size=$(stat -f%z "$backup_file" 2>/dev/null || stat -c%s "$backup_file" 2>/dev/null || echo "0")
+  if [ "$file_size" -lt 1024 ]; then
+    log_error "备份文件异常（${file_size} 字节），中止部署"
+    return 1
+  fi
+
+  log_success "备份完成: $backup_file (${file_size} bytes)"
+  INFRA_BACKUP_FILE="$backup_file"
+  export INFRA_BACKUP_FILE
+}
+
+# ============================================
+# 函数: pipeline_infra_deploy
+# ============================================
+# 部署分发（根据服务类型调用对应部署策略）
+# 参数: $1 = SERVICE
+# 返回: 由子函数决定
+pipeline_infra_deploy() {
+  local service="$1"
+
+  case "$service" in
+    keycloak)
+      pipeline_deploy_keycloak
+      ;;
+    nginx)
+      pipeline_deploy_nginx
+      ;;
+    noda-ops)
+      pipeline_deploy_noda_ops
+      ;;
+    postgres)
+      pipeline_deploy_postgres
+      ;;
+    *)
+      log_error "未知服务: $service"
+      return 1
+      ;;
+  esac
+}
+
+# ============================================
+# 函数: pipeline_deploy_keycloak
+# ============================================
+# Keycloak 蓝绿部署（复用 keycloak-blue-green-deploy.sh）
+# 设置环境变量后调用现有脚本
+# 返回: 由 keycloak-blue-green-deploy.sh 决定
+pipeline_deploy_keycloak() {
+  log_info "Keycloak 蓝绿部署（复用 keycloak-blue-green-deploy.sh）"
+
+  # 设置 Keycloak 专用环境变量
+  export SERVICE_NAME="keycloak"
+  export SERVICE_PORT="8080"
+  export UPSTREAM_NAME="keycloak_backend"
+  export HEALTH_PATH="/health/ready"
+  export ACTIVE_ENV_FILE="/opt/noda/active-env-keycloak"
+  export UPSTREAM_CONF="$PROJECT_ROOT/config/nginx/snippets/upstream-keycloak.conf"
+  export SERVICE_GROUP="infra"
+  export CONTAINER_MEMORY="1g"
+  export CONTAINER_MEMORY_RESERVATION="512m"
+  export CONTAINER_READONLY="false"
+  export SERVICE_IMAGE="${SERVICE_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
+  export EXTRA_DOCKER_ARGS="-v $PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro --tmpfs /opt/keycloak/data"
+  export ENVSUBST_VARS='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${SMTP_HOST} ${SMTP_PORT} ${SMTP_FROM} ${SMTP_USER} ${SMTP_PASSWORD}'
+
+  bash "$PROJECT_ROOT/scripts/keycloak-blue-green-deploy.sh"
+}
+
+# ============================================
+# 函数: pipeline_deploy_nginx
+# ============================================
+# Nginx docker compose recreate（秒级中断，非零停机）
+# 保存当前镜像 digest 用于回滚
+# 返回: 0=成功，1=失败
+pipeline_deploy_nginx() {
+  log_info "Nginx 重建部署（docker compose recreate）"
+
+  # 保存当前镜像 digest（用于回滚）
+  INFRA_ROLLBACK_IMAGE=$(docker inspect --format='{{.Image}}' noda-infra-nginx 2>/dev/null || echo "")
+  export INFRA_ROLLBACK_IMAGE
+  if [ -n "$INFRA_ROLLBACK_IMAGE" ]; then
+    log_info "保存当前镜像: ${INFRA_ROLLBACK_IMAGE:0:12}..."
+  fi
+
+  docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+    up -d --force-recreate --no-deps nginx
+
+  log_success "Nginx 重建完成"
+}
+
+# ============================================
+# 函数: pipeline_deploy_noda_ops
+# ============================================
+# noda-ops docker compose recreate（使用 build 模式）
+# 保存当前镜像 digest 用于回滚
+# 返回: 0=成功，1=失败
+pipeline_deploy_noda_ops() {
+  log_info "noda-ops 重建部署（docker compose recreate）"
+
+  INFRA_ROLLBACK_IMAGE=$(docker inspect --format='{{.Image}}' noda-ops 2>/dev/null || echo "")
+  export INFRA_ROLLBACK_IMAGE
+  if [ -n "$INFRA_ROLLBACK_IMAGE" ]; then
+    log_info "保存当前镜像: ${INFRA_ROLLBACK_IMAGE:0:12}..."
+  fi
+
+  # noda-ops 使用 build 模式，需要 --build
+  docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+    up -d --build --force-recreate --no-deps noda-ops
+
+  log_success "noda-ops 重建完成"
+}
+
+# ============================================
+# 函数: pipeline_deploy_postgres
+# ============================================
+# Postgres compose restart（需要备份+人工确认已完成）
+# 无需保存镜像（restart 不更换镜像）
+# 返回: 0=成功，1=失败
+pipeline_deploy_postgres() {
+  log_info "PostgreSQL 重启部署（docker compose restart）"
+
+  docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+    restart postgres
+
+  log_success "PostgreSQL 重启完成"
+}
+
+# ============================================
 # Source guard — 仅允许 source 加载，禁止直接执行
 # ============================================
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
