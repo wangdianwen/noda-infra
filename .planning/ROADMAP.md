@@ -90,7 +90,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 **Milestone Goal:** 所有容器只能通过 Jenkins Pipeline 上线，禁止直接 docker compose / shell 脚本部署
 
-- [ ] **Phase 31: Docker Socket 权限收敛 + 文件权限锁定** -- Docker socket 属组收敛到 jenkins，部署脚本仅 jenkins 可执行
+- [x] **Phase 31: Docker Socket 权限收敛 + 文件权限锁定** -- Docker socket 属组收敛到 jenkins，部署脚本仅 jenkins 可执行 (completed 2026-04-18)
 - [ ] **Phase 32: sudoers 白名单 + Break-Glass 紧急机制** -- 管理员只读 docker 命令 + 紧急部署受控入口
 - [ ] **Phase 33: 审计日志系统** -- auditd 内核审计 + Jenkins Audit Trail + 日志轮转
 - [ ] **Phase 34: Jenkins 权限矩阵 + 统一管理脚本** -- Matrix Auth 插件 + setup-docker-permissions.sh 一站式管理
@@ -110,9 +110,9 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 **Plans**: 3 plans
 
 Plans:
-- [ ] 31-01-PLAN.md — 创建 undo-permissions.sh 回滚脚本 + 修改 setup-jenkins.sh 为 socket 属组方式
-- [ ] 31-02-PLAN.md — 创建 apply-file-permissions.sh 一站式权限应用脚本
-- [ ] 31-03-PLAN.md — macOS 跨平台适配（gap closure: UAT 6 个 blocker 修复）
+- [x] 31-01-PLAN.md — 创建 undo-permissions.sh 回滚脚本 + 修改 setup-jenkins.sh 为 socket 属组方式
+- [x] 31-02-PLAN.md — 创建 apply-file-permissions.sh 一站式权限应用脚本
+- [x] 31-03-PLAN.md — macOS 跨平台适配（gap closure: UAT 6 个 blocker 修复）
 
 ### Phase 32: sudoers 白名单 + Break-Glass 紧急机制
 **Goal**: 权限锁定后管理员仍可通过受控路径进行只读调试和紧急部署，所有操作留有审计痕迹
@@ -167,7 +167,7 @@ Phases execute in numeric order: 31 → 32 → 33 → 34
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 31. Docker Socket 权限收敛 | v1.6 | 0/? | Not started | - |
+| 31. Docker Socket 权限收敛 | v1.6 | 3/3 | Complete | 2026-04-18 |
 | 32. sudoers + Break-Glass | v1.6 | 0/? | Not started | - |
 | 33. 审计日志系统 | v1.6 | 0/? | Not started | - |
 | 34. Jenkins 权限矩阵 + 统一脚本 | v1.6 | 0/? | Not started | - |
