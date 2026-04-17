@@ -16,6 +16,24 @@
 | age | 最新版 | SOPS 密钥加密工具 |
 | PostgreSQL 客户端 | 可选 | 本地数据库调试 |
 
+### 快速开始（一键搭建）
+
+如果你是首次搭建 Noda 开发环境，使用一键脚本即可完成本地 PostgreSQL 安装和数据库初始化：
+
+```bash
+bash setup-dev.sh
+```
+
+脚本自动执行以下步骤：
+1. 检查 Homebrew 是否安装
+2. 安装 PostgreSQL 17（与生产版本匹配）
+3. 创建开发数据库（noda_dev, keycloak_dev）
+4. 验证环境状态
+
+脚本支持重复运行——已安装的组件会被跳过，不会破坏现有数据。
+
+> **单独管理 PostgreSQL：** 如需更精细的 PG 管理（状态查看、数据库初始化、卸载），使用 `bash scripts/setup-postgres-local.sh <install|status|init-db|uninstall>`。
+
 ### 步骤 1：克隆仓库
 
 ```bash
@@ -60,7 +78,7 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up 
 | 配置项 | 开发环境 | 生产环境 |
 |--------|---------|---------|
 | Compose 文件 | `docker-compose.yml` + `docker-compose.dev.yml` | `docker-compose.yml` + `docker-compose.prod.yml` |
-| PostgreSQL 端口 | 本地 PostgreSQL 默认端口 `5432`，生产端口不暴露 | `5432:5432`（内部网络） |
+| PostgreSQL 端口 | `5433:5432`（开发容器），生产端口不暴露 | `5432:5432`（内部网络） |
 | Nginx 端口 | `8081:80` | `80:80` |
 | Keycloak `KC_HOSTNAME` | 空（允许 localhost 访问） | `https://auth.noda.co.nz` |
 | Keycloak `KC_PROXY` | `none` | `edge` |
@@ -70,16 +88,31 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up 
 
 ### 本地开发数据库（PostgreSQL）
 
-开发环境使用本地 PostgreSQL（通过 `setup-postgres-local.sh` 安装），不再需要 Docker 开发数据库容器。
+开发环境使用本地 PostgreSQL（Homebrew 安装），不再需要 Docker 开发数据库容器。
+
+**首次搭建**使用一键脚本：
 
 ```bash
-# 安装本地 PostgreSQL（首次）
-bash scripts/setup-postgres-local.sh install
-
-# 管理本地开发数据库
-bash scripts/setup-postgres-local.sh status    # 查看状态
-bash scripts/setup-postgres-local.sh connect   # 连接开发数据库
+bash setup-dev.sh
 ```
+
+**日常管理**使用专用脚本：
+
+```bash
+bash scripts/setup-postgres-local.sh status    # 查看状态
+bash scripts/setup-postgres-local.sh init-db   # 重建开发数据库
+bash scripts/setup-postgres-local.sh uninstall # 卸载 PostgreSQL
+```
+
+### 独立开发环境（仅 PostgreSQL，Docker 备选）
+
+如果需要 Docker 方式的数据库环境，可以使用独立 Compose 配置：
+
+```bash
+docker compose -f docker/docker-compose.dev-standalone.yml up -d
+```
+
+此配置使用独立的 `noda-dev` 项目名和网络（`noda-dev-network`），默认凭据为 `dev_user` / `dev_password_change_me`，数据库 `noda_dev`，端口 `5433`。
 
 ### 简化版环境（无需构建）
 
@@ -104,7 +137,7 @@ Noda 基础设施没有 `package.json`，所有构建和部署通过 Docker Comp
 
 | 脚本路径 | 用途 |
 |---------|------|
-| `scripts/deploy/deploy-infrastructure-prod.sh` | 生产环境完整部署。使用 2 个 compose 文件（base + prod）启动所有服务（包括 findclass-ssr），自动执行 5 步：验证环境 → 停止旧容器并启动新容器 → 等待健康检查 → 初始化数据库 → 配置 Keycloak → 验证 |
+| `scripts/deploy/deploy-infrastructure-prod.sh` | 生产环境完整部署。使用 3 个 compose 文件（base + prod + dev）启动所有服务（包括 findclass-ssr），自动执行 5 步：验证环境 → 停止旧容器并启动新容器 → 等待健康检查 → 初始化数据库 → 配置 Keycloak → 验证 |
 | `scripts/deploy/deploy-apps-prod.sh` | 生产环境应用部署。验证基础设施 → 停止旧容器 → 构建并启动 findclass-ssr |
 | `scripts/deploy/deploy-findclass-zero-deps.sh` | findclass-ssr 零依赖部署（含 SOPS 解密和自动清理） |
 | `scripts/deploy/migrate-production.sh` | 生产环境数据库迁移（含备份提醒和交互确认机制） |
@@ -184,7 +217,7 @@ Noda 基础设施没有 `package.json`，所有构建和部署通过 Docker Comp
 ### Docker Compose 规范
 
 - 基础配置在 `docker-compose.yml`，环境特定配置通过覆盖文件实现
-- 项目名保持一致：`noda-infra`（基础 + 生产 + 开发）、`noda-apps`（独立应用部署）
+- 项目名保持一致：`noda-infra`（基础 + 生产 + 开发）、`noda-apps`（独立应用部署）、`noda-dev`（独立开发）
 - 服务间通过 `noda-network` 外部网络通信
 - 所有服务配置 `restart: unless-stopped` 和健康检查
 - 生产环境通过 `deploy.resources` 设置 CPU/内存限额
@@ -247,7 +280,7 @@ Noda 基础设施没有 `package.json`，所有构建和部署通过 Docker Comp
 bash scripts/deploy/deploy-infrastructure-prod.sh
 ```
 
-此脚本自动执行：验证环境（检查 SOPS 文件和 Docker）→ 停止旧容器 → 使用 2 个 compose 文件（base + prod）启动所有服务 → 等待健康检查 → 初始化数据库 → 配置 Keycloak → 验证。
+此脚本自动执行：验证环境（检查 SOPS 文件和 Docker）→ 停止旧容器 → 使用 3 个 compose 文件（base + prod + dev）启动所有服务 → 等待健康检查 → 初始化数据库 → 配置 Keycloak → 验证。
 
 **2. 单独部署应用（findclass-ssr）：**
 
