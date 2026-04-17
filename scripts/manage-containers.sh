@@ -4,9 +4,10 @@ set -euo pipefail
 # ============================================
 # 蓝绿容器管理脚本
 # ============================================
-# 功能：管理 findclass-ssr 蓝绿双容器的完整生命周期
+# 功能：管理蓝绿双容器的完整生命周期（支持 findclass-ssr, noda-site, keycloak 等多服务）
 # 子命令：init, start, stop, restart, status, logs, switch
 # 用途：Phase 21 蓝绿部署基础设施，Phase 22 通过 source 复用函数
+# 参数化：通过环境变量 SERVICE_NAME/SERVICE_PORT/UPSTREAM_NAME 等适配不同服务
 # ============================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -95,18 +96,21 @@ set_active_env() {
 # prepare_env_file - 从模板生成临时 env 文件
 # 参数：$1 = env (blue 或 green)
 # 返回：临时 env 文件路径（通过 echo 输出）
-# 安全：只替换 POSTGRES_USER, POSTGRES_PASSWORD, RESEND_API_KEY 三个变量
+# 安全：只替换 ENVSUBST_VARS 中明确列出的变量名，避免替换 $HOSTNAME 等 shell 内置变量
 prepare_env_file() {
   local env="$1"
-  local tmp_file="/tmp/findclass-ssr-${env}.env.$$"
+  # 使用服务容器名而非 SERVICE_NAME 来生成临时文件，避免多服务冲突
+  local tmp_file="/tmp/${SERVICE_NAME}-${env}.env.$$"
 
   if ! command -v envsubst &>/dev/null; then
     log_error "envsubst 不可用，请安装 gettext: sudo apt install gettext"
     exit 1
   fi
 
-  # 只替换指定的三个变量，避免替换 $HOSTNAME 等 shell 内置变量
-  envsubst '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY}' < "$ENV_TEMPLATE" > "$tmp_file"
+  # 支持通过 ENVSUBST_VARS 环境变量覆盖需要替换的变量列表
+  # 默认值保持 findclass-ssr 兼容
+  local vars="${ENVSUBST_VARS:-\${POSTGRES_USER} \${POSTGRES_PASSWORD} \${RESEND_API_KEY}}"
+  envsubst "$vars" < "$ENV_TEMPLATE" > "$tmp_file"
   echo "$tmp_file"
 }
 
@@ -167,6 +171,13 @@ run_container() {
     tmp_env_file=$(prepare_env_file "$env")
   fi
 
+  # 支持通过环境变量覆盖容器参数（Keycloak 等服务需要更大内存、非只读、额外卷挂载）
+  local container_memory="${CONTAINER_MEMORY:-512m}"
+  local container_memory_reservation="${CONTAINER_MEMORY_RESERVATION:-128m}"
+  local container_readonly="${CONTAINER_READONLY:-true}"
+  local service_group="${SERVICE_GROUP:-apps}"
+  local extra_docker_args="${EXTRA_DOCKER_ARGS:-}"
+
   log_info "启动容器: $container_name (镜像: $image)"
 
   docker run -d \
@@ -176,16 +187,16 @@ run_container() {
     --stop-timeout 30 \
     --security-opt no-new-privileges \
     --cap-drop ALL \
-    --read-only \
+    $([ "$container_readonly" = "true" ] && echo "--read-only") \
     --tmpfs /tmp \
-    --memory 512m \
-    --memory-reservation 128m \
+    --memory "$container_memory" \
+    --memory-reservation "$container_memory_reservation" \
     --cpus 1 \
     --log-driver json-file \
     --log-opt max-size=10m \
     --log-opt max-file=3 \
     ${tmp_env_file:+--env-file "$tmp_env_file"} \
-    --label noda.service-group=apps \
+    --label "noda.service-group=${service_group}" \
     --label noda.environment=prod \
     --label "noda.blue-green=${env}" \
     --label com.docker.compose.project=noda-apps \
@@ -195,6 +206,7 @@ run_container() {
     --health-timeout 10s \
     --health-retries 3 \
     --health-start-period 60s \
+    ${extra_docker_args} \
     "$image"
 
   log_success "容器 $container_name 已启动"
@@ -230,7 +242,7 @@ update_upstream() {
   echo "$upstream_content" > "$tmp_file"
   mv "$tmp_file" "$host_conf"
 
-  log_info "upstream 已更新: $container_name:3001"
+  log_info "upstream 已更新: $container_name:$SERVICE_PORT"
 }
 
 # ============================================
@@ -254,11 +266,17 @@ cmd_init() {
   log_info "初始化蓝绿部署架构"
   log_info "=========================================="
 
-  # 步骤 1：检测 compose 管理的旧容器（无后缀）
+  # 步骤 1：检测 compose 管理的旧容器
+  # 先尝试直接 SERVICE_NAME（findclass-ssr 等），回退检查 compose 项目名前缀的容器
   local current_image=""
+  local compose_container_name="noda-infra-${SERVICE_NAME}-prod"
+
   if docker inspect "$SERVICE_NAME" &>/dev/null; then
     current_image=$(docker inspect --format='{{.Config.Image}}' "$SERVICE_NAME" 2>/dev/null || echo "")
     log_info "检测到 compose 容器 $SERVICE_NAME (镜像: ${current_image:-未知})"
+  elif docker inspect "$compose_container_name" &>/dev/null; then
+    current_image=$(docker inspect --format='{{.Config.Image}}' "$compose_container_name" 2>/dev/null || echo "")
+    log_info "检测到 compose 容器 $compose_container_name (镜像: ${current_image:-未知})"
   fi
 
   # 步骤 2：如果没有 compose 容器，检查是否已初始化
@@ -286,9 +304,13 @@ cmd_init() {
 
   # 步骤 4：停止 compose 容器
   log_info "步骤 4/10: 停止 compose 容器"
-  docker stop "$SERVICE_NAME"
-  docker rm "$SERVICE_NAME"
-  log_success "compose 容器已停止并移除"
+  local stop_container="$SERVICE_NAME"
+  if ! docker inspect "$SERVICE_NAME" &>/dev/null 2>&1 && docker inspect "$compose_container_name" &>/dev/null 2>&1; then
+    stop_container="$compose_container_name"
+  fi
+  docker stop "$stop_container"
+  docker rm "$stop_container"
+  log_success "compose 容器 $stop_container 已停止并移除"
 
   # 步骤 5：启动 blue 容器
   log_info "步骤 5/10: 启动 blue 容器"
@@ -578,6 +600,12 @@ usage() {
   UPSTREAM_NAME  nginx upstream 名称（默认 findclass_backend）
   HEALTH_PATH    健康检查路径（默认 /api/health）
   ACTIVE_ENV_FILE 活跃环境状态文件（默认 /opt/noda/active-env）
+  CONTAINER_MEMORY  容器内存限制（默认 512m）
+  CONTAINER_MEMORY_RESERVATION  容器内存预留（默认 128m）
+  CONTAINER_READONLY  容器只读模式（默认 true）
+  SERVICE_GROUP  服务组标签（默认 apps）
+  EXTRA_DOCKER_ARGS  额外 docker run 参数（默认 无）
+  ENVSUBST_VARS  envsubst 替换变量列表（默认 findclass-ssr 三个变量）
 
 示例:
   manage-containers.sh init
@@ -588,6 +616,15 @@ usage() {
   manage-containers.sh switch green
 
   SERVICE_NAME=noda-site SERVICE_PORT=3000 manage-containers.sh status
+
+  SERVICE_NAME=keycloak SERVICE_PORT=8080 UPSTREAM_NAME=keycloak_backend \\
+    HEALTH_PATH=/health/ready ACTIVE_ENV_FILE=/opt/noda/active-env-keycloak \\
+    UPSTREAM_CONF=\$PROJECT_ROOT/config/nginx/snippets/upstream-keycloak.conf \\
+    CONTAINER_MEMORY=1g CONTAINER_MEMORY_RESERVATION=512m CONTAINER_READONLY=false \\
+    SERVICE_GROUP=infra \\
+    ENVSUBST_VARS='\${POSTGRES_USER} \${POSTGRES_PASSWORD} \${KEYCLOAK_ADMIN_USER} \${KEYCLOAK_ADMIN_PASSWORD} \${SMTP_HOST} \${SMTP_PORT} \${SMTP_FROM} \${SMTP_USER} \${SMTP_PASSWORD}' \\
+    EXTRA_DOCKER_ARGS='-v /path/to/themes:/opt/keycloak/themes/noda:ro --tmpfs /opt/keycloak/data' \\
+    bash scripts/manage-containers.sh status
 EOF
 }
 
