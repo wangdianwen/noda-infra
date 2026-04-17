@@ -41,6 +41,7 @@ detect_platform() {
 }
 
 PLATFORM="$(detect_platform)"
+ACTUAL_USER="${SUDO_USER:-$(whoami)}"
 
 # ============================================
 # macOS/Linux stat 兼容
@@ -82,9 +83,9 @@ cmd_apply() {
     log_info "创建 /opt/noda/ 目录..."
     sudo mkdir -p /opt/noda
     if [[ "$PLATFORM" == "macos" ]]; then
-        sudo chown "$(whoami):staff" /opt/noda
+        sudo chown "$ACTUAL_USER:staff" /opt/noda
         sudo chmod 770 /opt/noda
-        log_success "/opt/noda/ 目录已配置 ($(whoami):staff 770)"
+        log_success "/opt/noda/ 目录已配置 ($ACTUAL_USER:staff 770)"
     else
         sudo chown root:jenkins /opt/noda
         sudo chmod 770 /opt/noda
@@ -96,13 +97,13 @@ cmd_apply() {
     for script in "${LOCKED_SCRIPTS[@]}"; do
         if [ -f "$script" ]; then
             if [[ "$PLATFORM" == "macos" ]]; then
-                sudo chown "$(whoami):staff" "$script"
+                sudo chown "$ACTUAL_USER:staff" "$script"
             else
                 sudo chown root:jenkins "$script"
             fi
             sudo chmod 750 "$script"
             if [[ "$PLATFORM" == "macos" ]]; then
-                log_success "已锁定: $script (750 $(whoami):staff)"
+                log_success "已锁定: $script (750 $ACTUAL_USER:staff)"
             else
                 log_success "已锁定: $script (750 root:jenkins)"
             fi
@@ -233,7 +234,7 @@ cmd_verify() {
     # 4. 验证锁定脚本权限
     local expected_perms
     if [[ "$PLATFORM" == "macos" ]]; then
-        expected_perms="750:$(whoami):staff"
+        expected_perms="750:$ACTUAL_USER:staff"
     else
         expected_perms="750:root:jenkins"
     fi
@@ -289,7 +290,7 @@ cmd_verify() {
     if [ -d /opt/noda ]; then
         local noda_expected_perms
         if [[ "$PLATFORM" == "macos" ]]; then
-            noda_expected_perms="770:$(whoami):staff"
+            noda_expected_perms="770:$ACTUAL_USER:staff"
         else
             noda_expected_perms="770:root:jenkins"
         fi

@@ -27,6 +27,7 @@ detect_platform() {
 }
 
 PLATFORM="$(detect_platform)"
+ACTUAL_USER="${SUDO_USER:-$(whoami)}"
 
 # ============================================
 # 常量
@@ -197,9 +198,9 @@ undo_permissions() {
     if [ -f "$script" ]; then
       sudo chmod 755 "$script"
       if [[ "$PLATFORM" == "macos" ]]; then
-        sudo chown "$(whoami):staff" "$script"
+        sudo chown "$ACTUAL_USER:staff" "$script"
       else
-        sudo chown "$(whoami):$(whoami)" "$script"
+        sudo chown "$ACTUAL_USER:$ACTUAL_USER" "$script"
       fi
       log_success "已恢复: $script"
     else
