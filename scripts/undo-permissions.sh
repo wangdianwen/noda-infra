@@ -6,11 +6,27 @@ set -euo pipefail
 # ============================================
 # 功能：备份当前权限状态 + 回滚 Phase 31 权限变更
 # 用途：权限收敛前的安全网，确保可恢复到变更前状态
+# 兼容：macOS + Linux 双平台
 # ============================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$PROJECT_ROOT/scripts/lib/log.sh"
+
+# ============================================
+# 平台检测
+# ============================================
+detect_platform() {
+  local os
+  os="$(uname)"
+  if [[ "$os" == "Darwin" ]]; then
+    echo "macos"
+  else
+    echo "linux"
+  fi
+}
+
+PLATFORM="$(detect_platform)"
 
 # ============================================
 # 常量
@@ -74,7 +90,7 @@ get_socket_mode() {
 # 文件权限 600（仅 root 可读，T-31-02 缓解）
 backup_current_state() {
   log_info "=========================================="
-  log_info "备份当前权限状态"
+  log_info "备份当前权限状态 (平台: $PLATFORM)"
   log_info "=========================================="
 
   sudo mkdir -p "$(dirname "$BACKUP_FILE")"
@@ -96,7 +112,7 @@ backup_current_state() {
     done
     echo ""
     echo "# systemd docker override"
-    if [[ "$(uname)" != "Darwin" ]]; then
+    if [[ "$PLATFORM" == "linux" ]]; then
       local override_dir="/etc/systemd/system/docker.service.d"
       if [ -d "$override_dir" ]; then
         sudo cat "$override_dir"/*.conf 2>/dev/null || echo "无 override 文件"
@@ -104,14 +120,18 @@ backup_current_state() {
         echo "无 override 目录"
       fi
     else
-      echo "N/A (非 Linux)"
+      echo "N/A (macOS 环境，无 systemd)"
     fi
     echo ""
     echo "# jenkins 组信息"
-    if id jenkins >/dev/null 2>&1; then
-      groups jenkins 2>/dev/null || echo "jenkins 用户存在但无法获取组信息"
+    if [[ "$PLATFORM" == "linux" ]]; then
+      if id jenkins >/dev/null 2>&1; then
+        groups jenkins 2>/dev/null || echo "jenkins 用户存在但无法获取组信息"
+      else
+        echo "jenkins 用户不存在"
+      fi
     else
-      echo "jenkins 用户不存在"
+      echo "N/A (macOS 环境，无 jenkins 用户)"
     fi
   } | sudo tee "$BACKUP_FILE" > /dev/null
 
@@ -128,7 +148,7 @@ backup_current_state() {
 # 恢复 socket 为 root:docker、移除 systemd override、恢复脚本权限、jenkins 加入 docker 组
 undo_permissions() {
   log_info "=========================================="
-  log_info "回滚 Phase 31 权限变更"
+  log_info "回滚 Phase 31 权限变更 (平台: $PLATFORM)"
   log_info "=========================================="
 
   # 检查备份文件
@@ -144,27 +164,43 @@ undo_permissions() {
 
   # 步骤 1/6: 恢复 socket 属组为 root:docker
   log_info "步骤 1/6: 恢复 Docker socket 属组为 root:docker"
-  sudo chown root:docker /var/run/docker.sock
-  sudo chmod 660 /var/run/docker.sock
-  log_success "socket 属组已恢复"
+  if [[ "$PLATFORM" == "linux" ]]; then
+    sudo chown root:docker /var/run/docker.sock
+    sudo chmod 660 /var/run/docker.sock
+    log_success "socket 属组已恢复"
+  else
+    log_warn "macOS 环境：跳过 socket 属组恢复（Docker Desktop 管理）"
+  fi
 
   # 步骤 2/6: 移除 systemd override
   log_info "步骤 2/6: 移除 Docker socket 权限 systemd override"
-  sudo rm -f /etc/systemd/system/docker.service.d/socket-permissions.conf
-  sudo systemctl daemon-reload
-  log_success "systemd override 已移除"
+  if [[ "$PLATFORM" == "linux" ]]; then
+    sudo rm -f /etc/systemd/system/docker.service.d/socket-permissions.conf
+    sudo systemctl daemon-reload
+    log_success "systemd override 已移除"
+  else
+    log_warn "macOS 环境：跳过 systemd override 移除（无 systemd）"
+  fi
 
   # 步骤 3/6: 重启 Docker（使 override 生效）
   log_info "步骤 3/6: 重启 Docker 服务"
-  sudo systemctl restart docker
-  log_success "Docker 服务已重启"
+  if [[ "$PLATFORM" == "linux" ]]; then
+    sudo systemctl restart docker
+    log_success "Docker 服务已重启"
+  else
+    log_info "macOS 环境：请手动重启 Docker Desktop 以确保配置生效"
+  fi
 
   # 步骤 4/6: 恢复脚本权限为默认值
   log_info "步骤 4/6: 恢复脚本权限为 755"
   for script in "${LOCKED_SCRIPTS[@]}"; do
     if [ -f "$script" ]; then
       sudo chmod 755 "$script"
-      sudo chown "$(whoami):$(whoami)" "$script"
+      if [[ "$PLATFORM" == "macos" ]]; then
+        sudo chown "$(whoami):staff" "$script"
+      else
+        sudo chown "$(whoami):$(whoami)" "$script"
+      fi
       log_success "已恢复: $script"
     else
       log_warn "文件不存在，跳过: $script"
@@ -173,20 +209,32 @@ undo_permissions() {
 
   # 步骤 5/6: 将 jenkins 重新加入 docker 组
   log_info "步骤 5/6: 将 jenkins 重新加入 docker 组"
-  sudo usermod -aG docker jenkins
-  log_success "jenkins 用户已重新加入 docker 组"
+  if [[ "$PLATFORM" == "linux" ]]; then
+    sudo usermod -aG docker jenkins
+    log_success "jenkins 用户已重新加入 docker 组"
+  else
+    log_warn "macOS 环境：跳过 jenkins 组操作（无 jenkins 用户）"
+  fi
 
   # 步骤 6/6: 重启 Jenkins（使组变更生效）
   log_info "步骤 6/6: 重启 Jenkins 服务（使组变更生效）"
-  sudo systemctl restart jenkins
-  log_success "Jenkins 服务已重启"
+  if [[ "$PLATFORM" == "macos" ]]; then
+    brew services restart jenkins 2>/dev/null || log_warn "macOS: Jenkins 未通过 Homebrew 管理"
+  else
+    sudo systemctl restart jenkins
+    log_success "Jenkins 服务已重启"
+  fi
 
   log_success "=========================================="
   log_success "Phase 31 权限变更已回滚"
   log_success "=========================================="
-  log_info "验证命令:"
-  log_info "  sudo -u jenkins docker ps"
-  log_info "  ls -la /var/run/docker.sock"
+  if [[ "$PLATFORM" == "linux" ]]; then
+    log_info "验证命令:"
+    log_info "  sudo -u jenkins docker ps"
+    log_info "  ls -la /var/run/docker.sock"
+  else
+    log_info "macOS 环境：Docker Desktop 自动管理 socket 权限"
+  fi
 }
 
 # ============================================
@@ -205,13 +253,17 @@ Phase 31 最小 Undo 脚本
 
 备份文件: /opt/noda/pre-phase31-permissions-backup.txt（权限 600，仅 root 可读）
 
-回滚操作:
+回滚操作（Linux）:
   1. 恢复 Docker socket 属组为 root:docker (660)
   2. 移除 systemd socket 权限 override
   3. 重启 Docker 服务
   4. 恢复脚本权限为 755
   5. 将 jenkins 重新加入 docker 组
   6. 重启 Jenkins 服务
+
+平台差异:
+  macOS: 步骤 1-3/5 跳过（Docker Desktop 管理 socket，无 jenkins 用户）
+  macOS: 步骤 4 通用，步骤 6 使用 brew services restart jenkins
 EOF
 }
 
