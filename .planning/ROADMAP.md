@@ -135,17 +135,22 @@ Plans:
 - [x] 28-03-PLAN.md -- 创建 Jenkinsfile.keycloak + 扩展 pipeline-stages.sh
 
 ### Phase 29: 统一基础设施 Jenkins Pipeline
-**Goal**: 管理员可在 Jenkins 中选择目标基础设施服务（keycloak/nginx/noda-ops），Pipeline 自动执行备份、部署、健康检查和回滚
+**Goal**: 管理员可在 Jenkins 中选择目标基础设施服务（keycloak/nginx/noda-ops/postgres），Pipeline 自动执行备份、部署、健康检查和回滚
 **Depends on**: Phase 28（Keycloak 蓝绿框架就绪）
 **Requirements**: PIPELINE-01, PIPELINE-02, PIPELINE-03, PIPELINE-04, PIPELINE-05, PIPELINE-06, PIPELINE-07
 **Success Criteria** (what must be TRUE):
-  1. Jenkins 中存在 `infra-deploy` Pipeline 任务，可通过下拉菜单选择 keycloak/nginx/noda-ops 服务
+  1. Jenkins 中存在 `infra-deploy` Pipeline 任务，可通过下拉菜单选择 keycloak/nginx/noda-ops/postgres 服务
   2. Pipeline 部署 keycloak 前自动执行 pg_dump 全量备份，备份失败则中止部署
-  3. 每个服务使用匹配的部署策略：keycloak=蓝绿零停机、nginx=重建替换、noda-ops=重建替换
-  4. 部署后自动执行服务专属健康检查（keycloak: HTTP /health/ready、nginx: HTTP 200、noda-ops: 容器 running）
-  5. 健康检查失败时自动回滚到部署前状态（Keycloak 切回旧容器）
-  6. 重启 PostgreSQL 等高风险操作前 Pipeline 暂停等待人工确认
-**Plans**: TBD
+  3. 每个服务使用匹配的部署策略：keycloak=蓝绿零停机、nginx=重建替换、noda-ops=重建替换、postgres=重启
+  4. 部署后自动执行服务专属健康检查（keycloak: HTTP /health/ready、nginx: HTTP 200、noda-ops: 容器 running、postgres: pg_isready）
+  5. 健康检查失败时自动回滚到部署前状态（Keycloak 切回旧容器、nginx/noda-ops 恢复旧镜像）
+  6. 重启 PostgreSQL 等高风险操作前 Pipeline 暂停等待人工确认（30 分钟超时）
+**Plans:** 3 plans
+
+Plans:
+- [ ] 29-01-PLAN.md -- pipeline-stages.sh 基础设施函数（部署/备份/健康检查/回滚）
+- [ ] 29-02-PLAN.md -- Jenkinsfile.infra 统一 Pipeline（choice 参数 + 7 阶段 + input 门禁）
+- [ ] 29-03-PLAN.md -- deploy-infrastructure-prod.sh 精简（移除 nginx/noda-ops 逻辑）
 
 ### Phase 30: 一键开发环境脚本
 **Goal**: 新开发者运行一个命令即可搭建完整的本地开发环境（PostgreSQL + 数据库初始化 + 配置）
@@ -168,5 +173,5 @@ Phases execute in numeric order: 26 -> 27 -> 28 -> 29 -> 30
 | 26. 宿主机 PostgreSQL 安装与配置 | v1.5 | 1/2 | Complete    | 2026-04-16 |
 | 27. 开发容器清理与 Docker Compose 简化 | v1.5 | 3/3 | Complete    | 2026-04-16 |
 | 28. Keycloak 蓝绿部署基础设施 | v1.5 | 3/3 | Complete    | 2026-04-17 |
-| 29. 统一基础设施 Jenkins Pipeline | v1.5 | 0/? | Not started | - |
+| 29. 统一基础设施 Jenkins Pipeline | v1.5 | 0/3 | Not started | - |
 | 30. 一键开发环境脚本 | v1.5 | 0/? | Not started | - |
