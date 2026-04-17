@@ -148,7 +148,7 @@ Plans:
 **Plans:** 3 plans
 
 Plans:
-- [ ] 29-01-PLAN.md -- pipeline-stages.sh 基础设施函数（部署/备份/健康检查/回滚）
+- [x] 29-01-PLAN.md -- pipeline-stages.sh 基础设施函数（部署/备份/健康检查/回滚）
 - [ ] 29-02-PLAN.md -- Jenkinsfile.infra 统一 Pipeline（choice 参数 + 7 阶段 + input 门禁）
 - [ ] 29-03-PLAN.md -- deploy-infrastructure-prod.sh 精简（移除 nginx/noda-ops 逻辑）
 
@@ -173,5 +173,5 @@ Phases execute in numeric order: 26 -> 27 -> 28 -> 29 -> 30
 | 26. 宿主机 PostgreSQL 安装与配置 | v1.5 | 1/2 | Complete    | 2026-04-16 |
 | 27. 开发容器清理与 Docker Compose 简化 | v1.5 | 3/3 | Complete    | 2026-04-16 |
 | 28. Keycloak 蓝绿部署基础设施 | v1.5 | 3/3 | Complete    | 2026-04-17 |
-| 29. 统一基础设施 Jenkins Pipeline | v1.5 | 0/3 | Not started | - |
+| 29. 统一基础设施 Jenkins Pipeline | v1.5 | 1/3 | In progress | - |
 | 30. 一键开发环境脚本 | v1.5 | 0/? | Not started | - |
