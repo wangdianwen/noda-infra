@@ -155,10 +155,23 @@ EOF
     log_info "无管理员凭据文件（${ADMIN_ENV_FILE}），跳过"
   fi
 
-  # 步骤 8/10: Docker 权限
-  log_info "步骤 8/10: 配置 Docker 权限"
-  sudo usermod -aG docker jenkins
-  log_success "jenkins 用户已加入 docker 组"
+  # 步骤 8/10: Docker 权限（通过 socket 属组，不加入 docker 组）
+  log_info "步骤 8/10: 配置 Docker 权限（socket 属组方式）"
+  # 确保不在 docker 组（幂等操作）
+  sudo gpasswd -d jenkins docker 2>/dev/null || true
+  # 配置 systemd override 确保 socket 属组为 jenkins
+  DOCKER_OVERRIDE_DIR="/etc/systemd/system/docker.service.d"
+  sudo mkdir -p "$DOCKER_OVERRIDE_DIR"
+  sudo tee "$DOCKER_OVERRIDE_DIR/socket-permissions.conf" > /dev/null <<'OVERRIDE'
+[Service]
+ExecStartPost=/bin/sh -c 'chown root:jenkins /var/run/docker.sock && chmod 660 /var/run/docker.sock'
+OVERRIDE
+  sudo systemctl daemon-reload
+  # 立即应用（如果 Docker 正在运行）
+  if systemctl is-active --quiet docker 2>/dev/null; then
+      sudo systemctl restart docker
+  fi
+  log_success "Docker socket 权限配置完成（jenkins 用户通过 socket 属组访问）"
 
   # 步骤 9/10: 启动 Jenkins
   log_info "步骤 9/10: 启动 Jenkins"
@@ -239,6 +252,11 @@ cmd_uninstall() {
   log_info "步骤 11/13: 从 docker 组移除 jenkins 用户"
   sudo gpasswd -d jenkins docker 2>/dev/null || true
 
+  # 步骤 11.5: 删除 Docker socket override
+  log_info "步骤 11.5/13: 删除 Docker socket 权限 override"
+  sudo rm -f /etc/systemd/system/docker.service.d/socket-permissions.conf
+  sudo systemctl daemon-reload
+
   # 步骤 12/13: 删除 jenkins 系统用户
   log_info "步骤 12/13: 删除 jenkins 系统用户"
   sudo userdel jenkins 2>/dev/null || true
@@ -293,13 +311,19 @@ cmd_status() {
     all_ok=false
   fi
 
-  # 检查 4: Docker 权限
+  # 检查 4: Docker 权限（通过 socket 属组）
   log_info "检查 4/5: Docker 权限"
-  if groups jenkins 2>/dev/null | grep -q docker; then
-    log_success "jenkins 用户属于 docker 组"
+  if sudo -u jenkins docker info >/dev/null 2>&1; then
+    log_success "jenkins 用户可以执行 docker 命令（socket 属组方式）"
   else
-    log_error "jenkins 用户不属于 docker 组"
+    log_error "jenkins 用户无法执行 docker 命令"
     all_ok=false
+  fi
+  # 补充: 检查 systemd override 是否存在
+  if [ -f /etc/systemd/system/docker.service.d/socket-permissions.conf ]; then
+    log_success "Docker socket 权限 systemd override 已配置"
+  else
+    log_warn "Docker socket 权限 systemd override 未配置（重启后权限可能丢失）"
   fi
 
   # 检查 5: Jenkins 版本
