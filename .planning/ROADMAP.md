@@ -107,11 +107,11 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
   3. 服务器重启或 Docker 服务重启后，Docker socket 属组仍为 root:jenkins（systemd override 持久化）
   4. 所有 4 个 Jenkins Pipeline（findclass-ssr、noda-site、keycloak、infra）端到端正常运行
   5. 备份脚本（noda-ops 容器内 + 宿主机 docker exec）正常工作
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 31-01: TBD
-- [ ] 31-02: TBD
+- [ ] 31-01-PLAN.md — 创建 undo-permissions.sh 回滚脚本 + 修改 setup-jenkins.sh 为 socket 属组方式
+- [ ] 31-02-PLAN.md — 创建 apply-file-permissions.sh 一站式权限应用脚本
 
 ### Phase 32: sudoers 白名单 + Break-Glass 紧急机制
 **Goal**: 权限锁定后管理员仍可通过受控路径进行只读调试和紧急部署，所有操作留有审计痕迹
@@ -122,7 +122,7 @@ Plans:
   2. 管理员执行 `sudo docker run/rm/compose up/down/exec` 被拒绝（写入命令不可执行）
   3. Break-Glass 脚本在 Jenkins 正常运行时拒绝执行（防止滥用）
   4. Break-Glass 脚本在 Jenkins 不可用时，验证通过后可执行紧急部署，且操作被记录到审计日志
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
 - [ ] 32-01: TBD
@@ -137,7 +137,7 @@ Plans:
   2. auditd 日志文件权限为 root 只读，普通用户无法修改或删除
   3. Jenkins Audit Trail 插件记录 Pipeline 触发事件（谁在什么时候触发了什么 Job）
   4. sudo 操作被记录到独立日志文件（通过 sudoers Defaults logfile 配置）
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
 - [ ] 33-01: TBD
@@ -152,7 +152,7 @@ Plans:
   2. `setup-docker-permissions.sh apply` 一键配置所有权限（socket + 文件 + sudoers + auditd）
   3. `setup-docker-permissions.sh verify` 输出全部 PASS 的权限检查结果
   4. `setup-docker-permissions.sh rollback` 可恢复到权限收敛前的状态
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
 - [ ] 34-01: TBD
