@@ -304,15 +304,18 @@ pipeline_preflight() {
   docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || { log_error "Docker 网络 noda-network 不存在"; return 1; }
   log_info "Docker 网络 noda-network 存在"
 
-  # 检查 noda-apps 目录
-  if [ ! -d "$apps_dir" ]; then
-    log_error "noda-apps 目录不存在: $apps_dir"
-    log_error "请检查 Jenkinsfile Pre-flight stage 的 checkout 配置"
-    return 1
-  fi
-  log_info "noda-apps 目录存在: $apps_dir"
-
   local service="${SERVICE_NAME:-findclass-ssr}"
+
+  # noda-apps 目录仅对从源码构建的服务需要（findclass-ssr, noda-site）
+  # Keycloak 等使用官方镜像的服务不需要
+  if [ "$service" != "keycloak" ]; then
+    if [ ! -d "$apps_dir" ]; then
+      log_error "noda-apps 目录不存在: $apps_dir"
+      log_error "请检查 Jenkinsfile Pre-flight stage 的 checkout 配置"
+      return 1
+    fi
+    log_info "noda-apps 目录存在: $apps_dir"
+  fi
 
   if [ "$service" = "findclass-ssr" ]; then
     # findclass-ssr 专用检查：Node.js、pnpm、package.json、lint、test、备份
@@ -344,12 +347,23 @@ pipeline_preflight() {
       log_warn "备份检查未通过，继续部署（生产环境应调查备份状态）"
     fi
   else
-    # 其他服务（noda-site 等）：检查 Dockerfile 存在
-    local dockerfile="${DOCKERFILE:-$PROJECT_ROOT/deploy/Dockerfile.${service}}"
-    if [ ! -f "$dockerfile" ]; then
-      log_error "Dockerfile 不存在: $dockerfile"; return 1
+    # Keycloak: 检查官方镜像配置
+    if [ "$service" = "keycloak" ]; then
+      local service_image="${SERVICE_IMAGE:-}"
+      if [ -z "$service_image" ]; then
+        log_error "SERVICE_IMAGE 未设置（Keycloak 需要指定官方镜像）"
+        return 1
+      fi
+      log_info "Keycloak 镜像: $service_image"
+      log_info "Keycloak 不需要构建，将使用 docker pull 拉取官方镜像"
+    else
+      # 其他服务（noda-site 等）：检查 Dockerfile 存在
+      local dockerfile="${DOCKERFILE:-$PROJECT_ROOT/deploy/Dockerfile.${service}}"
+      if [ ! -f "$dockerfile" ]; then
+        log_error "Dockerfile 不存在: $dockerfile"; return 1
+      fi
+      log_info "Dockerfile 存在: $dockerfile"
     fi
-    log_info "Dockerfile 存在: $dockerfile"
   fi
 
   log_success "前置检查全部通过"
@@ -401,16 +415,50 @@ pipeline_test() {
   )
 }
 
+# ============================================
+# 函数: pipeline_pull_image
+# ============================================
+# 拉取官方镜像（用于不从源码构建的服务如 Keycloak）
+# 环境变量控制：
+#   SERVICE_IMAGE - 官方镜像名（如 quay.io/keycloak/keycloak:26.2.3）
+# 返回：0=成功，1=失败
+pipeline_pull_image() {
+  local image="${SERVICE_IMAGE:-}"
+
+  if [ -z "$image" ]; then
+    log_error "SERVICE_IMAGE 未设置，无法拉取镜像"
+    return 1
+  fi
+
+  log_info "拉取镜像: $image"
+
+  if ! docker pull "$image"; then
+    log_error "镜像拉取失败: $image"
+    return 1
+  fi
+
+  log_success "镜像拉取完成: $image"
+}
+
 # pipeline_deploy - 部署新容器到目标环境
-# 参数: $1 = TARGET_ENV (blue/green), $2 = GIT_SHA
+# 参数: $1 = TARGET_ENV (blue/green), $2 = GIT_SHA (可选，官方镜像服务不需要)
 # 环境变量控制：
 #   SERVICE_NAME - 服务名（默认 findclass-ssr）
+#   SERVICE_IMAGE - 官方镜像名（设置后忽略 GIT_SHA，用于 Keycloak 等）
 pipeline_deploy() {
   local target_env="$1"
-  local git_sha="$2"
+  local git_sha="${2:-}"
   local service="${SERVICE_NAME:-findclass-ssr}"
   local target_container
   target_container=$(get_container_name "$target_env")
+
+  # 确定镜像名：如果设置了 SERVICE_IMAGE 则使用官方镜像，否则使用 Git SHA 标签
+  local image_name
+  if [ -n "${SERVICE_IMAGE:-}" ]; then
+    image_name="$SERVICE_IMAGE"
+  else
+    image_name="${service}:${git_sha}"
+  fi
 
   # 停止旧的无后缀容器（从单容器模式迁移到蓝绿模式）
   local legacy_container="$service"
@@ -429,8 +477,8 @@ pipeline_deploy() {
   fi
 
   # 启动新容器
-  run_container "$target_env" "${service}:${git_sha}"
-  log_success "部署完成: $target_container (${service}:${git_sha})"
+  run_container "$target_env" "$image_name"
+  log_success "部署完成: $target_container ($image_name)"
 }
 
 # pipeline_health_check - HTTP 健康检查
@@ -511,6 +559,7 @@ pipeline_purge_cdn() {
 }
 
 # pipeline_cleanup - 停掉非活跃容器 + 清理旧镜像
+# 官方镜像服务（Keycloak 等）跳过 SHA 镜像清理，仅清理 dangling images
 pipeline_cleanup() {
   # 停掉非活跃容器，降低资源消耗
   local active_env
@@ -533,7 +582,24 @@ pipeline_cleanup() {
     log_info "无非活跃容器需要清理"
   fi
 
-  cleanup_old_images
+  # 官方镜像服务（Keycloak 等）不需要 SHA 镜像清理
+  if [ -z "${SERVICE_IMAGE:-}" ]; then
+    cleanup_old_images
+  else
+    # 仅清理 dangling images
+    local dangling_ids
+    dangling_ids=$(docker images -f "dangling=true" --format '{{.ID}}' 2>/dev/null || true)
+    local count=0
+    for img_id in $dangling_ids; do
+      docker rmi "$img_id" 2>/dev/null || true
+      count=$((count + 1))
+    done
+    if [ "$count" -gt 0 ]; then
+      log_success "dangling 镜像清理完成: 删除 ${count} 个"
+    else
+      log_info "镜像清理: 无需清理"
+    fi
+  fi
 }
 
 # pipeline_failure_cleanup - 部署失败时捕获日志并清理
