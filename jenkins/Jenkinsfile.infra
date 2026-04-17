@@ -1,0 +1,132 @@
+#!/usr/bin/env groovy
+// 统一基础设施 Jenkins Pipeline
+// 7 阶段: Pre-flight -> Backup -> Human Approval -> Deploy -> Health Check -> Verify -> Cleanup
+// 手动触发（无自动触发配置）
+// 参数化服务选择: keycloak / nginx / noda-ops / postgres
+
+pipeline {
+    agent any
+
+    environment {
+        PROJECT_ROOT = "${WORKSPACE}"
+        COMPOSE_BASE = "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml"
+        BACKUP_HOST_DIR = "${WORKSPACE}/docker/volumes/backup"
+    }
+
+    options {
+        // 禁止并发构建，防止两个 Pipeline 同时操作基础设施服务
+        disableConcurrentBuilds()
+        // 保留最近 20 次构建日志
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timestamps()
+    }
+
+    // 注意：无 triggers 块 — 仅通过 "Build Now" 手动触发
+
+    parameters {
+        choice(
+            name: 'SERVICE',
+            choices: ['keycloak', 'nginx', 'noda-ops', 'postgres'],
+            description: '选择要部署的基础设施服务'
+        )
+    }
+
+    stages {
+        stage('Pre-flight') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_infra_preflight "$SERVICE"
+                '''
+            }
+        }
+
+        stage('Backup') {
+            when {
+                anyOf {
+                    expression { params.SERVICE == 'keycloak' }
+                    expression { params.SERVICE == 'postgres' }
+                }
+            }
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_backup_database "$SERVICE"
+                '''
+            }
+        }
+
+        stage('Human Approval') {
+            when {
+                expression { params.SERVICE == 'postgres' }
+            }
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: """确认重启 PostgreSQL?
+                    服务: ${params.SERVICE}
+                    影响范围: Keycloak、findclass-ssr、noda-ops 将短暂断连数据库
+                    备份文件: 请查看上方 Backup 阶段日志
+                    """.stripIndent(), ok: '确认重启'
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_infra_deploy "$SERVICE"
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_infra_health_check "$SERVICE"
+                '''
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_infra_verify "$SERVICE"
+                '''
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_infra_cleanup "$SERVICE"
+                '''
+            }
+        }
+    }
+
+    post {
+        failure {
+            script {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_infra_failure_cleanup "$SERVICE"
+                '''
+                archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
+            }
+        }
+        success {
+            echo "基础设施服务 ${params.SERVICE} 部署成功"
+        }
+    }
+}
