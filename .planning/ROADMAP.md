@@ -82,7 +82,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [x] **Phase 27: 开发容器清理与 Docker Compose 简化** -- 移除 dev 容器，精简 compose overlay (completed 2026-04-16)
 - [x] **Phase 28: Keycloak 蓝绿部署基础设施** -- Keycloak 蓝绿容器管理 + upstream 切换 (completed 2026-04-17)
 - [x] **Phase 29: 统一基础设施 Jenkins Pipeline** -- Jenkinsfile.infra 参数化部署基础设施服务 (completed 2026-04-17)
-- [ ] **Phase 30: 一键开发环境脚本** -- setup-dev.sh 幂等安装开发环境
+- [x] **Phase 30: 一键开发环境脚本** -- setup-dev.sh 幂等安装开发环境 (completed 2026-04-17)
 
 ## Phase Details
 
@@ -160,10 +160,10 @@ Plans:
   1. 开发者运行 `bash setup-dev.sh` 后自动完成 Homebrew PostgreSQL 安装、数据库创建、用户配置
   2. 脚本重复运行不会破坏已有数据或覆盖已有配置（幂等性）
   3. 脚本在 Apple Silicon (/opt/homebrew) 和 Intel (/usr/local) Mac 上均可正常工作
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 30-01-PLAN.md -- 创建 setup-dev.sh 一键脚本 + 更新 DEVELOPMENT.md 文档
+- [x] 30-01-PLAN.md -- 创建 setup-dev.sh 一键脚本 + 更新 DEVELOPMENT.md 文档
 
 ## Progress
 
@@ -177,4 +177,4 @@ Phases execute in numeric order: 26 -> 27 -> 28 -> 29 -> 30
 | 27. 开发容器清理与 Docker Compose 简化 | v1.5 | 3/3 | Complete    | 2026-04-16 |
 | 28. Keycloak 蓝绿部署基础设施 | v1.5 | 3/3 | Complete    | 2026-04-17 |
 | 29. 统一基础设施 Jenkins Pipeline | v1.5 | 3/3 | Complete    | 2026-04-17 |
-| 30. 一键开发环境脚本 | v1.5 | 0/1 | Not started | - |
+| 30. 一键开发环境脚本 | v1.5 | 1/1 | Complete    | 2026-04-17 |
