@@ -77,12 +77,16 @@ Jenkins 生命周期管理脚本
   restart         重启 Jenkins 服务
   upgrade         升级 Jenkins 到最新 LTS
   reset-password <新密码>  重置管理员密码
+  apply-matrix-auth   应用 Jenkins 权限矩阵配置（Admin 全权限 + Developer 最小权限）
+  verify-matrix-auth  验证 Jenkins 权限矩阵配置是否正确
 
 示例:
   setup-jenkins.sh install
   setup-jenkins.sh status
   setup-jenkins.sh show-password
   setup-jenkins.sh reset-password my-new-password
+  setup-jenkins.sh apply-matrix-auth
+  setup-jenkins.sh verify-matrix-auth
 
 平台差异:
   macOS: install/uninstall 使用 Homebrew，请手动执行 brew install/uninstall jenkins
@@ -715,15 +719,272 @@ GROOVY
 }
 
 # ============================================
+# cmd_apply_matrix_auth() — 通过 Jenkins CLI 执行权限矩阵 Groovy 脚本
+# ============================================
+cmd_apply_matrix_auth() {
+  log_info "=========================================="
+  log_info "应用 Jenkins 权限矩阵配置"
+  log_info "=========================================="
+
+  if [[ "$PLATFORM" == "macos" ]]; then
+    log_warn "macOS 不支持此操作，跳过"
+    return 0
+  fi
+
+  # root 权限检查
+  if [[ $EUID -ne 0 ]]; then
+    log_error "此命令需要 root 权限，请使用: sudo bash $0 apply-matrix-auth"
+    exit 1
+  fi
+
+  # 检查 Jenkins 是否运行
+  if ! curl -sf "http://localhost:${JENKINS_PORT}/login" > /dev/null 2>&1; then
+    log_error "Jenkins 未运行，请先启动: sudo systemctl start jenkins"
+    exit 1
+  fi
+
+  # 检查 Groovy 脚本是否存在
+  local groovy_script="$GROOVY_SRC_DIR/06-matrix-auth.groovy"
+  if [ ! -f "$groovy_script" ]; then
+    log_error "权限矩阵脚本不存在: ${groovy_script}"
+    exit 1
+  fi
+
+  # 查找 jenkins-cli.jar
+  local jhome
+  jhome="$(jenkins_home)"
+  local cli_jar=""
+  local possible_paths=(
+    "${jhome}/war/WEB-INF/jenkins-cli.jar"
+    "${jhome}/jenkins-cli.jar"
+    "/usr/share/jenkins/jenkins-cli.jar"
+    "/usr/share/java/jenkins-cli.jar"
+  )
+
+  for path in "${possible_paths[@]}"; do
+    if sudo test -f "$path"; then
+      cli_jar="$path"
+      log_info "找到 jenkins-cli.jar: ${cli_jar}"
+      break
+    fi
+  done
+
+  if [ -z "$cli_jar" ]; then
+    log_error "未找到 jenkins-cli.jar，已检查以下路径:"
+    for path in "${possible_paths[@]}"; do
+      log_error "  ${path}"
+    done
+    exit 1
+  fi
+
+  # 执行 Groovy 脚本
+  log_info "执行权限矩阵配置脚本..."
+  local apply_output
+  apply_output=$(sudo -u jenkins java -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$groovy_script" 2>&1) || {
+    log_error "权限矩阵脚本执行失败"
+    log_error "输出: ${apply_output}"
+    exit 1
+  }
+
+  log_info "脚本输出:"
+  echo "$apply_output"
+
+  # 检查是否需要重启（插件首次安装）
+  if echo "$apply_output" | grep -q "Restart required"; then
+    log_warn "matrix-auth 插件已安装，需要重启 Jenkins 后再次执行此命令"
+    log_info "重启命令: sudo bash $0 restart && sudo bash $0 apply-matrix-auth"
+  elif echo "$apply_output" | grep -q "Matrix authorization configured"; then
+    log_success "=========================================="
+    log_success "Jenkins 权限矩阵配置成功"
+    log_success "=========================================="
+    log_info "Admin:     Overall/Administer (全权限)"
+    log_info "Developer: Overall/Read + Job/Read + Job/Build + Job/Discover + Run/Read + View/Read"
+    log_warn "如果创建了 developer 用户，请通过 Jenkins UI 修改其初始密码"
+  else
+    log_warn "脚本执行完成，但未检测到预期的成功标志"
+    log_info "请检查上方输出确认配置状态"
+  fi
+}
+
+# ============================================
+# cmd_verify_matrix_auth() — 验证 Jenkins 权限矩阵配置是否正确
+# ============================================
+cmd_verify_matrix_auth() {
+  log_info "=========================================="
+  log_info "验证 Jenkins 权限矩阵配置"
+  log_info "=========================================="
+
+  if [[ "$PLATFORM" == "macos" ]]; then
+    log_warn "macOS 不支持此操作，跳过"
+    return 0
+  fi
+
+  # root 权限检查
+  if [[ $EUID -ne 0 ]]; then
+    log_error "此命令需要 root 权限，请使用: sudo bash $0 verify-matrix-auth"
+    exit 1
+  fi
+
+  # 检查 Jenkins 是否运行
+  if ! curl -sf "http://localhost:${JENKINS_PORT}/login" > /dev/null 2>&1; then
+    log_error "Jenkins 未运行，请先启动: sudo systemctl start jenkins"
+    exit 1
+  fi
+
+  # 查找 jenkins-cli.jar
+  local jhome
+  jhome="$(jenkins_home)"
+  local cli_jar=""
+  local possible_paths=(
+    "${jhome}/war/WEB-INF/jenkins-cli.jar"
+    "${jhome}/jenkins-cli.jar"
+    "/usr/share/jenkins/jenkins-cli.jar"
+    "/usr/share/java/jenkins-cli.jar"
+  )
+
+  for path in "${possible_paths[@]}"; do
+    if sudo test -f "$path"; then
+      cli_jar="$path"
+      break
+    fi
+  done
+
+  if [ -z "$cli_jar" ]; then
+    log_error "未找到 jenkins-cli.jar"
+    exit 1
+  fi
+
+  # 创建临时验证脚本
+  local verify_script
+  verify_script=$(mktemp /tmp/verify-matrix-auth.groovy.XXXXXX)
+  cat > "$verify_script" <<'VERIFY_GROOVY'
+import jenkins.model.*
+import hudson.model.*
+import org.jenkinsci.plugins.matrixauth.*
+
+def instance = Jenkins.getInstance()
+def strategy = instance.getAuthorizationStrategy()
+def allPassed = true
+
+// 检查 1: 权限策略类型为 GlobalMatrixAuthorizationStrategy
+if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+    println '[PASS] Authorization strategy: GlobalMatrixAuthorizationStrategy'
+} else {
+    println '[FAIL] Authorization strategy: ' + strategy.getClass().getSimpleName() + ' (expected GlobalMatrixAuthorizationStrategy)'
+    allPassed = false
+}
+
+// 检查 2: admin 拥有 Jenkins.ADMINISTER
+if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+    def adminPerms = strategy.getGrantedPermissions().get(Jenkins.ADMINISTER) ?: []
+    if (adminPerms.contains('admin')) {
+        println '[PASS] admin has Overall/Administer'
+    } else {
+        println '[FAIL] admin missing Overall/Administer (found: ' + adminPerms + ')'
+        allPassed = false
+    }
+}
+
+// 检查 3: developer 拥有 Item.BUILD
+if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+    def buildPerms = strategy.getGrantedPermissions().get(Item.BUILD) ?: []
+    if (buildPerms.contains('developer')) {
+        println '[PASS] developer has Job/Build'
+    } else {
+        println '[FAIL] developer missing Job/Build (found: ' + buildPerms + ')'
+        allPassed = false
+    }
+}
+
+// 检查 4: developer 拥有 Item.READ
+if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+    def readPerms = strategy.getGrantedPermissions().get(Item.READ) ?: []
+    if (readPerms.contains('developer')) {
+        println '[PASS] developer has Job/Read'
+    } else {
+        println '[FAIL] developer missing Job/Read (found: ' + readPerms + ')'
+        allPassed = false
+    }
+}
+
+// 检查 5: developer 拥有 Run.READ
+if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+    def runPerms = strategy.getGrantedPermissions().get(Run.READ) ?: []
+    if (runPerms.contains('developer')) {
+        println '[PASS] developer has Run/Read'
+    } else {
+        println '[FAIL] developer missing Run/Read (found: ' + runPerms + ')'
+        allPassed = false
+    }
+}
+
+// 检查 6: developer 拥有 Jenkins.READ
+if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+    def overallRead = strategy.getGrantedPermissions().get(Jenkins.READ) ?: []
+    if (overallRead.contains('developer')) {
+        println '[PASS] developer has Overall/Read'
+    } else {
+        println '[FAIL] developer missing Overall/Read (found: ' + overallRead + ')'
+        allPassed = false
+    }
+}
+
+// 检查 7: developer 没有 Item.CONFIGURE
+if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+    def configPerms = strategy.getGrantedPermissions().get(Item.CONFIGURE) ?: []
+    if (!configPerms.contains('developer')) {
+        println '[PASS] developer does NOT have Job/Configure (correct)'
+    } else {
+        println '[FAIL] developer has Job/Configure (should not)'
+        allPassed = false
+    }
+}
+
+if (allPassed) {
+    println ''
+    println 'All matrix authorization checks PASSED'
+    System.exit(0)
+} else {
+    println ''
+    println 'Some matrix authorization checks FAILED'
+    System.exit(1)
+}
+VERIFY_GROOVY
+
+  # 执行验证脚本
+  local verify_output
+  verify_output=$(sudo -u jenkins java -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$verify_script" 2>&1)
+  local verify_exit=$?
+
+  # 清理临时脚本
+  rm -f "$verify_script"
+
+  echo "$verify_output"
+
+  if [ $verify_exit -eq 0 ]; then
+    log_success "=========================================="
+    log_success "Jenkins 权限矩阵验证通过"
+    log_success "=========================================="
+  else
+    log_error "=========================================="
+    log_error "Jenkins 权限矩阵验证失败"
+    log_error "=========================================="
+    exit 1
+  fi
+}
+
+# ============================================
 # 子命令分发
 # ============================================
 case "${1:-}" in
-  install)        cmd_install "$@" ;;
-  uninstall)      cmd_uninstall "$@" ;;
-  status)         cmd_status "$@" ;;
-  show-password)  cmd_show_password "$@" ;;
-  restart)        cmd_restart "$@" ;;
-  upgrade)        cmd_upgrade "$@" ;;
-  reset-password) cmd_reset_password "$@" ;;
-  *)              usage && exit 1 ;;
+  install)           cmd_install "$@" ;;
+  uninstall)         cmd_uninstall "$@" ;;
+  status)            cmd_status "$@" ;;
+  show-password)     cmd_show_password "$@" ;;
+  restart)           cmd_restart "$@" ;;
+  upgrade)           cmd_upgrade "$@" ;;
+  reset-password)    cmd_reset_password "$@" ;;
+  apply-matrix-auth) cmd_apply_matrix_auth "$@" ;;
+  verify-matrix-auth) cmd_verify_matrix_auth "$@" ;;
+  *)                 usage && exit 1 ;;
 esac
