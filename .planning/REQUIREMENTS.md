@@ -57,12 +57,12 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| LIB-01 | — | Pending |
-| LIB-02 | — | Pending |
-| LIB-03 | — | Pending |
-| BLUE-01 | — | Pending |
-| BLUE-02 | — | Pending |
-| CLEAN-01 | — | Pending |
-| CLEAN-02 | — | Pending |
-| QUAL-01 | — | Pending |
-| QUAL-02 | — | Pending |
+| LIB-01 | Phase 35 | Pending |
+| LIB-02 | Phase 35 | Pending |
+| LIB-03 | Phase 35 | Pending |
+| BLUE-01 | Phase 36 | Pending |
+| BLUE-02 | Phase 36 | Pending |
+| CLEAN-01 | Phase 37 | Pending |
+| CLEAN-02 | Phase 37 | Pending |
+| QUAL-01 | Phase 38 | Pending |
+| QUAL-02 | Phase 38 | Pending |

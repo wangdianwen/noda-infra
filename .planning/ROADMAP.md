@@ -13,10 +13,15 @@
 ## Phases
 
 **Phase Numbering:**
-- Integer phases (1-34): Planned milestone work
-- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+- Integer phases (35-38): Planned v1.7 milestone work
+- Decimal phases (35.1, 35.2): Urgent insertions (marked with INSERTED)
 
 Decimal phases appear between their surrounding integers in numeric order.
+
+- [ ] **Phase 35: 共享库建设** - 提取 3 个共享库文件（deploy-check.sh, platform.sh, image-cleanup.sh），消除多处重复代码
+- [ ] **Phase 36: 蓝绿部署统一** - 合并两个蓝绿部署脚本为参数化入口，精简 rollback-findclass.sh
+- [ ] **Phase 37: 清理与重命名** - 删除不可用的验证脚本，消除 health.sh 命名混淆
+- [ ] **Phase 38: 质量保证** - ShellCheck 零 error + shfmt 统一格式化
 
 <details>
 <summary>v1.0 完整备份系统 + v1.1 基础设施现代化 (Phases 1-9) -- SHIPPED 2026-04-11</summary>
@@ -86,6 +91,9 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 </details>
 
+<details>
+<summary>v1.6 Jenkins Pipeline 强制执行 (Phases 31-34) -- SHIPPED 2026-04-18</summary>
+
 ### v1.6 Jenkins Pipeline 强制执行 (Shipped 2026-04-18)
 
 **Milestone Goal:** 所有容器只能通过 Jenkins Pipeline 上线，禁止直接 docker compose / shell 脚本部署
@@ -95,79 +103,79 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [x] **Phase 33: 审计日志系统** -- auditd 内核审计 + Jenkins Audit Trail + 日志轮转 (completed 2026-04-18)
 - [x] **Phase 34: Jenkins 权限矩阵 + 统一管理脚本** -- Matrix Auth 插件 + setup-docker-permissions.sh 一站式管理 (completed 2026-04-18)
 
-## Phase Details
+</details>
 
-### Phase 31: Docker Socket 权限收敛 + 文件权限锁定
-**Goal**: 仅 jenkins 用户可通过 Docker socket 执行 docker 命令，部署脚本仅 jenkins 可执行，且权限配置在服务器重启后持久保留
-**Depends on**: Nothing (v1.6 第一个 Phase)
-**Requirements**: PERM-01, PERM-02, PERM-03, PERM-04, PERM-05, JENKINS-01, JENKINS-02
+### v1.7 代码精简与规整 (In Progress)
+
+**Milestone Goal:** 在不影响现有功能的前提下，消除重复代码、合并冗余脚本、统一代码风格，使代码库更简洁易维护
+
+#### Phase 35: 共享库建设
+**Goal**: 所有消费者脚本通过 source 引用统一的共享库文件，消除跨文件的函数定义重复
+**Depends on**: Nothing（本里程碑首个阶段）
+**Requirements**: LIB-01, LIB-02, LIB-03
 **Success Criteria** (what must be TRUE):
-  1. `sudo -u jenkins docker ps` 返回容器列表（jenkins 用户可正常执行 docker 命令）
-  2. `sudo -u admin docker ps` 返回 permission denied（非 jenkins 用户无法直接执行 docker 命令）
-  3. 服务器重启或 Docker 服务重启后，Docker socket 属组仍为 root:jenkins（systemd override 持久化）
-  4. 所有 4 个 Jenkins Pipeline（findclass-ssr、noda-site、keycloak、infra）端到端正常运行
-  5. 备份脚本（noda-ops 容器内 + 宿主机 docker exec）正常工作
-**Plans**: 3 plans
+  1. `scripts/lib/deploy-check.sh` 存在且包含 `http_health_check()` 和 `e2e_verify()` 函数，4 个原调用方文件不再内联定义这些函数
+  2. `scripts/lib/platform.sh` 存在且包含 `detect_platform()` 函数，8 个原调用方文件改为 source 该库
+  3. `scripts/lib/image-cleanup.sh` 存在且包含 `cleanup_old_images()` 函数，3 个原调用方文件改为 source 该库
+  4. 所有共享库文件包含 Source Guard 防止直接执行，通过函数参数传递差异化的超时/重试配置
+**Plans**: TBD
 
 Plans:
-- [x] 31-01-PLAN.md — 创建 undo-permissions.sh 回滚脚本 + 修改 setup-jenkins.sh 为 socket 属组方式
-- [x] 31-02-PLAN.md — 创建 apply-file-permissions.sh 一站式权限应用脚本
-- [x] 31-03-PLAN.md — macOS 跨平台适配（gap closure: UAT 6 个 blocker 修复）
+- [ ] 35-01: 提取 deploy-check.sh 共享库（http_health_check + e2e_verify）
+- [ ] 35-02: 提取 platform.sh 共享库（detect_platform）
+- [ ] 35-03: 提取 image-cleanup.sh 共享库（cleanup_old_images）
 
-### Phase 32: sudoers 白名单 + Break-Glass 紧急机制
-**Goal**: 权限锁定后管理员仍可通过受控路径进行只读调试和紧急部署，所有操作留有审计痕迹
-**Depends on**: Phase 31
-**Requirements**: BREAK-01, BREAK-02, BREAK-03, BREAK-04
+#### Phase 36: 蓝绿部署统一
+**Goal**: findclass-ssr 和 keycloak 的蓝绿部署通过单一参数化脚本执行，消除 95% 重复逻辑
+**Depends on**: Phase 35（需要 deploy-check.sh 中的共享函数）
+**Requirements**: BLUE-01, BLUE-02
 **Success Criteria** (what must be TRUE):
-  1. 管理员可通过 `sudo docker ps/logs/inspect/stats/top` 执行只读调试命令
-  2. 管理员执行 `sudo docker run/rm/compose up/down/exec` 被拒绝（写入命令不可执行）
-  3. Break-Glass 脚本在 Jenkins 正常运行时拒绝执行（防止滥用）
-  4. Break-Glass 脚本在 Jenkins 不可用时，验证通过后可执行紧急部署，且操作被记录到审计日志
-**Plans**: 2 plans
+  1. `scripts/blue-green-deploy.sh` 通过环境变量（SERVICE_IMAGE、SERVICE_PORT、HEALTH_PATH 等）参数化支持 findclass-ssr 和 keycloak 两种服务
+  2. 旧 `scripts/keycloak-blue-green-deploy.sh` 保留为向后兼容 wrapper，调用新脚本并传递正确参数
+  3. `scripts/rollback-findclass.sh` 使用 `scripts/lib/deploy-check.sh` 中的共享函数，不再包含内联的健康检查逻辑
+  4. findclass-ssr 蓝绿部署通过统一脚本执行，行为与重构前一致（零停机、自动回滚）
+**Plans**: TBD
 
 Plans:
-- [x] 32-01-PLAN.md — sudoers 白名单安装/验证脚本（install-sudoers-whitelist.sh + verify-sudoers-whitelist.sh）
-- [x] 32-02-PLAN.md — Break-Glass 紧急部署脚本（break-glass.sh: Jenkins 健康检查 + PAM 认证 + 审计日志）
+- [ ] 36-01: 合并蓝绿部署脚本为参数化入口
+- [ ] 36-02: 精简 rollback-findclass.sh 使用共享库
 
-### Phase 33: 审计日志系统
-**Goal**: 所有 docker 命令执行和 Jenkins Pipeline 操作被完整记录，日志不可篡改且不会占满磁盘
-**Depends on**: Phase 31
-**Requirements**: AUDIT-01, AUDIT-02, AUDIT-03, AUDIT-04
+#### Phase 37: 清理与重命名
+**Goal**: 代码库不再包含不可用的遗留脚本，文件命名不再引起混淆
+**Depends on**: Nothing（独立于其他阶段，但建议在 Phase 36 后执行以避免合并冲突）
+**Requirements**: CLEAN-01, CLEAN-02
 **Success Criteria** (what must be TRUE):
-  1. `ausearch -k docker-cmd` 可查询到所有 docker 命令执行记录（含用户、时间、命令参数）
-  2. auditd 日志文件权限为 root 只读，普通用户无法修改或删除
-  3. Jenkins Audit Trail 插件记录 Pipeline 触发事件（谁在什么时候触发了什么 Job）
-  4. sudo 操作被记录到独立日志文件（通过 sudoers Defaults logfile 配置）
-**Plans**: 3 plans
+  1. `scripts/verify/` 目录下 5 个一次性验证脚本已删除，目录不存在或为空
+  2. `scripts/backup/lib/health.sh` 重命名为 `scripts/backup/lib/db-health.sh`，所有 source 引用路径已更新
+  3. 项目中无任何文件引用已删除的 verify 脚本或旧的 health.sh 路径
+**Plans**: TBD
 
 Plans:
-- [x] 33-01-PLAN.md — auditd 规则安装/验证/卸载脚本（AUDIT-01 + AUDIT-02）
-- [x] 33-02-PLAN.md — Jenkins Audit Trail 插件安装 + logrotate 配置（AUDIT-03）
-- [x] 33-03-PLAN.md — sudo 日志配置安装/验证脚本 + logrotate 配置（AUDIT-04）
+- [ ] 37-01: 删除 scripts/verify/ 下 5 个不可用的验证脚本
+- [ ] 37-02: 重命名 backup/lib/health.sh 为 db-health.sh 并更新引用
 
-### Phase 34: Jenkins 权限矩阵 + 统一管理脚本
-**Goal**: Jenkins 内部权限细化（管理员全权限/普通用户只触发），权限配置可通过统一脚本一键 apply/verify/rollback
-**Depends on**: Phase 32, Phase 33
-**Requirements**: JENKINS-03, JENKINS-04, PERM-05
+#### Phase 38: 质量保证
+**Goal**: scripts/ 目录下所有 .sh 文件通过 ShellCheck 零 error 检查并有一致的代码风格
+**Depends on**: Phase 35, Phase 36, Phase 37（在所有代码变更完成后执行）
+**Requirements**: QUAL-01, QUAL-02
 **Success Criteria** (what must be TRUE):
-  1. 非 admin 用户可以触发 Pipeline 运行但不能修改 Job 配置或访问 Script Console
-  2. `setup-docker-permissions.sh apply` 一键配置所有权限（socket + 文件 + sudoers + auditd）
-  3. `setup-docker-permissions.sh verify` 输出全部 PASS 的权限检查结果
-  4. `setup-docker-permissions.sh rollback` 可恢复到权限收敛前的状态
-**Plans**: 2 plans
+  1. `shellcheck scripts/**/*.sh` 输出零 error 级别问题（warning 可通过 .shellcheckrc 抑制）
+  2. `shfmt` 格式化后所有 .sh 文件风格一致（缩进、引号、空格等）
+  3. `.shellcheckrc` 配置文件存在，记录项目级抑制规则和解释
+**Plans**: TBD
 
 Plans:
-- [x] 34-01-PLAN.md — Jenkins 权限矩阵 Groovy 脚本 + setup-jenkins.sh apply/verify-matrix-auth 子命令（JENKINS-03, JENKINS-04）
-- [x] 34-02-PLAN.md — setup-docker-permissions.sh 统一编排器脚本 apply/verify/rollback（PERM-05）
+- [ ] 38-01: ShellCheck 消除所有 error 级别问题
+- [ ] 38-02: shfmt 统一格式化所有 .sh 文件
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 31 -> 32 -> 33 -> 34
+Phases execute in numeric order: 35 -> 36 -> 37 -> 38
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 31. Docker Socket 权限收敛 | v1.6 | 3/3 | Complete | 2026-04-18 |
-| 32. sudoers + Break-Glass | v1.6 | 2/2 | Complete | 2026-04-18 |
-| 33. 审计日志系统 | v1.6 | 3/3 | Complete | 2026-04-18 |
-| 34. Jenkins 权限矩阵 + 统一脚本 | v1.6 | 2/2 | Complete | 2026-04-18 |
+| 35. 共享库建设 | v1.7 | 0/3 | Not started | - |
+| 36. 蓝绿部署统一 | v1.7 | 0/2 | Not started | - |
+| 37. 清理与重命名 | v1.7 | 0/2 | Not started | - |
+| 38. 质量保证 | v1.7 | 0/2 | Not started | - |
