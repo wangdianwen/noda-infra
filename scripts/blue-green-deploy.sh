@@ -15,6 +15,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/manage-containers.sh"
 source "$PROJECT_ROOT/scripts/lib/deploy-check.sh"
+source "$PROJECT_ROOT/scripts/lib/image-cleanup.sh"
 
 # ============================================
 # 常量
@@ -24,43 +25,6 @@ HEALTH_CHECK_INTERVAL=4
 E2E_MAX_RETRIES=5
 E2E_INTERVAL=2
 COMPOSE_FILE="$PROJECT_ROOT/docker/docker-compose.app.yml"
-
-# ============================================
-# 函数: cleanup_old_images
-# ============================================
-# 保留最近 N 个带标签的镜像，删除更早的
-# 参数:
-#   $1: 保留数量（默认 5）
-cleanup_old_images() {
-  local keep_count="${1:-5}"
-
-  # 列出所有非 latest 标签的镜像，按创建时间排序（最新在前）
-  local images
-  images=$(docker images findclass-ssr --format '{{.Tag}} {{.CreatedAt}}' \
-    | grep -v '^latest ' \
-    | sort -t' ' -k2 -r \
-    | awk '{print $1}')
-
-  local total
-  total=$(echo "$images" | grep -c . || true)
-
-  if [ "$total" -le "$keep_count" ]; then
-    log_info "镜像清理: ${total} 个标签镜像 <= 保留 ${keep_count}，无需清理"
-    return 0
-  fi
-
-  local to_delete
-  to_delete=$(echo "$images" | tail -n +$((keep_count + 1)))
-
-  log_info "镜像清理: ${total} 个标签镜像，保留 ${keep_count}，删除 $((total - keep_count)) 个"
-
-  for tag in $to_delete; do
-    log_info "  删除 findclass-ssr:${tag}"
-    docker rmi "findclass-ssr:${tag}" 2>/dev/null || true
-  done
-
-  log_success "旧镜像清理完成"
-}
 
 # ============================================
 # 主函数
@@ -188,7 +152,7 @@ main() {
   log_info "步骤 7/7: 清理旧镜像"
   log_info "=========================================="
 
-  cleanup_old_images 5
+  cleanup_by_tag_count "findclass-ssr" 5
 
   # 完成
   log_success "=========================================="

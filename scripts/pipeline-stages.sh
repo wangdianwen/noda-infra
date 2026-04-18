@@ -15,6 +15,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/manage-containers.sh"
 source "$PROJECT_ROOT/scripts/lib/deploy-check.sh"
+source "$PROJECT_ROOT/scripts/lib/image-cleanup.sh"
 
 # 加载 .env（envsubst 需要数据库密码等环境变量）
 # Jenkins workspace 可能不包含 .env（gitignored），尝试从多个路径加载
@@ -105,89 +106,6 @@ check_backup_freshness() {
 
   log_info "备份检查通过: 最新备份 ${age_hours} 小时前（阈值: ${max_age_hours} 小时）"
   return 0
-}
-
-# ============================================
-# 函数: cleanup_old_images
-# ============================================
-# 删除超过指定天数的旧镜像和 dangling images（per D-12）
-# 原逻辑：保留最近 N 个 → 新逻辑：删除超过 7 天的
-# 参数：
-#   $1: 保留天数（可选，默认使用 IMAGE_RETENTION_DAYS 变量）
-# 环境变量：
-#   IMAGE_RETENTION_DAYS - 镜像保留天数（默认 7，per D-13）
-cleanup_old_images() {
-  local retention_days="${IMAGE_RETENTION_DAYS:-${1:-7}}"
-
-  log_info "镜像清理: 删除超过 ${retention_days} 天的旧镜像..."
-
-  # macOS 兼容：BSD date 使用 -v-${retention_days}d
-  local cutoff_epoch
-  if date -v-1d >/dev/null 2>&1; then
-    cutoff_epoch=$(date -v-"${retention_days}"d +%s)
-  else
-    cutoff_epoch=$(date -d "${retention_days} days ago" +%s)
-  fi
-
-  # 1. 清理带 Git SHA 标签的旧镜像（排除 latest，per D-14）
-  local service="${SERVICE_NAME:-findclass-ssr}"
-  local sha_tags
-  sha_tags=$(docker images "$service" --format '{{.Tag}}' \
-    | grep -v '^latest$' \
-    | grep -v '^<none>' || true)
-
-  local deleted=0
-  for tag in $sha_tags; do
-    # 使用 docker inspect 获取 ISO 8601 创建时间（per RESEARCH: docker images CreatedAt 格式不稳定）
-    local created_iso
-    created_iso=$(docker inspect --format '{{.Created}}' "${service}:${tag}" 2>/dev/null || echo "")
-
-    if [ -z "$created_iso" ]; then
-      continue
-    fi
-
-    # 将 ISO 8601 转为 epoch（macOS 兼容）
-    local image_epoch
-    if date -j -f "%Y-%m-%dT%H:%M:%S" "" >/dev/null 2>&1; then
-      # macOS: 截取 ISO 8601 到秒级精度
-      local created_short
-      created_short=$(echo "$created_iso" | sed 's/\..*//' | sed 's/Z$//')
-      image_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$created_short" +%s 2>/dev/null || echo "0")
-    else
-      image_epoch=$(date -d "$created_iso" +%s 2>/dev/null || echo "0")
-    fi
-
-    if [ "$image_epoch" -eq 0 ]; then
-      continue
-    fi
-
-    if [ "$image_epoch" -lt "$cutoff_epoch" ]; then
-      # macOS 兼容的日期显示
-      local image_date
-      if date -r 0 >/dev/null 2>&1; then
-        image_date=$(date -r "$image_epoch" +"%Y-%m-%d")
-      else
-        image_date=$(date -d "@$image_epoch" +"%Y-%m-%d")
-      fi
-      log_info "  删除 ${service}:${tag} ($image_date)"
-      docker rmi "${service}:${tag}" 2>/dev/null || true
-      deleted=$((deleted + 1))
-    fi
-  done
-
-  # 2. 清理 dangling images（per D-15）
-  local dangling_ids
-  dangling_ids=$(docker images -f "dangling=true" --format '{{.ID}}' 2>/dev/null || true)
-  for img_id in $dangling_ids; do
-    docker rmi "$img_id" 2>/dev/null || true
-    deleted=$((deleted + 1))
-  done
-
-  if [ "$deleted" -gt 0 ]; then
-    log_success "镜像清理完成: 删除 ${deleted} 个镜像"
-  else
-    log_info "镜像清理: 无需清理"
-  fi
 }
 
 # ============================================
@@ -496,21 +414,10 @@ pipeline_cleanup() {
 
   # 官方镜像服务（Keycloak 等）不需要 SHA 镜像清理
   if [ -z "${SERVICE_IMAGE:-}" ]; then
-    cleanup_old_images
+    cleanup_by_date_threshold "${SERVICE_NAME:-findclass-ssr}" "${IMAGE_RETENTION_DAYS:-7}"
   else
     # 仅清理 dangling images
-    local dangling_ids
-    dangling_ids=$(docker images -f "dangling=true" --format '{{.ID}}' 2>/dev/null || true)
-    local count=0
-    for img_id in $dangling_ids; do
-      docker rmi "$img_id" 2>/dev/null || true
-      count=$((count + 1))
-    done
-    if [ "$count" -gt 0 ]; then
-      log_success "dangling 镜像清理完成: 删除 ${count} 个"
-    else
-      log_info "镜像清理: 无需清理"
-    fi
+    cleanup_dangling
   fi
 }
 
@@ -944,7 +851,7 @@ pipeline_infra_cleanup() {
   case "$service" in
     keycloak)
       # 清理 dangling images（keycloak 使用 SERVICE_IMAGE，不会产生 SHA 标签）
-      cleanup_old_images
+      cleanup_dangling
       ;;
     nginx|noda-ops)
       log_info "$service 无需额外清理"

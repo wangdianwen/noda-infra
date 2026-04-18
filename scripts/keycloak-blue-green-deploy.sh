@@ -25,6 +25,7 @@ fi
 
 source "$PROJECT_ROOT/scripts/manage-containers.sh"
 source "$PROJECT_ROOT/scripts/lib/deploy-check.sh"
+source "$PROJECT_ROOT/scripts/lib/image-cleanup.sh"
 
 # ============================================
 # Keycloak 蓝绿参数（覆盖 manage-containers.sh 默认值）
@@ -57,28 +58,6 @@ HEALTH_CHECK_MAX_RETRIES=45
 HEALTH_CHECK_INTERVAL=4
 E2E_MAX_RETRIES=5
 E2E_INTERVAL=2
-
-# ============================================
-# 函数: cleanup_old_keycloak_images
-# ============================================
-# 清理无标签的 Keycloak 镜像（官方镜像不使用 Git SHA 标签）
-cleanup_old_keycloak_images() {
-  local deleted=0
-
-  # 清理 dangling images
-  local dangling_ids
-  dangling_ids=$(docker images -f "dangling=true" --format '{{.ID}}' 2>/dev/null || true)
-  for img_id in $dangling_ids; do
-    docker rmi "$img_id" 2>/dev/null || true
-    deleted=$((deleted + 1))
-  done
-
-  if [ "$deleted" -gt 0 ]; then
-    log_success "镜像清理完成: 删除 ${deleted} 个 dangling 镜像"
-  else
-    log_info "镜像清理: 无需清理"
-  fi
-}
 
 # ============================================
 # 主函数
@@ -198,7 +177,7 @@ main() {
   log_info "步骤 6/7: 清理旧镜像"
   log_info "=========================================="
 
-  cleanup_old_keycloak_images
+  cleanup_dangling
 
   # 完成
   log_success "=========================================="
