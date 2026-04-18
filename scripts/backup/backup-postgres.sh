@@ -21,7 +21,7 @@ source "$SCRIPT_DIR/lib/constants.sh"
 
 # 加载库文件
 source "$SCRIPT_DIR/lib/config.sh"
-source "$SCRIPT_DIR/lib/health.sh"
+source "$SCRIPT_DIR/lib/db-health.sh"
 source "$SCRIPT_DIR/lib/log.sh"
 source "$SCRIPT_DIR/lib/util.sh"
 source "$SCRIPT_DIR/lib/db.sh"
