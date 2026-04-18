@@ -116,14 +116,14 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 **Success Criteria** (what must be TRUE):
   1. `scripts/lib/deploy-check.sh` 存在且包含 `http_health_check()` 和 `e2e_verify()` 函数，4 个原调用方文件不再内联定义这些函数
   2. `scripts/lib/platform.sh` 存在且包含 `detect_platform()` 函数，8 个原调用方文件改为 source 该库
-  3. `scripts/lib/image-cleanup.sh` 存在且包含 `cleanup_old_images()` 函数，3 个原调用方文件改为 source 该库
-  4. 所有共享库文件包含 Source Guard 防止直接执行，通过函数参数传递差异化的超时/重试配置
-**Plans**: TBD
+  3. `scripts/lib/image-cleanup.sh` 存在且包含 3 个独立清理函数（cleanup_by_tag_count/cleanup_by_date_threshold/cleanup_dangling），3 个原调用方文件改为 source 该库
+  4. 所有共享库文件包含 Source Guard 防止重复加载，通过函数参数传递差异化的超时/重试配置
+**Plans**: 3 plans
 
 Plans:
-- [ ] 35-01: 提取 deploy-check.sh 共享库（http_health_check + e2e_verify）
-- [ ] 35-02: 提取 platform.sh 共享库（detect_platform）
-- [ ] 35-03: 提取 image-cleanup.sh 共享库（cleanup_old_images）
+- [ ] 35-01-PLAN.md — 提取 deploy-check.sh 共享库（http_health_check + e2e_verify，4 个消费者迁移）
+- [ ] 35-02-PLAN.md — 提取 platform.sh 共享库（detect_platform，8 个消费者迁移）
+- [ ] 35-03-PLAN.md — 提取 image-cleanup.sh 共享库（3 个清理函数，3 个消费者迁移，依赖 35-01）
 
 #### Phase 36: 蓝绿部署统一
 **Goal**: findclass-ssr 和 keycloak 的蓝绿部署通过单一参数化脚本执行，消除 95% 重复逻辑
