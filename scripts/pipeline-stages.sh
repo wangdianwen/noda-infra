@@ -109,8 +109,8 @@ check_backup_freshness() {
 # ============================================
 # 函数: http_health_check
 # ============================================
-# 从 blue-green-deploy.sh 复制（该文件无 source guard，不能 source）
-# 通过 docker exec 在目标容器内执行 wget 检测 HTTP 端点
+# 通过 nginx 容器在 Docker 网络中检查目标容器的 HTTP 端点
+# 某些镜像（如 Keycloak）内部没有 wget/curl，改用 nginx 容器作为代理检查
 # 参数:
 #   $1: 容器名
 #   $2: 最大重试次数（默认 30）
@@ -127,7 +127,7 @@ http_health_check() {
   while [ $attempt -lt $max_retries ]; do
     attempt=$((attempt + 1))
 
-    if docker exec "$container" wget --quiet --tries=1 --spider "http://localhost:${SERVICE_PORT:-3001}${HEALTH_PATH:-/api/health}" 2>/dev/null; then
+    if docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider "http://${container}:${SERVICE_PORT:-3001}${HEALTH_PATH:-/api/health}" 2>/dev/null; then
       log_success "$container — HTTP 健康检查通过 (第 ${attempt}/${max_retries} 次)"
       return 0
     fi
