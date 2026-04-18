@@ -177,8 +177,10 @@ run_container() {
   local container_readonly="${CONTAINER_READONLY:-true}"
   local service_group="${SERVICE_GROUP:-apps}"
   local extra_docker_args="${EXTRA_DOCKER_ARGS:-}"
+  local container_cmd="${CONTAINER_CMD:-}"
+  local container_cap_add="${CONTAINER_CAP_ADD:-}"
 
-  log_info "启动容器: $container_name (镜像: $image)"
+  log_info "启动容器: $container_name (镜像: $image${container_cmd:+, 命令: $container_cmd})"
 
   docker run -d \
     --name "$container_name" \
@@ -187,6 +189,7 @@ run_container() {
     --stop-timeout 30 \
     --security-opt no-new-privileges \
     --cap-drop ALL \
+    ${container_cap_add:+--cap-add "$container_cap_add"} \
     $([ "$container_readonly" = "true" ] && echo "--read-only") \
     --tmpfs /tmp \
     --memory "$container_memory" \
@@ -207,7 +210,8 @@ run_container() {
     --health-retries 3 \
     --health-start-period 60s \
     ${extra_docker_args} \
-    "$image"
+    "$image" \
+    ${container_cmd:+"$container_cmd"}
 
   log_success "容器 $container_name 已启动"
 

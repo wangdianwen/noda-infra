@@ -15,6 +15,14 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/lib/health.sh"
+
+# 加载 .env（envsubst 需要 POSTGRES_USER 等环境变量）
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
+
 source "$PROJECT_ROOT/scripts/manage-containers.sh"
 
 # ============================================
@@ -32,6 +40,7 @@ export SERVICE_GROUP="${SERVICE_GROUP:-infra}"
 export CONTAINER_MEMORY="${CONTAINER_MEMORY:-1g}"
 export CONTAINER_MEMORY_RESERVATION="${CONTAINER_MEMORY_RESERVATION:-512m}"
 export CONTAINER_READONLY="${CONTAINER_READONLY:-false}"
+export CONTAINER_CMD="${CONTAINER_CMD:-start}"
 
 # Keycloak 额外 docker run 参数（主题卷挂载 + data tmpfs）
 export EXTRA_DOCKER_ARGS="${EXTRA_DOCKER_ARGS:--v $PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro --tmpfs /opt/keycloak/data}"
@@ -190,6 +199,16 @@ main() {
   target_env=$(get_inactive_env)
   local target_container
   target_container=$(get_container_name "$target_env")
+
+  # 检测并停止 compose 管理的旧容器（首次蓝绿部署迁移）
+  local compose_container="noda-infra-keycloak-prod"
+  if [ "$(is_container_running "$compose_container")" = "true" ]; then
+    log_warn "检测到 compose 管理的 Keycloak 容器: $compose_container"
+    log_info "停止 compose 容器（迁移到蓝绿架构）..."
+    docker stop -t 30 "$compose_container"
+    docker rm "$compose_container"
+    log_success "compose 容器已停止并移除"
+  fi
 
   log_info "活跃环境: $active_env"
   log_info "目标环境: $target_env"
