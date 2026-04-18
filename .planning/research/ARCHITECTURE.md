@@ -1,633 +1,742 @@
-# Architecture Research: Shell 脚本精简重构
+# Architecture Research: 密钥管理集中化
 
-**Domain:** Shell 脚本库架构、蓝绿部署框架、库依赖管理
-**Researched:** 2026-04-18
-**Confidence:** HIGH（基于完整代码库审计，无外部依赖需验证）
-
----
-
-## 一、现状架构
-
-### 1.1 当前目录结构
-
-```
-scripts/
-├── lib/                          # 通用库（2 文件）
-│   ├── log.sh                    # 34 行 — 带颜色日志（info/success/error/warn）
-│   └── health.sh                 # 70 行 — 容器健康检查轮询
-│
-├── backup/lib/                   # 备份专用库（12 文件）
-│   ├── log.sh                    # 87 行 — 日志（info/warn/error/success + progress + json + structured）
-│   ├── health.sh                 # 358 行 — PG 连接检查 + 磁盘空间检查 + 数据库大小
-│   ├── config.sh                 # 374 行 — 配置加载/验证/访问函数
-│   ├── constants.sh              # 75 行 — 退出码 + 测试/监控/校验常量
-│   ├── util.sh                   # 86 行 — 时间戳、权限、清理、校验和、格式化
-│   ├── db.sh                     # 389 行 — 数据库备份操作
-│   ├── cloud.sh                  # 243 行 — B2 云存储操作
-│   ├── restore.sh                # 379 行 — 数据库恢复操作
-│   ├── alert.sh                  # 163 行 — 告警通知
-│   ├── metrics.sh                # 209 行 — 性能指标收集
-│   ├── verify.sh                 # 233 行 — 备份验证
-│   └── test-verify.sh            # 362 行 — 自动化验证测试
-│
-├── blue-green-deploy.sh          # 297 行 — findclass-ssr 蓝绿部署
-├── keycloak-blue-green-deploy.sh # 297 行 — keycloak 蓝绿部署
-├── rollback-findclass.sh         # 200 行 — findclass-ssr 紧急回滚
-├── manage-containers.sh          # 659 行 — 蓝绿容器管理（8 子命令）
-├── pipeline-stages.sh            # 1108 行 — Jenkins Pipeline 函数库
-├── setup-jenkins.sh              # 1029 行 — Jenkins 安装/卸载
-├── setup-jenkins-pipeline.sh     # 490 行 — Jenkins Pipeline 配置
-├── prepare-jenkins-pipeline.sh   # 375 行 — Jenkins Pipeline 准备
-├── setup-postgres-local.sh       # 539 行 — 宿主机 PG 安装
-├── setup-docker-permissions.sh   # 333 行 — Docker 权限配置
-├── apply-file-permissions.sh     # 409 行 — 文件权限应用
-├── undo-permissions.sh           # 279 行 — 权限回退
-├── break-glass.sh                # 324 行 — 紧急访问
-├── init-databases.sh             # 91 行 — 数据库初始化
-├── setup-keycloak-full.sh        # 186 行 — Keycloak 完整设置
-├── install-auditd-rules.sh       # 310 行 — 审计规则安装
-├── install-sudo-log.sh           # 298 行 — sudo 日志配置
-├── install-sudoers-whitelist.sh  # 298 行 — sudoers 白名单
-├── verify-sudoers-whitelist.sh   # 154 行 — sudoers 验证
-│
-├── deploy/                       # 部署脚本（旧版手动回退）
-│   ├── deploy-apps-prod.sh       # 168 行 — 应用部署
-│   ├── deploy-infrastructure-prod.sh
-│   └── ...
-│
-├── utils/                        # 工具脚本
-│   ├── decrypt-secrets.sh
-│   └── validate-docker.sh
-│
-├── verify/                       # 一次性验证脚本（5 文件）
-│   ├── quick-verify.sh
-│   ├── verify-apps.sh
-│   ├── verify-findclass.sh
-│   ├── verify-infrastructure.sh
-│   └── verify-services.sh
-│
-├── jenkins/                      # Jenkins 相关
-│
-└── backup/                       # 备份子系统
-    ├── backup-postgres.sh
-    ├── restore-postgres.sh
-    ├── verify-restore.sh
-    ├── test-verify-weekly.sh
-    ├── lib/                      # 12 个库文件（见上）
-    ├── tests/                    # 12 个测试脚本
-    ├── templates/                # 文档模板
-    └── docker/                   # 测试用 Dockerfile
-```
-
-### 1.2 库依赖关系图（当前）
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                    顶层脚本（source 消费者）                        │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  blue-green-deploy.sh ─────┐                                     │
-│  keycloak-blue-green ──────┤                                     │
-│  rollback-findclass.sh ────┼── source ──> scripts/lib/log.sh     │
-│  manage-containers.sh ─────┤              scripts/lib/health.sh  │
-│  pipeline-stages.sh ───────┤                                     │
-│  deploy-apps-prod.sh ──────┤                                     │
-│  setup-*.sh, install-*.sh ─┘                                     │
-│                                                                  │
-│  backup-postgres.sh ─────── source ──> scripts/backup/lib/*.sh   │
-│  restore-postgres.sh ──────            （独立库链）               │
-│  verify-restore.sh ────────                                      │
-│                                                                  │
-└──────────────────────────────────────────────────────────────────┘
-
-scripts/lib/ （通用库）          scripts/backup/lib/ （备份专用库）
-├── log.sh (34行)                ├── log.sh (87行) ─── 重复 + 增强
-└── health.sh (70行)             ├── health.sh (358行) ── 完全不同的功能
-                                 ├── constants.sh (75行)
-                                 ├── config.sh (374行)
-                                 ├── util.sh (86行)
-                                 └── ... (8个专用库)
-```
-
-### 1.3 关键发现：重复代码清单
-
-| 重复函数 | 出现位置 | 行数/次 | 总行数 | 差异点 |
-|---------|---------|---------|--------|--------|
-| `http_health_check()` | blue-green-deploy.sh, keycloak-blue-green-deploy.sh, pipeline-stages.sh, rollback-findclass.sh | ~25行 x 4 | ~100 | URL 端口/路径参数化 |
-| `e2e_verify()` | blue-green-deploy.sh, keycloak-blue-green-deploy.sh, pipeline-stages.sh, rollback-findclass.sh | ~45行 x 4 | ~180 | 端口/路径参数化 |
-| `log_*()` 函数组 | scripts/lib/log.sh vs scripts/backup/lib/log.sh | 34行 vs 87行 | 121 | backup 版多 progress/json/structured |
-| 常量定义 | blue-green-deploy.sh, keycloak-blue-green-deploy.sh | 各 ~15行 | ~30 | HEALTH_CHECK_MAX_RETRIES 等 |
-| `cleanup_old_images()` | blue-green-deploy.sh, pipeline-stages.sh, keycloak-blue-green-deploy.sh | ~30行 x 3 | ~90 | 参数/策略不同 |
-
-**总重复代码量：约 520 行**（占 scripts/ 总量 ~5%）
+**Domain:** Docker Compose 基础设施 + Jenkins CI/CD 密钥管理集成
+**Researched:** 2026-04-19
+**Confidence:** HIGH（基于完整代码库审计 + Context7 官方文档验证）
 
 ---
 
-## 二、推荐目标架构
+## 一、现状分析
 
-### 2.1 重构后的目录结构
+### 1.1 当前密钥分布
+
+项目当前有 4 个独立的密钥存储位置，彼此无统一管理：
+
+| 存储位置 | 包含的密钥 | 消费者 | 格式 |
+|---------|----------|--------|------|
+| `docker/.env` | POSTGRES_PASSWORD, KEYCLOAK_ADMIN_*, CLOUDFLARE_TUNNEL_TOKEN, B2_*, ANTHROPIC_* | docker compose (noda-infra, noda-apps), pipeline-stages.sh | 明文 .env |
+| `.env.production` | POSTGRES_*, KEYCLOAK_*, SMTP_*, RESEND_API_KEY, CLOUDFLARE_TUNNEL_TOKEN | docker compose app, 部署脚本 | 明文 .env |
+| `scripts/backup/.env.backup` | POSTGRES_*, B2_* | noda-ops 容器内备份脚本 | 明文 .env |
+| `config/secrets.sops.yaml` | cloudflare_tunnel_token, postgres_password, keycloak_admin_password, google_oauth_* | 部署脚本 (sops --decrypt) | SOPS + age 加密 |
+
+**关键问题：**
+1. `docker/.env` 和 `.env.production` 之间存在大量重复密钥（POSTGRES_PASSWORD, KEYCLOAK_ADMIN_*）
+2. 同一密钥在多个文件中维护，更新时容易遗漏
+3. `docker/.env` 被 gitignore 排除但 pipeline-stages.sh 直接 source 它（第 22-29 行），Jenkins 需要手动维护此文件
+4. SOPS 加密文件已存在但只存储了部分密钥，未成为唯一真相源
+
+### 1.2 现有 SOPS + age 基础设施
+
+项目已建立的 SOPS 加密体系：
+- **加密工具:** SOPS + age (非对称加密)
+- **配置文件:** `.sops.yaml` 定义加密规则
+- **密钥文件:** `config/keys/git-age-key.txt`（gitignored，仅本地保存）
+- **加密存储:** `config/secrets.sops.yaml`（加密后提交到 Git）
+- **解密脚本:** `scripts/utils/decrypt-secrets.sh`（支持 production/infra/noda/all）
+- **消费者:** `deploy-infrastructure-prod.sh` 检查 `config/secrets.sops.yaml` 是否存在
+
+### 1.3 密钥消费链路
 
 ```
-scripts/
-├── lib/                              # 统一通用库（合并后）
-│   ├── log.sh                        # 统一日志（合并两个 log.sh）
-│   ├── health.sh                     # 容器健康检查（不变）
-│   ├── http-check.sh                 # [新增] HTTP 健康检查 + E2E 验证
-│   └── image-cleanup.sh              # [新增] 镜像清理函数
-│
-├── backup/lib/                       # 备份专用库（保留，仅修改 log 依赖）
-│   ├── config.sh                     # 不变
-│   ├── constants.sh                  # 不变
-│   ├── util.sh                       # 不变
-│   ├── db.sh                         # 改 source ../lib/log.sh
-│   ├── cloud.sh                      # 改 source ../lib/log.sh
-│   ├── restore.sh                    # 改 source ../lib/log.sh
-│   ├── alert.sh                      # 改 source ../lib/log.sh
-│   ├── metrics.sh                    # 改 source ../lib/log.sh
-│   ├── verify.sh                     # 改 source ../lib/log.sh
-│   ├── test-verify.sh                # 改 source ../lib/log.sh
-│   ├── health.sh                     # 保留（功能完全不同，仅名相同）
-│   └── [log.sh 删除]                 # 指向 scripts/lib/log.sh
-│
-├── blue-green-deploy.sh              # [重写] 通用蓝绿部署入口
-├── rollback-findclass.sh             # [重写] 复用 http-check.sh
-├── manage-containers.sh              # 不变（已参数化良好）
-├── pipeline-stages.sh                # [精简] 删除 http_health_check/e2e_verify 内联副本
-└── ...
+密钥存储                    消费链路
+──────────────────────────────────────────────────────
+
+docker/.env ──────────┐
+                       ├──> docker compose up (环境变量替换 ${VAR})
+                       ├──> pipeline-stages.sh (source 加载)
+                       └──> noda-ops 容器环境变量 (B2_*, POSTGRES_*)
+
+.env.production ───────> docker-compose.app.yml 环境变量替换
+                        (${POSTGRES_USER}, ${RESEND_API_KEY}, ...)
+
+scripts/backup/.env.backup ──> noda-ops 容器内备份脚本 source
+
+config/secrets.sops.yaml ──> sops --decrypt → 临时文件 → source → 删除
 ```
 
-### 2.2 统一日志库：合并方案
+### 1.4 资源约束
 
-**策略：** 将 backup/lib/log.sh 的增强功能合并到 scripts/lib/log.sh，删除 backup/lib/log.sh。
+单服务器部署，现有容器资源分配：
 
-```bash
-# scripts/lib/log.sh — 合并后的统一日志库
+| 服务 | CPU 限制 | 内存限制 |
+|------|---------|---------|
+| PostgreSQL | 2 核 | 2G |
+| Keycloak (blue/green) | 1 核 | 1G (每个) |
+| findclass-ssr (blue/green) | 1 核 | 512M (每个) |
+| Nginx | 共享 | 共享 |
+| noda-ops | 共享 | 共享 |
+| noda-site | 0.25 核 | 64M |
+| Jenkins (宿主机) | 共享 | 共享 |
 
-# === 基础颜色常量 ===
-_GREEN='\033[0;32m'; _YELLOW='\033[1;33m'
-_RED='\033[0;31m';   _BLUE='\033[0;34m'
-_NC='\033[0m'
+**约束：** 服务器总内存有限，新服务必须轻量。
 
-# === 基础日志函数（原有） ===
-log_info()    { echo -e "${_YELLOW}info  $*${_NC}"; }
-log_success() { echo -e "${_GREEN}ok    $*${_NC}"; }
-log_error()   { echo -e "${_RED}fail  $*${_NC}" >&2; }
-log_warn()    { echo -e "${_YELLOW}warn  $*${_NC}"; }
+---
 
-# === 增强日志函数（来自 backup/lib/log.sh） ===
-log_progress() {
-  local current=$1 total=$2 message=$3
-  local percent=$((current * 100 / total))
-  echo "progress [$current/$total] ($percent%) $message"
-}
+## 二、方案评估
 
-log_structured() {
-  local level=$1 stage=$2 database=$3 message=$4 details="${5:-}"
-  local timestamp; timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-  echo "[$timestamp] [$level] [$stage] [$database] $message"
-  [[ -n "$details" ]] && echo "Details: $details"
-}
+### 2.1 方案对比
+
+| 维度 | 增强 SOPS + age（推荐） | HashiCorp Vault | Infisical 自托管 |
+|------|----------------------|-----------------|-----------------|
+| 额外容器 | 0 | 1 (Vault) | 3 (backend + PG + Redis) |
+| 额外内存 | 0 | 256-512M | 1-2G |
+| 实施复杂度 | 低 | 高（unseal、初始化、HA） | 中（依赖 PG + Redis） |
+| 学习成本 | 已有基础 | 高（新概念多） | 中 |
+| 运维负担 | 低 | 高（unseal、备份、升级） | 中（多容器管理） |
+| 与现有架构兼容性 | 极好（无侵入） | 需新增 compose 项目 | 需新增 compose 项目 |
+| 失败影响范围 | 有限（回退到手动 .env） | 严重（Vault down = 全部服务无法获取密钥） | 严重（同 Vault） |
+| CI/CD 集成 | sops --decrypt 一行 | 需要 vault CLI + token 管理 | infisical CLI + token |
+| 密钥轮换 | 手动 | 自动（动态密钥） | 自动 |
+| 审计日志 | git log（变更记录） | 完整审计日志 | 完整审计日志 |
+| 许可证 | MPL-2.0 (SOPS) + MIT (age) | BSL 1.1 | MIT (核心) |
+| 项目规模适配度 | 高（单服务器，<20 密钥） | 过重（企业级功能大部分用不上） | 过重（需要 3 个额外容器） |
+
+### 2.2 方案选型：增强 SOPS + age
+
+**推荐理由：**
+
+1. **零额外资源消耗** — 不需要新增容器，不影响现有服务
+2. **已有基础设施** — 项目已经使用 SOPS + age，只需扩展到覆盖所有密钥
+3. **Git 作为真相源** — 加密文件提交到 Git，天然有版本控制和审计日志
+4. **渐进式迁移** — 可以逐个 .env 文件迁移，无需一次性切换
+5. **无单点故障** — 不引入新的运行时依赖，SOPS 解密是部署时操作而非运行时
+6. **规模匹配** — 项目约 20 个密钥，不需要 Vault/Infisical 的动态密钥和自动轮换
+
+**为什么不选 Vault：**
+- 单服务器已有 Jenkins + PostgreSQL + Keycloak + findclass-ssr，资源紧张
+- Vault 的 unseal 机制意味着每次容器重启都需要人工干预（除非配置 auto-unseal，又引入额外复杂度）
+- Vault down = 所有依赖它的服务无法启动 = 引入鸡生蛋问题
+- BSL 许可证对企业使用有限制
+
+**为什么不选 Infisical：**
+- 自托管需要 3 个额外容器（backend + PG + Redis），资源开销 1-2G
+- 又引入一个需要备份和管理的数据库
+- MIT 核心版本缺少 RBAC 和 SSO，对单用户场景无额外价值
+
+---
+
+## 三、推荐架构
+
+### 3.1 架构总览
+
+```
+                    Git 仓库（唯一真相源）
+                    ┌──────────────────────┐
+                    │ config/secrets/       │
+                    │   infra.sops.yaml     │ ← 基础设施密钥
+                    │   apps.sops.yaml      │ ← 应用密钥
+                    │   backup.sops.yaml    │ ← 备份系统密钥
+                    │   jenkins.sops.yaml   │ ← Jenkins 专用
+                    │                       │
+                    │ .sops.yaml            │ ← SOPS 加密规则
+                    │ config/keys/          │ ← age 密钥 (gitignored)
+                    └──────────┬───────────┘
+                               │
+              ┌────────────────┼──────────────────┐
+              │                │                  │
+         Jenkins          部署脚本           docker compose
+              │                │                  │
+    ┌─────────▼──────┐ ┌──────▼───────┐ ┌────────▼─────────┐
+    │ pipeline       │ │ deploy-*.sh  │ │ envsubst / source │
+    │ fetch-secrets  │ │ decrypt-secs │ │ .env（临时生成）  │
+    │ → .env 临时文件│ │ → env vars   │ │                  │
+    └────────────────┘ └──────────────┘ └──────────────────┘
+              │                │                  │
+              └────────────────┼──────────────────┘
+                               │
+                    ┌──────────▼───────────┐
+                    │ Docker Compose 服务   │
+                    │ (环境变量注入)        │
+                    └──────────────────────┘
 ```
 
-**影响范围：** backup/lib/ 下 7 个 source log.sh 的文件都需要改路径。改动是机械性的搜索替换。
+### 3.2 密钥文件重组
 
-### 2.3 HTTP 健康检查 + E2E 验证：统一方案
+将分散的密钥整合到 `config/secrets/` 目录，按消费方分组：
 
-**策略：** 提取到 `scripts/lib/http-check.sh`，通过环境变量参数化端口和路径。
+```yaml
+# config/secrets/infra.sops.yaml — 基础设施密钥
+# 消费者：docker-compose.yml + docker-compose.prod.yml
+postgres_user: ENC[...]
+postgres_password: ENC[...]
+postgres_db: ENC[...]
+keycloak_admin_user: ENC[...]
+keycloak_admin_password: ENC[...]
+cloudflare_tunnel_token: ENC[...]
 
-```bash
-# scripts/lib/http-check.sh — HTTP 健康检查 + E2E 验证（统一版）
-# 依赖：scripts/lib/log.sh
-# 环境变量控制：
-#   SERVICE_PORT  — 服务端口（默认 3001）
-#   HEALTH_PATH   — 健康检查路径（默认 /api/health）
+# config/secrets/apps.sops.yaml — 应用密钥
+# 消费者：docker-compose.app.yml, findclass-ssr
+smtp_host: ENC[...]
+smtp_port: ENC[...]
+smtp_user: ENC[...]
+smtp_password: ENC[...]
+resend_api_key: ENC[...]
+anthropic_auth_token: ENC[...]
+anthropic_base_url: ENC[...]
 
-# http_health_check - 容器内 HTTP 健康检查
-# 参数：
-#   $1: 容器名
-#   $2: 最大重试次数（默认 30）
-#   $3: 重试间隔秒数（默认 4）
-# 环境变量：SERVICE_PORT, HEALTH_PATH
-http_health_check() {
-  local container="$1"
-  local max_retries="${2:-${HEALTH_CHECK_MAX_RETRIES:-30}}"
-  local interval="${3:-${HEALTH_CHECK_INTERVAL:-4}}"
-  local port="${SERVICE_PORT:-3001}"
-  local path="${HEALTH_PATH:-/api/health}"
-  local attempt=0
+# config/secrets/backup.sops.yaml — 备份系统密钥
+# 消费者：noda-ops 容器
+b2_account_id: ENC[...]
+b2_application_key: ENC[...]
+b2_bucket_name: ENC[...]
 
-  log_info "HTTP 健康检查: $container (最多 ${max_retries} 次, 间隔 ${interval}s)"
-
-  while [ $attempt -lt $max_retries ]; do
-    attempt=$((attempt + 1))
-    if docker exec "$container" wget --quiet --tries=1 --spider \
-       "http://localhost:${port}${path}" 2>/dev/null; then
-      log_success "$container — HTTP 健康检查通过 (第 ${attempt}/${max_retries} 次)"
-      return 0
-    fi
-    [ $attempt -lt $max_retries ] && sleep "$interval"
-  done
-
-  log_error "$container — HTTP 健康检查失败 (${max_retries} 次尝试)"
-  log_info "最近容器日志:"
-  docker logs "$container" --tail 20 2>&1 | sed 's/^/  /'
-  return 1
-}
-
-# e2e_verify - 通过 nginx 容器验证完整请求链路
-# 参数：
-#   $1: 目标环境 (blue 或 green) — 需要 get_container_name（来自 manage-containers.sh）
-#   $2: 最大重试次数（默认 5）
-#   $3: 重试间隔秒数（默认 2）
-# 环境变量：SERVICE_PORT, HEALTH_PATH, NGINX_CONTAINER
-e2e_verify() {
-  local target_env="$1"
-  local max_retries="${2:-${E2E_MAX_RETRIES:-5}}"
-  local interval="${3:-${E2E_INTERVAL:-2}}"
-  # get_container_name 来自 manage-containers.sh，调用者必须已 source
-  local container_name; container_name=$(get_container_name "$target_env")
-  local port="${SERVICE_PORT:-3001}"
-  local path="${HEALTH_PATH:-/api/health}"
-  # ... curl/wget 双模式检测逻辑（同现有实现）
-}
+# config/secrets/jenkins.sops.yaml — Jenkins 专用密钥
+# 消费者：Jenkins Pipeline
+cf_api_token: ENC[...]
+cf_zone_id: ENC[...]
+noda_apps_git_ssh_key: ENC[...]
 ```
 
-**关键设计决策：** `e2e_verify()` 依赖 `get_container_name()`（来自 manage-containers.sh），但不直接 source manage-containers.sh。调用者（blue-green-deploy.sh, pipeline-stages.sh）负责同时 source 两者。这种「依赖注入」模式避免了库之间的循环依赖。
+**分组原则：** 按最小权限原则，每个消费方只能解密自己需要的密钥。实际上使用同一个 age 密钥，但文件分离使权限管理更清晰。
 
-### 2.4 镜像清理：统一方案
+### 3.3 统一密钥获取脚本
 
-**策略：** 提取到 `scripts/lib/image-cleanup.sh`，合并三种清理策略。
-
-```bash
-# scripts/lib/image-cleanup.sh — 镜像清理（统一版）
-# 依赖：scripts/lib/log.sh
-
-# cleanup_sha_images - 清理超过指定天数的 SHA 标签镜像
-# 参数：$1 = 保留天数（默认 7）
-# 环境变量：SERVICE_NAME, IMAGE_RETENTION_DAYS
-cleanup_sha_images() { ... }
-
-# cleanup_dangling_images - 清理 dangling images
-cleanup_dangling_images() { ... }
-
-# cleanup_old_images - 综合清理（SHA + dangling）
-# 官方镜像服务（SERVICE_IMAGE 已设置）仅清理 dangling
-cleanup_old_images() {
-  if [ -z "${SERVICE_IMAGE:-}" ]; then
-    cleanup_sha_images "${1:-}"
-  fi
-  cleanup_dangling_images
-}
-```
-
-### 2.5 蓝绿部署框架：统一入口
-
-**策略：** 将 blue-green-deploy.sh 和 keycloak-blue-green-deploy.sh 合并为一个参数化脚本。
-
-核心差异点和统一方式：
-
-| 差异点 | findclass-ssr | keycloak | 统一方式 |
-|--------|--------------|----------|---------|
-| 镜像获取 | docker compose build + SHA tag | docker pull 官方镜像 | SERVICE_IMAGE 环境变量区分 |
-| 端口 | 3001 | 8080 | SERVICE_PORT 环境变量 |
-| 健康路径 | /api/health | /realms/master | HEALTH_PATH 环境变量 |
-| 内存限制 | 512m | 1g | CONTAINER_MEMORY 环境变量 |
-| 只读模式 | true | false | CONTAINER_READONLY 环境变量 |
-| 额外参数 | 无 | 主题卷 + data tmpfs | EXTRA_DOCKER_ARGS 环境变量 |
-| 健康检查超时 | 30x4=120s | 45x4=180s | HEALTH_CHECK_MAX_RETRIES 环境变量 |
-| 旧容器迁移 | 无 | 检测 compose 容器 | 统一检测逻辑 |
-
-**统一入口脚本逻辑：**
+新增 `scripts/lib/secrets.sh` — 统一密钥获取接口：
 
 ```bash
 #!/bin/bash
-# scripts/blue-green-deploy.sh — 通用蓝绿部署（统一版）
-# 通过环境变量参数化支持 findclass-ssr, keycloak, 以及未来服务
+# scripts/lib/secrets.sh — 统一密钥获取接口
+# 依赖：sops CLI, age 密钥
+# 用法：
+#   source scripts/lib/secrets.sh
+#   fetch_secrets infra     # 解密 infra.sops.yaml → 设置环境变量
+#   fetch_secrets apps      # 解密 apps.sops.yaml → 设置环境变量
+#   fetch_secrets backup    # 解密 backup.sops.yaml → 设置环境变量
+#   fetch_secrets_all       # 解密所有密钥
 
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+_SECRETS_DIR="${_SECRETS_DIR:-$PROJECT_ROOT/config/secrets}"
+_SECRETS_CACHE_DIR="/tmp/noda-secrets-$$"
 
-source "$PROJECT_ROOT/scripts/lib/log.sh"
-source "$PROJECT_ROOT/scripts/lib/http-check.sh"
-source "$PROJECT_ROOT/scripts/lib/image-cleanup.sh"
-source "$PROJECT_ROOT/scripts/manage-containers.sh"
+# _find_age_key - 查找 age 密钥文件
+_find_age_key() {
+    # 优先级：环境变量 > 项目目录 > 用户目录
+    if [[ -n "${SOPS_AGE_KEY_FILE:-}" && -f "$SOPS_AGE_KEY_FILE" ]]; then
+        echo "$SOPS_AGE_KEY_FILE"
+        return
+    fi
+    local key_file="$PROJECT_ROOT/config/keys/git-age-key.txt"
+    if [[ -f "$key_file" ]]; then
+        echo "$key_file"
+        return
+    fi
+    log_error "未找到 age 密钥文件，请设置 SOPS_AGE_KEY_FILE"
+    return 1
+}
 
-# 加载 .env
-[ -f "$PROJECT_ROOT/docker/.env" ] && { set -a; source "$PROJECT_ROOT/docker/.env"; set +a; }
+# fetch_secrets - 解密密钥文件并导出为环境变量
+# 参数：$1 = 密钥组名 (infra|apps|backup|jenkins)
+# 效果：将解密后的键值对 export 到当前 shell
+fetch_secrets() {
+    local group="$1"
+    local encrypted_file="$_SECRETS_DIR/${group}.sops.yaml"
 
-main() {
-  # 前置检查（Docker daemon + nginx + network）— 通用
-  # 读取活跃环境 — 通用
-  # 根据 SERVICE_IMAGE 是否设置：
-  #   有 SERVICE_IMAGE → docker pull（Keycloak/官方镜像模式）
-  #   无 SERVICE_IMAGE → docker build + SHA tag（findclass-ssr/源码构建模式）
-  # 停旧目标容器 + run_container（通用）
-  # http_health_check（通用，参数化）
-  # update_upstream + nginx -t + reload_nginx（通用）
-  # e2e_verify（通用，参数化）
-  # cleanup_old_images（通用）
+    if [[ ! -f "$encrypted_file" ]]; then
+        log_error "密钥文件不存在: $encrypted_file"
+        return 1
+    fi
+
+    local age_key
+    age_key=$(_find_age_key) || return 1
+    export SOPS_AGE_KEY_FILE="$age_key"
+
+    # 解密 YAML → 提取键值对 → export
+    local decrypted
+    decrypted=$(sops --decrypt "$encrypted_file" 2>/dev/null) || {
+        log_error "密钥解密失败: $group"
+        return 1
+    }
+
+    # YAML 值提取（纯 bash，无 yq 依赖）
+    while IFS=': ' read -r key value; do
+        key=$(echo "$key" | xargs)
+        value=$(echo "$value" | xargs)
+        [[ -z "$key" || "$key" == \#* ]] && continue
+        # 去除引号
+        value="${value#\"}" ; value="${value%\"}"
+        export "$key=$value"
+    done <<< "$decrypted"
+
+    log_success "已加载密钥: $group"
+}
+
+# cleanup_secrets - 清理环境变量中的敏感信息
+cleanup_secrets() {
+    # 从已知的密钥列表中 unset 环境变量
+    # 注意：这不会影响已经传递给 docker compose up 的变量
+    unset POSTGRES_PASSWORD KEYCLOAK_ADMIN_PASSWORD 2>/dev/null || true
+    # ... 其他密钥
+    rm -rf "$_SECRETS_CACHE_DIR" 2>/dev/null || true
+}
+
+# fetch_secrets_all - 加载所有密钥组
+fetch_secrets_all() {
+    fetch_secrets infra
+    fetch_secrets apps
+    fetch_secrets backup
+    fetch_secrets jenkins
 }
 ```
 
-**Keycloak 调用方式变为（与 pipeline_deploy_keycloak() 现有逻辑一致）：**
+### 3.4 Docker Compose 集成
+
+**方式：部署时生成临时 .env 文件**
+
+不修改 docker-compose.yml 中的 `${VAR}` 引用方式（这是 Docker Compose 的标准模式），而是在部署前从 SOPS 解密生成 `.env` 文件：
 
 ```bash
-SERVICE_NAME=keycloak \
-SERVICE_PORT=8080 \
-UPSTREAM_NAME=keycloak_backend \
-HEALTH_PATH=/realms/master \
-ACTIVE_ENV_FILE=/opt/noda/active-env-keycloak \
-UPSTREAM_CONF=$PROJECT_ROOT/config/nginx/snippets/upstream-keycloak.conf \
-CONTAINER_MEMORY=1g \
-CONTAINER_MEMORY_RESERVATION=512m \
-CONTAINER_READONLY=false \
-SERVICE_GROUP=infra \
-SERVICE_IMAGE=quay.io/keycloak/keycloak:26.2.3 \
-EXTRA_DOCKER_ARGS='-v .../themes:/opt/keycloak/themes/noda:ro --tmpfs /opt/keycloak/data' \
-ENVSUBST_VARS='${POSTGRES_USER} ...' \
-HEALTH_CHECK_MAX_RETRIES=45 \
-bash scripts/blue-green-deploy.sh
+# scripts/lib/secrets.sh 中的 generate_env_file 函数
+# 生成临时 .env 文件供 docker compose 消费
+
+generate_env_file() {
+    local group="$1"
+    local output_file="$2"
+
+    fetch_secrets "$group"
+
+    # 将环境变量写入临时 .env 文件
+    sops --decrypt "$_SECRETS_DIR/${group}.sops.yaml" | \
+        sed 's/: /=/' | \
+        sed 's/^"//' | sed 's/"$//' > "$output_file"
+
+    chmod 600 "$output_file"
+}
 ```
 
-### 2.6 重构后依赖关系图
+**Docker Compose 部署流程变化：**
+
+```bash
+# 之前（直接 source docker/.env）
+source docker/.env
+docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+
+# 之后（从加密文件解密生成临时 .env）
+source scripts/lib/secrets.sh
+generate_env_file infra /tmp/noda-infra-env.$$
+docker compose --env-file /tmp/noda-infra-env.$$ -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+rm -f /tmp/noda-infra-env.$$
+```
+
+### 3.5 Jenkins Pipeline 集成
+
+**修改 pipeline-stages.sh 的密钥加载逻辑：**
+
+当前 pipeline-stages.sh 第 22-29 行：
+
+```bash
+# 当前：直接 source 明文 .env
+for _env_path in "$PROJECT_ROOT/docker/.env" "$HOME/Project/noda-infra/docker/.env"; do
+    if [ -f "$_env_path" ]; then
+        set -a; source "$_env_path"; set +a
+        break
+    fi
+done
+```
+
+改为：
+
+```bash
+# 新：从 SOPS 加密文件解密
+source "$PROJECT_ROOT/scripts/lib/secrets.sh"
+
+# 根据需要加载对应密钥组
+fetch_secrets infra   # 数据库密码、Keycloak 管理员密码、Cloudflare token
+fetch_secrets backup  # B2 凭据（备份相关 Pipeline 使用）
+fetch_secrets jenkins # Cloudflare API token（CDN Purge 阶段使用）
+```
+
+**Jenkins 环境配置要求：**
+
+Jenkins 宿主机需要：
+1. 安装 `sops` CLI
+2. 配置 `SOPS_AGE_KEY_FILE` 环境变量指向 age 私钥
+3. age 私钥存储在 Jenkins 的 `credentials` 中，通过 `withCredentials` 注入
+
+```groovy
+// Jenkinsfile 中的 environment 块增强
+environment {
+    PROJECT_ROOT = "${WORKSPACE}"
+    SOPS_AGE_KEY_FILE = credentials('sops-age-key-file')  // Jenkins Credentials
+    // ... 其他环境变量
+}
+```
+
+### 3.6 网络拓扑
+
+**无变化。** SOPS 方案不引入新的网络组件。密钥解密是部署时（build time / deploy time）操作，不是运行时（runtime）操作。
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│                       顶层脚本（source 消费者）                     │
-├───────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│  blue-green-deploy.sh ──┐                                         │
-│  rollback-findclass.sh ─┤                                         │
-│  manage-containers.sh ──┼── source ──> scripts/lib/log.sh        │
-│  pipeline-stages.sh ────┤              scripts/lib/health.sh     │
-│  deploy-*.sh ───────────┤              scripts/lib/http-check.sh │
-│  setup-*.sh ────────────┘              scripts/lib/image-cleanup │
-│                                                                   │
-│  backup-postgres.sh ──── source ──> scripts/lib/log.sh (统一)    │
-│  restore-postgres.sh ───               scripts/backup/lib/*.sh   │
-│  verify-restore.sh ─────              （独立库链，log 指向统一版） │
-│                                                                   │
-└───────────────────────────────────────────────────────────────────┘
+                    ┌──────────────────────────────────────┐
+                    │         noda-network (external)       │
+                    │                                      │
+                    │  ┌──────────┐  ┌─────────────────┐  │
+                    │  │ nginx    │  │ noda-ops        │  │
+                    │  │ :80      │  │ (backup+CF)     │  │
+                    │  └────┬─────┘  └────────┬────────┘  │
+                    │       │                 │            │
+                    │  ┌────▼─────┐  ┌────────▼────────┐  │
+                    │  │ keycloak │  │ postgres        │  │
+                    │  │ :8080    │  │ :5432           │  │
+                    │  └──────────┘  └─────────────────┘  │
+                    │                                      │
+                    │  ┌─────────────────────────────────┐ │
+                    │  │ findclass-ssr (blue/green)       │ │
+                    │  │ noda-site                        │ │
+                    │  └─────────────────────────────────┘ │
+                    └──────────────────────────────────────┘
 
-scripts/lib/ （统一通用库）         scripts/backup/lib/ （备份专用库）
-├── log.sh        ← 合并版         ├── config.sh      — 不变
-├── health.sh     ← 不变           ├── constants.sh   — 不变
-├── http-check.sh ← [新增]         ├── util.sh        — 不变
-└── image-cleanup ← [新增]         ├── db.sh          — 改 source
-                                   ├── cloud.sh       — 改 source
-                                   ├── restore.sh     — 改 source
-                                   ├── alert.sh       — 改 source
-                                   ├── metrics.sh     — 改 source
-                                   ├── verify.sh      — 改 source
-                                   ├── test-verify.sh — 改 source
-                                   └── health.sh      — 不变（功能不同）
+宿主机:
+  Jenkins — 部署时调用 sops --decrypt → 环境变量 → docker compose
+  age 密钥 — 仅 Jenkins 用户和运维者可读
+```
+
+### 3.7 备份流程
+
+**SOPS 加密文件的备份策略：**
+
+SOPS 加密文件已存储在 Git 中，天然有版本控制。但密钥管理引入了两个新的备份需求：
+
+#### 3.7.1 age 私钥备份
+
+age 私钥（`config/keys/git-age-key.txt`）是解密所有密钥的根密钥，必须安全备份：
+
+```
+age 私钥备份策略：
+1. 主存储：服务器 config/keys/git-age-key.txt (gitignored)
+2. 备份 1：离线 USB 或密码管理器（如 1Password/Bitwarden）
+3. 备份 2：B2 云存储加密存储（使用独立密码加密后上传）
+
+恢复：只要有 age 私钥，即可从 Git 仓库中的 SOPS 加密文件解密所有密钥
+```
+
+#### 3.7.2 密钥文件同步到 B2
+
+在现有 noda-ops 备份流程中添加 SOPS 加密文件备份：
+
+```bash
+# 在 noda-ops 的 crontab 中添加（或集成到 backup-postgres.sh）
+# 备份 SOPS 加密文件到 B2（文件已经加密，直接上传）
+
+rclone copy /app/config-secrets/ b2:noda-backups/secrets/ \
+    --verbose --log-file /var/log/noda-backup/secrets-backup.log
+```
+
+**注意：** 上传的是 SOPS 加密后的 `.sops.yaml` 文件，不是明文。age 私钥使用独立加密后单独上传。
+
+### 3.8 迁移流程
+
+#### 3.8.1 迁移步骤（可逆、渐进式）
+
+```
+Phase 1: 创建密钥文件结构
+  ├─ 创建 config/secrets/ 目录
+  ├─ 创建 infra.sops.yaml（从 docker/.env 和 config/secrets.sops.yaml 迁移）
+  ├─ 创建 apps.sops.yaml（从 .env.production 迁移）
+  ├─ 创建 backup.sops.yaml（从 scripts/backup/.env.backup 迁移）
+  └─ 创建 jenkins.sops.yaml（Jenkins 凭据文档化）
+
+Phase 2: 创建统一密钥获取接口
+  ├─ 创建 scripts/lib/secrets.sh
+  └─ 单元测试：sops 加密/解密/环境变量导出
+
+Phase 3: 修改消费方（渐进式）
+  ├─ 修改 pipeline-stages.sh（最关键 — Jenkins 主消费方）
+  ├─ 修改 deploy-infrastructure-prod.sh
+  ├─ 修改 deploy-apps-prod.sh
+  └─ 修改 noda-ops 容器环境变量注入方式
+
+Phase 4: 验证 + 清理
+  ├─ 全流程测试（Jenkins Pipeline + 手动部署）
+  ├─ 删除 docker/.env 中的密钥（保留非敏感变量如 COMPOSE_PROJECT_NAME）
+  ├─ 删除 .env.production
+  ├─ 删除 scripts/backup/.env.backup 中的密钥
+  └─ 更新 .gitignore 和文档
+```
+
+#### 3.8.2 迁移映射表
+
+| 现有位置 | 目标位置 | 密钥列表 |
+|---------|---------|---------|
+| `docker/.env` → POSTGRES_USER | config/secrets/infra.sops.yaml | postgres_user |
+| `docker/.env` → POSTGRES_PASSWORD | config/secrets/infra.sops.yaml | postgres_password |
+| `docker/.env` → POSTGRES_DB | config/secrets/infra.sops.yaml | postgres_db |
+| `docker/.env` → KEYCLOAK_ADMIN_USER | config/secrets/infra.sops.yaml | keycloak_admin_user |
+| `docker/.env` → KEYCLOAK_ADMIN_PASSWORD | config/secrets/infra.sops.yaml | keycloak_admin_password |
+| `docker/.env` → CLOUDFLARE_TUNNEL_TOKEN | config/secrets/infra.sops.yaml | cloudflare_tunnel_token |
+| `docker/.env` → B2_ACCOUNT_ID | config/secrets/backup.sops.yaml | b2_account_id |
+| `docker/.env` → B2_APPLICATION_KEY | config/secrets/backup.sops.yaml | b2_application_key |
+| `docker/.env` → B2_BUCKET_NAME | config/secrets/backup.sops.yaml | b2_bucket_name |
+| `docker/.env` → ANTHROPIC_AUTH_TOKEN | config/secrets/apps.sops.yaml | anthropic_auth_token |
+| `docker/.env` → ANTHROPIC_BASE_URL | config/secrets/apps.sops.yaml | anthropic_base_url |
+| `.env.production` → SMTP_* | config/secrets/apps.sops.yaml | smtp_host, smtp_port, smtp_user, smtp_password |
+| `.env.production` → RESEND_API_KEY | config/secrets/apps.sops.yaml | resend_api_key |
+| `scripts/backup/.env.backup` → B2_* | config/secrets/backup.sops.yaml | (已合并) |
+| `config/secrets.sops.yaml` → * | 分散到对应文件后删除 | (已分散) |
+| Jenkins credentials → cf-api-token | config/secrets/jenkins.sops.yaml | cf_api_token |
+| Jenkins credentials → cf-zone-id | config/secrets/jenkins.sops.yaml | cf_zone_id |
+
+### 3.9 故障恢复（Fallback）
+
+#### 3.9.1 SOPS 解密失败
+
+**场景：** age 私钥丢失或 SOPS 工具不可用
+
+**恢复方案：**
+1. **age 私钥丢失：** 从离线备份恢复（密码管理器或 USB）
+2. **SOPS 不可用：** 在部署服务器上运行 `apt install sops` 或下载二进制
+3. **紧急回退：** 手动创建 `.env` 文件（从密码管理器中获取密钥值）
+
+```bash
+# 紧急回退脚本（scripts/utils/emergency-env.sh）
+# 从密码管理器获取密钥值，手动创建 .env 文件
+#!/bin/bash
+echo "紧急模式：手动输入密钥值生成 .env 文件"
+echo "POSTGRES_PASSWORD="; read -rs PG_PASS
+echo "KEYCLOAK_ADMIN_PASSWORD="; read -rs KC_PASS
+# ...
+cat > /tmp/emergency.env <<EOF
+POSTGRES_PASSWORD=$PG_PASS
+KEYCLOAK_ADMIN_PASSWORD=$KC_PASS
+EOF
+chmod 600 /tmp/emergency.env
+echo "紧急 .env 已生成: /tmp/emergency.env"
+```
+
+#### 3.9.2 密钥文件损坏
+
+**场景：** Git 中的 SOPS 加密文件被损坏
+
+**恢复方案：**
+1. `git log -- config/secrets/infra.sops.yaml` 找到上一个有效版本
+2. `git checkout HEAD~1 -- config/secrets/infra.sops.yaml` 恢复
+3. B2 备份中也有加密文件副本
+
+#### 3.9.3 Jenkins 无法获取密钥
+
+**场景：** Jenkins 构建时 SOPS 解密失败
+
+**恢复方案：**
+1. Pipeline 在 Pre-flight 阶段检查 `sops` 和 age 密钥文件
+2. 如果失败，Pipeline 提供明确的错误信息和恢复指引
+3. 使用手动部署脚本（`deploy-infrastructure-prod.sh`）作为回退
+4. 手动脚本也使用相同的 `secrets.sh` 接口，但可以退回到直接指定 `.env` 文件
+
+```bash
+# pipeline-stages.sh 中的回退逻辑
+if ! fetch_secrets infra 2>/dev/null; then
+    log_warn "SOPS 解密失败，尝试加载明文 .env（不推荐）"
+    if [[ -f "$PROJECT_ROOT/docker/.env" ]]; then
+        set -a; source "$PROJECT_ROOT/docker/.env"; set +a
+        log_warn "已从明文 .env 加载密钥（建议迁移到 SOPS）"
+    else
+        log_error "无法加载任何密钥，中止部署"
+        return 1
+    fi
+fi
 ```
 
 ---
 
-## 三、组件边界与职责
+## 四、组件边界与职责
 
-| 组件 | 职责 | 依赖 | 消费者 |
-|------|------|------|--------|
-| `lib/log.sh` | 统一日志输出（基础 + 增强） | 无 | 所有脚本 |
-| `lib/health.sh` | 容器 Docker healthcheck 轮询 | log.sh | manage-containers, deploy-* |
-| `lib/http-check.sh` | HTTP 健康检查 + E2E 验证 | log.sh | blue-green-deploy, pipeline-stages, rollback |
-| `lib/image-cleanup.sh` | 镜像清理（SHA + dangling） | log.sh | blue-green-deploy, pipeline-stages |
-| `manage-containers.sh` | 蓝绿容器生命周期管理 | log.sh, health.sh | 所有蓝绿脚本 |
-| `pipeline-stages.sh` | Jenkins Pipeline 函数 | log.sh, manage-containers, http-check, image-cleanup | Jenkinsfile |
-| `blue-green-deploy.sh` | 通用蓝绿部署入口 | log.sh, http-check, image-cleanup, manage-containers | Jenkinsfile / 手动 |
-| `backup/lib/*` | 备份子系统专用逻辑 | lib/log.sh（统一） | backup-postgres, restore-postgres |
+### 4.1 新增组件
 
-### 组件边界原则
-
-1. **lib/ 层零业务逻辑**：只提供纯工具函数（日志、检查、清理），不包含任何部署流程
-2. **manage-containers.sh 是容器管理的唯一入口**：所有蓝绿容器操作通过此脚本
-3. **backup/lib/ 独立性保持**：备份系统有自己独立的生命周期和配置体系，不与部署脚本耦合
-4. **http-check.sh 不依赖 manage-containers.sh**：`e2e_verify()` 需要 `get_container_name()`，但通过调用者间接获取而非直接依赖
-
----
-
-## 四、集成点识别
-
-### 4.1 新增文件
-
-| 文件 | 来源 | 内容 |
+| 组件 | 职责 | 类型 |
 |------|------|------|
-| `scripts/lib/http-check.sh` | 从 blue-green-deploy.sh 提取 | `http_health_check()` + `e2e_verify()` 参数化统一版 |
-| `scripts/lib/image-cleanup.sh` | 从 pipeline-stages.sh 提取 | `cleanup_old_images()` + `cleanup_sha_images()` + `cleanup_dangling_images()` |
+| `config/secrets/*.sops.yaml` | 加密密钥存储（Git 提交） | 数据文件 |
+| `scripts/lib/secrets.sh` | 统一密钥获取接口 | Shell 库 |
+| `scripts/utils/backup-age-key.sh` | age 私钥备份到 B2 | 工具脚本 |
+| `scripts/utils/emergency-env.sh` | 紧急回退 .env 生成 | 工具脚本 |
 
-### 4.2 修改文件
+### 4.2 修改组件
 
-| 文件 | 变更类型 | 具体改动 |
+| 组件 | 变更类型 | 具体改动 |
 |------|---------|---------|
-| `scripts/lib/log.sh` | 增强 | 合并 backup/lib/log.sh 的 `log_progress()` + `log_structured()` |
-| `scripts/blue-green-deploy.sh` | 重写 | 改为参数化通用蓝绿部署，source http-check.sh + image-cleanup.sh |
-| `scripts/keycloak-blue-green-deploy.sh` | **删除** | 功能合并入 blue-green-deploy.sh |
-| `scripts/rollback-findclass.sh` | 精简 | 删除内联的 http_health_check/e2e_verify，source http-check.sh |
-| `scripts/pipeline-stages.sh` | 精简 | 删除内联的 http_health_check/e2e_verify/cleanup_old_images，source http-check.sh + image-cleanup.sh |
-| `scripts/backup/lib/log.sh` | **删除** | 内容已合并到 scripts/lib/log.sh |
-| `scripts/backup/lib/db.sh` | 改 source 路径 | `source "$_DB_LIB_DIR/log.sh"` 改为指向 `scripts/lib/log.sh` |
-| `scripts/backup/lib/cloud.sh` | 改 source 路径 | 同上模式 |
-| `scripts/backup/lib/restore.sh` | 改 source 路径 | 同上模式 |
-| `scripts/backup/lib/alert.sh` | 改 source 路径 | 同上模式 |
-| `scripts/backup/lib/metrics.sh` | 改 source 路径 | 同上模式 |
-| `scripts/backup/lib/verify.sh` | 改 source 路径 | 同上模式 |
-| `scripts/backup/lib/test-verify.sh` | 改 source 路径 | 同上模式 |
+| `pipeline-stages.sh` | 密钥加载重构 | 第 22-29 行 source .env 改为 `fetch_secrets` |
+| `deploy-infrastructure-prod.sh` | 密钥加载重构 | 第 209 行检查改为 `fetch_secrets infra` |
+| `deploy-apps-prod.sh` | 密钥加载重构 | 添加 `fetch_secrets apps` |
+| `Jenkinsfile.findclass-ssr` | 环境变量增强 | 添加 `SOPS_AGE_KEY_FILE` credentials |
+| `Jenkinsfile.infra` | 环境变量增强 | 添加 `SOPS_AGE_KEY_FILE` credentials |
+| `Jenkinsfile.keycloak` | 环境变量增强 | 添加 `SOPS_AGE_KEY_FILE` credentials |
+| `Jenkinsfile.noda-site` | 无变更 | noda-site 不需要密钥 |
+| `docker/docker-compose.yml` | 移除硬编码环境变量 | noda-ops 的 B2_* 环境变量改为从 .env 读取 |
+| `.sops.yaml` | 更新加密规则 | 添加 `config/secrets/*.sops.yaml` 路径规则 |
 
-### 4.3 不变文件
+### 4.3 删除组件（迁移完成后）
 
-| 文件 | 原因 |
-|------|------|
-| `scripts/lib/health.sh` | 功能无重叠（Docker healthcheck 轮询 vs HTTP 检查） |
-| `scripts/backup/lib/health.sh` | 功能完全不同（PG 连接/磁盘/数据库大小） |
-| `scripts/backup/lib/config.sh` | 备份专用配置体系 |
-| `scripts/backup/lib/constants.sh` | 备份专用退出码 |
-| `scripts/backup/lib/util.sh` | 备份专用工具函数 |
-| `scripts/manage-containers.sh` | 已参数化良好，无需修改 |
-| 所有 setup-*.sh, install-*.sh | 仅 source log.sh，无需改动 |
-| scripts/verify/*.sh | 不 source 自定义库，不参与重构 |
+| 组件 | 删除原因 |
+|------|---------|
+| `config/secrets.sops.yaml` | 内容分散到 `config/secrets/*.sops.yaml` |
+| `docker/.env`（密钥部分） | 密钥迁移到 SOPS 文件，仅保留非敏感配置 |
+| `.env.production` | 全部密钥迁移到 SOPS 文件 |
+| `scripts/backup/.env.backup`（密钥部分） | 密钥迁移到 SOPS 文件 |
+| `scripts/utils/decrypt-secrets.sh` | 被 `scripts/lib/secrets.sh` 替代 |
 
-### 4.4 构建顺序（依赖关系决定）
+---
+
+## 五、数据流
+
+### 5.1 部署时密钥注入流程（Jenkins Pipeline）
 
 ```
-Phase 1: scripts/lib/log.sh（合并增强）
-  | 所有后续改动依赖此文件
-  v
-Phase 2: scripts/lib/http-check.sh + scripts/lib/image-cleanup.sh（新增）
-  | 依赖 log.sh
-  v
-Phase 3: scripts/backup/lib/*.sh（改 source 路径）— 可与 Phase 2 并行
-  | 依赖 log.sh 合并版
-  v
-Phase 4: blue-green-deploy.sh（重写）+ 删除 keycloak-blue-green-deploy.sh
-  | 依赖 http-check.sh + image-cleanup.sh
-  v
-Phase 5: rollback-findclass.sh + pipeline-stages.sh（精简内联副本）
-  | 依赖 http-check.sh + image-cleanup.sh
+┌─────────────┐    ┌───────────────┐    ┌──────────────────┐    ┌──────────────┐
+│ Jenkins     │    │ scripts/lib/  │    │ SOPS + age       │    │ Docker       │
+│ Pipeline    │───>│ secrets.sh    │───>│ decrypt           │───>│ Compose      │
+│             │    │               │    │                   │    │              │
+│ 1. checkout │    │ 2. fetch_     │    │ 3. sops --decrypt │    │ 4. compose up│
+│    代码     │    │    secrets    │    │    *.sops.yaml    │    │    环境变量  │
+│             │    │    infra      │    │    → 环境变量     │    │    注入容器  │
+│             │    │    apps       │    │                   │    │              │
+│             │    │    backup     │    │                   │    │              │
+└─────────────┘    └───────────────┘    └──────────────────┘    └──────────────┘
+```
+
+**步骤详解：**
+
+1. Jenkins checkout 代码 → `.sops.yaml` 和 `config/secrets/*.sops.yaml` 都在 Git 中
+2. Jenkins 通过 `withCredentials` 注入 `SOPS_AGE_KEY_FILE` 路径
+3. `pipeline-stages.sh` 调用 `fetch_secrets infra/apps/backup`
+4. `secrets.sh` 执行 `sops --decrypt` 解密到内存中的环境变量
+5. 后续 `docker compose up` 或 `docker run` 通过 `${VAR}` 引用已设置的环境变量
+6. Pipeline 结束时环境变量随 shell 退出自动清理
+
+### 5.2 手动部署时密钥注入流程
+
+```
+┌─────────────┐    ┌───────────────┐    ┌──────────────────┐
+│ 运维者      │    │ deploy-*.sh   │    │ Docker Compose   │
+│             │───>│               │───>│                  │
+│ export      │    │ source        │    │ compose up       │
+│ SOPS_AGE_   │    │ secrets.sh    │    │ (环境变量已设置) │
+│ KEY_FILE=.. │    │ fetch_secrets │    │                  │
+└─────────────┘    └───────────────┘    └──────────────────┘
+```
+
+### 5.3 密钥更新流程
+
+```
+┌─────────────┐    ┌───────────────┐    ┌──────────────┐
+│ 运维者      │    │ SOPS 编辑     │    │ Git          │
+│             │───>│               │───>│              │
+│ sops edit   │    │ 自动加密      │    │ git add +    │
+│ infra.sops  │    │ 保存加密文件  │    │ git commit + │
+│ .yaml       │    │               │    │ git push     │
+└─────────────┘    └───────────────┘    └──────────────┘
+                                               │
+                                               ▼
+                                        ┌──────────────┐
+                                        │ Jenkins      │
+                                        │ 下次构建时   │
+                                        │ 自动使用新值 │
+                                        └──────────────┘
 ```
 
 ---
 
-## 五、架构模式
+## 六、安全考量
 
-### 模式 1: Source Guard（防重复加载 + 防直接执行）
+### 6.1 age 私钥保护
 
-**已使用的模式：**
+age 私钥是整个密钥管理体系的根信任点：
 
-manage-containers.sh 底部（可 source 可执行）：
-```bash
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  case "${1:-}" in
-    init|start|stop|...) ... ;;
-  esac
-fi
+| 保护措施 | 说明 |
+|---------|------|
+| 服务器本地存储 | `config/keys/git-age-key.txt`，权限 600，仅 jenkins 用户可读 |
+| Jenkins Credentials | 作为 Secret file 类型存储，Pipeline 中通过 `withCredentials` 注入 |
+| 离线备份 | 存储在密码管理器（如 1Password），或加密 USB |
+| B2 加密备份 | 使用独立密码的 gpg 对称加密后上传到 B2 |
+
+### 6.2 内存中的密钥生命周期
+
+```
+密钥在内存中的存在时间：
+  fetch_secrets → export → docker compose up → shell 退出 → 环境变量消失
+
+最长存活时间：一个 Pipeline 构建周期（通常 5-15 分钟）
+不会写入磁盘（除非使用 generate_env_file 生成临时文件，使用后立即删除）
 ```
 
-pipeline-stages.sh 底部（仅 source）：
-```bash
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  echo "pipeline-stages.sh 是函数库，不支持直接执行"
-  exit 1
-fi
-```
+### 6.3 审计日志
 
-backup/lib/config.sh 顶部（防重复加载）：
-```bash
-if [[ -n "${_NODA_CONFIG_LOADED:-}" ]]; then return 0; fi
-_NODA_CONFIG_LOADED=1
-```
-
-**推荐：** 新增的 `http-check.sh` 和 `image-cleanup.sh` 使用仅 source 模式，因为它们总被其他脚本调用。
-
-### 模式 2: 环境变量参数化（多态）
-
-**已使用的模式：** manage-containers.sh 通过 SERVICE_NAME/SERVICE_PORT/UPSTREAM_NAME 等环境变量适配不同服务。
-
-**扩展应用：** blue-green-deploy.sh 通过 SERVICE_IMAGE 是否设置来决定构建 vs 拉取模式。
-
-```bash
-# 参数化模式示例
-deploy_service() {
-  if [ -n "${SERVICE_IMAGE:-}" ]; then
-    # 官方镜像模式：拉取
-    docker pull "$SERVICE_IMAGE"
-    local image="$SERVICE_IMAGE"
-  else
-    # 源码构建模式：构建 + SHA 标签
-    docker build -t "${SERVICE_NAME}:${git_sha}" ...
-    local image="${SERVICE_NAME}:${git_sha}"
-  fi
-
-  # 后续流程完全相同
-  run_container "$target_env" "$image"
-  http_health_check "$target_container"
-  ...
-}
-```
-
-### 模式 3: 跨目录库引用（动态路径计算）
-
-**当前模式（backup/lib/ 内部）：**
-```bash
-_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$_LIB_DIR/constants.sh"
-```
-
-**推荐模式（跨目录引用统一库）：**
-```bash
-# backup/lib/db.sh 引用统一 log.sh
-_DB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# 计算上层路径：backup/lib/ -> backup/ -> scripts/ -> scripts/lib/
-_UNIFIED_LIB="$(cd "$_DB_LIB_DIR/../../lib" && pwd)"
-
-# 条件加载统一 log（避免重复 source）
-if ! type log_info &>/dev/null; then
-  source "$_UNIFIED_LIB/log.sh"
-fi
-```
-
-这个模式的关键是使用 `cd` + `pwd` 组合获得绝对路径，避免相对路径在不同工作目录下失效。
+Git 提交记录天然提供密钥变更审计：
+- `git log -- config/secrets/` 查看所有密钥文件变更历史
+- `git diff` 显示哪些行被修改（SOPS 支持行级加密，diff 友好）
+- Jenkins 构建日志记录每次部署使用的 Git commit SHA
 
 ---
 
-## 六、Anti-Patterns
+## 七、Anti-Patterns
 
-### Anti-Pattern 1: 函数复制粘贴替代 source
+### Anti-Pattern 1: 运行时密钥服务（Vault/Infisical 模式）
 
-**当前问题：** http_health_check 和 e2e_verify 被 4 次复制到不同文件中，每次参数略有不同。
+**问题：** 在单服务器上运行密钥服务意味着密钥服务 down = 所有服务 down。这比当前的 .env 文件方案更脆弱。
 
-**后果：** 修改一处忘记同步其他 3 处，导致行为不一致。
+**避免：** 使用部署时解密（SOPS）而非运行时获取（Vault/Infisical）。密钥在容器启动前就已经存在于环境变量中。
 
-**正确做法：** 提取到 `lib/http-check.sh`，通过参数和环境变量控制差异。
+### Anti-Pattern 2: 密钥文件全部分到一个文件
 
-### Anti-Pattern 2: 命名相同但功能不同的文件
+**问题：** 将所有密钥放入单个 `secrets.sops.yaml` 意味着 noda-ops 容器可以解密 Keycloak 管理员密码，findclass-ssr 可以看到 B2 凭据。
 
-**当前问题：** `scripts/lib/health.sh`（Docker healthcheck 轮询）与 `scripts/backup/lib/health.sh`（PG 连接/磁盘检查）同名但功能完全不同。
+**避免：** 按消费方分组到不同文件（infra/apps/backup/jenkins），虽然使用同一个 age 密钥，但文件分离使权限意图更清晰，也为未来分密钥提供基础。
 
-**后果：** 开发者混淆，以为 backup/lib/health.sh 是 scripts/lib/health.sh 的增强版。
+### Anti-Pattern 3: 迁移时一次性切换
 
-**正确做法：** 保持两文件存在但确保命名或注释明确区分。backup/lib/health.sh 已有清晰注释说明其功能。重构时确保 backup/ 子系统的脚本不会误 source scripts/lib/health.sh。
+**问题：** 一次性删除所有 .env 文件，如果 SOPS 解密出问题，无法回退。
 
-### Anti-Pattern 3: 全局变量污染
+**避免：** 渐进式迁移 — 每个 .env 文件独立迁移，迁移后保留原文件作为回退（带 .bak 后缀），确认 SOPS 流程稳定后再删除。
 
-**当前问题：** 多个脚本 source 后在全局命名空间定义大量变量（EXIT_SUCCESS, HEALTH_CHECK_MAX_RETRIES 等）。
+### Anti-Pattern 4: age 私钥只存一处
 
-**后果：** 变量名冲突风险，readonly 变量重复定义导致 source 失败。
+**问题：** age 私钥只在服务器上，服务器硬盘损坏 = 永久丢失所有密钥。
 
-**正确做法：**
-- 库文件使用 guard 防止重复加载（config.sh 的 `_NODA_CONFIG_LOADED` 模式）
-- 常量使用命名前缀（如 `NODA_EXIT_SUCCESS` 而非 `EXIT_SUCCESS`）— 但当前规模下暂无冲突，低优先级
-- 已有的 readonly 保护是正确的（backup/lib/constants.sh 使用 `readonly` + guard）
-
-### Anti-Pattern 4: 副作用 source
-
-**当前问题：** `source manage-containers.sh` 不仅定义函数，还执行了 NGINX_CONTAINER 等常量赋值。
-
-**说明：** manage-containers.sh 当前的模式是合理的 — 常量赋值在全局作用域（source 时执行），函数定义也在全局作用域。这种模式在 shell 中是标准做法。需要注意新增库文件不要在 source 时执行任何有副作用的操作（如网络请求、文件写入）。
+**避免：** age 私钥至少有 3 处备份：服务器本地 + 密码管理器 + B2 加密备份。
 
 ---
 
-## 七、backup/lib/health.sh 不应合并的理由
-
-两个 health.sh 功能完全不同：
-
-| scripts/lib/health.sh | scripts/backup/lib/health.sh |
-|----------------------|------------------------------|
-| Docker 容器 healthcheck 状态轮询 | PostgreSQL 连接检查 |
-| `wait_container_healthy()` | `check_postgres_connection()` |
-| 依赖：无 | 依赖：constants.sh, config.sh |
-| 消费者：部署脚本 | 消费者：备份脚本 |
-| 端口/协议无关 | PG 特定协议 |
-
-**结论：** 保留两文件，仅确保 backup/lib/health.sh 不被非备份脚本误 source。
-
----
-
-## 八、verify/ 目录处理建议
+## 八、构建顺序建议
 
 ```
-scripts/verify/
-├── quick-verify.sh          — 快速全服务验证（一键检查所有）
-├── verify-apps.sh           — 应用服务验证
-├── verify-findclass.sh      — findclass-ssr 验证
-├── verify-infrastructure.sh — 基础设施验证
-└── verify-services.sh       — 服务可达性验证
+Phase 1: 基础设施（无破坏性变更）
+  ├─ 创建 config/secrets/ 目录结构
+  ├─ 从现有文件迁移密钥到 *.sops.yaml
+  ├─ 创建 scripts/lib/secrets.sh
+  └─ 单元测试 secrets.sh 的加密/解密/导出功能
+
+Phase 2: Jenkins 集成（关键路径）
+  ├─ Jenkins 安装 sops CLI
+  ├─ 配置 Jenkins Credentials（age 私钥）
+  ├─ 修改 pipeline-stages.sh 密钥加载
+  └─ 端到端测试 Pipeline（findclass-ssr 部署）
+
+Phase 3: 手动部署脚本迁移
+  ├─ 修改 deploy-infrastructure-prod.sh
+  ├─ 修改 deploy-apps-prod.sh
+  └─ 修改 noda-ops 环境变量注入
+
+Phase 4: 备份 + 清理
+  ├─ age 私钥备份到 B2（加密后）
+  ├─ SOPS 文件备份集成到 noda-ops crontab
+  ├─ 删除旧明文 .env 文件（确认稳定后）
+  ├─ 更新文档和 .gitignore
+  └─ 删除 scripts/utils/decrypt-secrets.sh（被 secrets.sh 替代）
 ```
 
-**建议：** 保留但标记为一次性验证工具。这些脚本不 source 任何自定义库（使用原生 echo），不参与本次重构。后续可考虑合并 quick-verify.sh 为唯一入口，其他作为子函数。
+**依赖关系：**
+- Phase 2 依赖 Phase 1（需要 secrets.sh 和密钥文件）
+- Phase 3 依赖 Phase 1（同上）
+- Phase 4 依赖 Phase 2 + 3（确认所有消费方都已迁移）
 
 ---
 
-## 九、重构风险评估
+## 九、扩展性考虑
 
-| 风险 | 影响 | 缓解措施 |
-|------|------|---------|
-| backup/lib/ source 路径改动导致备份失败 | **高**（备份是核心价值） | 路径改动后完整运行 backup-postgres.sh 验证 |
-| blue-green-deploy.sh 重写破坏部署流程 | **高** | 保留旧脚本作为回退（类似 deploy-apps-prod.sh 保留策略） |
-| http-check.sh 参数化遗漏差异 | **中** | 对比 4 个现有版本的所有参数差异，确保环境变量覆盖完整 |
-| cleanup_old_images 策略合并不兼容 | **中** | 三种策略都保留为独立函数，通过环境变量选择 |
-| readonly 变量重复定义 | **低** | config.sh 已有 guard，constants.sh 使用 `if -z` 检查 |
+| 关注点 | 当前（<20 密钥） | 50+ 密钥 | 100+ 密钥 / 多环境 |
+|--------|-----------------|----------|-------------------|
+| 密钥管理 | SOPS + 手动编辑 | SOPS + sed/yq 脚本 | 考虑 Infisical 或 Vault |
+| 分组策略 | 4 个文件（按消费方） | 可能需要更细粒度分组 | 按环境 + 服务矩阵分组 |
+| 轮换 | 手动（sops edit） | 半自动（脚本 + cron） | 全自动（Vault 动态密钥） |
+| 多人协作 | 单 age 密钥 | 多 age 密钥 (.sops.yaml 配置多 recipient) | 考虑 KMS 集成 |
+
+**当前方案可以平滑升级到 Vault/Infisical：** 密钥文件格式独立于存储后端。如果未来需要迁移到 Vault，`secrets.sh` 的接口不变，只是内部实现从 `sops --decrypt` 改为 `vault kv get`。
 
 ---
 
@@ -635,11 +744,16 @@ scripts/verify/
 
 | 来源 | 置信度 | 用途 |
 |------|--------|------|
-| 完整代码库审计（2026-04-18） | HIGH | 所有 scripts/ 下 .sh 文件的逐行分析 |
-| 依赖关系 grep 验证 | HIGH | `grep -rn "source.*\.sh"` 确认所有 source 链路 |
-| 重复代码量化 | HIGH | `grep -rn "http_health_check\|e2e_verify\|cleanup_old"` 统计重复量 |
-| 行数统计 | HIGH | `wc -l scripts/**/*.sh` 获取各文件规模 |
+| 项目代码库完整审计（2026-04-19） | HIGH | docker-compose*.yml, .env*, pipeline-stages.sh, Jenkinsfile.* |
+| Context7: HashiCorp Vault Docker 部署文档 | HIGH | Vault standalone Docker 配置、unseal 流程、Raft 存储 |
+| Context7: HashiCorp Vault AppRole 认证文档 | HIGH | CI/CD 集成模式、Jenkins 最佳实践 |
+| Context7: HashiCorp Vault Raft 备份恢复文档 | HIGH | `vault operator raft snapshot save/restore` |
+| Context7: Infisical Docker Compose 部署文档 | HIGH | 自托管架构、资源需求 |
+| Context7: Infisical CLI 文档 | HIGH | `infisical export` 和 CI/CD 集成模式 |
+| SOPS + age 官方文档 | HIGH | 加密配置、.sops.yaml 规则 |
+| 现有 config/secrets.sops.yaml 审计 | HIGH | 当前 SOPS 使用状态 |
 
 ---
-*Architecture research for: Shell 脚本精简重构*
-*Researched: 2026-04-18*
+
+*Architecture research for: 密钥管理集中化*
+*Researched: 2026-04-19*

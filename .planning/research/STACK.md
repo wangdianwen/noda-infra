@@ -1,254 +1,321 @@
-# Stack Research: v1.7 Shell 脚本重构与代码精简
+# Stack Research: 密钥管理集中化 (v1.8)
 
-**Domain:** Shell/Bash 脚本重构 — 静态分析、格式化、测试、重复代码消除
-**Researched:** 2026-04-18
+**Domain:** Docker Compose 单服务器基础设施 + Jenkins CI/CD 密钥管理
+**Researched:** 2026-04-19
 **Confidence:** HIGH
 
-## 核心结论
+## 核心决策：使用 Infisical Cloud（免费版）+ Infisical CLI
 
-项目有 65 个 Shell 脚本（约 15,137 行），核心问题是重复代码和过大单文件。重构工具链需要三个层次：**静态分析（ShellCheck）** 发现代码质量问题，**格式化（shfmt）** 统一风格，**测试（Bats）** 保证重构不破坏功能。不需要引入任何运行时依赖——所有工具都是开发工具，仅在重构阶段和 CI 中使用。
+**不选择自托管 Docker 密钥服务。** 经过对比分析，推荐使用 Infisical Cloud 免费版而非自托管任何密钥管理服务。原因：
+
+1. 单服务器资源有限，自托管方案额外消耗 1-4 GB 内存
+2. 项目仅 ~20 个密钥，60 次/月部署，远低于免费额度
+3. Infisical 免费版功能（无限制密钥、3 项目、3 环境、Jenkins 集成）完全满足需求
+4. 自托管引入新的运维负担（备份、升级、监控），违背基础设施精简原则
 
 ## Recommended Stack
 
-### Core: 静态分析与质量检查
+### Core: 密钥管理服务
 
 | Technology | Version | Purpose | Why Recommended | Confidence |
 |------------|---------|---------|-----------------|------------|
-| ShellCheck | v0.11.0 (2025-08-03) | Shell 脚本静态分析 | Shell 脚本领域唯一的工业级 linter，检测 300+ 种常见错误（未引用变量、不安全的算术、SC 前缀错误码）。v0.11.0 新增 SC2329（未调用函数检测）对重构中识别死代码极其有用 | HIGH |
-| shfmt | v3.13.1 (2026-04-06) | Shell 脚本格式化 | 基于 mvdan/sh parser 的唯一成熟的 shell 格式化工具。支持 EditorConfig，`-s` 简化模式可自动简化冗余语法。v3.13.1 新增 `.zshrc`/`.bash_profile` 文件名自动检测 shell 方言 | HIGH |
+| Infisical Cloud (Free) | SaaS | 密钥存储、版本管理、Web UI | 免费、无限制密钥数、原生 Jenkins 集成、MIT 开源项目、Web UI 管理密钥。免费版支持 3 项目、3 环境、5 用户、10 集成，完全覆盖本项目需求 | HIGH |
 
-### Core: 测试框架
+### Core: CLI 工具
 
 | Technology | Version | Purpose | Why Recommended | Confidence |
 |------------|---------|---------|-----------------|------------|
-| Bats (Bash Automated Testing System) | v1.13.0 (2025-11-07) | Shell 脚本单元测试 | Shell 脚本测试的事实标准。TDD 风格 `@test` 语法，`run`/`assert` 模式，v1.13.0 新增 `--abort` fail-fast 和 `--negative-filter`。项目已有 12 个手写测试脚本（scripts/backup/tests/），但不是 Bats 格式 | HIGH |
+| Infisical CLI | 0.43.x | Jenkins Pipeline 中拉取和注入密钥 | 46MB 轻量 CLI，支持 `infisical export`（导出 .env 格式）和 `infisical run`（命令包裹注入），宿主机 apt 安装无需容器。Universal Auth 支持无交互 CI/CD 认证 | HIGH |
 
-### Supporting: 重构辅助工具
+### Core: 认证方式
 
-| Tool | Purpose | When to Use | Confidence |
-|------|---------|-------------|------------|
-| `diff` + `source` 验证 | 重构前后功能等价性验证 | 每次合并重复脚本后，对比 `source` 后的函数签名和行为 | HIGH |
-| `bash -n` (syntax check) | 语法检查无需执行 | 每次修改后快速验证，ShellCheck 已包含此功能 | HIGH |
-| `git diff --stat` | 重构前后行数对比 | 每个 phase 结束后统计精简效果 | HIGH |
-| `.shellcheckrc` | 项目级 ShellCheck 配置 | 全局排除不适用的规则、设置 source-path | HIGH |
+| Technology | Version | Purpose | Why Recommended | Confidence |
+|------------|---------|---------|-----------------|------------|
+| Machine Identity (Universal Auth) | - | CI/CD 无交互认证 | Client ID + Client Secret 认证，无需浏览器交互。Secret 存储在 Jenkins Credentials 中，Pipeline 中通过 `withCredentials` 注入 | HIGH |
 
-## 与项目现状的映射
+## Jenkins Pipeline 集成方案
 
-### 重复文件分析与工具使用策略
+### 集成架构
 
-| 重复类型 | 涉及文件 | 行数差异 | 推荐工具 | 策略 |
-|---------|---------|---------|---------|------|
-| 日志库 | `scripts/lib/log.sh` vs `scripts/backup/lib/log.sh` | 33 行 vs 87 行 | ShellCheck + 手动合并 | backup 版本功能更多（log_progress/log_json/log_structured），合并后以 backup 版本为基础，scripts 版本的彩色输出作为可选功能 |
-| 健康检查库 | `scripts/lib/health.sh` vs `scripts/backup/lib/health.sh` | 69 行 vs 358 行 | ShellCheck + 手动合并 | 完全不同的功能：前者是 Docker 容器健康检查，后者是 PostgreSQL 连接+磁盘空间检查。不应合并，应重命名消除混淆 |
-| 蓝绿部署 | `scripts/blue-green-deploy.sh` vs `scripts/keycloak-blue-green-deploy.sh` | 297 行 vs 297 行，差异 264 行 | ShellCheck + 手动参数化 | 264 行差异中大部分是服务特定常量和健康检查 URL 参数化，核心逻辑完全相同。提取 `deploy_service()` 函数，两个脚本变为配置文件 |
-| 大文件 | `pipeline-stages.sh` (1108行), `setup-jenkins.sh` (1029行) | - | ShellCheck + 函数提取 | ShellCheck 的 SC2329（未调用函数）可识别死代码；函数提取后按职责分组到独立文件 |
+```
+Jenkins Pipeline
+    |
+    |-- withCredentials(Infisical Client ID/Secret)
+    |       |
+    |       |-- infisical login --method=universal-auth
+    |       |
+    |       |-- infisical export --env=prod --format=dotenv > docker/.env
+    |       |       |
+    |       |       +--> docker compose up (使用注入的 .env)
+    |       |
+    |       +-- infisical run --env=prod -- docker compose up -d
+```
 
-### 工具安装与配置
+### 两种密钥注入模式
+
+| 模式 | 命令 | 适用场景 | 优劣 |
+|------|------|---------|------|
+| Export 模式 | `infisical export --env=prod --format=dotenv > .env` | docker compose 需要读取 .env 文件时 | 兼容现有流程，.env 写入磁盘（临时） |
+| Run 模式 | `infisical run --env=prod -- docker compose up -d` | 命令只需环境变量时 | 密钥不写入磁盘，更安全 |
+
+### Pipeline 代码示例
+
+```groovy
+// Jenkinsfile 中的密钥拉取
+stage('Fetch Secrets') {
+    steps {
+        withCredentials([
+            string(credentialsId: 'infisical-client-id', variable: 'INFISICAL_CLIENT_ID'),
+            string(credentialsId: 'infisical-client-secret', variable: 'INFISICAL_CLIENT_SECRET')
+        ]) {
+            sh '''
+                # 认证
+                infisical login --method=universal-auth \
+                    --client-id=$INFISICAL_CLIENT_ID \
+                    --client-secret=$INFISICAL_CLIENT_SECRET \
+                    --plain
+
+                # 导出密钥到 .env 文件（docker compose 需要）
+                infisical export --env=prod --projectId=$INFISICAL_PROJECT_ID \
+                    --format=dotenv > docker/.env
+            '''
+        }
+    }
+}
+```
+
+## Infisical 免费版额度 vs 项目需求
+
+| 资源 | 免费额度 | Noda 需求 | 充裕度 |
+|------|---------|----------|--------|
+| 密钥数量 | 无限制 | ~20 个 | 充裕 |
+| 项目数 | 3 | 1 (noda-infra) | 充裕 |
+| 环境数 | 3 | 2 (dev/prod) | 充裕 |
+| 团队成员 | 5 | 1-2 | 充裕 |
+| 集成数 | 10 | 1 (Jenkins) | 充裕 |
+| 部署频率 | 无限制 | ~60 次/月 | 充裕 |
+| Secret Scanning | 包含 | 可选 | 额外收益 |
+| Secret Referencing | 包含 | 可用 | 免费版特性 |
+| Webhooks | 包含 | 可用 | 免费版特性 |
+| Infisical Agent | 包含 | 暂不需要 | 免费版特性 |
+| Self-hosting 选项 | 包含 | 不使用 | 免费版也支持自托管 |
+
+**结论：免费版完全覆盖需求，无需付费。**
+
+## 需要管理的密钥清单
+
+| 密钥 | 当前位置 | 用途 | 敏感度 |
+|------|---------|------|--------|
+| POSTGRES_USER | docker/.env | 数据库用户名 | P2 |
+| POSTGRES_PASSWORD | docker/.env | 数据库密码 | P1 |
+| POSTGRES_DB | docker/.env | 数据库名 | P2（非敏感） |
+| KEYCLOAK_ADMIN_USER | docker/.env | Keycloak 管理员 | P2 |
+| KEYCLOAK_ADMIN_PASSWORD | docker/.env | Keycloak 管理员密码 | P1 |
+| KEYCLOAK_DB_PASSWORD | docker/.env | Keycloak 数据库密码 | P1 |
+| CLOUDFLARE_TUNNEL_TOKEN | docker/.env | Cloudflare Tunnel | P1 |
+| B2_ACCOUNT_ID | docker/.env | Backblaze B2 账户 | P1 |
+| B2_APPLICATION_KEY | docker/.env | Backblaze B2 密钥 | P1 |
+| B2_BUCKET_NAME | docker/.env | B2 桶名 | P2（非敏感） |
+| ANTHROPIC_AUTH_TOKEN | docker/.env | Anthropic API | P1 |
+| ANTHROPIC_BASE_URL | docker/.env | API 端点 | P2（非敏感） |
+| SMTP_HOST | .env.production | SMTP 服务器 | P2 |
+| SMTP_PASSWORD | .env.production | SMTP 密码 | P1 |
+| RESEND_API_KEY | .env.production | ReSend API | P1 |
+| VITE_KEYCLOAK_URL | .env.production | 前端构建变量 | P2（非敏感） |
+| VITE_KEYCLOAK_REALM | .env.production | 前端构建变量 | P2（非敏感） |
+| VITE_KEYCLOAK_CLIENT_ID | .env.production | 前端构建变量 | P2（非敏感） |
+
+## Installation
 
 ```bash
 # ============================================
-# 开发工具安装（macOS 开发机 + Linux 生产服务器）
+# Infisical CLI 安装（生产服务器宿主机，一次性）
 # ============================================
 
-# ShellCheck v0.11.0
-brew install shellcheck          # macOS
-# Linux: 下载预编译二进制
-# scversion="v0.11.0"
-# wget -qO- "https://github.com/koalaman/shellcheck/releases/download/${scversion}/shellcheck-${scversion}.linux.x86_64.tar.xz" | tar -xJv
-# sudo cp "shellcheck-${scversion}/shellcheck" /usr/local/bin/
+# Linux (Ubuntu/Debian)
+curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.deb.sh' | sudo -E bash
+sudo apt-get update && sudo apt-get install -y infisical
 
-# shfmt v3.13.1
-brew install shfmt               # macOS
-# Linux:
-# go install mvdan.cc/sh/v3/cmd/shfmt@latest
-# 或下载二进制: https://github.com/mvdan/sh/releases
+# macOS (开发机)
+brew install infisical
 
-# Bats v1.13.0（仅开发时需要）
-brew install bats-core           # macOS
-# Linux:
-# git clone https://github.com/bats-core/bats-core.git /tmp/bats-core
-# cd /tmp/bats-core && sudo ./install.sh /usr/local
+# 验证安装
+infisical --version   # 预期: 0.43.x
 
-# 验证版本
-shellcheck --version             # 预期: 0.11.0
-shfmt --version                  # 预期: v3.13.1
-bats --version                   # 预期: 1.13.0
-```
-
-## .shellcheckrc 配置（项目根目录）
-
-```ini
-# noda-infra ShellCheck 配置
-# 文档: https://github.com/koalaman/shellcheck/wiki/Directive
-
-# shell 方言
-shell=bash
-
-# source 路径：相对于脚本目录查找 source 文件
-source-path=SCRIPTDIR
-
-# 允许 source 任何文件（项目中有大量 source 语句）
-external-sources=true
-
-# 启用可选检查
-enable=quote-safe-variables
-enable=check-unassigned-uppercase
-enable=require-variable-ranges
-
-# 排除不适用的规则
-# SC2155: declare and assign separately（项目风格允许合并声明赋值）
-disable=SC2155
-
-# SC2034: unused variable（backup/lib/constants.sh 定义大量常量，部分可能未使用）
-disable=SC2034
-```
-
-## .editorconfig 配置（项目根目录，shfmt 会读取）
-
-```ini
-# Shell 脚本格式化配置
-[*.sh]
-indent_style = space
-indent_size = 4
-# shfmt 选项: -i 4 -fn (4空格缩进, 函数起始花括号换行)
-```
-
-## 使用命令
-
-```bash
 # ============================================
-# 日常重构工作流
+# Jenkins 认证配置（一次性）
 # ============================================
-
-# 1. 修改前：记录当前状态
-shellcheck -f json scripts/lib/log.sh > /tmp/before.json
-
-# 2. 修改脚本...
-
-# 3. 修改后：验证 ShellCheck 错误数没有增加
-shellcheck scripts/lib/log.sh
-
-# 4. 格式化（先检查差异，再写入）
-shfmt -d scripts/lib/log.sh       # 查看差异
-shfmt -w scripts/lib/log.sh       # 写入格式化结果
-
-# 5. 语法检查（ShellCheck 已包含，快速单独检查）
-bash -n scripts/lib/log.sh
-
-# 6. 全量检查（CI 中使用）
-shellcheck scripts/**/*.sh
-shfmt -d scripts/**/*.sh
+# 1. 访问 https://app.infisical.com/signup 创建账户
+# 2. 创建项目 "noda-infra"
+# 3. 创建两个环境: dev, prod
+# 4. 在 Project Settings > Machine Identities 创建 Universal Auth
+# 5. 记录 Client ID 和 Client Secret
+# 6. 在 Jenkins > Credentials 中添加:
+#    - infisical-client-id (Secret text)
+#    - infisical-client-secret (Secret text)
+#    - infisical-project-id (Secret text)
+# 7. 所有 Pipeline 中使用 withCredentials 注入
 ```
+
+## 备份策略
+
+| 数据 | 方式 | 频率 | 存储 |
+|------|------|------|------|
+| Infisical 密钥 | Infisical Cloud 托管（多区域冗余） | 实时 | Infisical 托管 |
+| 本地 .env（迁移前） | 备份到 B2 | 迁移时一次性 | Backblaze B2 |
+| Infisical 导出快照 | `infisical export` + B2 上传 | 每日 cron | Backblaze B2 |
+| Jenkins 凭据 | JenkinsCredentials XML 导出 | 迁移时一次性 | 安全存储 |
+
+注意：Infisical Cloud 免费版不包含 Point-in-Time Recovery（Pro 功能），也不包含 Secret Versioning（Pro 功能）。但密钥变更频率极低（月级别），通过定期 `infisical export` 备份到 B2 即可满足恢复需求。即使 Infisical Cloud 宕机，Pipeline 中可临时使用 `--fallback` 缓存机制持续服务。
 
 ## Alternatives Considered
 
-### 静态分析工具
+### 密钥管理方案完整对比
 
 | Recommended | Alternative | Why Not |
 |-------------|-------------|---------|
-| ShellCheck | bashate (OpenStack) | 规则少（约 30 条 vs ShellCheck 300+ 条），不支持 bash 高级特性，已多年不活跃 |
-| ShellCheck | SobboleScan | 学术原型，不维护 |
-| ShellCheck | 自定义 grep/sed 检查 | 不可靠，维护成本高，ShellCheck 已覆盖所有常见错误 |
+| **Infisical Cloud (Free)** | HashiCorp Vault (自托管 Docker) | 资源消耗大：Vault 进程最低 512MB RAM（推荐 4GB+），加 Consul/Raft 存储需要更多。运维复杂：unseal 密钥管理（3-of-5 Shamir）、TLS 证书配置、policy 管理。官方生产加固指南要求独占服务器（single tenancy）。BSL 许可证限制。学习曲线陡峭。对于 20 个静态密钥完全是杀鸡用牛刀 |
+| **Infisical Cloud (Free)** | Infisical (自托管 Docker) | docker-compose.prod.yml 需要 3 个容器：infisical/infisical:latest (694MB 镜像，运行时 ~512MB-1GB RAM) + postgres:14-alpine (~256MB RAM) + redis (~128MB RAM)，总计 ~1-1.5GB 额外内存。且 Infisical 的 PostgreSQL 数据库也需要备份，形成"管理密钥的密钥需要密钥"的循环依赖。Infisical 自身还需要 SMTP 配置来发送邀请邮件 |
+| **Infisical Cloud (Free)** | Docker Secrets (Swarm mode) | 需要 Docker Swarm 模式，当前使用 Docker Compose standalone。且无 Web UI、无版本控制、无审计日志、无 CI/CD 集成 |
+| **Infisical Cloud (Free)** | SOPS + Git | 密钥存储在 Git 仓库中（即使加密），增加攻击面。需要 GPG/KMS 密钥管理。需要额外密钥分发机制给 docker compose。无 Web UI，不便于非技术用户管理 |
+| **Infisical Cloud (Free)** | CyberArk Conjur | 企业级产品，资源消耗极大（4GB+ RAM），配置极其复杂。开源版 (Conjur OSS) 功能严重受限。适合大规模企业部署，不适合单服务器项目 |
+| **Infisical Cloud (Free)** | 1Password Secrets Automation | 需要 1Password Business 账户 ($7.99/用户/月起)。无免费自托管选项。CLI 工具 (op) 在 CI/CD 中集成不如 Infisical 成熟 |
+| **Infisical Cloud (Free)** | Doppler | 免费版仅 5 个用户、5 个项目。CLI 集成不如 Infisical 的 `infisical run`/`infisical export` 灵活。不在 GitHub 上开源（闭源 SaaS），社区可信度低 |
 
-### 格式化工具
+### 为什么不用自托管 Infisical（详细分析）
 
-| Recommended | Alternative | Why Not |
-|-------------|-------------|---------|
-| shfmt | beautify_bash (Python) | 已停止维护，不支持 bash 高级语法 |
-| shfmt | editor auto-format | 无法在 CI 中统一执行 |
-| shfmt | 手动格式化 | 不可靠，无法保证一致性 |
+Infisical 官方 `docker-compose.prod.yml`（来自 GitHub 仓库 main 分支）：
 
-### 测试框架
+```yaml
+services:
+  backend:
+    image: infisical/infisical:latest   # 694MB 压缩，运行时 ~512MB-1GB RAM
+    ports:
+      - 80:8080
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
-| Recommended | Alternative | Why Not |
-|-------------|-------------|---------|
-| Bats | shellspec | 语法更接近 RSpec 但社区更小；项目现有测试是手写 bash 脚本，迁移到 Bats 改动更小 |
-| Bats | shunit2 | Google 出品但已停止维护（最后 release 2018），功能远不如 Bats |
-| Bats | 手写测试脚本（项目现状） | 项目已有 12 个手写测试脚本，但没有断言框架，测试失败依赖 exit code，不好维护。Bats 的 `assert_output`/`assert_success` 更清晰 |
+  redis:
+    image: redis                        # 运行时 ~128MB RAM
 
-### 重复代码检测
+  db:
+    image: postgres:14-alpine           # 运行时 ~256MB RAM
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+```
 
-| Recommended | Alternative | Why Not |
-|-------------|-------------|---------|
-| `diff` + 人工审查 | CPD (PMD Copy-Paste Detector) | CPD 不支持 Shell 语法，只能做纯文本匹配 |
-| `diff` + 人工审查 | SonarQube | 需要安装完整平台，过度工程化 |
-| `diff` + 人工审查 | 自定义脚本检测重复函数 | 投入产出比低，项目只有 65 个脚本，人工审查可控 |
+**总内存占用：~1-1.5GB 额外 RAM。** 在单服务器上，这会显著挤压现有服务（PostgreSQL、Keycloak、findclass-ssr、nginx、noda-ops）的内存空间。
+
+**循环依赖问题：**
+- Infisical 的 PostgreSQL 需要密码 -> 存在哪里？
+- Infisical 的 ENCRYPTION_KEY 和 AUTH_SECRET -> 存在哪里？
+- 最终还是需要至少一个 .env 文件来 bootstrap Infisical
+
+### 为什么不用 HashiCorp Vault（详细分析）
+
+**资源需求：**
+- Vault 进程本身：256MB-512MB（最小可用），官方生产推荐 4-8GB
+- 需要额外存储后端（Integrated Raft 或外部 Consul）
+- 官方生产加固指南明确要求 "single tenancy"（独占一台服务器）
+
+**运维复杂度：**
+- Unseal 流程：每次重启需要至少 3-of-5 Shamir 密钥才能 unseal
+- 必须配置 TLS 证书（生产环境不允许 HTTP）
+- 需要管理 auth method（AppRole/Token/UserPass）、policy、secret engine
+- 备份需要 `vault operator raft snapshot save`
+- 密钥轮转需要手动策略或自动化脚本
+
+**许可证问题：**
+- Vault 从 2023 年改为 BSL (Business Source License)，非 MIT/Apache
+- BSL 禁止在竞品托管服务中使用
+- 虽然不影响内部使用，但 MIT 许可证的 Infisical 更自由
+
+**能力浪费：**
+- 我们需要存储约 20 个静态密钥（KV v2 足够）
+- 不需要动态密钥生成（数据库临时凭证等）
+- 不需要 PKI 证书管理
+- 不需要数据库凭证轮转
+- 不需要多集群复制
+- Vault 90% 的能力在此场景中无用
 
 ## What NOT to Use
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| bashate | 规则太少（30条 vs ShellCheck 300+条），OpenStack 项目已不积极维护 | ShellCheck |
-| shunit2 | 最后 release 2018 年，不支持 TAP 协议，功能远不如 Bats | Bats |
-| ShellCheck `disable=all` | 完全禁用检查，失去静态分析的价值 | 逐条禁用特定 SC 编号 |
-| 大规模自动化重构工具 | Shell 脚本没有安全的 AST 级别自动重构工具，awk/sed 替换会破坏字符串内容 | 手动重构 + ShellCheck 验证 |
-| ctags/cscope | 设计用于 C/C++ 代码浏览，对 Shell 脚本的函数识别不可靠 | `grep -n "^function\|^[a-z_]*() {" scripts/*.sh` |
-| IDE 重构功能 | VS Code/Zed 的 Shell 重构支持极其有限（无 rename symbol、无 extract function） | 手动重构 + shfmt 格式化 |
+| HashiCorp Vault (自托管) | 单服务器资源不足（4GB+ RAM），运维复杂度与收益不成比例（unseal/TLS/policy），BSL 许可证 | Infisical Cloud |
+| Infisical (自托管 Docker) | 3 个额外容器 + 1.5GB 内存，密钥管理的循环依赖（Infisical 的 DB 密码存哪？） | Infisical Cloud |
+| CyberArk Conjur | 企业级产品，4GB+ RAM，配置复杂度极高 | Infisical Cloud |
+| Docker Swarm Secrets | 需要切换到 Swarm 模式，破坏现有 Docker Compose standalone 架构 | Infisical CLI |
+| 硬编码 .env 文件（当前方案） | 密钥明文存储在磁盘，存在 Git 历史中（.env.production 已 commit），无法审计访问，无法轮转 | Infisical Cloud + CLI |
+| Jenkins Credentials Store 作为唯一密钥存储 | 仅 Jenkins 内使用，docker compose 启动仍需明文 .env，不统一。且无法版本管理密钥 | Infisical Cloud + Jenkins Credentials 仅存 bootstrap 凭据 |
+| AWS Secrets Manager / GCP Secret Manager | 需要云平台账号和额外费用，增加网络延迟和外部依赖 | Infisical Cloud |
+| etcd 作为密钥存储 | 无加密默认、无审计、无 Web UI，不是密钥管理工具而是分布式 KV 存储 | Infisical Cloud |
+| ansible-vault | 仅适合 Ansible 场景，无 CI/CD 集成，无 Web UI，手动管理加密密钥 | Infisical Cloud |
 
-## 重构验证策略
+## Stack Patterns by Variant
 
-### 分层验证
+**如果将来需要离线/内网环境：**
+- 迁移到 Infisical 自托管（`docker-compose.prod.yml`）
+- 利用 Infisical CLI 的 `--domain=https://infisical.internal` 参数指向自托管实例
+- 需要服务器增加至少 2GB 内存
+- Infisical 自托管也包含在免费版中
 
-| 层次 | 工具 | 目的 | 何时执行 |
-|------|------|------|---------|
-| L1: 语法 | `bash -n` / ShellCheck | 确保脚本可解析 | 每次保存后 |
-| L2: 格式 | `shfmt -d` | 统一代码风格 | 每次 commit 前 |
-| L3: 语义 | `shellcheck -S warning` | 检测潜在运行时错误 | 每次 commit 前 |
-| L4: 功能 | 手动测试 / Bats | 确保行为不变 | 合并重复代码后 |
-| L5: 集成 | Jenkins Pipeline | 生产环境端到端验证 | phase 完成后 |
+**如果将来需要动态密钥（数据库临时凭证等）：**
+- 评估升级到 Infisical Pro（Secret Rotation + Dynamic Secrets 功能）
+- Infisical Pro 支持 PostgreSQL、MySQL 的动态密钥和自动轮转
+- $18/月/identity，按需评估
 
-### 重复代码合并的安全流程
+**如果将来需要 KMS/HSM 硬件加密：**
+- 必须用 Vault Enterprise 或 Infisical Enterprise
+- 不在当前需求范围内
 
-```
-1. shellcheck 原始两个文件（记录 warning 数量）
-2. diff 两个文件，标记差异点
-3. 编写合并后的新文件
-4. shellcheck 新文件（warning 数量不应增加）
-5. shfmt -w 新文件
-6. source 新文件 + 调用函数验证（手动或 Bats）
-7. 更新所有引用点的 source 路径
-8. 删除旧文件
-9. grep 确认无残留引用
-10. git commit（一个逻辑变更一次 commit）
-```
+**如果将来部署频率增长到 >1000 次/月：**
+- Infisical 免费版有 API 速率限制（具体限制未公开）
+- 可考虑升级到 Pro 版获取更高速率限制
 
-## 版本兼容性
+## Version Compatibility
 
 | Component | Version | Compatible With | Notes |
 |-----------|---------|-----------------|-------|
-| ShellCheck v0.11.0 | 2025-08-03 | macOS (arm64/x86_64), Linux (x86_64/aarch64) | 预编译二进制，无运行时依赖 |
-| shfmt v3.13.1 | 2026-04-06 | macOS, Linux | Go 单二进制文件，无依赖 |
-| Bats v1.13.0 | 2025-11-07 | macOS (bash 3.2+), Linux (bash 4.0+) | macOS 自带 bash 3.2 兼容 |
-| `.shellcheckrc` | ShellCheck 0.7.0+ | 当前 v0.11.0 完全支持 | - |
-| `.editorconfig` | shfmt v3.0+ | 当前 v3.13.1 完全支持 | shfmt 会读取 .editorconfig 中的 indent 设置 |
+| Infisical CLI | 0.43.76 | Linux amd64/arm64, macOS | 宿主机安装，不在容器内 |
+| Infisical CLI | 0.43.76 | Jenkins `sh` 步骤 | jenkins 用户需要有执行权限 |
+| infisical/infisical Docker 镜像 | v0.159.16 | Docker Compose | 自托管时使用，694MB 镜像 |
+| infisical/cli Docker 镜像 | 0.43.76 | Docker run | 备选方案（宿主机安装更简单） |
+| hashicorp/vault Docker 镜像 | 2.0.0 / 1.21.x | Docker Compose | 不推荐使用，仅供参考 |
+| PostgreSQL 14-alpine | 14.x | Infisical 自托管后端数据库 | Infisical 自托管时需要 |
+| Redis | latest | Infisical 自托管缓存 | Infisical 自托管时需要 |
 
 ## 与现有架构的集成点
 
 | 现有组件 | 集成方式 | 变更范围 |
 |---------|---------|---------|
-| `scripts/pipeline-stages.sh` (1108行) | ShellCheck 分析 + 函数提取拆分 | 大 — 核心重构目标 |
-| `scripts/setup-jenkins.sh` (1029行) | ShellCheck 分析 + 子命令拆分 | 大 — 核心重构目标 |
-| `scripts/manage-containers.sh` (659行) | ShellCheck 分析 + 函数提取 | 中 |
-| `scripts/lib/log.sh` + `scripts/backup/lib/log.sh` | 合并为单一日志库 | 中 — 需更新所有 source 路径 |
-| `scripts/lib/health.sh` + `scripts/backup/lib/health.sh` | 重命名消除混淆（功能不同） | 小 — 仅重命名 |
-| `scripts/blue-green-deploy.sh` + `scripts/keycloak-blue-green-deploy.sh` | 参数化为单一脚本 | 中 — 核心重构目标 |
-| `scripts/verify/*.sh` (5个脚本) | 评估是否删除（一次性验证脚本） | 小 — 删除或合并 |
-| `jenkins/Jenkinsfile.*` | 可选：添加 ShellCheck 阶段 | 小 — 可在后续 milestone 做 |
-| 现有测试脚本 (`scripts/backup/tests/*.sh`) | 保持现状，不强制迁移 Bats | 无 — 本次不涉及 |
+| `docker/.env` | Pipeline 从 Infisical 拉取后生成此文件 | 中 -- 运行时生成，不手动维护 |
+| `.env.production` | VITE_* 变量迁移到 Infisical，构建时拉取 | 中 -- findclass-ssr Dockerfile 中需注入 |
+| `docker/docker-compose.yml` | 无变更，仍从 .env 读取 | 无 -- Docker Compose 行为不变 |
+| `jenkins/Jenkinsfile` | 添加 Fetch Secrets stage | 小 -- 在 Build stage 前插入 |
+| `jenkins/Jenkinsfile.infra` | 同上，基础设施 Pipeline 也需要 | 小 -- 同样的 Fetch Secrets 模式 |
+| `scripts/lib/health.sh` | 无变更 | 无 |
+| `scripts/deploy/deploy-*.sh` | 无变更（手动部署仍读 .env） | 无 -- .env 由 Infisical 生成 |
+| `config/nginx/*` | 无变更 | 无 |
+| Backblaze B2 | 添加密钥快照备份 | 小 -- 新增备份类型 |
 
 ## Sources
 
-- [ShellCheck GitHub Releases](https://github.com/koalaman/shellcheck/releases) — v0.11.0 (2025-08-03) 最新稳定版，HIGH confidence
-- [ShellCheck Wiki - Directive](https://github.com/koalaman/shellcheck/wiki/Directive) — .shellcheckrc 配置语法，HIGH confidence
-- [ShellCheck Wiki - Ignore](https://github.com/koalaman/shellcheck/wiki/Ignore) — disable/enable 规则方法，HIGH confidence
-- [Context7 /koalaman/shellcheck] — ShellCheck 安装、配置、规则信息，HIGH confidence
-- [shfmt GitHub Releases](https://github.com/mvdan/sh/releases) — v3.13.1 (2026-04-06) 最新稳定版，HIGH confidence
-- [Bats-core GitHub Releases](https://github.com/bats-core/bats-core/releases) — v1.13.0 (2025-11-07) 最新稳定版，HIGH confidence
-- [GitHub API: /repos/koalaman/shellcheck/releases/latest](https://api.github.com/repos/koalaman/shellcheck/releases/latest) — 版本号验证，HIGH confidence
-- [GitHub API: /repos/mvdan/sh/releases/latest](https://api.github.com/repos/mvdan/sh/releases/latest) — 版本号验证，HIGH confidence
-- [GitHub API: /repos/bats-core/bats-core/releases/latest](https://api.github.com/repos/bats-core/bats-core/releases/latest) — 版本号验证，HIGH confidence
-- 项目代码: `scripts/lib/log.sh`, `scripts/backup/lib/log.sh`, `scripts/lib/health.sh`, `scripts/backup/lib/health.sh`, `scripts/blue-green-deploy.sh`, `scripts/keycloak-blue-green-deploy.sh` — 重复代码分析
+- [Infisical 定价页](https://infisical.com/pricing) -- 免费版额度确认：无限制密钥、3 项目、3 环境、5 用户、10 集成，$0/月。HIGH confidence
+- [Infisical GitHub 仓库](https://github.com/Infisical/infisical) -- MIT 许可证，25.9k stars，自托管 docker-compose.prod.yml 配置文件。HIGH confidence
+- [Infisical Docker Hub: infisical/infisical](https://hub.docker.com/r/infisical/infisical/tags) -- 最新版本 v0.159.16 (2026-04-18)，镜像 694MB (amd64) / 677MB (arm64)。HIGH confidence
+- [Infisical Docker Hub: infisical/cli](https://hub.docker.com/r/infisical/cli/tags) -- 最新版本 0.43.76 (2026-04-18)，镜像 46.64MB (amd64) / 44.17MB (arm64)。HIGH confidence
+- [Infisical CLI Context7 文档](https://context7.com/infisical/cli/llms.txt) -- CLI 命令参考：`infisical run`、`infisical export`、`infisical login --method=universal-auth`、Machine Identity 认证流程。HIGH confidence
+- [Infisical 自托管 docker-compose.prod.yml](https://raw.githubusercontent.com/Infisical/infisical/main/docker-compose.prod.yml) -- 官方自托管配置：3 个容器（backend + postgres + redis）。HIGH confidence
+- [HashiCorp Vault Docker Hub](https://hub.docker.com/r/hashicorp/vault/tags) -- 最新版本 2.0.0 (2026-04-15)，镜像 182MB (amd64)。HIGH confidence
+- [HashiCorp Vault 生产加固指南](https://developer.hashicorp.com/vault/docs/concepts/production-hardening) -- 推荐 single tenancy、禁用 swap、强制 TLS、启用 audit device。HIGH confidence
+- [HashiCorp Vault 许可证](https://github.com/hashicorp/vault/blob/main/LICENSE) -- BSL (Business Source License)，非 MIT/Apache。HIGH confidence
+- [Vault v2.x 文档](https://developer.hashicorp.com/vault/docs/what-is-vault) -- 存储选项（Integrated Raft、Filesystem、In-memory），Enterprise vs Community 功能。HIGH confidence
+- 项目代码: `docker/docker-compose.yml`、`docker/.env`、`.env.production` -- 现有架构和密钥分布分析。HIGH confidence
 
 ---
-*Stack research for: Noda v1.7 Shell 脚本重构与代码精简*
-*Researched: 2026-04-18*
+*Stack research for: Noda 密钥管理集中化 (v1.8)*
+*Researched: 2026-04-19*
