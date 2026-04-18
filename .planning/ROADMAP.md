@@ -93,7 +93,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [x] **Phase 31: Docker Socket 权限收敛 + 文件权限锁定** -- Docker socket 属组收敛到 jenkins，部署脚本仅 jenkins 可执行 (completed 2026-04-18)
 - [ ] **Phase 32: sudoers 白名单 + Break-Glass 紧急机制** -- 管理员只读 docker 命令 + 紧急部署受控入口
 - [x] **Phase 33: 审计日志系统** -- auditd 内核审计 + Jenkins Audit Trail + 日志轮转 (completed 2026-04-18)
-- [ ] **Phase 34: Jenkins 权限矩阵 + 统一管理脚本** -- Matrix Auth 插件 + setup-docker-permissions.sh 一站式管理
+- [x] **Phase 34: Jenkins 权限矩阵 + 统一管理脚本** -- Matrix Auth 插件 + setup-docker-permissions.sh 一站式管理 (completed 2026-04-18)
 
 ## Phase Details
 
@@ -157,8 +157,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 34-01-PLAN.md — Jenkins 权限矩阵 Groovy 脚本 + setup-jenkins.sh apply/verify-matrix-auth 子命令（JENKINS-03, JENKINS-04）
-- [ ] 34-02-PLAN.md — setup-docker-permissions.sh 统一编排器脚本 apply/verify/rollback（PERM-05）
+- [x] 34-01-PLAN.md — Jenkins 权限矩阵 Groovy 脚本 + setup-jenkins.sh apply/verify-matrix-auth 子命令（JENKINS-03, JENKINS-04）
+- [x] 34-02-PLAN.md — setup-docker-permissions.sh 统一编排器脚本 apply/verify/rollback（PERM-05）
 
 ## Progress
 
@@ -170,4 +170,4 @@ Phases execute in numeric order: 31 -> 32 -> 33 -> 34
 | 31. Docker Socket 权限收敛 | v1.6 | 3/3 | Complete | 2026-04-18 |
 | 32. sudoers + Break-Glass | v1.6 | 0/2 | Planned | - |
 | 33. 审计日志系统 | v1.6 | 0/3 | Planned | - |
-| 34. Jenkins 权限矩阵 + 统一脚本 | v1.6 | 0/2 | Planned | - |
+| 34. Jenkins 权限矩阵 + 统一脚本 | v1.6 | 2/2 | Complete | 2026-04-18 |
