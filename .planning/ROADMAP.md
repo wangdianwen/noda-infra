@@ -148,17 +148,17 @@ Plans:
 ### Phase 34: Jenkins 权限矩阵 + 统一管理脚本
 **Goal**: Jenkins 内部权限细化（管理员全权限/普通用户只触发），权限配置可通过统一脚本一键 apply/verify/rollback
 **Depends on**: Phase 32, Phase 33
-**Requirements**: JENKINS-03, JENKINS-04
+**Requirements**: JENKINS-03, JENKINS-04, PERM-05
 **Success Criteria** (what must be TRUE):
   1. 非 admin 用户可以触发 Pipeline 运行但不能修改 Job 配置或访问 Script Console
   2. `setup-docker-permissions.sh apply` 一键配置所有权限（socket + 文件 + sudoers + auditd）
   3. `setup-docker-permissions.sh verify` 输出全部 PASS 的权限检查结果
   4. `setup-docker-permissions.sh rollback` 可恢复到权限收敛前的状态
-**Plans**: 3 plans
+**Plans**: 2 plans
 
 Plans:
-- [ ] 34-01: TBD
-- [ ] 34-02: TBD
+- [ ] 34-01-PLAN.md — Jenkins 权限矩阵 Groovy 脚本 + setup-jenkins.sh apply/verify-matrix-auth 子命令（JENKINS-03, JENKINS-04）
+- [ ] 34-02-PLAN.md — setup-docker-permissions.sh 统一编排器脚本 apply/verify/rollback（PERM-05）
 
 ## Progress
 
@@ -170,4 +170,4 @@ Phases execute in numeric order: 31 -> 32 -> 33 -> 34
 | 31. Docker Socket 权限收敛 | v1.6 | 3/3 | Complete | 2026-04-18 |
 | 32. sudoers + Break-Glass | v1.6 | 0/2 | Planned | - |
 | 33. 审计日志系统 | v1.6 | 0/3 | Planned | - |
-| 34. Jenkins 权限矩阵 + 统一脚本 | v1.6 | 0/? | Not started | - |
+| 34. Jenkins 权限矩阵 + 统一脚本 | v1.6 | 0/2 | Planned | - |
