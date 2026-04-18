@@ -1,0 +1,23 @@
+# .shellcheckrc — Noda 基础设施项目级 ShellCheck 配置
+# 文档: https://github.com/koalaman/shellcheck/blob/master/shellcheck.1.md
+
+# Shell 方言
+shell=bash
+
+# 允许跟踪 source 的外部文件
+external-sources=true
+
+# Source 搜索路径（ShellCheck 查找 source 目标文件的路径）
+source-path=SCRIPTDIR
+source-path=SCRIPTDIR/../lib
+source-path=SCRIPTDIR/../../lib
+
+# SC2034: 变量"未使用"
+# 原因: constants.sh 和 lib/ 文件定义的常量/变量由 source 的调用方使用
+# ShellCheck 无法跨文件追踪变量使用，导致 50 处误报
+disable=SC2034
+
+# SC2155: declare 和 assign 分开
+# 原因: 项目中广泛使用 `local var=$(cmd)` 模式（50 处）
+# 虽然可能掩盖返回值，但这是 bash 社区常见模式，逐文件修改风险大于收益（per D-02）
+disable=SC2155
