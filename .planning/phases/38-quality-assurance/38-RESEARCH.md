@@ -326,17 +326,19 @@ Source: [CITED: github.com/koalaman/shellcheck/blob/master/shellcheck.1.md]
 | A2 | 所有 61 个脚本的 `#!/bin/bash` shebang 会被 shfmt 正确识别为 bash 方言 | Pitfall 5 | 低 — 已验证 61/61 都有 `#!/bin/bash` |
 | A3 | .editorconfig 的 `[scripts/deploy/deploy-findclass-zero-deps.sh]` ignore 规则会被 shfmt 尊重 | Pattern 3 | 中 — 需要安装后验证；如果不生效，改用 find 排除 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **shfmt 格式化差异量**
    - What we know: 55/61 文件已用 4 空格缩进，6 个用 2 空格
    - What's unclear: `-fn` (function_next_line) 会改变多少函数声明的 brace 位置；目前约 57 个文件用 `name() {` 同行风格，4 个文件用换行风格
    - Recommendation: 先 `shfmt -d scripts/` 查看预期变更量，再决定是否需要分批提交
+   - **RESOLVED:** Plan 38-02 Task 1 步骤 1 执行 `shfmt -d scripts/ | wc -l` 预检差异量，根据差异量决定提交策略
 
 2. **SC2155 抑制 vs 修复**
    - What we know: 50 处 `local var=$(cmd)` 模式，分布在 backup/ 系统和多个脚本中
    - What's unclear: 是否值得逐文件修复（`local var; var=$(cmd)`）
    - Recommendation: 按用户决定 D-02，在 .shellcheckrc 中全局抑制（成本最低，风险最低）
+   - **RESOLVED:** 按 D-02 在 .shellcheckrc 中全局抑制 `disable=SC2155`（Plan 38-01 Task 1 步骤 3）
 
 ## Environment Availability
 
