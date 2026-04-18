@@ -2,7 +2,8 @@
 // 统一基础设施 Jenkins Pipeline
 // 7 阶段: Pre-flight -> Backup -> Human Approval -> Deploy -> Health Check -> Verify -> Cleanup
 // 手动触发（无自动触发配置）
-// 参数化服务选择: keycloak / nginx / noda-ops / postgres
+// 参数化服务选择: nginx / noda-ops / postgres
+// 注意: Keycloak 有专用 Pipeline (keycloak-deploy)，不在此处部署
 
 pipeline {
     agent any
@@ -26,8 +27,8 @@ pipeline {
     parameters {
         choice(
             name: 'SERVICE',
-            choices: ['keycloak', 'nginx', 'noda-ops', 'postgres'],
-            description: '选择要部署的基础设施服务'
+            choices: ['nginx', 'noda-ops', 'postgres'],
+            description: '选择要部署的基础设施服务（Keycloak 使用 keycloak-deploy Pipeline）'
         )
     }
 
@@ -44,10 +45,7 @@ pipeline {
 
         stage('Backup') {
             when {
-                anyOf {
-                    expression { params.SERVICE == 'keycloak' }
-                    expression { params.SERVICE == 'postgres' }
-                }
+                expression { params.SERVICE == 'postgres' }
             }
             steps {
                 sh '''

@@ -18,10 +18,10 @@ source "$PROJECT_ROOT/scripts/manage-containers.sh"
 # ============================================
 # 常量
 # ============================================
-HEALTH_CHECK_MAX_RETRIES=30
-HEALTH_CHECK_INTERVAL=4
-E2E_MAX_RETRIES=5
-E2E_INTERVAL=2
+HEALTH_CHECK_MAX_RETRIES="${HEALTH_CHECK_MAX_RETRIES:-30}"
+HEALTH_CHECK_INTERVAL="${HEALTH_CHECK_INTERVAL:-4}"
+E2E_MAX_RETRIES="${E2E_MAX_RETRIES:-5}"
+E2E_INTERVAL="${E2E_INTERVAL:-2}"
 COMPOSE_FILE="$PROJECT_ROOT/docker/docker-compose.app.yml"
 BACKUP_HOST_DIR="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}"
 BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-12}"

@@ -23,10 +23,14 @@ pipeline {
         CONTAINER_MEMORY = "1g"
         CONTAINER_MEMORY_RESERVATION = "512m"
         CONTAINER_READONLY = "false"
+        CONTAINER_CMD = "start"
         // envsubst 变量列表
         ENVSUBST_VARS = '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${SMTP_HOST} ${SMTP_PORT} ${SMTP_FROM} ${SMTP_USER} ${SMTP_PASSWORD}'
         // 额外 docker run 参数（主题卷 + data tmpfs）
         EXTRA_DOCKER_ARGS = "-v ${WORKSPACE}/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro --tmpfs /opt/keycloak/data"
+        // Keycloak 健康检查参数（启动较慢，需要更多重试）
+        HEALTH_CHECK_MAX_RETRIES = "45"
+        HEALTH_CHECK_INTERVAL = "4"
         // 蓝绿状态
         ACTIVE_ENV = sh(
             script: 'cat /opt/noda/active-env-keycloak 2>/dev/null || echo blue',
@@ -50,6 +54,7 @@ pipeline {
             steps {
                 // Keycloak 不需要 checkout noda-apps（使用官方镜像）
                 sh '''
+                    set -a && source docker/.env && set +a
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_preflight
@@ -63,6 +68,7 @@ pipeline {
         stage('Pull Image') {
             steps {
                 sh '''
+                    set -a && source docker/.env && set +a
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_pull_image
@@ -73,8 +79,16 @@ pipeline {
         stage('Deploy') {
             steps {
                 sh '''
+                    set -a && source docker/.env && set +a
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
+                    # 停止 compose 管理的旧容器（首次蓝绿部署迁移）
+                    if [ "$(is_container_running noda-infra-keycloak-prod)" = "true" ]; then
+                        log_warn "检测到 compose 容器 noda-infra-keycloak-prod，停止并迁移到蓝绿架构"
+                        docker stop -t 30 noda-infra-keycloak-prod
+                        docker rm noda-infra-keycloak-prod
+                        log_success "compose 容器已停止并移除"
+                    fi
                     pipeline_deploy "$TARGET_ENV"
                 '''
             }
@@ -83,6 +97,7 @@ pipeline {
         stage('Health Check') {
             steps {
                 sh '''
+                    set -a && source docker/.env && set +a
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_health_check "$TARGET_ENV"
@@ -93,6 +108,7 @@ pipeline {
         stage('Switch') {
             steps {
                 sh '''
+                    set -a && source docker/.env && set +a
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_switch "$TARGET_ENV" "$ACTIVE_ENV"
@@ -103,6 +119,7 @@ pipeline {
         stage('Verify') {
             steps {
                 sh '''
+                    set -a && source docker/.env && set +a
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_verify "$TARGET_ENV"
@@ -120,6 +137,7 @@ pipeline {
                             string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
                         ]) {
                             sh '''
+                                set -a && source docker/.env && set +a
                                 source scripts/lib/log.sh
                                 source scripts/pipeline-stages.sh
                                 pipeline_purge_cdn
@@ -141,6 +159,7 @@ pipeline {
             script {
                 if (env.TARGET_ENV && env.TARGET_ENV != 'null') {
                     sh '''
+                        set -a && source docker/.env && set +a
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
                         pipeline_failure_cleanup "$TARGET_ENV"

@@ -17,9 +17,9 @@ source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/lib/health.sh"
 
 # 加载 .env（envsubst 需要 POSTGRES_USER 等环境变量）
-if [ -f "$PROJECT_ROOT/.env" ]; then
+if [ -f "$PROJECT_ROOT/docker/.env" ]; then
     set -a
-    source "$PROJECT_ROOT/.env"
+    source "$PROJECT_ROOT/docker/.env"
     set +a
 fi
 
