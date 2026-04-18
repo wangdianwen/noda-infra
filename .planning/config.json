@@ -1,5 +1,5 @@
 {
-  "model_profile": "quality",
+  "model_profile": "balanced",
   "commit_docs": true,
   "parallelization": true,
   "search_gitignored": false,
@@ -22,10 +22,12 @@
     "node_repair_budget": 2,
     "ui_phase": true,
     "ui_safety_gate": true,
+    "ai_integration_phase": true,
     "text_mode": false,
-    "research_before_questions": false,
+    "research_before_questions": true,
     "discuss_mode": "discuss",
     "skip_discuss": false,
+    "use_worktrees": true,
     "_auto_chain_active": true
   },
   "hooks": {
