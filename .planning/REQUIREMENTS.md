@@ -1,78 +1,68 @@
-# Milestone v1.6 Requirements: Jenkins Pipeline 强制执行
+# Requirements: Noda 基础设施 v1.7 代码精简与规整
 
-**Goal:** 所有容器只能通过 Jenkins Pipeline 上线，禁止直接 docker compose / shell 脚本部署
+**Defined:** 2026-04-18
+**Core Value:** 数据库永不丢失。重构不得影响备份系统和生产部署流程。
 
----
+## v1.7 Requirements
 
-## 权限收敛 (PERM)
+### 共享库提取
 
-- [ ] **PERM-01**: Docker socket 属组从 `docker` 改为 `jenkins`，非 jenkins 用户无法直接执行 docker 命令
-- [ ] **PERM-02**: Docker socket 权限通过 systemd override 持久化，服务器重启后自动恢复
-- [ ] **PERM-03**: 部署脚本（deploy/*.sh、pipeline-stages.sh、manage-containers.sh）文件权限锁定为 `750 root:jenkins`
-- [ ] **PERM-04**: git pull 后文件权限自动恢复（setup-docker-permissions.sh 或 Pipeline pre-flight 集成）
-- [ ] **PERM-05**: 统一权限管理脚本 `setup-docker-permissions.sh`，一站式配置所有权限
+- [ ] **LIB-01**: `http_health_check()` 和 `e2e_verify()` 从 4 个文件提取到 `scripts/lib/deploy-check.sh`，所有调用方改为 source 该库，保持各文件中不同的超时/重试参数通过函数参数传递
+- [ ] **LIB-02**: `detect_platform()` 从 8 个文件提取到 `scripts/lib/platform.sh`，所有调用方改为 source 该库
+- [ ] **LIB-03**: `cleanup_old_images()` 从 3 个文件提取到 `scripts/lib/image-cleanup.sh`，所有调用方改为 source 该库
 
-## 紧急访问 (BREAK)
+### 蓝绿部署统一
 
-- [ ] **BREAK-01**: admin 用户可通过 sudoers 白名单执行只读 docker 命令（ps、logs、inspect、stats、top）
-- [ ] **BREAK-02**: admin 用户无法通过 sudoers 执行 docker 写入命令（run、rm、compose up/down、exec）
-- [ ] **BREAK-03**: Break-Glass 紧急部署入口脚本，需密码验证 + 记录审计日志
-- [ ] **BREAK-04**: Break-Glass 脚本在执行前验证 Jenkins 确实不可用（避免滥用）
+- [ ] **BLUE-01**: 合并 `scripts/blue-green-deploy.sh` 和 `scripts/keycloak-blue-green-deploy.sh` 为统一的参数化脚本，通过环境变量（SERVICE_IMAGE、SERVICE_PORT、HEALTH_PATH 等）区分服务，保留旧脚本作为向后兼容 wrapper（调用新脚本）
+- [ ] **BLUE-02**: 更新 `scripts/rollback-findclass.sh` 使用 `scripts/lib/deploy-check.sh` 中的共享函数，消除内联重复的健康检查逻辑
 
-## 审计日志 (AUDIT)
+### 清理与重命名
 
-- [ ] **AUDIT-01**: auditd 规则监控所有 docker 命令执行，记录 auid（登录用户）、时间、命令参数
-- [ ] **AUDIT-02**: auditd 日志独立存储，普通用户不可篡改
-- [ ] **AUDIT-03**: Jenkins Audit Trail 插件安装，记录谁在什么时候触发了什么 Pipeline
-- [ ] **AUDIT-04**: sudo 操作日志记录（通过 sudoers Defaults logfile 配置）
+- [ ] **CLEAN-01**: 删除 `scripts/verify/` 下 5 个一次性验证脚本（quick-verify.sh、verify-apps.sh、verify-services.sh、verify-infrastructure.sh、verify-findclass.sh），这些脚本硬编码旧架构路径，已无法在生产环境运行
+- [ ] **CLEAN-02**: 重命名 `scripts/backup/lib/health.sh` 为 `scripts/backup/lib/db-health.sh`，消除与 `scripts/lib/health.sh`（Docker 容器健康检查）的命名混淆，更新所有 source 路径
 
-## Jenkins 兼容与权限 (JENKINS)
+### 质量保证
 
-- [ ] **JENKINS-01**: 权限收敛后所有 4 个 Jenkins Pipeline 正常工作（findclass-ssr、noda-site、keycloak、infra）
-- [ ] **JENKINS-02**: 权限收敛后备份脚本正常工作（noda-ops 容器内 + 宿主机 docker exec）
-- [ ] **JENKINS-03**: Matrix Authorization Strategy 插件安装，区分管理员/开发者/只读角色
-- [ ] **JENKINS-04**: 非 admin 用户可以触发 Pipeline 但不能修改 Job 配置
+- [ ] **QUAL-01**: 对 `scripts/` 下所有 .sh 文件运行 ShellCheck，消除 error 级别问题，warning 级别可按需抑制
+- [ ] **QUAL-02**: 使用 shfmt 统一格式化 `scripts/` 下所有 .sh 文件，建立一致的代码风格
 
----
+## Future Requirements
 
-## Future Requirements (Deferred)
+### 精简大文件（v1.8+）
 
-- chattr +i 锁定关键配置文件（防止 root 误操作）
-- Docker Content Trust 镜像签名验证
-- SELinux/AppArmor 强制访问控制
-- 定期审计检查脚本（cron + 报告）
+- **SLIM-01**: 拆分 `scripts/pipeline-stages.sh`（1108行）为按职责分组的模块文件
+- **SLIM-02**: 拆分 `scripts/setup-jenkins.sh`（1029行）为安装/配置/安全子命令模块
+
+### 安全脚本收敛（v1.8+）
+
+- **SEC-01**: 将 8 个安全脚本收敛为 `noda-security.sh` 单一入口
+
+### 测试框架（v1.8+）
+
+- **TEST-01**: 引入 Bats 测试框架替代手写测试脚本
+- **TEST-02**: 将 ShellCheck 集成为 Jenkins Pipeline 质量门禁
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| skykiwi-crawler Pipeline | 单次任务容器，手动触发足够（v1.5 PROJECT.md 决策） |
-| Rootless Docker | 迁移成本远大于收益，现有 docker-compose.yml 假设 rootful |
-| Docker Socket Proxy (TEEU/HAProxy) | 单服务器场景过度工程化 |
-| HashiCorp Vault / Teleport | 单服务器 + 1-2 管理员场景不需要 |
-| LDAP/OIDC 集成 | Jenkins 内置用户管理足够 |
-| Jenkins H2 → PostgreSQL 迁移 | 与强制执行主题关联度中等，推迟到 v1.7 |
-
----
+| 合并 scripts/lib/log.sh 和 scripts/backup/lib/log.sh | 运行环境不同（宿主机终端 vs 容器 cron），合并会威胁备份系统稳定性 |
+| 合并 scripts/lib/health.sh 和 scripts/backup/lib/health.sh | 功能完全不同（Docker 容器健康 vs 数据库连接+磁盘检查），仅命名巧合 |
+| 引入 Bats 测试框架 | 本次专注重构，测试框架迁移是独立工作 |
+| Docker Compose 文件精简 | overlay 模式运行良好，无实际冗余 |
+| pipeline-stages.sh 拆分 | 高风险（Jenkins 运行时字符串拼接调用），留待专项处理 |
+| setup-jenkins.sh 拆分 | 仅在安装/卸载时使用，优先级低 |
 
 ## Traceability
 
 | Requirement | Phase | Status |
-|------------|-------|--------|
-| PERM-01 | Phase 31 | Pending |
-| PERM-02 | Phase 31 | Pending |
-| PERM-03 | Phase 31 | Pending |
-| PERM-04 | Phase 31 | Pending |
-| PERM-05 | Phase 34 | Pending |
-| BREAK-01 | Phase 32 | Pending |
-| BREAK-02 | Phase 32 | Pending |
-| BREAK-03 | Phase 32 | Pending |
-| BREAK-04 | Phase 32 | Pending |
-| AUDIT-01 | Phase 33 | Pending |
-| AUDIT-02 | Phase 33 | Pending |
-| AUDIT-03 | Phase 33 | Pending |
-| AUDIT-04 | Phase 33 | Pending |
-| JENKINS-01 | Phase 31 | Pending |
-| JENKINS-02 | Phase 31 | Pending |
-| JENKINS-03 | Phase 34 | Pending |
-| JENKINS-04 | Phase 34 | Pending |
+|-------------|-------|--------|
+| LIB-01 | — | Pending |
+| LIB-02 | — | Pending |
+| LIB-03 | — | Pending |
+| BLUE-01 | — | Pending |
+| BLUE-02 | — | Pending |
+| CLEAN-01 | — | Pending |
+| CLEAN-02 | — | Pending |
+| QUAL-01 | — | Pending |
+| QUAL-02 | — | Pending |
