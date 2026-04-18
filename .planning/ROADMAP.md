@@ -151,8 +151,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 37-01-PLAN.md — 删除 scripts/verify/ 下 5 个不可用的验证脚本 + 更新 deploy 脚本引用
-- [ ] 37-02-PLAN.md — 重命名 backup/lib/health.sh 为 db-health.sh 并更新 source 路径（per D-01）
+- [x] 37-01-PLAN.md — 删除 scripts/verify/ 下 5 个不可用的验证脚本 + 更新 deploy 脚本引用
+- [x] 37-02-PLAN.md — 重命名 backup/lib/health.sh 为 db-health.sh 并更新 source 路径（per D-01）
 
 #### Phase 38: 质量保证
 **Goal**: scripts/ 目录下所有 .sh 文件通过 ShellCheck 零 error 检查并有一致的代码风格
@@ -177,5 +177,5 @@ Phases execute in numeric order: 35 -> 36 -> 37 -> 38
 |-------|-----------|----------------|--------|-----------|
 | 35. 共享库建设 | v1.7 | 3/3 | Complete | 2026-04-18 |
 | 36. 蓝绿部署统一 | v1.7 | 2/2 | Complete | 2026-04-19 |
-| 37. 清理与重命名 | v1.7 | 0/2 | Not started | - |
+| 37. 清理与重命名 | v1.7 | 2/2 | Complete | 2026-04-19 |
 | 38. 质量保证 | v1.7 | 0/2 | Not started | - |
