@@ -54,7 +54,6 @@ pipeline {
             steps {
                 // Keycloak 不需要 checkout noda-apps（使用官方镜像）
                 sh '''
-                    set -a && source docker/.env && set +a
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_preflight
@@ -68,7 +67,6 @@ pipeline {
         stage('Pull Image') {
             steps {
                 sh '''
-                    set -a && source docker/.env && set +a
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_pull_image
@@ -79,7 +77,6 @@ pipeline {
         stage('Deploy') {
             steps {
                 sh '''
-                    set -a && source docker/.env && set +a
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     # 停止 compose 管理的旧容器（首次蓝绿部署迁移）
@@ -97,7 +94,6 @@ pipeline {
         stage('Health Check') {
             steps {
                 sh '''
-                    set -a && source docker/.env && set +a
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_health_check "$TARGET_ENV"
@@ -108,7 +104,6 @@ pipeline {
         stage('Switch') {
             steps {
                 sh '''
-                    set -a && source docker/.env && set +a
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_switch "$TARGET_ENV" "$ACTIVE_ENV"
@@ -119,7 +114,6 @@ pipeline {
         stage('Verify') {
             steps {
                 sh '''
-                    set -a && source docker/.env && set +a
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_verify "$TARGET_ENV"
@@ -137,7 +131,6 @@ pipeline {
                             string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
                         ]) {
                             sh '''
-                                set -a && source docker/.env && set +a
                                 source scripts/lib/log.sh
                                 source scripts/pipeline-stages.sh
                                 pipeline_purge_cdn
@@ -159,7 +152,6 @@ pipeline {
             script {
                 if (env.TARGET_ENV && env.TARGET_ENV != 'null') {
                     sh '''
-                        set -a && source docker/.env && set +a
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
                         pipeline_failure_cleanup "$TARGET_ENV"

@@ -12,6 +12,3 @@
 
 # 每天凌晨 4:00 清理旧备份文件
 0 4 * * * find /tmp/postgres_backups -type f -name "*.dump" -mtime +7 -delete 2>/dev/null || true
-
-# Skykiwi 课程数据爬虫 — 每天 UTC 18:00 / NZST 06:00
-0 18 * * * cd /app && python3 -B scripts/crawl-skykiwi.py --all-boards >> /var/log/skykiwi-crawler.log 2>&1

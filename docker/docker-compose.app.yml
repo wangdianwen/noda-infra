@@ -70,45 +70,6 @@ services:
       - /tmp
 
   # ----------------------------------------
-  # Skykiwi 爬虫（定时任务）
-  # 每天 UTC 18:00 / NZST 06:00 自动抓取课程数据
-  # 手动触发: docker compose -f docker/docker-compose.app.yml run --rm skykiwi-crawler
-  # ----------------------------------------
-  skykiwi-crawler:
-    build:
-      context: ../../noda-apps
-      dockerfile: ../noda-infra/deploy/Dockerfile.skykiwi-crawler
-    image: skykiwi-crawler:latest
-    container_name: skykiwi-crawler
-    labels:
-      - "noda.service-group=apps"
-      - "noda.environment=prod"
-    restart: "no"
-    security_opt:
-      - no-new-privileges:true
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.z.ai/api/anthropic}
-      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:?请设置 ANTHROPIC_AUTH_TOKEN 环境变量}
-    networks:
-      - noda-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
-        reservations:
-          cpus: '0.1'
-          memory: 128M
-    cap_drop:
-      - ALL
-
-  # ----------------------------------------
   # NODA Site（静态 Landing Page）
   # 预渲染 HTML + 静态文件服务
   # ----------------------------------------
