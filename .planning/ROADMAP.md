@@ -18,7 +18,7 @@
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 35: 共享库建设** - 提取 3 个共享库文件（deploy-check.sh, platform.sh, image-cleanup.sh），消除多处重复代码
+- [x] **Phase 35: 共享库建设** - 提取 3 个共享库文件（deploy-check.sh, platform.sh, image-cleanup.sh），消除多处重复代码 (completed 2026-04-18)
 - [ ] **Phase 36: 蓝绿部署统一** - 合并两个蓝绿部署脚本为参数化入口，精简 rollback-findclass.sh
 - [ ] **Phase 37: 清理与重命名** - 删除不可用的验证脚本，消除 health.sh 命名混淆
 - [ ] **Phase 38: 质量保证** - ShellCheck 零 error + shfmt 统一格式化
@@ -121,9 +121,9 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 **Plans**: 3 plans
 
 Plans:
-- [ ] 35-01-PLAN.md — 提取 deploy-check.sh 共享库（http_health_check + e2e_verify，4 个消费者迁移）
-- [ ] 35-02-PLAN.md — 提取 platform.sh 共享库（detect_platform，8 个消费者迁移）
-- [ ] 35-03-PLAN.md — 提取 image-cleanup.sh 共享库（3 个清理函数，3 个消费者迁移，依赖 35-01）
+- [x] 35-01-PLAN.md — 提取 deploy-check.sh 共享库（http_health_check + e2e_verify，4 个消费者迁移）
+- [x] 35-02-PLAN.md — 提取 platform.sh 共享库（detect_platform，8 + 1 个消费者迁移）
+- [x] 35-03-PLAN.md — 提取 image-cleanup.sh 共享库（3 个清理函数，3 个消费者迁移，依赖 35-01）
 
 #### Phase 36: 蓝绿部署统一
 **Goal**: findclass-ssr 和 keycloak 的蓝绿部署通过单一参数化脚本执行，消除 95% 重复逻辑
