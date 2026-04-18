@@ -13,7 +13,7 @@ pipeline {
         SERVICE_NAME = "keycloak"
         SERVICE_PORT = "8080"
         UPSTREAM_NAME = "keycloak_backend"
-        HEALTH_PATH = "/"
+        HEALTH_PATH = "/realms/master"
         ACTIVE_ENV_FILE = "/opt/noda/active-env-keycloak"
         UPSTREAM_CONF = "${WORKSPACE}/config/nginx/snippets/upstream-keycloak.conf"
         SERVICE_GROUP = "infra"
