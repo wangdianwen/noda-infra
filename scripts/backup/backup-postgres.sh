@@ -284,7 +284,7 @@ main() {
   # 清理旧备份
   log_info "步骤 5/7: 清理旧备份"
   cleanup_old_backups "$(get_backup_dir)"
-  cleanup_old_backups_b2 $(get_retention_days)
+  cleanup_old_backups_b2 "$(get_retention_days)"
   log_success "旧备份清理完成"
 
   # 清理旧历史记录（Phase 5）

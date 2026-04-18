@@ -195,42 +195,11 @@ show_deployment_status() {
 main() {
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "Findclass 零依赖部署"
+    echo "Findclass 零依赖部署 (DEPRECATED)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-
-    # 检查依赖
-    check_dependencies
-
-    # 解密密钥
-    decrypt_secrets
-
-    # 构建镜像
-    build_images
-
-    # 停止旧容器
-    stop_old_containers
-
-    # 启动新容器
-    start_new_containers
-
-    # 等待容器就绪
-    wait_for_containers
-
-    # 健康检查
-    if ! health_check; then
-        # 可选：在这里触发回滚
-        # rollback_deployment
-        log_warn "健康检查未通过，请手动验证"
-    fi
-
-    # 显示部署状态
-    show_deployment_status
-
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "部署完成！"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
+    log_error "此脚本已废弃，请使用 deploy-infrastructure-prod.sh 或 deploy-apps-prod.sh"
+    exit 1
 }
 
 # 运行主函数
