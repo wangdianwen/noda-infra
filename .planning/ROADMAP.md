@@ -10,6 +10,7 @@
 - **v1.5 开发环境本地化 + 基础设施 CI/CD** -- Phases 26-30 (shipped 2026-04-17) -- [详情](milestones/v1.5-ROADMAP.md)
 - **v1.6 Jenkins Pipeline 强制执行** -- Phases 31-34 (shipped 2026-04-18)
 - **v1.7 代码精简与规整** -- Phases 35-38 (shipped 2026-04-19) -- [详情](milestones/v1.7-ROADMAP.md)
+- **v1.8 密钥管理集中化** -- Phases 39-42 (in progress)
 
 ## Phases
 
@@ -98,3 +99,68 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [x] **Phase 38: 质量保证** (2/2 plans) -- completed 2026-04-19
 
 </details>
+
+### v1.8 密钥管理集中化 (In Progress)
+
+**Milestone Goal:** 将分散在多个 .env 文件中的敏感环境变量迁移到 Infisical Cloud 集中管理，与 Jenkins Pipeline 集成实现安全注入，备份到 Backblaze B2，并清理 Git 历史中的密钥泄露。
+
+- [ ] **Phase 39: Infisical 基础设施搭建** -- CLI 安装、项目创建、凭据配置、离线备份
+- [ ] **Phase 40: Jenkins Pipeline 集成** -- Fetch Secrets stage、凭据绑定、Docker Compose 注入、VITE_* 构建
+- [ ] **Phase 41: 迁移与清理** -- .env 文件迁移、明文删除、SOPS 代码清理
+- [ ] **Phase 42: 备份与安全** -- B2 密钥快照、Git 历史 BFG 清理
+
+## Phase Details
+
+### Phase 39: Infisical 基础设施搭建
+**Goal**: Jenkins 宿主机可以通过 Infisical CLI 认证并拉取所有密钥
+**Depends on**: Nothing (v1.8 第一个阶段)
+**Requirements**: INFRA-01, INFRA-02, INFRA-03, INFRA-04
+**Success Criteria** (what must be TRUE):
+  1. Jenkins 宿主机上 `infisical --version` 返回有效版本号（CLI 安装成功）
+  2. `infisical export --env=prod` 输出包含所有预期密钥的 .env 格式内容（项目创建 + 密钥录入成功）
+  3. 通过 Machine Identity 认证（非交互式）可以执行 `infisical export`，无需手动登录
+  4. Infisical 凭据（Client ID/Secret）已离线备份到密码管理器和 B2 加密快照
+**Plans**: TBD
+
+### Phase 40: Jenkins Pipeline 集成
+**Goal**: Jenkins Pipeline 启动时自动从 Infisical 拉取密钥，Docker Compose 和 docker build 都能正确获取所需环境变量
+**Depends on**: Phase 39
+**Requirements**: PIPE-01, PIPE-02, PIPE-03, PIPE-04
+**Success Criteria** (what must be TRUE):
+  1. Jenkinsfile 包含 "Fetch Secrets" stage，Pipeline 执行时在 workspace 生成 .env 文件
+  2. 构建日志中不包含 Infisical Client ID/Secret 明文（withCredentials 遮蔽生效）
+  3. `docker compose up` 启动的服务（postgres, keycloak, nginx, noda-ops）正常运行，所有环境变量值与迁移前一致
+  4. findclass-ssr 镜像构建时 VITE_* 变量通过 --build-arg 正确注入，前端页面正常加载
+**Plans**: TBD
+
+### Phase 41: 迁移与清理
+**Goal**: 所有密钥已在 Infisical 验证通过后，删除明文 .env 文件和废弃的 SOPS 代码
+**Depends on**: Phase 40
+**Requirements**: MIGR-01, MIGR-02, MIGR-03, MIGR-04
+**Success Criteria** (what must be TRUE):
+  1. .env.production 和 docker/.env 中的所有密钥已录入 Infisical，且通过 `infisical export` 验证完整
+  2. 备份系统 scripts/backup/.env.backup 保持独立的明文文件不变，不受密钥管理迁移影响
+  3. .env.production 和 docker/.env 明文文件已从文件系统删除，服务仍能通过 Infisical 正常部署
+  4. scripts/utils/decrypt-secrets.sh 及所有 SOPS 相关代码和引用已清理干净
+**Plans**: TBD
+
+### Phase 42: 备份与安全
+**Goal**: Infisical 密钥有定期 B2 快照备份，Git 历史中的密钥泄露已清除
+**Depends on**: Phase 41
+**Requirements**: BACKUP-01, BACKUP-02
+**Success Criteria** (what must be TRUE):
+  1. cron 任务定期将 Infisical 密钥快照（`infisical export` 输出）上传到 Backblaze B2
+  2. Git 历史中 docker/.env 的明文密钥已被 BFG Repo Cleaner 清除，`git log --all -- docker/.env` 不再显示密钥内容
+**Plans**: TBD
+
+## Progress
+
+**Execution Order:**
+Phases execute in numeric order: 39 -> 40 -> 41 -> 42
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 39. Infisical 基础设施搭建 | 0/TBD | Not started | - |
+| 40. Jenkins Pipeline 集成 | 0/TBD | Not started | - |
+| 41. 迁移与清理 | 0/TBD | Not started | - |
+| 42. 备份与安全 | 0/TBD | Not started | - |

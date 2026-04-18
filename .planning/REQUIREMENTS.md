@@ -60,26 +60,26 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | — | Pending |
-| INFRA-02 | — | Pending |
-| INFRA-03 | — | Pending |
-| INFRA-04 | — | Pending |
-| PIPE-01 | — | Pending |
-| PIPE-02 | — | Pending |
-| PIPE-03 | — | Pending |
-| PIPE-04 | — | Pending |
-| MIGR-01 | — | Pending |
-| MIGR-02 | — | Pending |
-| MIGR-03 | — | Pending |
-| MIGR-04 | — | Pending |
-| BACKUP-01 | — | Pending |
-| BACKUP-02 | — | Pending |
+| INFRA-01 | Phase 39 | Pending |
+| INFRA-02 | Phase 39 | Pending |
+| INFRA-03 | Phase 39 | Pending |
+| INFRA-04 | Phase 39 | Pending |
+| PIPE-01 | Phase 40 | Pending |
+| PIPE-02 | Phase 40 | Pending |
+| PIPE-03 | Phase 40 | Pending |
+| PIPE-04 | Phase 40 | Pending |
+| MIGR-01 | Phase 41 | Pending |
+| MIGR-02 | Phase 41 | Pending |
+| MIGR-03 | Phase 41 | Pending |
+| MIGR-04 | Phase 41 | Pending |
+| BACKUP-01 | Phase 42 | Pending |
+| BACKUP-02 | Phase 42 | Pending |
 
 **Coverage:**
 - v1 requirements: 14 total
-- Mapped to phases: 0
-- Unmapped: 14 ⚠️
+- Mapped to phases: 14
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-19*
-*Last updated: 2026-04-19 after initial definition*
+*Last updated: 2026-04-19 -- roadmap created, all requirements mapped to phases 39-42*
