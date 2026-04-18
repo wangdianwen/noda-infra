@@ -4,8 +4,8 @@ milestone: v1.7
 milestone_name: 代码精简与规整
 status: executing
 stopped_at: ""
-last_updated: "2026-04-18T23:30:00+12:00"
-last_activity: 2026-04-18 -- Phase 35 complete
+last_updated: "2026-04-18T23:45:00+12:00"
+last_activity: 2026-04-18 -- Phase 36 context gathered
 progress:
   total_phases: 4
   completed_phases: 1
@@ -22,7 +22,7 @@ See: .planning/PROJECT.md (updated 2026-04-18)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** v1.7 代码精简与规整 -- Phase 36 准备规划
+**Current focus:** v1.7 代码精简与规整 -- Phase 36 context gathered, ready to plan
 
 ## Current Position
 
@@ -62,6 +62,6 @@ Recent decisions:
 
 ## Session Continuity
 
-Last session: 2026-04-18T23:30:00+12:00
-Phase 35 complete (3/3 plans, 9 commits)
-Next: Phase 36 蓝绿部署统一
+Last session: 2026-04-18T23:45:00+12:00
+Phase 36 context gathered (3 decisions: 构建内置模式/清理参数化/回滚双服务)
+Next: Phase 36 plan
