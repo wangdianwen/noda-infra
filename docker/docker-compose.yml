@@ -102,7 +102,10 @@ services:
       start_period: 30s
 
   # ----------------------------------------
-  # Keycloak 认证服务（基础配置）
+  # Keycloak 认证服务（已迁移到蓝绿部署）
+  # 注意：生产环境通过 Jenkins keycloak-deploy Pipeline 管理
+  # 容器名为 keycloak-blue / keycloak-green，不使用 compose 启动
+  # 此定义仅作为配置参考保留
   # ----------------------------------------
   keycloak:
     image: quay.io/keycloak/keycloak:26.2.3

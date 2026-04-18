@@ -107,9 +107,18 @@ prepare_env_file() {
     exit 1
   fi
 
+  # 自动解析 Keycloak 蓝绿活跃容器名（findclass-ssr 等服务需要 KEYCLOAK_INTERNAL_URL）
+  if [ -f "/opt/noda/active-env-keycloak" ]; then
+    export KEYCLOAK_ACTIVE_CONTAINER="keycloak-$(cat /opt/noda/active-env-keycloak)"
+  else
+    export KEYCLOAK_ACTIVE_CONTAINER="${KEYCLOAK_ACTIVE_CONTAINER:-keycloak-blue}"
+  fi
+
   # 支持通过 ENVSUBST_VARS 环境变量覆盖需要替换的变量列表
   # 默认值保持 findclass-ssr 兼容
-  local vars="${ENVSUBST_VARS:-\${POSTGRES_USER} \${POSTGRES_PASSWORD} \${RESEND_API_KEY}}"
+  # 注意：不能在 ${VAR:-...} 内嵌套 ${...}，内层 } 会被误认为外层闭合
+  local _default_vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${KEYCLOAK_ACTIVE_CONTAINER}'
+  local vars="${ENVSUBST_VARS:-$_default_vars}"
   envsubst "$vars" < "$ENV_TEMPLATE" > "$tmp_file"
   echo "$tmp_file"
 }
