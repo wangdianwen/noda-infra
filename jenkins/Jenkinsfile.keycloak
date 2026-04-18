@@ -24,6 +24,7 @@ pipeline {
         CONTAINER_MEMORY_RESERVATION = "512m"
         CONTAINER_READONLY = "false"
         CONTAINER_CMD = "start"
+        CONTAINER_HEALTH_CMD = "bash -c 'echo > /dev/tcp/localhost/8080'"
         // envsubst 变量列表
         ENVSUBST_VARS = '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${SMTP_HOST} ${SMTP_PORT} ${SMTP_FROM} ${SMTP_USER} ${SMTP_PASSWORD}'
         // 额外 docker run 参数（主题卷 + data tmpfs）

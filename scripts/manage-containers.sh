@@ -188,6 +188,7 @@ run_container() {
   local extra_docker_args="${EXTRA_DOCKER_ARGS:-}"
   local container_cmd="${CONTAINER_CMD:-}"
   local container_cap_add="${CONTAINER_CAP_ADD:-}"
+  local container_health_cmd="${CONTAINER_HEALTH_CMD:-node -e \"fetch('http://localhost:${SERVICE_PORT}${HEALTH_PATH}').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"}"
 
   log_info "启动容器: $container_name (镜像: $image${container_cmd:+, 命令: $container_cmd})"
 
@@ -213,7 +214,7 @@ run_container() {
     --label "noda.blue-green=${env}" \
     --label com.docker.compose.project=noda-apps \
     --label "com.docker.compose.service=${SERVICE_NAME}" \
-    --health-cmd "node -e \"fetch('http://localhost:${SERVICE_PORT}${HEALTH_PATH}').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"" \
+    --health-cmd "$container_health_cmd" \
     --health-interval 30s \
     --health-timeout 10s \
     --health-retries 3 \
