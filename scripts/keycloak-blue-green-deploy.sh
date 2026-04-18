@@ -24,6 +24,7 @@ if [ -f "$PROJECT_ROOT/docker/.env" ]; then
 fi
 
 source "$PROJECT_ROOT/scripts/manage-containers.sh"
+source "$PROJECT_ROOT/scripts/lib/deploy-check.sh"
 
 # ============================================
 # Keycloak 蓝绿参数（覆盖 manage-containers.sh 默认值）
@@ -56,94 +57,6 @@ HEALTH_CHECK_MAX_RETRIES=45
 HEALTH_CHECK_INTERVAL=4
 E2E_MAX_RETRIES=5
 E2E_INTERVAL=2
-
-# ============================================
-# 函数: http_health_check
-# ============================================
-# Keycloak 专用 HTTP 健康检查（per D-01）
-# 使用 /health/ready 端点
-http_health_check() {
-  local container="$1"
-  local max_retries="${2:-$HEALTH_CHECK_MAX_RETRIES}"
-  local interval="${3:-$HEALTH_CHECK_INTERVAL}"
-  local attempt=0
-
-  log_info "Keycloak HTTP 健康检查: $container (最多 ${max_retries} 次, 间隔 ${interval}s)"
-
-  while [ $attempt -lt $max_retries ]; do
-    attempt=$((attempt + 1))
-
-    if docker exec "$container" wget --quiet --tries=1 --spider "http://localhost:${SERVICE_PORT}${HEALTH_PATH}" 2>/dev/null; then
-      log_success "$container — Keycloak 健康检查通过 (第 ${attempt}/${max_retries} 次)"
-      return 0
-    fi
-
-    if [ $attempt -lt $max_retries ]; then
-      sleep "$interval"
-    fi
-  done
-
-  log_error "$container — Keycloak 健康检查失败 (${max_retries} 次尝试)"
-  log_info "最近容器日志:"
-  docker logs "$container" --tail 20 2>&1 | sed 's/^/  /'
-  return 1
-}
-
-# ============================================
-# 函数: e2e_verify
-# ============================================
-# 通过 nginx 容器验证 Keycloak 可达性
-e2e_verify() {
-  local target_env="$1"
-  local max_retries="${2:-$E2E_MAX_RETRIES}"
-  local interval="${3:-$E2E_INTERVAL}"
-  local container_name
-  container_name=$(get_container_name "$target_env")
-
-  log_info "E2E 验证: nginx -> $container_name (最多 ${max_retries} 次)"
-
-  local use_curl=true
-  if ! docker exec "$NGINX_CONTAINER" which curl >/dev/null 2>&1; then
-    log_info "nginx 容器无 curl，使用 wget 备选方案"
-    use_curl=false
-  fi
-
-  local attempt=0
-  while [ $attempt -lt $max_retries ]; do
-    attempt=$((attempt + 1))
-
-    local result=1
-
-    if [ "$use_curl" = true ]; then
-      local http_code
-      http_code=$(docker exec "$NGINX_CONTAINER" \
-        curl -s -o /dev/null -w "%{http_code}" \
-        "http://${container_name}:${SERVICE_PORT}${HEALTH_PATH}" 2>/dev/null || echo "000")
-
-      if [ "$http_code" = "200" ]; then
-        result=0
-      fi
-    else
-      if docker exec "$NGINX_CONTAINER" \
-        wget --quiet --tries=1 --spider \
-        "http://${container_name}:${SERVICE_PORT}${HEALTH_PATH}" 2>/dev/null; then
-        result=0
-      fi
-    fi
-
-    if [ $result -eq 0 ]; then
-      log_success "E2E 验证通过 (第 ${attempt}/${max_retries} 次)"
-      return 0
-    fi
-
-    if [ $attempt -lt $max_retries ]; then
-      sleep "$interval"
-    fi
-  done
-
-  log_error "E2E 验证失败 (${max_retries} 次尝试)"
-  return 1
-}
 
 # ============================================
 # 函数: cleanup_old_keycloak_images
@@ -242,7 +155,7 @@ main() {
   log_info "步骤 3/7: HTTP 健康检查"
   log_info "=========================================="
 
-  if ! http_health_check "$target_container" "$HEALTH_CHECK_MAX_RETRIES" "$HEALTH_CHECK_INTERVAL"; then
+  if ! http_health_check "$target_container" "$SERVICE_PORT" "$HEALTH_PATH" "$HEALTH_CHECK_MAX_RETRIES" "$HEALTH_CHECK_INTERVAL"; then
     log_error "健康检查失败，保持当前环境: $active_env"
     log_warn "新容器 $target_container 仍在运行，可手动检查后停止"
     exit 1
@@ -270,7 +183,7 @@ main() {
   log_info "步骤 5/7: E2E 验证"
   log_info "=========================================="
 
-  if ! e2e_verify "$target_env" "$E2E_MAX_RETRIES" "$E2E_INTERVAL"; then
+  if ! e2e_verify "$target_env" "$SERVICE_PORT" "$HEALTH_PATH" "$E2E_MAX_RETRIES" "$E2E_INTERVAL"; then
     log_error "E2E 验证失败，执行自动回滚"
     update_upstream "$active_env"
     docker exec "$NGINX_CONTAINER" nginx -t
