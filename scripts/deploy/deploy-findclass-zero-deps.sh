@@ -145,19 +145,9 @@ wait_for_containers() {
 # 健康检查
 health_check() {
     log_info "执行健康检查..."
-
-    local verify_script="$PROJECT_ROOT/scripts/verify/verify-findclass.sh"
-    if [[ -f "$verify_script" ]]; then
-        if bash "$verify_script"; then
-            log_info "健康检查通过"
-            return 0
-        else
-            log_warn "健康检查失败，但容器已启动"
-            return 1
-        fi
-    fi
-
-    log_warn "验证脚本不存在，跳过健康检查"
+    # 旧 verify-findclass.sh 已删除（硬编码旧架构路径，不可用）
+    # 健康检查由 Jenkins Pipeline 部署阶段覆盖
+    log_info "健康检查由 Pipeline 覆盖，跳过本地验证"
     return 0
 }
 
