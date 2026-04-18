@@ -213,7 +213,7 @@ run_container() {
     --label "noda.blue-green=${env}" \
     --label com.docker.compose.project=noda-apps \
     --label "com.docker.compose.service=${SERVICE_NAME}" \
-    --health-cmd "wget --quiet --tries=1 --spider http://localhost:${SERVICE_PORT}${HEALTH_PATH} || exit 1" \
+    --health-cmd "node -e \"fetch('http://localhost:${SERVICE_PORT}${HEALTH_PATH}').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"" \
     --health-interval 30s \
     --health-timeout 10s \
     --health-retries 3 \
