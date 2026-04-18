@@ -1,36 +1,36 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.6
-milestone_name: Jenkins Pipeline 强制执行
-status: shipped
-stopped_at: v1.6 complete
-last_updated: "2026-04-18T03:30:00Z"
-last_activity: 2026-04-18 -- v1.6 milestone shipped, all 4 phases complete
+milestone: v1.7
+milestone_name: 代码精简与规整
+status: Defining requirements
+last_updated: "2026-04-18T06:00:00.000Z"
+last_activity: 2026-04-18 -- v1.7 milestone started
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 10
-  completed_plans: 10
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-17)
+See: .planning/PROJECT.md (updated 2026-04-18)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** v1.6 shipped — ready for next milestone
+**Current focus:** v1.7 代码精简与规整
 
 ## Current Position
 
-Phase: v1.6 COMPLETE (all 4 phases shipped)
-Status: Milestone shipped
-Last activity: 2026-04-18 -- v1.6 milestone shipped
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-18 -- v1.7 milestone started
 
-Progress: [██████████] 100%
+Progress: [          ] 0%
 
 ## Previous Milestones
 
@@ -60,10 +60,10 @@ Recent decisions:
 ### Blockers/Concerns
 
 - Phase 32/34 有 human_needed 测试项（需要 Linux 生产环境验证 sudoers/权限矩阵实际行为）
-- Jenkins H2 → 本地 PostgreSQL 迁移待完成（Active 需求，v1.7 范围）
+- Jenkins H2 → 本地 PostgreSQL 迁移待完成（Active 需求，v1.7+ 范围）
 
 ## Session Continuity
 
-Last session: 2026-04-18T03:30:00Z
-Stopped at: v1.6 milestone shipped
+Last session: 2026-04-18T06:00:00.000Z
+Stopped at: —
 Resume file: None
