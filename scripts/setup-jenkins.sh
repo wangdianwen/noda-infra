@@ -721,25 +721,76 @@ GROOVY
 # ============================================
 # cmd_apply_matrix_auth() — 通过 Jenkins CLI 执行权限矩阵 Groovy 脚本
 # ============================================
+# 查找 Java 可执行文件
+find_java() {
+  if [[ "$PLATFORM" == "macos" ]]; then
+    local brew_java="/opt/homebrew/opt/openjdk@21/bin/java"
+    if [ -x "$brew_java" ]; then
+      echo "$brew_java"
+      return
+    fi
+  fi
+  # Linux 或 fallback
+  command -v java 2>/dev/null && return
+  echo "java"
+}
+
+# 查找 jenkins-cli.jar
+find_cli_jar() {
+  local jhome
+  jhome="$(jenkins_home)"
+  local possible_paths=(
+    "${jhome}/war/WEB-INF/jenkins-cli.jar"
+    "${jhome}/jenkins-cli.jar"
+    "/usr/share/jenkins/jenkins-cli.jar"
+    "/usr/share/java/jenkins-cli.jar"
+  )
+  # macOS: Homebrew Jenkins-LTS puts CLI jar alongside war
+  if [[ "$PLATFORM" == "macos" ]]; then
+    possible_paths=(
+      "/opt/homebrew/opt/jenkins-lts/libexec/cli-"*.jar
+      "${jhome}/war/WEB-INF/jenkins-cli.jar"
+      "${jhome}/jenkins-cli.jar"
+    )
+  fi
+
+  for path in "${possible_paths[@]}"; do
+    # macOS runs as current user, Linux runs as jenkins (needs sudo)
+    if [[ "$PLATFORM" == "macos" ]]; then
+      if [ -f "$path" ]; then
+        echo "$path"
+        return
+      fi
+    else
+      if sudo test -f "$path" 2>/dev/null; then
+        echo "$path"
+        return
+      fi
+    fi
+  done
+  return 1
+}
+
 cmd_apply_matrix_auth() {
   log_info "=========================================="
   log_info "应用 Jenkins 权限矩阵配置"
   log_info "=========================================="
 
-  if [[ "$PLATFORM" == "macos" ]]; then
-    log_warn "macOS 不支持此操作，跳过"
-    return 0
-  fi
-
-  # root 权限检查
-  if [[ $EUID -ne 0 ]]; then
-    log_error "此命令需要 root 权限，请使用: sudo bash $0 apply-matrix-auth"
-    exit 1
+  # macOS 不需要 root（Homebrew Jenkins 以当前用户运行）
+  if [[ "$PLATFORM" != "macos" ]]; then
+    if [[ $EUID -ne 0 ]]; then
+      log_error "此命令需要 root 权限，请使用: sudo bash $0 apply-matrix-auth"
+      exit 1
+    fi
   fi
 
   # 检查 Jenkins 是否运行
   if ! curl -sf "http://localhost:${JENKINS_PORT}/login" > /dev/null 2>&1; then
-    log_error "Jenkins 未运行，请先启动: sudo systemctl start jenkins"
+    if [[ "$PLATFORM" == "macos" ]]; then
+      log_error "Jenkins 未运行，请先启动: brew services start jenkins-lts"
+    else
+      log_error "Jenkins 未运行，请先启动: sudo systemctl start jenkins"
+    fi
     exit 1
   fi
 
@@ -751,40 +802,34 @@ cmd_apply_matrix_auth() {
   fi
 
   # 查找 jenkins-cli.jar
-  local jhome
-  jhome="$(jenkins_home)"
-  local cli_jar=""
-  local possible_paths=(
-    "${jhome}/war/WEB-INF/jenkins-cli.jar"
-    "${jhome}/jenkins-cli.jar"
-    "/usr/share/jenkins/jenkins-cli.jar"
-    "/usr/share/java/jenkins-cli.jar"
-  )
-
-  for path in "${possible_paths[@]}"; do
-    if sudo test -f "$path"; then
-      cli_jar="$path"
-      log_info "找到 jenkins-cli.jar: ${cli_jar}"
-      break
-    fi
-  done
-
-  if [ -z "$cli_jar" ]; then
-    log_error "未找到 jenkins-cli.jar，已检查以下路径:"
-    for path in "${possible_paths[@]}"; do
-      log_error "  ${path}"
-    done
+  local cli_jar
+  cli_jar="$(find_cli_jar)" || {
+    log_error "未找到 jenkins-cli.jar"
     exit 1
-  fi
+  }
+  log_info "找到 jenkins-cli.jar: ${cli_jar}"
+
+  # 查找 Java
+  local java_cmd
+  java_cmd="$(find_java)"
+  log_info "使用 Java: ${java_cmd}"
 
   # 执行 Groovy 脚本
   log_info "执行权限矩阵配置脚本..."
   local apply_output
-  apply_output=$(sudo -u jenkins java -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$groovy_script" 2>&1) || {
-    log_error "权限矩阵脚本执行失败"
-    log_error "输出: ${apply_output}"
-    exit 1
-  }
+  if [[ "$PLATFORM" == "macos" ]]; then
+    apply_output=$("$java_cmd" -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$groovy_script" 2>&1) || {
+      log_error "权限矩阵脚本执行失败"
+      log_error "输出: ${apply_output}"
+      exit 1
+    }
+  else
+    apply_output=$(sudo -u jenkins "$java_cmd" -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$groovy_script" 2>&1) || {
+      log_error "权限矩阵脚本执行失败"
+      log_error "输出: ${apply_output}"
+      exit 1
+    }
+  fi
 
   log_info "脚本输出:"
   echo "$apply_output"
@@ -792,7 +837,11 @@ cmd_apply_matrix_auth() {
   # 检查是否需要重启（插件首次安装）
   if echo "$apply_output" | grep -q "Restart required"; then
     log_warn "matrix-auth 插件已安装，需要重启 Jenkins 后再次执行此命令"
-    log_info "重启命令: sudo bash $0 restart && sudo bash $0 apply-matrix-auth"
+    if [[ "$PLATFORM" == "macos" ]]; then
+      log_info "重启命令: brew services restart jenkins-lts && bash $0 apply-matrix-auth"
+    else
+      log_info "重启命令: sudo bash $0 restart && sudo bash $0 apply-matrix-auth"
+    fi
   elif echo "$apply_output" | grep -q "Matrix authorization configured"; then
     log_success "=========================================="
     log_success "Jenkins 权限矩阵配置成功"
@@ -814,45 +863,30 @@ cmd_verify_matrix_auth() {
   log_info "验证 Jenkins 权限矩阵配置"
   log_info "=========================================="
 
-  if [[ "$PLATFORM" == "macos" ]]; then
-    log_warn "macOS 不支持此操作，跳过"
-    return 0
-  fi
-
-  # root 权限检查
-  if [[ $EUID -ne 0 ]]; then
-    log_error "此命令需要 root 权限，请使用: sudo bash $0 verify-matrix-auth"
-    exit 1
+  # macOS 不需要 root（Homebrew Jenkins 以当前用户运行）
+  if [[ "$PLATFORM" != "macos" ]]; then
+    if [[ $EUID -ne 0 ]]; then
+      log_error "此命令需要 root 权限，请使用: sudo bash $0 verify-matrix-auth"
+      exit 1
+    fi
   fi
 
   # 检查 Jenkins 是否运行
   if ! curl -sf "http://localhost:${JENKINS_PORT}/login" > /dev/null 2>&1; then
-    log_error "Jenkins 未运行，请先启动: sudo systemctl start jenkins"
+    if [[ "$PLATFORM" == "macos" ]]; then
+      log_error "Jenkins 未运行，请先启动: brew services start jenkins-lts"
+    else
+      log_error "Jenkins 未运行，请先启动: sudo systemctl start jenkins"
+    fi
     exit 1
   fi
 
   # 查找 jenkins-cli.jar
-  local jhome
-  jhome="$(jenkins_home)"
-  local cli_jar=""
-  local possible_paths=(
-    "${jhome}/war/WEB-INF/jenkins-cli.jar"
-    "${jhome}/jenkins-cli.jar"
-    "/usr/share/jenkins/jenkins-cli.jar"
-    "/usr/share/java/jenkins-cli.jar"
-  )
-
-  for path in "${possible_paths[@]}"; do
-    if sudo test -f "$path"; then
-      cli_jar="$path"
-      break
-    fi
-  done
-
-  if [ -z "$cli_jar" ]; then
+  local cli_jar
+  cli_jar="$(find_cli_jar)" || {
     log_error "未找到 jenkins-cli.jar"
     exit 1
-  fi
+  }
 
   # 创建临时验证脚本
   local verify_script
@@ -953,7 +987,13 @@ VERIFY_GROOVY
 
   # 执行验证脚本
   local verify_output
-  verify_output=$(sudo -u jenkins java -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$verify_script" 2>&1)
+  local java_cmd
+  java_cmd="$(find_java)"
+  if [[ "$PLATFORM" == "macos" ]]; then
+    verify_output=$("$java_cmd" -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$verify_script" 2>&1)
+  else
+    verify_output=$(sudo -u jenkins "$java_cmd" -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$verify_script" 2>&1)
+  fi
   local verify_exit=$?
 
   # 清理临时脚本
