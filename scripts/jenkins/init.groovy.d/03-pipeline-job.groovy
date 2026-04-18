@@ -1,5 +1,5 @@
-// Jenkins Pipeline 作业配置（SCM 模式）
-// 功能：配置 noda-apps-deploy Pipeline 从 noda-infra 仓库读取 Jenkinsfile
+// Jenkins Pipeline 作业配置 - findclass-ssr 蓝绿部署
+// 功能：配置 findclass-ssr-deploy Pipeline 从 noda-infra 仓库读取 Jenkinsfile.findclass-ssr
 //
 // 执行时机：02-plugins.groovy 之后执行（字母顺序）
 // 更新策略：作业已存在则更新 configXml（解决幂等性问题）
@@ -8,13 +8,13 @@ import org.jenkinsci.plugins.workflow.job.*
 import hudson.XmlFile
 
 def instance = Jenkins.getInstance()
-def jobName = 'noda-apps-deploy'
+def jobName = 'findclass-ssr-deploy'
 
 // ---------- Pipeline 作业 XML 配置（SCM 模式）----------
-// 使用 CpsScmFlowDefinition 从 noda-infra 仓库读取 jenkins/Jenkinsfile
+// 使用 CpsScmFlowDefinition 从 noda-infra 仓库读取 jenkins/Jenkinsfile.findclass-ssr
 def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
 <flow-definition plugin="workflow-job">
-  <description>Noda Apps 蓝绿部署 Pipeline（8 阶段）</description>
+  <description>Findclass SSR 蓝绿部署 Pipeline（9 阶段）</description>
   <keepDependencies>false</keepDependencies>
   <properties/>
   <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps">
@@ -31,7 +31,7 @@ def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
         </hudson.plugins.git.BranchSpec>
       </branches>
     </scm>
-    <scriptPath>jenkins/Jenkinsfile</scriptPath>
+    <scriptPath>jenkins/Jenkinsfile.findclass-ssr</scriptPath>
     <lightweight>true</lightweight>
   </definition>
   <triggers/>

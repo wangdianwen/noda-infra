@@ -135,7 +135,7 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 通过 Jenkins UI 手动触发蓝绿部署 Pipeline：
 
 1. 浏览器访问 Jenkins（默认 http://\<server-ip\>:8888）
-2. 点击 `findclass-deploy` 任务
+2. 点击 `findclass-ssr-deploy` 任务
 3. 点击 "Build Now" 按钮
 4. Pipeline 自动执行 9 阶段：Pre-flight -> Build -> Test -> Deploy -> Health Check -> Switch -> Verify -> CDN Purge -> Cleanup
 5. 查看 Stage View 确认各阶段状态

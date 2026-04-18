@@ -267,10 +267,10 @@ step4_verify_pipeline() {
   fi
 
   # 检查 Jenkinsfile 存在
-  if [ -f "$PROJECT_ROOT/jenkins/Jenkinsfile" ]; then
-    echo -e "${GREEN}✓ Jenkinsfile 存在${NC}"
+  if [ -f "$PROJECT_ROOT/jenkins/Jenkinsfile.findclass-ssr" ]; then
+    echo -e "${GREEN}✓ Jenkinsfile.findclass-ssr 存在${NC}"
   else
-    echo -e "${RED}✗ Jenkinsfile 不存在${NC}"
+    echo -e "${RED}✗ Jenkinsfile.findclass-ssr 不存在${NC}"
     all_ok=false
   fi
 

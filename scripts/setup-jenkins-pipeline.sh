@@ -358,12 +358,12 @@ import jenkins.model.*
 import org.jenkinsci.plugins.workflow.job.*
 
 def instance = Jenkins.getInstance()
-def job = instance.getItem('noda-apps-deploy')
+def job = instance.getItem('findclass-ssr-deploy')
 
 if (job == null) {
-  println "ERROR: Pipeline job 'noda-apps-deploy' not found"
+  println "ERROR: Pipeline job 'findclass-ssr-deploy' not found"
 } else {
-  println "Pipeline job 'noda-apps-deploy' exists"
+  println "Pipeline job 'findclass-ssr-deploy' exists"
   println "Type: " + job.getClass().getSimpleName()
   def defn = job.getDefinition()
   if (defn != null) {
@@ -376,7 +376,7 @@ GROOVY_END
   local result
   result=$(run_groovy "$JENKINS_USER" "$JENKINS_ADMIN_PASSWORD" "$groovy_script")
   if echo "$result" | grep -q "exists"; then
-    echo -e "${GREEN}✓ Pipeline 作业 'noda-apps-deploy' 已存在${NC}"
+    echo -e "${GREEN}✓ Pipeline 作业 'findclass-ssr-deploy' 已存在${NC}"
   else
     log_warn "Pipeline 作业未找到，尝试手动创建..."
     # 重新运行 03-pipeline-job.groovy
@@ -448,13 +448,13 @@ step7_summary() {
   echo -e "${GREEN}Jenkins Pipeline 配置完成！${NC}"
   echo -e "${GREEN}============================================${NC}"
   echo ""
-  echo "Pipeline 作业: noda-apps-deploy"
-  echo "Jenkinsfile: jenkins/Jenkinsfile (9 阶段)"
+  echo "Pipeline 作业: findclass-ssr-deploy"
+  echo "Jenkinsfile: jenkins/Jenkinsfile.findclass-ssr (9 阶段)"
   echo ""
   echo -e "${CYAN}触发方式:${NC}"
   echo "  1. 浏览器访问 $JENKINS_URL"
   echo "  2. 使用管理员账号登录"
-  echo "  3. 点击 noda-apps-deploy"
+  echo "  3. 点击 findclass-ssr-deploy"
   echo "  4. 点击 Build Now"
   echo ""
   echo -e "${CYAN}Pipeline 阶段:${NC}"
