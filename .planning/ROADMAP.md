@@ -8,7 +8,7 @@
 - **v1.3 安全收敛与分组整理** -- Phases 15-18 (shipped 2026-04-12) -- [详情](milestones/v1.3-ROADMAP.md)
 - **v1.4 CI/CD 零停机部署** -- Phases 19-25 (shipped 2026-04-16) -- [详情](milestones/v1.4-ROADMAP.md)
 - **v1.5 开发环境本地化 + 基础设施 CI/CD** -- Phases 26-30 (shipped 2026-04-17) -- [详情](milestones/v1.5-ROADMAP.md)
-- **v1.6 Jenkins Pipeline 强制执行** -- Phases 31-34 (in progress)
+- **v1.6 Jenkins Pipeline 强制执行** -- Phases 31-34 (shipped 2026-04-18)
 
 ## Phases
 
@@ -86,12 +86,12 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 </details>
 
-### v1.6 Jenkins Pipeline 强制执行 (In Progress)
+### v1.6 Jenkins Pipeline 强制执行 (Shipped 2026-04-18)
 
 **Milestone Goal:** 所有容器只能通过 Jenkins Pipeline 上线，禁止直接 docker compose / shell 脚本部署
 
 - [x] **Phase 31: Docker Socket 权限收敛 + 文件权限锁定** -- Docker socket 属组收敛到 jenkins，部署脚本仅 jenkins 可执行 (completed 2026-04-18)
-- [ ] **Phase 32: sudoers 白名单 + Break-Glass 紧急机制** -- 管理员只读 docker 命令 + 紧急部署受控入口
+- [x] **Phase 32: sudoers 白名单 + Break-Glass 紧急机制** -- 管理员只读 docker 命令 + 紧急部署受控入口 (completed 2026-04-18)
 - [x] **Phase 33: 审计日志系统** -- auditd 内核审计 + Jenkins Audit Trail + 日志轮转 (completed 2026-04-18)
 - [x] **Phase 34: Jenkins 权限矩阵 + 统一管理脚本** -- Matrix Auth 插件 + setup-docker-permissions.sh 一站式管理 (completed 2026-04-18)
 
@@ -126,8 +126,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 32-01-PLAN.md — sudoers 白名单安装/验证脚本（install-sudoers-whitelist.sh + verify-sudoers-whitelist.sh）
-- [ ] 32-02-PLAN.md — Break-Glass 紧急部署脚本（break-glass.sh: Jenkins 健康检查 + PAM 认证 + 审计日志）
+- [x] 32-01-PLAN.md — sudoers 白名单安装/验证脚本（install-sudoers-whitelist.sh + verify-sudoers-whitelist.sh）
+- [x] 32-02-PLAN.md — Break-Glass 紧急部署脚本（break-glass.sh: Jenkins 健康检查 + PAM 认证 + 审计日志）
 
 ### Phase 33: 审计日志系统
 **Goal**: 所有 docker 命令执行和 Jenkins Pipeline 操作被完整记录，日志不可篡改且不会占满磁盘
@@ -141,9 +141,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 33-01-PLAN.md — auditd 规则安装/验证/卸载脚本（AUDIT-01 + AUDIT-02）
-- [ ] 33-02-PLAN.md — Jenkins Audit Trail 插件安装 + logrotate 配置（AUDIT-03）
-- [ ] 33-03-PLAN.md — sudo 日志配置安装/验证脚本 + logrotate 配置（AUDIT-04）
+- [x] 33-01-PLAN.md — auditd 规则安装/验证/卸载脚本（AUDIT-01 + AUDIT-02）
+- [x] 33-02-PLAN.md — Jenkins Audit Trail 插件安装 + logrotate 配置（AUDIT-03）
+- [x] 33-03-PLAN.md — sudo 日志配置安装/验证脚本 + logrotate 配置（AUDIT-04）
 
 ### Phase 34: Jenkins 权限矩阵 + 统一管理脚本
 **Goal**: Jenkins 内部权限细化（管理员全权限/普通用户只触发），权限配置可通过统一脚本一键 apply/verify/rollback
@@ -168,6 +168,6 @@ Phases execute in numeric order: 31 -> 32 -> 33 -> 34
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 31. Docker Socket 权限收敛 | v1.6 | 3/3 | Complete | 2026-04-18 |
-| 32. sudoers + Break-Glass | v1.6 | 0/2 | Planned | - |
-| 33. 审计日志系统 | v1.6 | 0/3 | Planned | - |
+| 32. sudoers + Break-Glass | v1.6 | 2/2 | Complete | 2026-04-18 |
+| 33. 审计日志系统 | v1.6 | 3/3 | Complete | 2026-04-18 |
 | 34. Jenkins 权限矩阵 + 统一脚本 | v1.6 | 2/2 | Complete | 2026-04-18 |
