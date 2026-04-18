@@ -162,11 +162,11 @@ Plans:
   1. `shellcheck scripts/**/*.sh` 输出零 error 级别问题（warning 可通过 .shellcheckrc 抑制）
   2. `shfmt` 格式化后所有 .sh 文件风格一致（缩进、引号、空格等）
   3. `.shellcheckrc` 配置文件存在，记录项目级抑制规则和解释
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 38-01: ShellCheck 消除所有 error 级别问题
-- [ ] 38-02: shfmt 统一格式化所有 .sh 文件
+- [ ] 38-01-PLAN.md — 安装 shfmt + 创建 .editorconfig 和 .shellcheckrc 配置文件
+- [ ] 38-02-PLAN.md — shfmt 批量格式化 + ShellCheck/bash-n 双重验证（依赖 38-01）
 
 ## Progress
 
