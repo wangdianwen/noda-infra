@@ -15,19 +15,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SUDOERS_FILE="/etc/sudoers.d/noda-docker-readonly"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
-
-# ============================================
-# 平台检测
-# ============================================
-detect_platform() {
-    local os
-    os="$(uname)"
-    if [[ "$os" == "Darwin" ]]; then
-        echo "macos"
-    else
-        echo "linux"
-    fi
-}
+source "$PROJECT_ROOT/scripts/lib/platform.sh"
 
 PLATFORM="$(detect_platform)"
 

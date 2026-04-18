@@ -9,19 +9,7 @@ AUDITD_CONF="/etc/audit/auditd.conf"
 BACKUP_DIR="/opt/noda/pre-phase33-backup"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
-
-# ============================================
-# 平台检测
-# ============================================
-detect_platform() {
-    local os
-    os="$(uname)"
-    if [[ "$os" == "Darwin" ]]; then
-        echo "macos"
-    else
-        echo "linux"
-    fi
-}
+source "$PROJECT_ROOT/scripts/lib/platform.sh"
 
 PLATFORM="$(detect_platform)"
 

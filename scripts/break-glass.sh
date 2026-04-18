@@ -17,19 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
-
-# ============================================
-# 平台检测
-# ============================================
-detect_platform() {
-    local os
-    os="$(uname)"
-    if [[ "$os" == "Darwin" ]]; then
-        echo "macos"
-    else
-        echo "linux"
-    fi
-}
+source "$PROJECT_ROOT/scripts/lib/platform.sh"
 
 PLATFORM="$(detect_platform)"
 
