@@ -210,23 +210,32 @@ get_database_stats()
 {
     local db_name=$1
 
-    # 查询数据库统计信息
-    local stats=$(PGPASSWORD=$POSTGRES_PASSWORD psql -h noda-infra-postgres-prod -U postgres -d "$db_name" -t -c "
+    # 使用 -A（无对齐）-F'|'（分隔符）确保输出可靠解析
+    local stats
+    stats=$(PGPASSWORD=$POSTGRES_PASSWORD psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$db_name" -t -A -F'|' -c "
     SELECT
-      (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE') as table_count,
-      (SELECT COALESCE(SUM(n_live_tup), 0)::bigint FROM pg_stat_user_tables) as total_rows,
-      pg_database_size('$db_name') as db_size
- ;" 2>/dev/null)
+      (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'),
+      (SELECT COALESCE(SUM(n_live_tup), 0)::bigint FROM pg_stat_user_tables WHERE schemaname = 'public'),
+      pg_database_size(current_database());" 2>&1)
 
-    # 解析结果（psql -t 用 | 分隔列）
-    local table_count=$(echo "$stats" | awk -F'|' '{print $1}' | xargs)
-    local total_rows=$(echo "$stats" | awk -F'|' '{print $2}' | xargs)
-    local db_size=$(echo "$stats" | awk -F'|' '{print $3}' | xargs)
+    # 检查查询是否成功（psql 输出包含 | 分隔的 3 个数字）
+    local table_count=0
+    local total_rows=0
+    local db_size=0
 
-    # 处理可能的 NULL 值
-    table_count=${table_count:-0}
-    total_rows=${total_rows:-0}
-    db_size=${db_size:-0}
+    if echo "$stats" | grep -qE '^[[:space:]]*[0-9]+\|[0-9]+\|[0-9]+'; then
+        local result
+        result=$(echo "$stats" | grep -oE '[0-9]+\|[0-9]+\|[0-9]+' | head -1)
+        table_count=$(echo "$result" | cut -d'|' -f1)
+        total_rows=$(echo "$result" | cut -d'|' -f2)
+        db_size=$(echo "$result" | cut -d'|' -f3)
+    else
+        # 查询失败时使用 pg_database_size 单独获取大小
+        local size_result
+        size_result=$(PGPASSWORD=$POSTGRES_PASSWORD psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$db_name" -t -A -c \
+            "SELECT pg_database_size(current_database());" 2>/dev/null)
+        db_size=$(echo "$size_result" | grep -oE '^[0-9]+' || echo "0")
+    fi
 
     # 返回 JSON
     cat <<EOF
@@ -255,19 +264,25 @@ get_historical_backup_size()
         return
     fi
 
-    # 计算截止时间
+    # 计算截止时间（ISO 8601 格式，与 history.json 中的 timestamp 格式一致）
     local cutoff_time
-    cutoff_time=$(date -d "$history_days days ago" +%s 2>/dev/null || date -v-${history_days}d +%s)
+    cutoff_time=$(date -d "$history_days days ago" -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -v-${history_days}d -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    # 获取该数据库的历史备份记录
-    local historical_sizes=$(jq \
+    # 获取该数据库的历史备份记录（使用 floor 确保返回整数）
+    local historical_sizes
+    historical_sizes=$(jq \
         "[.[] | select(.database==\"$db_name\" and .operation==\"backup\" and .timestamp >= \"$cutoff_time\") | .file_size] | \
      map(select(. != 0 and . != null)) | \
-     if length > 0 then add / length else 0 end" \
+     if length > 0 then (add / length | floor) else 0 end" \
         "$HISTORY_FILE" 2>/dev/null)
 
-    # 转为整数（jq 平均值可能返回浮点数，bash 不支持浮点比较）
-    echo "${historical_sizes:-0}" | cut -d. -f1
+    # 确保返回有效整数
+    historical_sizes="${historical_sizes:-0}"
+    if ! [[ "$historical_sizes" =~ ^[0-9]+$ ]]; then
+        historical_sizes=$(echo "$historical_sizes" | cut -d. -f1)
+        historical_sizes="${historical_sizes:-0}"
+    fi
+    echo "$historical_sizes"
 }
 
 # 判断数据量是否异常
@@ -327,6 +342,12 @@ check_data_volume_before_backup()
     local total_rows
     total_rows=$(echo "$current_stats" | jq -r '.total_rows')
 
+    # 确保 current_size 是有效整数
+    if ! [[ "$current_size" =~ ^[0-9]+$ ]]; then
+        log_warn "  无法获取数据库大小（$current_size），跳过数据量校验"
+        return 0
+    fi
+
     log_info "  表数量: $table_count"
     log_info "  总行数: $total_rows"
     log_info "  数据库大小: $(numfmt --to=iec $current_size 2>/dev/null || echo $current_size) bytes"
@@ -334,6 +355,12 @@ check_data_volume_before_backup()
     # 获取历史备份大小
     local historical_size
     historical_size=$(get_historical_backup_size "$db_name" "$DATA_VOLUME_HISTORY_DAYS")
+
+    # 确保 historical_size 是有效整数
+    if ! [[ "$historical_size" =~ ^[0-9]+$ ]]; then
+        log_warn "  历史数据无效（$historical_size），跳过数据量对比"
+        return 0
+    fi
 
     if [[ $historical_size -gt 0 ]]; then
         log_info "  历史平均大小: $(numfmt --to=iec $historical_size 2>/dev/null || echo $historical_size) bytes"

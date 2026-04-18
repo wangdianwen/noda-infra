@@ -167,9 +167,9 @@ cleanup_old_metrics()
     fi
 
     local cutoff_time
-    cutoff_time=$(date -d "$LOG_RETENTION_DAYS days ago" +%s 2>/dev/null || date -v-${LOG_RETENTION_DAYS}d +%s)
+    cutoff_time=$(date -d "$LOG_RETENTION_DAYS days ago" -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -v-${LOG_RETENTION_DAYS}d -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    # 过滤掉旧记录
+    # 过滤掉旧记录（timestamp 为 ISO 8601 格式，使用字符串比较）
     local temp_file="${HISTORY_FILE}.tmp"
     jq "[.[] | select(.timestamp >= \"$cutoff_time\")]" "$HISTORY_FILE" >"$temp_file" 2>/dev/null
     mv "$temp_file" "$HISTORY_FILE"
