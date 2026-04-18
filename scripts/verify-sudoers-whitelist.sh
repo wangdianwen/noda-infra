@@ -25,13 +25,15 @@ PLATFORM="$(detect_platform)"
 PASS_COUNT=0
 FAIL_COUNT=0
 
-check_pass() {
+check_pass()
+{
     local name="$1"
     PASS_COUNT=$((PASS_COUNT + 1))
     echo -e "  ${_GREEN}PASS${_NC}  $name"
 }
 
-check_fail() {
+check_fail()
+{
     local name="$1"
     FAIL_COUNT=$((FAIL_COUNT + 1))
     echo -e "  ${_RED}FAIL${_NC}  $name"
@@ -40,7 +42,8 @@ check_fail() {
 # ============================================
 # 验证逻辑
 # ============================================
-main() {
+main()
+{
     log_info "Phase 32: 验证 sudoers 白名单规则 (平台: $PLATFORM)"
     echo ""
 

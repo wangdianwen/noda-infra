@@ -30,7 +30,8 @@ fi
 # ============================================
 # 子命令：apply — 按 Phase 顺序配置所有权限
 # ============================================
-cmd_apply() {
+cmd_apply()
+{
     log_info "=========================================="
     log_info "统一权限配置 — apply (平台: $PLATFORM)"
     log_info "=========================================="
@@ -74,11 +75,12 @@ cmd_apply() {
 # 参数：$1 = 检查项描述，$2... = 要执行的命令
 # 输出：[PASS] 或 [FAIL] 前缀
 # 行为：第一个 FAIL 即退出（快速失败模式 D-12）
-verify_item() {
+verify_item()
+{
     local desc="$1"
     shift
     set +e
-    if "$@" > /dev/null 2>&1; then
+    if "$@" >/dev/null 2>&1; then
         echo "[PASS] ${desc}"
     else
         echo "[FAIL] ${desc}"
@@ -91,7 +93,8 @@ verify_item() {
 # ============================================
 # 子命令：verify — 汇总所有 Phase 验证
 # ============================================
-cmd_verify() {
+cmd_verify()
+{
     log_info "=========================================="
     log_info "统一权限验证 — verify (平台: $PLATFORM)"
     log_info "=========================================="
@@ -124,14 +127,15 @@ cmd_verify() {
 # ============================================
 # rollback_jenkins_matrix — 回滚 Jenkins 权限矩阵为 FullControlOnceLoggedInAuthorizationStrategy
 # ============================================
-rollback_jenkins_matrix() {
+rollback_jenkins_matrix()
+{
     if [[ "$PLATFORM" == "macos" ]]; then
         log_warn "macOS 不支持 Jenkins 权限矩阵操作，跳过"
         return 0
     fi
 
     # 检查 Jenkins 是否运行
-    if ! curl -sf "http://localhost:8888/login" > /dev/null 2>&1; then
+    if ! curl -sf "http://localhost:8888/login" >/dev/null 2>&1; then
         log_warn "Jenkins 未运行，跳过权限矩阵回滚"
         return 0
     fi
@@ -163,7 +167,7 @@ rollback_jenkins_matrix() {
     # 创建临时 Groovy 回滚脚本
     local rollback_script
     rollback_script=$(mktemp /tmp/rollback-matrix-auth.groovy.XXXXXX)
-    cat > "$rollback_script" <<'ROLLBACK_GROOVY'
+    cat >"$rollback_script" <<'ROLLBACK_GROOVY'
 import jenkins.model.*
 import hudson.security.*
 
@@ -224,7 +228,8 @@ ROLLBACK_GROOVY
 # ============================================
 # 子命令：rollback — 反序回滚所有权限配置
 # ============================================
-cmd_rollback() {
+cmd_rollback()
+{
     log_info "=========================================="
     log_info "统一权限回滚 — rollback (平台: $PLATFORM)"
     log_info "=========================================="
@@ -280,7 +285,8 @@ cmd_rollback() {
 # ============================================
 # usage() — 显示帮助信息
 # ============================================
-usage() {
+usage()
+{
     cat <<EOF
 统一权限管理编排器 (Phase 31-34)
 
@@ -313,9 +319,9 @@ EOF
 # 子命令分发
 # ============================================
 case "${1:-}" in
-    apply)    cmd_apply ;;
-    verify)   cmd_verify ;;
+    apply) cmd_apply ;;
+    verify) cmd_verify ;;
     rollback) cmd_rollback ;;
-    help|--help|-h) usage ;;
+    help | --help | -h) usage ;;
     *) usage && exit 1 ;;
 esac

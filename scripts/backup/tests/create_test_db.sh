@@ -17,24 +17,25 @@ TEST_DB_NAME="test_backup_db"
 POSTGRES_CONTAINER="noda-infra-postgres-prod"
 
 # 创建测试数据库
-create_test_database() {
-  echo "ℹ️  创建测试数据库: $TEST_DB_NAME"
+create_test_database()
+{
+    echo "ℹ️  创建测试数据库: $TEST_DB_NAME"
 
-  # 检查数据库是否已存在
-  local exists=$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres -t -c \
-    "SELECT 1 FROM pg_database WHERE datname = '$TEST_DB_NAME';" 2>/dev/null | tr -d ' ')
+    # 检查数据库是否已存在
+    local exists=$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres -t -c \
+        "SELECT 1 FROM pg_database WHERE datname = '$TEST_DB_NAME';" 2>/dev/null | tr -d ' ')
 
-  if [ "$exists" = "1" ]; then
-    echo "⚠️  测试数据库已存在，先删除"
-    cleanup_test_database
-  fi
+    if [ "$exists" = "1" ]; then
+        echo "⚠️  测试数据库已存在，先删除"
+        cleanup_test_database
+    fi
 
-  # 创建数据库
-  docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres -c \
-    "CREATE DATABASE $TEST_DB_NAME;"
+    # 创建数据库
+    docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres -c \
+        "CREATE DATABASE $TEST_DB_NAME;"
 
-  # 创建测试表并插入数据
-  docker exec "$POSTGRES_CONTAINER" psql -U postgres -d "$TEST_DB_NAME" <<EOF
+    # 创建测试表并插入数据
+    docker exec "$POSTGRES_CONTAINER" psql -U postgres -d "$TEST_DB_NAME" <<EOF
 -- 创建测试表
 CREATE TABLE test_users (
     id SERIAL PRIMARY KEY,
@@ -64,37 +65,39 @@ INSERT INTO test_posts (title, content, author_id) VALUES
     ('Test Post 2', 'Content of test post 2', 2);
 EOF
 
-  echo "✅ 测试数据库创建成功: $TEST_DB_NAME"
-  echo "ℹ️  测试表: test_users, test_posts"
-  echo "ℹ️  测试数据: 3 users, 2 posts"
+    echo "✅ 测试数据库创建成功: $TEST_DB_NAME"
+    echo "ℹ️  测试表: test_users, test_posts"
+    echo "ℹ️  测试数据: 3 users, 2 posts"
 }
 
 # 清理测试数据库
-cleanup_test_database() {
-  echo "ℹ️  清理测试数据库: $TEST_DB_NAME"
+cleanup_test_database()
+{
+    echo "ℹ️  清理测试数据库: $TEST_DB_NAME"
 
-  local exists=$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres -t -c \
-    "SELECT 1 FROM pg_database WHERE datname = '$TEST_DB_NAME';" 2>/dev/null | tr -d ' ')
+    local exists=$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres -t -c \
+        "SELECT 1 FROM pg_database WHERE datname = '$TEST_DB_NAME';" 2>/dev/null | tr -d ' ')
 
-  if [ "$exists" != "1" ]; then
-    echo "⚠️  测试数据库不存在，无需清理"
-    return 0
-  fi
+    if [ "$exists" != "1" ]; then
+        echo "⚠️  测试数据库不存在，无需清理"
+        return 0
+    fi
 
-  # 终止所有连接
-  docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres -c \
-    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$TEST_DB_NAME' AND pid <> pg_backend_pid();" > /dev/null 2>&1 || true
+    # 终止所有连接
+    docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres -c \
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$TEST_DB_NAME' AND pid <> pg_backend_pid();" >/dev/null 2>&1 || true
 
-  # 删除数据库
-  docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres -c \
-    "DROP DATABASE $TEST_DB_NAME;"
+    # 删除数据库
+    docker exec "$POSTGRES_CONTAINER" psql -U postgres -d postgres -c \
+        "DROP DATABASE $TEST_DB_NAME;"
 
-  echo "✅ 测试数据库已清理: $TEST_DB_NAME"
+    echo "✅ 测试数据库已清理: $TEST_DB_NAME"
 }
 
 # 显示帮助
-show_help() {
-  cat <<EOF
+show_help()
+{
+    cat <<EOF
 用法: $(basename "$0") [选项]
 
 选项:
@@ -109,36 +112,37 @@ EOF
 }
 
 # 主流程
-main() {
-  local action="create"
+main()
+{
+    local action="create"
 
-  while [[ $# -gt 0 ]]; do
-    case $1 in
-      --create)
-        action="create"
-        shift
-        ;;
-      --cleanup)
-        action="cleanup"
-        shift
-        ;;
-      --help)
-        show_help
-        exit 0
-        ;;
-      *)
-        echo "❌ 未知参数: $1"
-        show_help
-        exit 1
-        ;;
-    esac
-  done
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --create)
+                action="create"
+                shift
+                ;;
+            --cleanup)
+                action="cleanup"
+                shift
+                ;;
+            --help)
+                show_help
+                exit 0
+                ;;
+            *)
+                echo "❌ 未知参数: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
 
-  if [ "$action" = "create" ]; then
-    create_test_database
-  else
-    cleanup_test_database
-  fi
+    if [ "$action" = "create" ]; then
+        create_test_database
+    else
+        cleanup_test_database
+    fi
 }
 
 main "$@"

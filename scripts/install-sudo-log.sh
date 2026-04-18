@@ -19,7 +19,8 @@ PLATFORM="$(detect_platform)"
 # ============================================
 # 子命令：install — 安装 sudo 日志配置
 # ============================================
-cmd_install() {
+cmd_install()
+{
     log_info "Phase 33: 安装 sudo 操作日志配置 (平台: $PLATFORM)..."
 
     # 1. 平台检查
@@ -51,7 +52,7 @@ cmd_install() {
 
     # 5. 写入 sudoers 配置文件
     log_info "写入 sudoers 配置文件: $SUDOERS_FILE..."
-    tee "$SUDOERS_FILE" > /dev/null <<'EOF'
+    tee "$SUDOERS_FILE" >/dev/null <<'EOF'
 # Noda Sudo Audit Log Configuration (Phase 33, AUDIT-04)
 # 将所有 sudo 操作记录到独立日志文件
 
@@ -96,7 +97,8 @@ EOF
 # ============================================
 # 子命令：verify — 验证 sudo 日志配置
 # ============================================
-cmd_verify() {
+cmd_verify()
+{
     local all_ok=true
 
     log_info "Phase 33: 验证 sudo 操作日志配置 (平台: $PLATFORM)..."
@@ -209,7 +211,8 @@ cmd_verify() {
 # ============================================
 # 子命令：uninstall — 卸载 sudo 日志配置
 # ============================================
-cmd_uninstall() {
+cmd_uninstall()
+{
     log_info "Phase 33: 卸载 sudo 操作日志配置..."
 
     if [[ "$PLATFORM" == "macos" ]]; then
@@ -238,7 +241,8 @@ cmd_uninstall() {
 # ============================================
 # 用法说明
 # ============================================
-usage() {
+usage()
+{
     cat <<EOF
 用法: sudo $(basename "$0") <命令>
 
@@ -276,7 +280,7 @@ case "${1:-}" in
     uninstall)
         cmd_uninstall
         ;;
-    help|--help|-h)
+    help | --help | -h)
         usage
         ;;
     *)

@@ -37,7 +37,8 @@ ALLOWED_SCRIPTS=(
 # check_jenkins_available() — Jenkins 可用性检查（D-02, BREAK-04）
 # ============================================
 # 返回：0=可用（拒绝 Break-Glass），1=不可用（允许 Break-Glass）
-check_jenkins_available() {
+check_jenkins_available()
+{
     log_info "检查 Jenkins 可用性..."
     log_info "端点: $JENKINS_HEALTH_URL (超时: ${JENKINS_HEALTH_TIMEOUT}s)"
 
@@ -62,7 +63,8 @@ check_jenkins_available() {
 # ============================================
 # 使用 sudo -v 验证用户身份（触发 PAM 密码验证）
 # 返回：0=验证通过，1=验证失败
-verify_identity() {
+verify_identity()
+{
     log_info "身份验证（需要 sudo 密码）..."
 
     if sudo -v; then
@@ -77,7 +79,8 @@ verify_identity() {
 # ============================================
 # log_audit() — 审计日志记录（BREAK-03）
 # ============================================
-log_audit() {
+log_audit()
+{
     local action="$1"
     local detail="${2:-}"
 
@@ -90,7 +93,7 @@ log_audit() {
     local log_entry
     log_entry="[$timestamp] user=$(whoami) action=$action detail=$detail"
 
-    echo "$log_entry" | sudo tee -a "$AUDIT_LOG" > /dev/null
+    echo "$log_entry" | sudo tee -a "$AUDIT_LOG" >/dev/null
     sudo chmod 640 "$AUDIT_LOG"
     sudo chown root:jenkins "$AUDIT_LOG" 2>/dev/null || true
 }
@@ -98,7 +101,8 @@ log_audit() {
 # ============================================
 # validate_script() — 验证目标脚本在允许列表中（D-03）
 # ============================================
-validate_script() {
+validate_script()
+{
     local target_script="$1"
 
     for allowed in "${ALLOWED_SCRIPTS[@]}"; do
@@ -118,7 +122,8 @@ validate_script() {
 # ============================================
 # cmd_deploy() — 执行紧急部署（核心逻辑）
 # ============================================
-cmd_deploy() {
+cmd_deploy()
+{
     local target_script="${1:-}"
     local script_args="${@:2}"
 
@@ -218,7 +223,8 @@ cmd_deploy() {
 # ============================================
 # cmd_status() — 显示 Break-Glass 状态
 # ============================================
-cmd_status() {
+cmd_status()
+{
     log_info "=========================================="
     log_info "Break-Glass 状态"
     log_info "=========================================="
@@ -257,7 +263,8 @@ cmd_status() {
 # ============================================
 # cmd_log() — 查看审计日志
 # ============================================
-cmd_log() {
+cmd_log()
+{
     if [ ! -f "$AUDIT_LOG" ]; then
         log_info "审计日志为空: $AUDIT_LOG"
         return 0
@@ -271,7 +278,8 @@ cmd_log() {
 # ============================================
 # 用法说明
 # ============================================
-usage() {
+usage()
+{
     cat <<EOF
 用法: $(basename "$0") <命令> [参数]
 
@@ -304,9 +312,9 @@ EOF
 # 子命令分发
 # ============================================
 case "${1:-}" in
-    deploy)  cmd_deploy "${@:2}" ;;
-    status)  cmd_status ;;
-    log)     cmd_log ;;
-    help|--help|-h) usage ;;
-    *)       usage && exit 1 ;;
+    deploy) cmd_deploy "${@:2}" ;;
+    status) cmd_status ;;
+    log) cmd_log ;;
+    help | --help | -h) usage ;;
+    *) usage && exit 1 ;;
 esac

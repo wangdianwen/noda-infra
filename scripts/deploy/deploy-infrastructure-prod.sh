@@ -22,9 +22,9 @@ source "$PROJECT_ROOT/scripts/lib/health.sh"
 # 解析命令行参数
 SKIP_BACKUP=false
 for arg in "$@"; do
-  case "$arg" in
-    --skip-backup) SKIP_BACKUP=true ;;
-  esac
+    case "$arg" in
+        --skip-backup) SKIP_BACKUP=true ;;
+    esac
 done
 
 # 回滚目录和文件
@@ -36,9 +36,9 @@ ROLLBACK_COMPOSE="$ROLLBACK_DIR/docker-compose.rollback.yml"
 COMPOSE_FILES="-f docker/docker-compose.yml -f docker/docker-compose.prod.yml"
 
 EXPECTED_CONTAINERS=(
-  "noda-infra-postgres-prod"
-  # nginx, noda-ops 已迁移到 Jenkinsfile.infra Pipeline 管理
-  # keycloak 和 findclass-ssr 已迁移到蓝绿 docker run 管理
+    "noda-infra-postgres-prod"
+    # nginx, noda-ops 已迁移到 Jenkinsfile.infra Pipeline 管理
+    # keycloak 和 findclass-ssr 已迁移到蓝绿 docker run 管理
 )
 
 # 启动的服务列表
@@ -51,18 +51,19 @@ START_SERVICES="postgres"
 # save_image_tags - 保存当前运行容器的镜像 digest
 # 参数：无（保存到 ROLLBACK_FILE）
 # 返回：0=成功
-save_image_tags() {
-  mkdir -p "$ROLLBACK_DIR"
-  : > "$ROLLBACK_FILE"
-  for container in "${EXPECTED_CONTAINERS[@]}"; do
-    local image_id
-    image_id=$(docker inspect --format='{{.Image}}' "$container" 2>/dev/null || echo "")
-    if [ -n "$image_id" ]; then
-      echo "${container}=${image_id}" >> "$ROLLBACK_FILE"
-      log_info "已保存 ${container} 的镜像: ${image_id:0:12}..."
-    fi
-  done
-  log_success "镜像标签已保存到 ${ROLLBACK_FILE}"
+save_image_tags()
+{
+    mkdir -p "$ROLLBACK_DIR"
+    : >"$ROLLBACK_FILE"
+    for container in "${EXPECTED_CONTAINERS[@]}"; do
+        local image_id
+        image_id=$(docker inspect --format='{{.Image}}' "$container" 2>/dev/null || echo "")
+        if [ -n "$image_id" ]; then
+            echo "${container}=${image_id}" >>"$ROLLBACK_FILE"
+            log_info "已保存 ${container} 的镜像: ${image_id:0:12}..."
+        fi
+    done
+    log_success "镜像标签已保存到 ${ROLLBACK_FILE}"
 }
 
 # rollback_images - 使用 docker compose override 回退到保存的镜像版本
@@ -76,57 +77,59 @@ save_image_tags() {
 # 容器名到服务名映射（因为 container_name 与 service name 不同）：
 #   noda-infra-postgres-prod  -> postgres
 # 注意：nginx, noda-ops 已迁移到 Jenkinsfile.infra Pipeline 管理
-rollback_images() {
-  if [ ! -f "$ROLLBACK_FILE" ]; then
-    log_error "回滚文件不存在: ${ROLLBACK_FILE}"
-    return 1
-  fi
+rollback_images()
+{
+    if [ ! -f "$ROLLBACK_FILE" ]; then
+        log_error "回滚文件不存在: ${ROLLBACK_FILE}"
+        return 1
+    fi
 
-  # 容器名 -> compose 服务名映射（兼容 bash 3.2，不使用 declare -A）
-  container_to_service() {
-    case "$1" in
-      noda-infra-postgres-prod) echo "postgres" ;;
-      *) echo "" ;;
-    esac
-  }
+    # 容器名 -> compose 服务名映射（兼容 bash 3.2，不使用 declare -A）
+    container_to_service()
+    {
+        case "$1" in
+            noda-infra-postgres-prod) echo "postgres" ;;
+            *) echo "" ;;
+        esac
+    }
 
-  log_info "开始生成回滚 compose override..."
+    log_info "开始生成回滚 compose override..."
 
-  # 生成 rollback compose override 文件
-  cat > "$ROLLBACK_COMPOSE" <<'YAML_HEADER'
+    # 生成 rollback compose override 文件
+    cat >"$ROLLBACK_COMPOSE" <<'YAML_HEADER'
 # 自动生成的回滚 overlay — 恢复到部署前的镜像版本
 name: noda-infra
 services:
 YAML_HEADER
 
-  local has_entries=false
-  while IFS='=' read -r container image_id; do
-    [ -z "$container" ] && continue
-    local service
-    service="$(container_to_service "$container")"
-    if [ -z "$service" ]; then
-      log_info "跳过未映射的容器: ${container}"
-      continue
+    local has_entries=false
+    while IFS='=' read -r container image_id; do
+        [ -z "$container" ] && continue
+        local service
+        service="$(container_to_service "$container")"
+        if [ -z "$service" ]; then
+            log_info "跳过未映射的容器: ${container}"
+            continue
+        fi
+        echo "  ${service}:" >>"$ROLLBACK_COMPOSE"
+        echo "    image: ${image_id}" >>"$ROLLBACK_COMPOSE"
+        has_entries=true
+        log_info "回滚 ${service} 到镜像 ${image_id:0:12}..."
+    done <"$ROLLBACK_FILE"
+
+    if [ "$has_entries" = false ]; then
+        log_error "没有可回滚的服务"
+        return 1
     fi
-    echo "  ${service}:" >> "$ROLLBACK_COMPOSE"
-    echo "    image: ${image_id}" >> "$ROLLBACK_COMPOSE"
-    has_entries=true
-    log_info "回滚 ${service} 到镜像 ${image_id:0:12}..."
-  done < "$ROLLBACK_FILE"
 
-  if [ "$has_entries" = false ]; then
-    log_error "没有可回滚的服务"
-    return 1
-  fi
+    log_info "执行 docker compose 回滚..."
+    if ! docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f "$ROLLBACK_COMPOSE" up -d --no-deps --force-recreate; then
+        log_error "docker compose 回滚失败"
+        return 1
+    fi
 
-  log_info "执行 docker compose 回滚..."
-  if ! docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f "$ROLLBACK_COMPOSE" up -d --no-deps --force-recreate; then
-    log_error "docker compose 回滚失败"
-    return 1
-  fi
-
-  log_success "回滚完成（使用 compose override 恢复）"
-  return 0
+    log_success "回滚完成（使用 compose override 恢复）"
+    return 0
 }
 
 # ============================================
@@ -136,62 +139,64 @@ YAML_HEADER
 # check_recent_backup - 检查最近备份是否在 12 小时内
 # 参数：无（检查 noda-ops 容器内的 history.json）
 # 返回：0=备份足够新（跳过），1=需要备份
-check_recent_backup() {
-  local history_json
-  history_json=$(docker exec noda-ops cat /app/history/history.json 2>/dev/null || echo "")
+check_recent_backup()
+{
+    local history_json
+    history_json=$(docker exec noda-ops cat /app/history/history.json 2>/dev/null || echo "")
 
-  if [ -z "$history_json" ]; then
-    log_info "无备份历史记录，需要执行备份"
-    return 1
-  fi
+    if [ -z "$history_json" ]; then
+        log_info "无备份历史记录，需要执行备份"
+        return 1
+    fi
 
-  local last_backup_ts
-  last_backup_ts=$(echo "$history_json" | jq -r '
+    local last_backup_ts
+    last_backup_ts=$(echo "$history_json" | jq -r '
     [(. // []) | select(.operation=="backup" and .duration > 0)] |
     sort_by(.timestamp) | reverse |
     .[0].timestamp // empty
   ' 2>/dev/null || echo "")
 
-  if [ -z "$last_backup_ts" ]; then
-    log_info "无成功备份记录，需要执行备份"
-    return 1
-  fi
+    if [ -z "$last_backup_ts" ]; then
+        log_info "无成功备份记录，需要执行备份"
+        return 1
+    fi
 
-  # 计算备份时间差（兼容 macOS 和 Linux）
-  local last_epoch now_epoch age
-  if date -u -v0S +%s >/dev/null 2>&1; then
-    # macOS
-    last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "${last_backup_ts%%.*}Z" +%s 2>/dev/null || echo "0")
-  else
-    # Linux
-    last_epoch=$(date -d "${last_backup_ts%%.*}Z" +%s 2>/dev/null || echo "0")
-  fi
-  now_epoch=$(date +%s)
-  age=$((now_epoch - last_epoch))
+    # 计算备份时间差（兼容 macOS 和 Linux）
+    local last_epoch now_epoch age
+    if date -u -v0S +%s >/dev/null 2>&1; then
+        # macOS
+        last_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "${last_backup_ts%%.*}Z" +%s 2>/dev/null || echo "0")
+    else
+        # Linux
+        last_epoch=$(date -d "${last_backup_ts%%.*}Z" +%s 2>/dev/null || echo "0")
+    fi
+    now_epoch=$(date +%s)
+    age=$((now_epoch - last_epoch))
 
-  local threshold_seconds=43200  # 12 hours
+    local threshold_seconds=43200 # 12 hours
 
-  if [ "$age" -lt "$threshold_seconds" ]; then
-    local age_hours=$((age / 3600))
-    log_success "最近备份在 ${age_hours} 小时前，跳过部署前备份"
-    return 0
-  else
-    log_info "最近备份超过 12 小时前，需要执行备份"
-    return 1
-  fi
+    if [ "$age" -lt "$threshold_seconds" ]; then
+        local age_hours=$((age / 3600))
+        log_success "最近备份在 ${age_hours} 小时前，跳过部署前备份"
+        return 0
+    else
+        log_info "最近备份超过 12 小时前，需要执行备份"
+        return 1
+    fi
 }
 
 # run_pre_deploy_backup - 执行部署前备份
 # 参数：无
 # 返回：0=成功，1=失败
-run_pre_deploy_backup() {
-  log_info "执行部署前数据库备份..."
-  if ! docker exec noda-ops /app/backup/backup-postgres.sh; then
-    log_error "部署前备份失败"
-    return 1
-  fi
-  log_success "部署前备份完成"
-  return 0
+run_pre_deploy_backup()
+{
+    log_info "执行部署前数据库备份..."
+    if ! docker exec noda-ops /app/backup/backup-postgres.sh; then
+        log_error "部署前备份失败"
+        return 1
+    fi
+    log_success "部署前备份完成"
+    return 0
 }
 
 # ============================================
@@ -202,18 +207,18 @@ log_info "步骤 1/5: 验证环境配置"
 log_info "=========================================="
 
 if [ ! -f "config/secrets.sops.yaml" ]; then
-  log_error "加密配置文件不存在: config/secrets.sops.yaml"
-  exit 1
+    log_error "加密配置文件不存在: config/secrets.sops.yaml"
+    exit 1
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
-  log_error "Docker 未安装"
-  exit 1
+    log_error "Docker 未安装"
+    exit 1
 fi
 
 if ! docker compose version >/dev/null 2>&1; then
-  log_error "Docker Compose 未安装"
-  exit 1
+    log_error "Docker Compose 未安装"
+    exit 1
 fi
 
 log_success "环境验证通过"
@@ -235,12 +240,12 @@ log_info "步骤 3/5: 部署前自动备份"
 log_info "=========================================="
 
 if ! check_recent_backup; then
-  if [ "$SKIP_BACKUP" = true ]; then
-    log_info "已通过 --skip-backup 跳过部署前备份"
-  elif ! run_pre_deploy_backup; then
-    log_error "部署前备份失败，中止部署"
-    exit 1
-  fi
+    if [ "$SKIP_BACKUP" = true ]; then
+        log_info "已通过 --skip-backup 跳过部署前备份"
+    elif ! run_pre_deploy_backup; then
+        log_error "部署前备份失败，中止部署"
+        exit 1
+    fi
 fi
 
 # ============================================
@@ -268,39 +273,39 @@ log_info "=========================================="
 HEALTH_TIMEOUT=90
 
 for container in "${EXPECTED_CONTAINERS[@]}"; do
-  if ! wait_container_healthy "$container" "$HEALTH_TIMEOUT"; then
-    log_info "尝试回滚到上一版本..."
-    rollback_images || true
-    exit 1
-  fi
+    if ! wait_container_healthy "$container" "$HEALTH_TIMEOUT"; then
+        log_info "尝试回滚到上一版本..."
+        rollback_images || true
+        exit 1
+    fi
 done
 
 # 容器健康后初始化数据库
 log_info "初始化数据库..."
 if ! bash scripts/init-databases.sh; then
-  log_error "数据库初始化失败"
-  exit 1
+    log_error "数据库初始化失败"
+    exit 1
 fi
 log_success "数据库初始化完成"
 
 # 最终验证（重启次数）
 RESTART_ISSUES=0
 for container in "${EXPECTED_CONTAINERS[@]}"; do
-  RESTARTS=$(docker inspect --format='{{.RestartCount}}' "$container" 2>/dev/null || echo "0")
-  if [ "$RESTARTS" -gt 10 ]; then
-    log_error "$container — 已重启 ${RESTARTS} 次，可能存在异常"
-    docker logs "$container" --tail 5 2>&1 | sed 's/^/  /'
-    RESTART_ISSUES=$((RESTART_ISSUES + 1))
-  elif [ "$RESTARTS" -gt 3 ]; then
-    log_info "$container — 重启 ${RESTARTS} 次（启动期正常行为）"
-  fi
+    RESTARTS=$(docker inspect --format='{{.RestartCount}}' "$container" 2>/dev/null || echo "0")
+    if [ "$RESTARTS" -gt 10 ]; then
+        log_error "$container — 已重启 ${RESTARTS} 次，可能存在异常"
+        docker logs "$container" --tail 5 2>&1 | sed 's/^/  /'
+        RESTART_ISSUES=$((RESTART_ISSUES + 1))
+    elif [ "$RESTARTS" -gt 3 ]; then
+        log_info "$container — 重启 ${RESTARTS} 次（启动期正常行为）"
+    fi
 done
 
 if [ $RESTART_ISSUES -gt 0 ]; then
-  log_error "$RESTART_ISSUES 个容器频繁重启，请检查日志"
-  log_info "尝试回滚到上一版本..."
-  rollback_images || true
-  exit 1
+    log_error "$RESTART_ISSUES 个容器频繁重启，请检查日志"
+    log_info "尝试回滚到上一版本..."
+    rollback_images || true
+    exit 1
 fi
 
 log_success "所有容器验证通过"

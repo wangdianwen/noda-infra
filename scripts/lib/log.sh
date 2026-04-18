@@ -16,18 +16,22 @@ RED="$_RED"
 BLUE="$_BLUE"
 NC="$_NC"
 
-log_info() {
-  echo -e "${_YELLOW}ℹ️  $*${_NC}"
+log_info()
+{
+    echo -e "${_YELLOW}ℹ️  $*${_NC}"
 }
 
-log_success() {
-  echo -e "${_GREEN}✅ $*${_NC}"
+log_success()
+{
+    echo -e "${_GREEN}✅ $*${_NC}"
 }
 
-log_error() {
-  echo -e "${_RED}❌ $*${_NC}" >&2
+log_error()
+{
+    echo -e "${_RED}❌ $*${_NC}" >&2
 }
 
-log_warn() {
-  echo -e "${_YELLOW}⚠️  $*${_NC}"
+log_warn()
+{
+    echo -e "${_YELLOW}⚠️  $*${_NC}"
 }

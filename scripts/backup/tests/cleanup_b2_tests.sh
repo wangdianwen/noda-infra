@@ -19,7 +19,7 @@ chmod 600 "$rclone_config"
 b2_account_id=$(get_b2_account_id)
 b2_application_key=$(get_b2_application_key)
 
-cat > "$rclone_config" <<EOF
+cat >"$rclone_config" <<EOF
 [b2remote]
 type = b2
 account = $b2_account_id
@@ -31,8 +31,8 @@ b2_bucket_name=$(get_b2_bucket_name)
 b2_path=$(get_b2_path)
 
 rclone delete "b2remote:${b2_bucket_name}/${b2_path}2026/04/06/" \
-  --config "$rclone_config" \
-  --quiet
+    --config "$rclone_config" \
+    --quiet
 
 rm -f "$rclone_config"
 

@@ -26,10 +26,10 @@ pg_user=$(get_postgres_user)
 # 测试 1: 创建测试数据库
 echo "▶️  测试 1: 创建测试数据库"
 docker exec noda-infra-postgres-prod psql -U postgres -d postgres \
-  -c "DROP DATABASE IF EXISTS test_restore_quick;" >/dev/null 2>&1 || true
+    -c "DROP DATABASE IF EXISTS test_restore_quick;" >/dev/null 2>&1 || true
 
 docker exec noda-infra-postgres-prod psql -U postgres -d postgres \
-  -c "CREATE DATABASE test_restore_quick;" >/dev/null 2>&1
+    -c "CREATE DATABASE test_restore_quick;" >/dev/null 2>&1
 
 # 创建测试数据
 docker exec -i noda-infra-postgres-prod psql -U postgres -d test_restore_quick >/dev/null 2>&1 <<SQL
@@ -45,7 +45,7 @@ echo "▶️  测试 2: 创建本地备份"
 backup_file="/tmp/test_restore_quick_$(date +%Y%m%d_%H%M%S).sql"
 
 docker exec noda-infra-postgres-prod pg_dump -U postgres test_restore_quick \
-  --clean --if-exists > "$backup_file" 2>/dev/null
+    --clean --if-exists >"$backup_file" 2>/dev/null
 
 file_size=$(stat -f%z "$backup_file" 2>/dev/null || stat -c%s "$backup_file" 2>/dev/null)
 echo "✅ 备份文件创建成功: $backup_file ($file_size bytes)"
@@ -56,10 +56,10 @@ echo "▶️  测试 3: 测试验证功能"
 source lib/restore.sh
 
 if verify_backup_integrity "$backup_file"; then
-  echo "✅ 备份验证通过"
+    echo "✅ 备份验证通过"
 else
-  echo "❌ 备份验证失败"
-  exit 1
+    echo "❌ 备份验证失败"
+    exit 1
 fi
 echo ""
 
@@ -69,23 +69,23 @@ echo "yes" | restore_database "$backup_file" "test_restore_restored" >/dev/null 
 
 # 验证恢复的数据
 user_count=$(docker exec noda-infra-postgres-prod psql -U postgres -d test_restore_restored -t -c \
-  "SELECT COUNT(*) FROM users;" 2>/dev/null | xargs)
+    "SELECT COUNT(*) FROM users;" 2>/dev/null | xargs)
 
 if [[ "$user_count" -eq 3 ]]; then
-  echo "✅ 恢复成功，数据完整（$user_count 条记录）"
+    echo "✅ 恢复成功，数据完整（$user_count 条记录）"
 else
-  echo "❌ 恢复失败或数据不完整"
-  exit 1
+    echo "❌ 恢复失败或数据不完整"
+    exit 1
 fi
 echo ""
 
 # 测试 5: 清理
 echo "▶️  测试 5: 清理测试数据"
 docker exec noda-infra-postgres-prod psql -U postgres -d postgres \
-  -c "DROP DATABASE IF EXISTS test_restore_quick;" >/dev/null 2>&1 || true
+    -c "DROP DATABASE IF EXISTS test_restore_quick;" >/dev/null 2>&1 || true
 
 docker exec noda-infra-postgres-prod psql -U postgres -d postgres \
-  -c "DROP DATABASE IF EXISTS test_restore_restored;" >/dev/null 2>&1 || true
+    -c "DROP DATABASE IF EXISTS test_restore_restored;" >/dev/null 2>&1 || true
 
 rm -f "$backup_file"
 echo "✅ 清理完成"

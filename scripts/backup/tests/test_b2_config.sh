@@ -21,9 +21,9 @@ echo "B2_PATH: $(get_b2_path)"
 echo ""
 
 if validate_b2_credentials; then
-  echo "✅ B2 配置函数测试通过"
-  exit 0
+    echo "✅ B2 配置函数测试通过"
+    exit 0
 else
-  echo "❌ B2 配置函数测试失败"
-  exit 1
+    echo "❌ B2 配置函数测试失败"
+    exit 1
 fi

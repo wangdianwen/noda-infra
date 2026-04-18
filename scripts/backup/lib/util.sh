@@ -13,13 +13,15 @@ set -euo pipefail
 # ============================================
 
 # 返回当前时间戳（格式：YYYYMMDD_HHmmss）
-get_timestamp() {
-  date +"%Y%m%d_%H%M%S"
+get_timestamp()
+{
+    date +"%Y%m%d_%H%M%S"
 }
 
 # 返回日期路径（格式：YYYY/MM/DD）
-get_date_path() {
-  date +"%Y/%m/%d"
+get_date_path()
+{
+    date +"%Y/%m/%d"
 }
 
 # ============================================
@@ -29,9 +31,10 @@ get_date_path() {
 # 设置文件权限为 600（仅所有者可读写）
 # 参数：
 #   $1: 文件路径
-set_file_permissions() {
-  local file_path=$1
-  chmod 600 "$file_path"
+set_file_permissions()
+{
+    local file_path=$1
+    chmod 600 "$file_path"
 }
 
 # ============================================
@@ -41,13 +44,14 @@ set_file_permissions() {
 # 清理指定的文件列表
 # 参数：
 #   $1: 文件列表（空格分隔）
-cleanup_files() {
-  local file_list=$1
-  for file in $file_list; do
-    if [ -f "$file" ]; then
-      rm -f "$file"
-    fi
-  done
+cleanup_files()
+{
+    local file_list=$1
+    for file in $file_list; do
+        if [ -f "$file" ]; then
+            rm -f "$file"
+        fi
+    done
 }
 
 # ============================================
@@ -58,9 +62,10 @@ cleanup_files() {
 # 参数：
 #   $1: 文件路径
 # 返回：校验和字符串
-calculate_checksum() {
-  local file_path=$1
-  sha256sum "$file_path" | awk '{print $1}'
+calculate_checksum()
+{
+    local file_path=$1
+    sha256sum "$file_path" | awk '{print $1}'
 }
 
 # ============================================
@@ -71,16 +76,17 @@ calculate_checksum() {
 # 参数：
 #   $1: 字节数
 # 返回：格式化后的字符串（B、KB、MB、GB）
-format_bytes() {
-  local bytes=$1
+format_bytes()
+{
+    local bytes=$1
 
-  if [ "$bytes" -lt 1024 ]; then
-    echo "${bytes}B"
-  elif [ "$bytes" -lt 1048576 ]; then
-    echo "$((bytes / 1024))KB"
-  elif [ "$bytes" -lt 1073741824 ]; then
-    echo "$((bytes / 1048576))MB"
-  else
-    echo "$((bytes / 1073741824))GB"
-  fi
+    if [ "$bytes" -lt 1024 ]; then
+        echo "${bytes}B"
+    elif [ "$bytes" -lt 1048576 ]; then
+        echo "$((bytes / 1024))KB"
+    elif [ "$bytes" -lt 1073741824 ]; then
+        echo "$((bytes / 1048576))MB"
+    else
+        echo "$((bytes / 1073741824))GB"
+    fi
 }

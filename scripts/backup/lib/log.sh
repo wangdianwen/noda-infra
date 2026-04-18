@@ -13,23 +13,27 @@ set -euo pipefail
 # ============================================
 
 # 输出信息日志（前缀：ℹ️）
-log_info() {
-  echo "ℹ️  $1"
+log_info()
+{
+    echo "ℹ️  $1"
 }
 
 # 输出警告日志（前缀：⚠️）
-log_warn() {
-  echo "⚠️  $1"
+log_warn()
+{
+    echo "⚠️  $1"
 }
 
 # 输出错误日志（前缀：❌，到 stderr）
-log_error() {
-  echo "❌ $1" >&2
+log_error()
+{
+    echo "❌ $1" >&2
 }
 
 # 输出成功日志（前缀：✅）
-log_success() {
-  echo "✅ $1"
+log_success()
+{
+    echo "✅ $1"
 }
 
 # 输出进度日志（百分比 + 消息）
@@ -37,24 +41,26 @@ log_success() {
 #   $1: 当前进度
 #   $2: 总数
 #   $3: 消息内容
-log_progress() {
-  local current=$1
-  local total=$2
-  local message=$3
-  local percent=$((current * 100 / total))
-  echo "📊 [$current/$total] ($percent%) $message"
+log_progress()
+{
+    local current=$1
+    local total=$2
+    local message=$3
+    local percent=$((current * 100 / total))
+    echo "📊 [$current/$total] ($percent%) $message"
 }
 
 # 输出 JSON 格式日志（用于结构化日志，D-47）
 # 参数：
 #   $1: 键名
 #   $2: 值
-log_json() {
-  local key=$1
-  local value=$2
-  local timestamp
-  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  echo "{\"$key\":\"$value\",\"timestamp\":\"$timestamp\"}"
+log_json()
+{
+    local key=$1
+    local value=$2
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    echo "{\"$key\":\"$value\",\"timestamp\":\"$timestamp\"}"
 }
 
 # ============================================
@@ -68,20 +74,21 @@ log_json() {
 #   $3: 数据库名
 #   $4: 消息内容
 #   $5: 详细信息（JSON，可选）
-log_structured() {
-  local level=$1
-  local stage=$2
-  local database=$3
-  local message=$4
-  local details=${5:-}
+log_structured()
+{
+    local level=$1
+    local stage=$2
+    local database=$3
+    local message=$4
+    local details=${5:-}
 
-  local timestamp
-  timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-  local log_line="[$timestamp] [$level] [$stage] [$database] $message"
+    local timestamp
+    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    local log_line="[$timestamp] [$level] [$stage] [$database] $message"
 
-  echo "$log_line"
+    echo "$log_line"
 
-  if [[ -n "$details" ]]; then
-    echo "Details: $details"
-  fi
+    if [[ -n "$details" ]]; then
+        echo "Details: $details"
+    fi
 }

@@ -25,7 +25,7 @@ readonly EXIT_INVALID_ARGS=8
 # Phase 4: 自动化验证测试配置
 # ============================================
 
-readonly TEST_TIMEOUT=3600  # 1 小时超时
+readonly TEST_TIMEOUT=3600 # 1 小时超时
 readonly TEST_DB_PREFIX="test_restore_"
 readonly TEST_MAX_RETRIES=3
 readonly TEST_LOG_DIR="${TEST_LOG_DIR:-/var/log/noda-backup-test}"
@@ -43,17 +43,17 @@ readonly EXIT_CLEANUP_TEST_FAILED=14
 # 告警配置
 readonly ALERT_ENABLED="${ALERT_ENABLED:-true}"
 readonly ALERT_EMAIL="${ALERT_EMAIL:-}"
-readonly ALERT_DEDUP_WINDOW=3600  # 1 小时去重窗口
+readonly ALERT_DEDUP_WINDOW=3600 # 1 小时去重窗口
 
 # 历史记录文件（用户目录）
 readonly HISTORY_DIR="${HISTORY_DIR:-$HOME/.noda-backup/history}"
 readonly HISTORY_FILE="$HISTORY_DIR/history.json"
 readonly ALERT_HISTORY_FILE="$HISTORY_DIR/alert_history.json"
-readonly LOG_RETENTION_DAYS=7  # 日志保留 7 天
+readonly LOG_RETENTION_DAYS=7 # 日志保留 7 天
 
 # 指标配置
-readonly METRICS_WINDOW_SIZE=10  # 最近 10 次
-readonly METRICS_ANOMALY_THRESHOLD=50  # 50% 偏差
+readonly METRICS_WINDOW_SIZE=10       # 最近 10 次
+readonly METRICS_ANOMALY_THRESHOLD=50 # 50% 偏差
 
 # ============================================
 # Phase 6: 数据量校验配置
@@ -63,10 +63,10 @@ readonly METRICS_ANOMALY_THRESHOLD=50  # 50% 偏差
 readonly DATA_VOLUME_CHECK_ENABLED="${DATA_VOLUME_CHECK_ENABLED:-true}"
 
 # 数据量异常阈值（百分比）
-readonly DATA_VOLUME_ANOMALY_THRESHOLD=30  # 30% 变化视为异常
+readonly DATA_VOLUME_ANOMALY_THRESHOLD=30 # 30% 变化视为异常
 
 # 数据量历史记录窗口（天数）
-readonly DATA_VOLUME_HISTORY_DAYS=7  # 使用最近 7 天的数据
+readonly DATA_VOLUME_HISTORY_DAYS=7 # 使用最近 7 天的数据
 
 # 数据量校验严格模式
 # true: 异常时终止备份

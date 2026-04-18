@@ -16,7 +16,8 @@ PLATFORM="$(detect_platform)"
 # ============================================
 # 子命令：install — 安装 auditd 规则
 # ============================================
-cmd_install() {
+cmd_install()
+{
     log_info "Phase 33: 安装 auditd Docker 审计规则 (平台: $PLATFORM)..."
 
     # 1. 平台检查
@@ -49,7 +50,7 @@ cmd_install() {
 
     # 5. 写入 auditd 规则文件
     log_info "写入 auditd 规则文件: $RULES_FILE..."
-    tee "$RULES_FILE" > /dev/null <<'EOF'
+    tee "$RULES_FILE" >/dev/null <<'EOF'
 ## Noda Docker Command Audit Rules (Phase 33, AUDIT-01)
 ## 监控所有 docker 命令执行，记录 auid/时间/命令参数
 
@@ -86,7 +87,7 @@ EOF
         if grep -q "^${key}" "$AUDITD_CONF" 2>/dev/null; then
             sed -i "s/^${key}*=.*/${key} = ${value}/" "$AUDITD_CONF"
         else
-            echo "${key} = ${value}" >> "$AUDITD_CONF"
+            echo "${key} = ${value}" >>"$AUDITD_CONF"
         fi
     done
     log_success "auditd.conf 配置完成"
@@ -114,7 +115,8 @@ EOF
 # ============================================
 # 子命令：verify — 验证 auditd 规则
 # ============================================
-cmd_verify() {
+cmd_verify()
+{
     local all_ok=true
 
     log_info "Phase 33: 验证 auditd Docker 审计规则 (平台: $PLATFORM)..."
@@ -223,7 +225,8 @@ cmd_verify() {
 # ============================================
 # 子命令：uninstall — 卸载 auditd 规则
 # ============================================
-cmd_uninstall() {
+cmd_uninstall()
+{
     log_info "Phase 33: 卸载 auditd Docker 审计规则..."
 
     if [[ "$PLATFORM" == "macos" ]]; then
@@ -246,7 +249,8 @@ cmd_uninstall() {
 # ============================================
 # 用法说明
 # ============================================
-usage() {
+usage()
+{
     cat <<EOF
 用法: sudo $(basename "$0") <命令>
 
@@ -288,7 +292,7 @@ case "${1:-}" in
     uninstall)
         cmd_uninstall
         ;;
-    help|--help|-h)
+    help | --help | -h)
         usage
         ;;
     *)

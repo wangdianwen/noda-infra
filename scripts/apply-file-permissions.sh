@@ -34,7 +34,8 @@ ACTUAL_USER="${SUDO_USER:-$(whoami)}"
 # ============================================
 # macOS/Linux stat 兼容
 # ============================================
-stat_perms() {
+stat_perms()
+{
     local file="$1"
     if [[ "$(uname)" == "Darwin" ]]; then
         stat -f '%Lp:%Su:%Sg' "$file"
@@ -43,7 +44,8 @@ stat_perms() {
     fi
 }
 
-stat_group() {
+stat_group()
+{
     local file="$1"
     if [[ "$(uname)" == "Darwin" ]]; then
         stat -f '%Sg' "$file"
@@ -52,7 +54,8 @@ stat_group() {
     fi
 }
 
-stat_mode() {
+stat_mode()
+{
     local file="$1"
     if [[ "$(uname)" == "Darwin" ]]; then
         stat -f '%Lp' "$file"
@@ -64,7 +67,8 @@ stat_mode() {
 # ============================================
 # 子命令：apply -- 执行所有权限配置
 # ============================================
-cmd_apply() {
+cmd_apply()
+{
     log_info "Phase 31: 应用权限配置 (平台: $PLATFORM)..."
 
     # 1. 创建 /opt/noda/ 目录（manage-containers.sh 需要）
@@ -104,7 +108,7 @@ cmd_apply() {
     if [[ "$PLATFORM" == "linux" ]]; then
         log_info "创建 Docker socket systemd override..."
         sudo mkdir -p "$DOCKER_OVERRIDE_DIR"
-        sudo tee "$DOCKER_OVERRIDE_CONF" > /dev/null <<'EOF'
+        sudo tee "$DOCKER_OVERRIDE_CONF" >/dev/null <<'EOF'
 [Service]
 ExecStartPost=/bin/sh -c 'chown root:jenkins /var/run/docker.sock && chmod 660 /var/run/docker.sock'
 EOF
@@ -167,7 +171,8 @@ EOF
 # ============================================
 # 子命令：verify -- 验证所有权限配置
 # ============================================
-cmd_verify() {
+cmd_verify()
+{
     local all_ok=true
 
     log_info "Phase 31: 验证权限配置 (平台: $PLATFORM)..."
@@ -306,7 +311,8 @@ cmd_verify() {
 # ============================================
 # 子命令：hook -- 创建 Git post-merge hook
 # ============================================
-cmd_hook() {
+cmd_hook()
+{
     local hook_file="$PROJECT_ROOT/.git/hooks/post-merge"
 
     log_info "创建 Git post-merge hook..."
@@ -315,7 +321,7 @@ cmd_hook() {
     mkdir -p "$(dirname "$hook_file")"
 
     # 写入 hook 内容（跨平台）
-    cat > "$hook_file" <<'HOOKEOF'
+    cat >"$hook_file" <<'HOOKEOF'
 #!/bin/bash
 # .git/hooks/post-merge — git pull 后恢复部署脚本锁定权限
 # 由 apply-file-permissions.sh 创建，不在版本控制中
@@ -352,7 +358,8 @@ HOOKEOF
 # ============================================
 # 用法说明
 # ============================================
-usage() {
+usage()
+{
     cat <<EOF
 用法: $(basename "$0") <命令>
 
@@ -387,7 +394,7 @@ case "${1:-}" in
     hook)
         cmd_hook
         ;;
-    help|--help|-h)
+    help | --help | -h)
         usage
         ;;
     *)

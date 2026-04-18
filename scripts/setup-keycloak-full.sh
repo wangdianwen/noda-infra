@@ -30,8 +30,8 @@ GOOGLE_CLIENT_ID=$(echo "$SECRETS" | grep "google_oauth_client_id:" | cut -d' ' 
 GOOGLE_CLIENT_SECRET=$(echo "$SECRETS" | grep "google_oauth_client_secret:" | cut -d' ' -f2)
 
 if [ -z "$GOOGLE_CLIENT_ID" ] || [ -z "$GOOGLE_CLIENT_SECRET" ]; then
-  log_error "无法解密 Google OAuth 凭据"
-  exit 1
+    log_error "无法解密 Google OAuth 凭据"
+    exit 1
 fi
 
 log_success "凭据解密成功"
@@ -43,8 +43,8 @@ log_info "Client ID: ${GOOGLE_CLIENT_ID:0:20}..."
 log_info "步骤 2/6: 检查 Keycloak 容器"
 
 if ! docker ps --format "{{.Names}}" | grep -q "$KEYCLOAK_CONTAINER"; then
-  log_error "Keycloak 容器未运行"
-  exit 1
+    log_error "Keycloak 容器未运行"
+    exit 1
 fi
 
 log_success "Keycloak 容器运行正常"
@@ -57,15 +57,15 @@ log_info "步骤 3/6: 登录 Keycloak 管理员"
 KEYCLOAK_ADMIN_PASSWORD=$(docker exec $KEYCLOAK_CONTAINER printenv KEYCLOAK_ADMIN_PASSWORD)
 
 if [ -z "$KEYCLOAK_ADMIN_PASSWORD" ]; then
-  log_error "无法获取管理员密码"
-  exit 1
+    log_error "无法获取管理员密码"
+    exit 1
 fi
 
 docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh config credentials \
-  --server http://localhost:8080 \
-  --realm master \
-  --user admin \
-  --password "$KEYCLOAK_ADMIN_PASSWORD" > /dev/null 2>&1
+    --server http://localhost:8080 \
+    --realm master \
+    --user admin \
+    --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1
 
 log_success "管理员登录成功"
 
@@ -74,23 +74,23 @@ log_success "管理员登录成功"
 # ============================================
 log_info "步骤 4/6: 创建 noda realm"
 
-if docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh get realms/noda > /dev/null 2>&1; then
-  log_info "Realm 'noda' 已存在"
+if docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh get realms/noda >/dev/null 2>&1; then
+    log_info "Realm 'noda' 已存在"
 else
-  log_info "创建 realm 'noda'..."
+    log_info "创建 realm 'noda'..."
 
-  docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh create realms \
-    -s realm=noda \
-    -s enabled=true \
-    -s sslRequired=none \
-    -s registrationAllowed=true \
-    -s loginWithEmailAllowed=true \
-    -s duplicateEmailsAllowed=false \
-    -s resetPasswordAllowed=true \
-    -s editUsernameAllowed=false \
-    -s bruteForceProtected=true > /dev/null 2>&1
+    docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh create realms \
+        -s realm=noda \
+        -s enabled=true \
+        -s sslRequired=none \
+        -s registrationAllowed=true \
+        -s loginWithEmailAllowed=true \
+        -s duplicateEmailsAllowed=false \
+        -s resetPasswordAllowed=true \
+        -s editUsernameAllowed=false \
+        -s bruteForceProtected=true >/dev/null 2>&1
 
-  log_success "Realm 'noda' 创建成功"
+    log_success "Realm 'noda' 创建成功"
 fi
 
 # ============================================
@@ -101,7 +101,7 @@ log_info "步骤 5/6: 创建 noda-frontend client"
 # 创建 client JSON 配置（修复 CORS）
 CLIENT_JSON=$(mktemp /tmp/noda-frontend-client.json.XXXXXX)
 trap "rm -f $CLIENT_JSON" EXIT
-cat > "$CLIENT_JSON" << 'EOF'
+cat >"$CLIENT_JSON" <<'EOF'
 {
   "clientId": "noda-frontend",
   "name": "noda-frontend",
@@ -121,22 +121,22 @@ cat > "$CLIENT_JSON" << 'EOF'
 }
 EOF
 
-docker cp "$CLIENT_JSON" $KEYCLOAK_CONTAINER:/tmp/client.json > /dev/null 2>&1
+docker cp "$CLIENT_JSON" $KEYCLOAK_CONTAINER:/tmp/client.json >/dev/null 2>&1
 
 # 检查 client 是否已存在（缓存结果避免重复查询）
 CLIENTS_JSON=$(docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh get realms/noda/clients)
-if echo "$CLIENTS_JSON" | jq -e '.[] | select(.clientId=="noda-frontend")' > /dev/null 2>&1; then
-  log_info "Client 'noda-frontend' 已存在，更新 CORS 配置..."
+if echo "$CLIENTS_JSON" | jq -e '.[] | select(.clientId=="noda-frontend")' >/dev/null 2>&1; then
+    log_info "Client 'noda-frontend' 已存在，更新 CORS 配置..."
 
-  CLIENT_ID=$(echo "$CLIENTS_JSON" | jq -r '.[] | select(.clientId=="noda-frontend") | .id')
-  docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh update realms/noda/clients/$CLIENT_ID \
-    -s 'webOrigins=["https://class.noda.co.nz", "https://auth.noda.co.nz", "https://noda.co.nz", "http://localhost:*"]' \
-    -s 'redirectUris=["https://class.noda.co.nz/*", "https://auth.noda.co.nz/*", "http://localhost:*"]' > /dev/null 2>&1
+    CLIENT_ID=$(echo "$CLIENTS_JSON" | jq -r '.[] | select(.clientId=="noda-frontend") | .id')
+    docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh update realms/noda/clients/$CLIENT_ID \
+        -s 'webOrigins=["https://class.noda.co.nz", "https://auth.noda.co.nz", "https://noda.co.nz", "http://localhost:*"]' \
+        -s 'redirectUris=["https://class.noda.co.nz/*", "https://auth.noda.co.nz/*", "http://localhost:*"]' >/dev/null 2>&1
 
-  log_success "Client CORS 配置已更新"
+    log_success "Client CORS 配置已更新"
 else
-  docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh create clients -r noda -f /tmp/client.json > /dev/null 2>&1
-  log_success "Client 'noda-frontend' 创建成功"
+    docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh create clients -r noda -f /tmp/client.json >/dev/null 2>&1
+    log_success "Client 'noda-frontend' 创建成功"
 fi
 
 # ============================================
@@ -145,25 +145,25 @@ fi
 log_info "步骤 6/6: 配置 Google Identity Provider"
 
 GOOGLE_IDP_ARGS=(
-  -s alias=google
-  -s providerId=google
-  -s displayName=Google
-  -s enabled=true
-  -s "config.clientId=$GOOGLE_CLIENT_ID"
-  -s "config.clientSecret=$GOOGLE_CLIENT_SECRET"
-  -s config.useJwksUrl=true
-  -s "config.redirectUri=https://auth.noda.co.nz/realms/noda/broker/google/endpoint"
+    -s alias=google
+    -s providerId=google
+    -s displayName=Google
+    -s enabled=true
+    -s "config.clientId=$GOOGLE_CLIENT_ID"
+    -s "config.clientSecret=$GOOGLE_CLIENT_SECRET"
+    -s config.useJwksUrl=true
+    -s "config.redirectUri=https://auth.noda.co.nz/realms/noda/broker/google/endpoint"
 )
 
 # 检查 IdP 是否已存在
-if docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh get realms/noda/identity-provider/instances/google > /dev/null 2>&1; then
-  log_info "Google IdP 已存在，更新配置..."
-  docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh update realms/noda/identity-provider/instances/google \
-    "${GOOGLE_IDP_ARGS[@]}" > /dev/null 2>&1
+if docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh get realms/noda/identity-provider/instances/google >/dev/null 2>&1; then
+    log_info "Google IdP 已存在，更新配置..."
+    docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh update realms/noda/identity-provider/instances/google \
+        "${GOOGLE_IDP_ARGS[@]}" >/dev/null 2>&1
 else
-  log_info "创建 Google IdP..."
-  docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh create identity-provider/instances \
-    -r noda "${GOOGLE_IDP_ARGS[@]}" > /dev/null 2>&1
+    log_info "创建 Google IdP..."
+    docker exec $KEYCLOAK_CONTAINER /opt/keycloak/bin/kcadm.sh create identity-provider/instances \
+        -r noda "${GOOGLE_IDP_ARGS[@]}" >/dev/null 2>&1
 fi
 
 log_success "Google Identity Provider 配置成功"

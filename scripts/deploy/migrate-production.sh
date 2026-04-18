@@ -15,7 +15,8 @@ source "$SCRIPT_DIR/../lib/log.sh"
 
 # ==================== 环境检查 ====================
 
-check_production_environment() {
+check_production_environment()
+{
     log_info "检查生产环境配置..."
 
     # 检查 NODE_ENV
@@ -53,7 +54,8 @@ check_production_environment() {
 
 # ==================== 备份提醒 ====================
 
-show_backup_reminder() {
+show_backup_reminder()
+{
     echo ""
     echo "╔════════════════════════════════════════════════════════════════╗"
     echo "║              ⚠️  生产环境迁移 - 重要提醒                      ║"
@@ -76,7 +78,8 @@ show_backup_reminder() {
 
 # ==================== 生产环境迁移 ====================
 
-migrate_production() {
+migrate_production()
+{
     echo ""
     echo "╔════════════════════════════════════════════════════════════════╗"
     echo "║                    🚀 生产环境迁移                            ║"

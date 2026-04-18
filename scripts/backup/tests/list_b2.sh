@@ -26,7 +26,7 @@ chmod 600 "$rclone_config"
 b2_account_id=$(get_b2_account_id)
 b2_application_key=$(get_b2_application_key)
 
-cat > "$rclone_config" <<EOF
+cat >"$rclone_config" <<EOF
 [b2remote]
 type = b2
 account = $b2_account_id
@@ -36,6 +36,6 @@ EOF
 # 列出文件
 echo "B2 上的文件："
 rclone ls "b2remote:${b2_bucket_name}/${b2_path}" \
-  --config "$rclone_config"
+    --config "$rclone_config"
 
 rm -f "$rclone_config"

@@ -24,7 +24,8 @@ PLATFORM="$(detect_platform)"
 # ============================================
 # 子命令：install — 安装 sudoers 白名单规则
 # ============================================
-cmd_install() {
+cmd_install()
+{
     log_info "Phase 32: 安装 sudoers 白名单规则 (平台: $PLATFORM)..."
 
     # 1. 平台检查
@@ -47,12 +48,12 @@ cmd_install() {
         log_success "备份完成"
     else
         mkdir -p "$(dirname "$SUDOERS_BACKUP")"
-        echo "未找到已有的 sudoers 规则文件（首次安装）" > "$SUDOERS_BACKUP"
+        echo "未找到已有的 sudoers 规则文件（首次安装）" >"$SUDOERS_BACKUP"
     fi
 
     # 4. 写入 sudoers 规则文件
     log_info "写入 sudoers 规则文件: $SUDOERS_FILE..."
-    tee "$SUDOERS_FILE" > /dev/null <<'EOF'
+    tee "$SUDOERS_FILE" >/dev/null <<'EOF'
 # Noda Docker Read-Only Whitelist (Phase 32)
 # 允许 admin/sudo 组用户通过 sudo 执行只读 docker 命令
 # 白名单: ps, logs, inspect, stats, top (per D-05, BREAK-01)
@@ -143,7 +144,8 @@ EOF
 # ============================================
 # 子命令：verify — 验证 sudoers 规则
 # ============================================
-cmd_verify() {
+cmd_verify()
+{
     local all_ok=true
 
     log_info "Phase 32: 验证 sudoers 白名单规则 (平台: $PLATFORM)..."
@@ -214,7 +216,8 @@ cmd_verify() {
 # ============================================
 # 子命令：uninstall — 卸载 sudoers 规则
 # ============================================
-cmd_uninstall() {
+cmd_uninstall()
+{
     log_info "Phase 32: 卸载 sudoers 白名单规则..."
 
     if [[ "$PLATFORM" == "macos" ]]; then
@@ -235,7 +238,8 @@ cmd_uninstall() {
 # ============================================
 # 用法说明
 # ============================================
-usage() {
+usage()
+{
     cat <<EOF
 用法: sudo $(basename "$0") <命令>
 
@@ -276,7 +280,7 @@ case "${1:-}" in
     uninstall)
         cmd_uninstall
         ;;
-    help|--help|-h)
+    help | --help | -h)
         usage
         ;;
     *)
