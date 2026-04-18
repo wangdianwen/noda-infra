@@ -200,14 +200,33 @@ instance.save()
 println "Authorization strategy reverted to FullControlOnceLoggedInAuthorizationStrategy"
 ROLLBACK_GROOVY
 
-    # 执行回滚脚本
+    # 加载管理员凭据
+    local cred_file="$PROJECT_ROOT/scripts/jenkins/config/jenkins-admin.env"
+    local auth_user="" auth_pass=""
+    if [ -f "$cred_file" ]; then
+        source "$cred_file"
+        auth_user="${JENKINS_ADMIN_USER:-}"
+        auth_pass="${JENKINS_ADMIN_PASSWORD:-}"
+    fi
+
+    # 执行回滚脚本（通过 REST API scriptText 端点）
     local rollback_output
-    rollback_output=$(sudo -u jenkins java -jar "$cli_jar" -s "http://localhost:8888/" groovy < "$rollback_script" 2>&1) || {
-        log_warn "Jenkins 权限矩阵回滚执行失败（可能权限矩阵未配置）"
-        log_warn "输出: ${rollback_output}"
+    if [[ -n "$auth_user" && -n "$auth_pass" ]]; then
+        local script_content
+        script_content="$(cat "$rollback_script")"
+        rollback_output=$(curl -sf "http://localhost:8888/scriptText" \
+            -u "${auth_user}:${auth_pass}" \
+            --data-urlencode "script=${script_content}" 2>&1) || {
+            log_warn "Jenkins 权限矩阵回滚执行失败（可能权限矩阵未配置）"
+            log_warn "输出: ${rollback_output}"
+            rm -f "$rollback_script"
+            return 0
+        }
+    else
+        log_warn "未找到凭据文件，跳过 Jenkins 权限矩阵回滚"
         rm -f "$rollback_script"
         return 0
-    }
+    fi
 
     rm -f "$rollback_script"
     echo "$rollback_output"

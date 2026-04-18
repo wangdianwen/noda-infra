@@ -771,6 +771,25 @@ find_cli_jar() {
   return 1
 }
 
+# 加载管理员凭据
+load_admin_credentials() {
+  local cred_file="$SCRIPT_DIR/jenkins/config/jenkins-admin.env"
+  if [ ! -f "$cred_file" ]; then
+    log_error "未找到凭据文件: ${cred_file}"
+    log_error "请复制 jenkins-admin.env.example 为 jenkins-admin.env 并填写管理员凭据"
+    exit 1
+  fi
+  source "$cred_file"
+  if [[ -z "${JENKINS_ADMIN_USER:-}" || -z "${JENKINS_ADMIN_PASSWORD:-}" ]]; then
+    log_error "凭据文件中缺少 JENKINS_ADMIN_USER 或 JENKINS_ADMIN_PASSWORD"
+    exit 1
+  fi
+  if [[ "$JENKINS_ADMIN_PASSWORD" == "CHANGE_ME_TO_A_STRONG_PASSWORD" ]]; then
+    log_error "请先在 jenkins-admin.env 中设置实际密码或 API Token"
+    exit 1
+  fi
+}
+
 cmd_apply_matrix_auth() {
   log_info "=========================================="
   log_info "应用 Jenkins 权限矩阵配置"
@@ -783,6 +802,9 @@ cmd_apply_matrix_auth() {
       exit 1
     fi
   fi
+
+  # 加载管理员凭据
+  load_admin_credentials
 
   # 检查 Jenkins 是否运行
   if ! curl -sf "http://localhost:${JENKINS_PORT}/login" > /dev/null 2>&1; then
@@ -801,35 +823,18 @@ cmd_apply_matrix_auth() {
     exit 1
   fi
 
-  # 查找 jenkins-cli.jar
-  local cli_jar
-  cli_jar="$(find_cli_jar)" || {
-    log_error "未找到 jenkins-cli.jar"
+  # 执行 Groovy 脚本（通过 REST API scriptText 端点）
+  log_info "执行权限矩阵配置脚本..."
+  local script_content
+  script_content="$(cat "$groovy_script")"
+  local apply_output
+  apply_output=$(curl -sf "http://localhost:${JENKINS_PORT}/scriptText" \
+    -u "${JENKINS_ADMIN_USER}:${JENKINS_ADMIN_PASSWORD}" \
+    --data-urlencode "script=${script_content}" 2>&1) || {
+    log_error "权限矩阵脚本执行失败"
+    log_error "输出: ${apply_output}"
     exit 1
   }
-  log_info "找到 jenkins-cli.jar: ${cli_jar}"
-
-  # 查找 Java
-  local java_cmd
-  java_cmd="$(find_java)"
-  log_info "使用 Java: ${java_cmd}"
-
-  # 执行 Groovy 脚本
-  log_info "执行权限矩阵配置脚本..."
-  local apply_output
-  if [[ "$PLATFORM" == "macos" ]]; then
-    apply_output=$("$java_cmd" -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$groovy_script" 2>&1) || {
-      log_error "权限矩阵脚本执行失败"
-      log_error "输出: ${apply_output}"
-      exit 1
-    }
-  else
-    apply_output=$(sudo -u jenkins "$java_cmd" -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$groovy_script" 2>&1) || {
-      log_error "权限矩阵脚本执行失败"
-      log_error "输出: ${apply_output}"
-      exit 1
-    }
-  fi
 
   log_info "脚本输出:"
   echo "$apply_output"
@@ -871,6 +876,9 @@ cmd_verify_matrix_auth() {
     fi
   fi
 
+  # 加载管理员凭据
+  load_admin_credentials
+
   # 检查 Jenkins 是否运行
   if ! curl -sf "http://localhost:${JENKINS_PORT}/login" > /dev/null 2>&1; then
     if [[ "$PLATFORM" == "macos" ]]; then
@@ -894,14 +902,15 @@ cmd_verify_matrix_auth() {
   cat > "$verify_script" <<'VERIFY_GROOVY'
 import jenkins.model.*
 import hudson.model.*
-import org.jenkinsci.plugins.matrixauth.*
+import hudson.security.*
 
 def instance = Jenkins.getInstance()
 def strategy = instance.getAuthorizationStrategy()
 def allPassed = true
+def isMatrix = strategy.getClass().getSimpleName() == 'GlobalMatrixAuthorizationStrategy'
 
 // 检查 1: 权限策略类型为 GlobalMatrixAuthorizationStrategy
-if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+if (isMatrix) {
     println '[PASS] Authorization strategy: GlobalMatrixAuthorizationStrategy'
 } else {
     println '[FAIL] Authorization strategy: ' + strategy.getClass().getSimpleName() + ' (expected GlobalMatrixAuthorizationStrategy)'
@@ -909,7 +918,7 @@ if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
 }
 
 // 检查 2: admin 拥有 Jenkins.ADMINISTER
-if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+if (isMatrix) {
     def adminPerms = strategy.getGrantedPermissions().get(Jenkins.ADMINISTER) ?: []
     if (adminPerms.contains('admin')) {
         println '[PASS] admin has Overall/Administer'
@@ -920,7 +929,7 @@ if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
 }
 
 // 检查 3: developer 拥有 Item.BUILD
-if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+if (isMatrix) {
     def buildPerms = strategy.getGrantedPermissions().get(Item.BUILD) ?: []
     if (buildPerms.contains('developer')) {
         println '[PASS] developer has Job/Build'
@@ -931,7 +940,7 @@ if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
 }
 
 // 检查 4: developer 拥有 Item.READ
-if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+if (isMatrix) {
     def readPerms = strategy.getGrantedPermissions().get(Item.READ) ?: []
     if (readPerms.contains('developer')) {
         println '[PASS] developer has Job/Read'
@@ -941,19 +950,8 @@ if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
     }
 }
 
-// 检查 5: developer 拥有 Run.READ
-if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
-    def runPerms = strategy.getGrantedPermissions().get(Run.READ) ?: []
-    if (runPerms.contains('developer')) {
-        println '[PASS] developer has Run/Read'
-    } else {
-        println '[FAIL] developer missing Run/Read (found: ' + runPerms + ')'
-        allPassed = false
-    }
-}
-
-// 检查 6: developer 拥有 Jenkins.READ
-if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+// 检查 5: developer 拥有 Jenkins.READ
+if (isMatrix) {
     def overallRead = strategy.getGrantedPermissions().get(Jenkins.READ) ?: []
     if (overallRead.contains('developer')) {
         println '[PASS] developer has Overall/Read'
@@ -964,7 +962,7 @@ if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
 }
 
 // 检查 7: developer 没有 Item.CONFIGURE
-if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
+if (isMatrix) {
     def configPerms = strategy.getGrantedPermissions().get(Item.CONFIGURE) ?: []
     if (!configPerms.contains('developer')) {
         println '[PASS] developer does NOT have Job/Configure (correct)'
@@ -977,29 +975,30 @@ if (strategy instanceof GlobalMatrixAuthorizationStrategy) {
 if (allPassed) {
     println ''
     println 'All matrix authorization checks PASSED'
-    System.exit(0)
 } else {
     println ''
     println 'Some matrix authorization checks FAILED'
-    System.exit(1)
 }
 VERIFY_GROOVY
 
-  # 执行验证脚本
+  # 执行验证脚本（通过 REST API scriptText 端点）
   local verify_output
-  local java_cmd
-  java_cmd="$(find_java)"
-  if [[ "$PLATFORM" == "macos" ]]; then
-    verify_output=$("$java_cmd" -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$verify_script" 2>&1)
-  else
-    verify_output=$(sudo -u jenkins "$java_cmd" -jar "$cli_jar" -s "http://localhost:${JENKINS_PORT}/" groovy < "$verify_script" 2>&1)
-  fi
+  local script_content
+  script_content="$(cat "$verify_script")"
+  verify_output=$(curl -sf "http://localhost:${JENKINS_PORT}/scriptText" \
+    -u "${JENKINS_ADMIN_USER}:${JENKINS_ADMIN_PASSWORD}" \
+    --data-urlencode "script=${script_content}" 2>&1)
   local verify_exit=$?
 
   # 清理临时脚本
   rm -f "$verify_script"
 
   echo "$verify_output"
+
+  # 检查输出中是否包含 FAILED
+  if echo "$verify_output" | grep -q '\[FAIL\]'; then
+    verify_exit=1
+  fi
 
   if [ $verify_exit -eq 0 ]; then
     log_success "=========================================="

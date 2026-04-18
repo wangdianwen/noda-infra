@@ -74,8 +74,6 @@ strategy.add(hudson.model.Item.READ, "developer")
 strategy.add(hudson.model.Item.BUILD, "developer")
 // Job/Discover — 发现 Job（重定向到登录页而非 404）
 strategy.add(hudson.model.Item.DISCOVER, "developer")
-// Run/Read — 查看 Console Output
-strategy.add(hudson.model.Run.READ, "developer")
 // View/Read — 查看视图列表
 strategy.add(hudson.model.View.READ, "developer")
 
