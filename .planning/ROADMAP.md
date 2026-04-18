@@ -21,7 +21,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 35: 共享库建设** - 提取 3 个共享库文件（deploy-check.sh, platform.sh, image-cleanup.sh），消除多处重复代码 (completed 2026-04-18)
 - [x] **Phase 36: 蓝绿部署统一** - 合并两个蓝绿部署脚本为参数化入口，精简 rollback-findclass.sh (completed 2026-04-19)
 - [x] **Phase 37: 清理与重命名** - 删除不可用的验证脚本，消除 health.sh 命名混淆 (completed 2026-04-19)
-- [ ] **Phase 38: 质量保证** - ShellCheck 零 error + shfmt 统一格式化
+- [x] **Phase 38: 质量保证** - ShellCheck 零 error + shfmt 统一格式化 (completed 2026-04-19)
 
 <details>
 <summary>v1.0 完整备份系统 + v1.1 基础设施现代化 (Phases 1-9) -- SHIPPED 2026-04-11</summary>
@@ -105,7 +105,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 </details>
 
-### v1.7 代码精简与规整 (In Progress)
+### v1.7 代码精简与规整 (Shipped 2026-04-19)
 
 **Milestone Goal:** 在不影响现有功能的前提下，消除重复代码、合并冗余脚本、统一代码风格，使代码库更简洁易维护
 
@@ -165,8 +165,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 38-01-PLAN.md — 安装 shfmt + 创建 .editorconfig 和 .shellcheckrc 配置文件
-- [ ] 38-02-PLAN.md — shfmt 批量格式化 + ShellCheck/bash-n 双重验证（依赖 38-01）
+- [x] 38-01-PLAN.md — 安装 shfmt + 创建 .editorconfig 和 .shellcheckrc 配置文件
+- [x] 38-02-PLAN.md — shfmt 批量格式化 + ShellCheck/bash-n 双重验证（依赖 38-01）
 
 ## Progress
 
@@ -178,4 +178,4 @@ Phases execute in numeric order: 35 -> 36 -> 37 -> 38
 | 35. 共享库建设 | v1.7 | 3/3 | Complete | 2026-04-18 |
 | 36. 蓝绿部署统一 | v1.7 | 2/2 | Complete | 2026-04-19 |
 | 37. 清理与重命名 | v1.7 | 2/2 | Complete | 2026-04-19 |
-| 38. 质量保证 | v1.7 | 0/2 | Not started | - |
+| 38. 质量保证 | v1.7 | 2/2 | Complete | 2026-04-19 |
