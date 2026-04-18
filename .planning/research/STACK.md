@@ -1,489 +1,254 @@
-# Stack Research: v1.6 Jenkins Pipeline 强制执行
+# Stack Research: v1.7 Shell 脚本重构与代码精简
 
-**Domain:** Docker 权限收敛、部署脚本锁定、操作审计日志
-**Researched:** 2026-04-17
-**Confidence:** HIGH（基于 Linux 标准安全机制，无第三方依赖）
+**Domain:** Shell/Bash 脚本重构 — 静态分析、格式化、测试、重复代码消除
+**Researched:** 2026-04-18
+**Confidence:** HIGH
 
 ## 核心结论
 
-**不需要引入任何新的软件包或第三方工具。** 所需的强制执行机制全部基于 Linux 标准权限模型：`docker` 组成员控制、文件属主/权限（chown/chmod）、`sudoers` 白名单、`auditd` 内核审计。这些是 Debian/Ubuntu 自带的标准组件，已有 20+ 年成熟历史。
+项目有 65 个 Shell 脚本（约 15,137 行），核心问题是重复代码和过大单文件。重构工具链需要三个层次：**静态分析（ShellCheck）** 发现代码质量问题，**格式化（shfmt）** 统一风格，**测试（Bats）** 保证重构不破坏功能。不需要引入任何运行时依赖——所有工具都是开发工具，仅在重构阶段和 CI 中使用。
 
 ## Recommended Stack
 
-### 1. Docker 组成员控制（Docker Socket 访问）
+### Core: 静态分析与质量检查
 
-| Mechanism | Component | Purpose | Why | Confidence |
-|-----------|-----------|---------|-----|------------|
-| `gpasswd -d` | `gpasswd` (shadow 包, 系统自带) | 从 docker 组移除非 jenkins 用户 | Docker socket (`/var/run/docker.sock`) 权限模型为 `root:docker 660`，只有 root 和 docker 组成员能执行 docker 命令 | HIGH |
-| `usermod -aG docker jenkins` | `usermod` (passwd 包, 系统自带) | 保持 jenkins 用户在 docker 组 | Jenkins Pipeline 通过 `sh` 步骤调用 docker compose，需要 socket 访问权限 | HIGH |
+| Technology | Version | Purpose | Why Recommended | Confidence |
+|------------|---------|---------|-----------------|------------|
+| ShellCheck | v0.11.0 (2025-08-03) | Shell 脚本静态分析 | Shell 脚本领域唯一的工业级 linter，检测 300+ 种常见错误（未引用变量、不安全的算术、SC 前缀错误码）。v0.11.0 新增 SC2329（未调用函数检测）对重构中识别死代码极其有用 | HIGH |
+| shfmt | v3.13.1 (2026-04-06) | Shell 脚本格式化 | 基于 mvdan/sh parser 的唯一成熟的 shell 格式化工具。支持 EditorConfig，`-s` 简化模式可自动简化冗余语法。v3.13.1 新增 `.zshrc`/`.bash_profile` 文件名自动检测 shell 方言 | HIGH |
 
-**原理：** Docker daemon socket 是所有 docker 命令的入口。Linux 文件权限控制谁可以连接这个 socket。当前状态是 jenkins 用户已在 docker 组中（setup-jenkins.sh 第 160 行）。只需移除其他用户的 docker 组成员即可实现权限收敛。
+### Core: 测试框架
 
-**具体操作：**
+| Technology | Version | Purpose | Why Recommended | Confidence |
+|------------|---------|---------|-----------------|------------|
+| Bats (Bash Automated Testing System) | v1.13.0 (2025-11-07) | Shell 脚本单元测试 | Shell 脚本测试的事实标准。TDD 风格 `@test` 语法，`run`/`assert` 模式，v1.13.0 新增 `--abort` fail-fast 和 `--negative-filter`。项目已有 12 个手写测试脚本（scripts/backup/tests/），但不是 Bats 格式 | HIGH |
 
-```bash
-# 1. 审计当前 docker 组成员
-getent group docker
-# 输出示例: docker:x:998:jenkins,wangdianwen
+### Supporting: 重构辅助工具
 
-# 2. 移除非 jenkins 用户（保留 root，root 始终有权限）
-sudo gpasswd -d wangdianwen docker
+| Tool | Purpose | When to Use | Confidence |
+|------|---------|-------------|------------|
+| `diff` + `source` 验证 | 重构前后功能等价性验证 | 每次合并重复脚本后，对比 `source` 后的函数签名和行为 | HIGH |
+| `bash -n` (syntax check) | 语法检查无需执行 | 每次修改后快速验证，ShellCheck 已包含此功能 | HIGH |
+| `git diff --stat` | 重构前后行数对比 | 每个 phase 结束后统计精简效果 | HIGH |
+| `.shellcheckrc` | 项目级 ShellCheck 配置 | 全局排除不适用的规则、设置 source-path | HIGH |
 
-# 3. 验证
-getent group docker
-# 预期: docker:x:998:jenkins
+## 与项目现状的映射
 
-# 4. 被移除的用户需要重新登录才会生效
-# 或者: newgrp - (重置组会话)
-```
+### 重复文件分析与工具使用策略
 
-**紧急恢复（如果 Jenkins 完全不可用）：**
+| 重复类型 | 涉及文件 | 行数差异 | 推荐工具 | 策略 |
+|---------|---------|---------|---------|------|
+| 日志库 | `scripts/lib/log.sh` vs `scripts/backup/lib/log.sh` | 33 行 vs 87 行 | ShellCheck + 手动合并 | backup 版本功能更多（log_progress/log_json/log_structured），合并后以 backup 版本为基础，scripts 版本的彩色输出作为可选功能 |
+| 健康检查库 | `scripts/lib/health.sh` vs `scripts/backup/lib/health.sh` | 69 行 vs 358 行 | ShellCheck + 手动合并 | 完全不同的功能：前者是 Docker 容器健康检查，后者是 PostgreSQL 连接+磁盘空间检查。不应合并，应重命名消除混淆 |
+| 蓝绿部署 | `scripts/blue-green-deploy.sh` vs `scripts/keycloak-blue-green-deploy.sh` | 297 行 vs 297 行，差异 264 行 | ShellCheck + 手动参数化 | 264 行差异中大部分是服务特定常量和健康检查 URL 参数化，核心逻辑完全相同。提取 `deploy_service()` 函数，两个脚本变为配置文件 |
+| 大文件 | `pipeline-stages.sh` (1108行), `setup-jenkins.sh` (1029行) | - | ShellCheck + 函数提取 | ShellCheck 的 SC2329（未调用函数）可识别死代码；函数提取后按职责分组到独立文件 |
 
-```bash
-# root 用户始终可以执行 docker 命令（不受 docker 组限制）
-sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
-sudo docker compose -f docker/docker-compose.app.yml build findclass-ssr
-
-# 或者临时将自己加回 docker 组
-sudo usermod -aG docker $USER
-# 重新登录后生效
-```
-
-### 2. 部署脚本权限锁定
-
-| Mechanism | Component | Purpose | Why | Confidence |
-|-----------|-----------|---------|-----|------------|
-| `chown root:jenkins` | `chown` (coreutils, 系统自带) | 脚本属主为 root，属组为 jenkins | root 属主防止 jenkins 用户篡改脚本内容 | HIGH |
-| `chmod 750` | `chmod` (coreutils, 系统自带) | 仅 root 和 jenkins 组可执行 | 其他人（other）无读/写/执行权限 | HIGH |
-| `chattr +i` | `chattr` (e2fsprogs, 系统自带) | 关键脚本设为不可变 | 防止任何人（包括 root 意外操作）修改脚本，解除需要 `chattr -i` | HIGH |
-
-**需要锁定的文件清单：**
-
-| 文件 | 属主 | 属组 | 权限 | 不可变 |
-|------|------|------|------|--------|
-| `scripts/deploy/deploy-infrastructure-prod.sh` | root | jenkins | 750 | 否 |
-| `scripts/deploy/deploy-apps-prod.sh` | root | jenkins | 750 | 否 |
-| `scripts/blue-green-deploy.sh` | root | jenkins | 750 | 否 |
-| `scripts/manage-containers.sh` | root | jenkins | 750 | 否 |
-| `scripts/pipeline-stages.sh` | root | jenkins | 750 | 否 |
-| `scripts/lib/health.sh` | root | jenkins | 750 | 否 |
-| `scripts/lib/log.sh` | root | jenkins | 750 | 否 |
-| `config/nginx/snippets/upstream-*.conf` | root | jenkins | 660 | 否 |
-| `/opt/noda/active-env*` | root | jenkins | 660 | 否 |
-
-**具体操作：**
+### 工具安装与配置
 
 ```bash
-PROJECT_ROOT="/path/to/noda-infra"
-
-# 1. 创建 jenkins 组可访问的脚本锁定
-sudo chown root:jenkins "$PROJECT_ROOT/scripts/deploy/deploy-infrastructure-prod.sh"
-sudo chown root:jenkins "$PROJECT_ROOT/scripts/deploy/deploy-apps-prod.sh"
-sudo chown root:jenkins "$PROJECT_ROOT/scripts/blue-green-deploy.sh"
-sudo chown root:jenkins "$PROJECT_ROOT/scripts/manage-containers.sh"
-sudo chown root:jenkins "$PROJECT_ROOT/scripts/pipeline-stages.sh"
-sudo chown root:jenkins "$PROJECT_ROOT/scripts/lib/health.sh"
-sudo chown root:jenkins "$PROJECT_ROOT/scripts/lib/log.sh"
-
-# 2. 设置权限（root 和 jenkins 组可读写执行，其他人无权限）
-sudo chmod 750 "$PROJECT_ROOT/scripts/deploy/deploy-infrastructure-prod.sh"
-sudo chmod 750 "$PROJECT_ROOT/scripts/deploy/deploy-apps-prod.sh"
-sudo chmod 750 "$PROJECT_ROOT/scripts/blue-green-deploy.sh"
-sudo chmod 750 "$PROJECT_ROOT/scripts/manage-containers.sh"
-sudo chmod 750 "$PROJECT_ROOT/scripts/pipeline-stages.sh"
-sudo chmod 750 "$PROJECT_ROOT/scripts/lib/health.sh"
-sudo chmod 750 "$PROJECT_ROOT/scripts/lib/log.sh"
-
-# 3. upstream 配置文件（Jenkins 需要读写，nginx 容器挂载读取）
-sudo chown root:jenkins "$PROJECT_ROOT/config/nginx/snippets/upstream-findclass.conf"
-sudo chown root:jenkins "$PROJECT_ROOT/config/nginx/snippets/upstream-keycloak.conf"
-sudo chown root:jenkins "$PROJECT_ROOT/config/nginx/snippets/upstream-noda-site.conf"
-sudo chmod 660 "$PROJECT_ROOT/config/nginx/snippets/upstream-"*.conf
-
-# 4. 蓝绿状态文件
-sudo mkdir -p /opt/noda
-sudo chown root:jenkins /opt/noda
-sudo chmod 770 /opt/noda
-# active-env 文件（已存在时）
-sudo chown root:jenkins /opt/noda/active-env 2>/dev/null || true
-sudo chown root:jenkins /opt/noda/active-env-keycloak 2>/dev/null || true
-sudo chmod 660 /opt/noda/active-env* 2>/dev/null || true
-```
-
-**注意事项：**
-
-1. **git pull 后权限会被重置** — git 只记录 executable bit，不记录 owner/group。每次 `git pull` 后需要重新执行权限设置。解决方案：创建 `scripts/lock-permissions.sh` 脚本，在 Jenkins Pipeline 的 Pre-flight 阶段自动执行。
-2. **Jenkins workspace vs 生产路径** — Jenkins Pipeline 在 `$WORKSPACE` 中 checkout 代码并执行。setup-jenkins.sh 中 `usermod -aG docker jenkins` 确保 jenkins 用户有 docker 权限。文件权限锁定主要针对生产服务器上的部署路径。
-3. **脚本可读性** — 750 权限下 jenkins 组成员可以读取脚本内容。这是故意的——Jenkins 需要读取脚本才能 source 和执行。
-
-### 3. 操作审计日志（auditd）
-
-| Mechanism | Component | Purpose | Why | Confidence |
-|-----------|-----------|---------|-----|------------|
-| `auditd` | `auditd` (auditd 包, Debian/Ubuntu 自带) | 内核级审计 Docker 命令执行 | auditd 是 Linux 标准审计框架，记录谁在什么时候执行了什么命令，不可被用户空间程序绕过 | HIGH |
-| `auditctl` | `auditd` 子命令 | 添加审计规则 | 监控 docker/docker compose 二进制的执行事件 | HIGH |
-| `ausearch`/`aureport` | `auditd` 子命令 | 查询审计日志 | 追溯操作历史 | HIGH |
-| `/etc/audit/rules.d/` | 持久化规则目录 | 重启后保留规则 | auditd 包安装时自动创建 | HIGH |
-
-**auditd 安装与配置：**
-
-```bash
-# 1. 安装（Ubuntu 22.04/24.04 通常已预装）
-sudo apt install -y auditd audispd-plugins
-
-# 2. 验证服务状态
-sudo systemctl status auditd
-# 预期: active (running)
-
-# 3. 添加 Docker 专属审计规则
-sudo tee /etc/audit/rules.d/docker-audit.rules <<'EOF'
 # ============================================
-# Docker 操作审计规则
-# ============================================
-# 目的：记录所有 docker 命令的执行（谁、什么时候、什么命令）
-# 查询：ausearch -k docker-cmd | aureport -x -k docker-cmd
+# 开发工具安装（macOS 开发机 + Linux 生产服务器）
 # ============================================
 
-# 监控 docker 二进制的执行
--w /usr/bin/docker -p x -k docker-cmd
+# ShellCheck v0.11.0
+brew install shellcheck          # macOS
+# Linux: 下载预编译二进制
+# scversion="v0.11.0"
+# wget -qO- "https://github.com/koalaman/shellcheck/releases/download/${scversion}/shellcheck-${scversion}.linux.x86_64.tar.xz" | tar -xJv
+# sudo cp "shellcheck-${scversion}/shellcheck" /usr/local/bin/
 
-# 监控 docker compose 插件的执行
--w /usr/libexec/docker/cli-plugins/docker-compose -p x -k docker-cmd 2>/dev/null || true
--w /usr/lib/docker/cli-plugins/docker-compose -p x -k docker-cmd 2>/dev/null || true
+# shfmt v3.13.1
+brew install shfmt               # macOS
+# Linux:
+# go install mvdan.cc/sh/v3/cmd/shfmt@latest
+# 或下载二进制: https://github.com/mvdan/sh/releases
 
-# 监控 Docker socket 的写入（所有 docker 操作的底层入口）
--w /var/run/docker.sock -p wa -k docker-socket
+# Bats v1.13.0（仅开发时需要）
+brew install bats-core           # macOS
+# Linux:
+# git clone https://github.com/bats-core/bats-core.git /tmp/bats-core
+# cd /tmp/bats-core && sudo ./install.sh /usr/local
 
-# 监控关键部署脚本的执行
--w /path/to/noda-infra/scripts/deploy/deploy-infrastructure-prod.sh -p x -k deploy-script
--w /path/to/noda-infra/scripts/deploy/deploy-apps-prod.sh -p x -k deploy-script
--w /path/to/noda-infra/scripts/blue-green-deploy.sh -p x -k deploy-script
--w /path/to/noda-infra/scripts/manage-containers.sh -p x -k deploy-script
-EOF
-
-# 注意：上面的路径需要替换为实际的生产路径
-
-# 4. 加载规则（不重启服务的方式）
-sudo augenrules --load
-
-# 5. 验证规则已加载
-sudo auditctl -l | grep -E "docker-cmd|docker-socket|deploy-script"
+# 验证版本
+shellcheck --version             # 预期: 0.11.0
+shfmt --version                  # 预期: v3.13.1
+bats --version                   # 预期: 1.13.0
 ```
 
-**auditd 配置优化（`/etc/audit/auditd.conf`）：**
+## .shellcheckrc 配置（项目根目录）
 
 ```ini
-# 日志文件大小和轮转（生产服务器磁盘有限）
-max_log_file = 50
-num_logs = 10
-max_log_file_action = ROTATE
+# noda-infra ShellCheck 配置
+# 文档: https://github.com/koalaman/shellcheck/wiki/Directive
 
-# 空间管理
-space_left = 100
-space_left_action = SYSLOG
-admin_space_left = 50
-admin_space_left_action = SUSPEND
+# shell 方言
+shell=bash
 
-# 刷盘策略（平衡性能和安全）
-flush = INCREMENTAL_ASYNC
-freq = 50
+# source 路径：相对于脚本目录查找 source 文件
+source-path=SCRIPTDIR
+
+# 允许 source 任何文件（项目中有大量 source 语句）
+external-sources=true
+
+# 启用可选检查
+enable=quote-safe-variables
+enable=check-unassigned-uppercase
+enable=require-variable-ranges
+
+# 排除不适用的规则
+# SC2155: declare and assign separately（项目风格允许合并声明赋值）
+disable=SC2155
+
+# SC2034: unused variable（backup/lib/constants.sh 定义大量常量，部分可能未使用）
+disable=SC2034
 ```
 
-**查询审计日志：**
+## .editorconfig 配置（项目根目录，shfmt 会读取）
+
+```ini
+# Shell 脚本格式化配置
+[*.sh]
+indent_style = space
+indent_size = 4
+# shfmt 选项: -i 4 -fn (4空格缩进, 函数起始花括号换行)
+```
+
+## 使用命令
 
 ```bash
-# 查看所有 docker 命令执行记录
-sudo ausearch -k docker-cmd | aureport -x -i
+# ============================================
+# 日常重构工作流
+# ============================================
 
-# 查看特定用户（jenkins, UID 通常 1001）的操作
-sudo ausearch -k docker-cmd -ua 1001
+# 1. 修改前：记录当前状态
+shellcheck -f json scripts/lib/log.sh > /tmp/before.json
 
-# 查看最近 1 小时的 docker 操作
-sudo ausearch -k docker-cmd --start $(date -d '1 hour ago' +%H:%M:%S)
+# 2. 修改脚本...
 
-# 查看部署脚本执行记录
-sudo ausearch -k deploy-script | aureport -x -i
+# 3. 修改后：验证 ShellCheck 错误数没有增加
+shellcheck scripts/lib/log.sh
 
-# 查看非 jenkins 用户执行 docker 命令的记录（异常检测）
-sudo ausearch -k docker-cmd | grep -v "auid=1001" | grep "auid=" | aureport -x -i
-```
+# 4. 格式化（先检查差异，再写入）
+shfmt -d scripts/lib/log.sh       # 查看差异
+shfmt -w scripts/lib/log.sh       # 写入格式化结果
 
-**auditd 日志示例输出：**
+# 5. 语法检查（ShellCheck 已包含，快速单独检查）
+bash -n scripts/lib/log.sh
 
-```
-Executable Report
-===================================
-# date time exe term host auid event
-===================================
-1. 04/17/2026 14:30:22 /usr/bin/docker pts/0 server 1001 1234
-2. 04/17/2026 14:32:15 /usr/bin/docker pts/0 server 1000 1235
-```
-
-其中 `auid=1001` 是 jenkins 用户，`auid=1000` 是普通用户。后者表示有人绕过了 Jenkins 直接执行 docker 命令。
-
-### 4. sudoers 白名单（紧急操作通道）
-
-| Mechanism | Component | Purpose | Why | Confidence |
-|-----------|-----------|---------|-----|------------|
-| `/etc/sudoers.d/` | `visudo` (sudo 包, 系统自带) | 授权特定用户执行受限的紧急操作 | 紧急情况下（Jenkins 完全不可用），root 或授权管理员需要能通过 sudo 执行部署 | HIGH |
-
-**sudoers 配置（`/etc/sudoers.d/noda-deploy`）：**
-
-```bash
-# Noda 部署权限控制
-# 此文件管理谁可以执行部署相关操作
-
-# jenkins 用户：可以无密码执行 docker 命令（Pipeline 需要）
-jenkins ALL=(root) NOPASSWD: /usr/bin/docker *
-jenkins ALL=(root) NOPASSWD: /usr/bin/docker
-
-# 管理员（如 wangdianwen）：可以通过 sudo 执行部署脚本（紧急回退）
-# 但不能直接执行 docker 命令（必须通过脚本）
-admin-user ALL=(root) /path/to/noda-infra/scripts/deploy/deploy-infrastructure-prod.sh
-admin-user ALL=(root) /path/to/noda-infra/scripts/deploy/deploy-apps-prod.sh
-admin-user ALL=(root) /usr/bin/docker ps
-admin-user ALL=(root) /usr/bin/docker logs *
-admin-user ALL=(root) /usr/bin/docker compose ps
-admin-user ALL=(root) /usr/bin/docker compose logs *
-```
-
-**注意：** 上面的 `admin-user` 需要替换为实际的管理员用户名。
-
-**为什么 jenkins 需要 NOPASSWD sudo docker 权限：**
-
-当前 Jenkins Pipeline 中的 `sh` 步骤以 jenkins 用户身份执行。Jenkins 已在 docker 组中，可以直接执行 docker 命令。`sudoers` 中的 docker 权限是额外的安全网——如果未来从 docker 组移除 jenkins，可以通过 sudo 继续工作。
-
-**实际方案中 jenkins 不需要 sudoers 规则。** 它通过 docker 组成员获得权限。sudoers 配置是给管理员用户的紧急通道。
-
-## Supporting Tools
-
-### 5. 权限锁定脚本（新建）
-
-| Tool | Purpose | When to Run |
-|------|---------|-------------|
-| `scripts/lock-permissions.sh` | 一键设置所有部署相关文件的属主和权限 | git pull 后、手动执行、或 Pipeline Pre-flight 阶段 |
-
-**脚本功能：**
-
-```bash
-#!/bin/bash
-# scripts/lock-permissions.sh
-# 一键锁定部署脚本和配置文件的权限
-# 用途：git pull 后执行，确保权限不被重置
-# 执行：sudo bash scripts/lock-permissions.sh
-
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEPLOY_USER="jenkins"
-
-echo "=== 锁定部署脚本权限 ==="
-
-# 部署脚本
-for script in \
-  scripts/deploy/deploy-infrastructure-prod.sh \
-  scripts/deploy/deploy-apps-prod.sh \
-  scripts/blue-green-deploy.sh \
-  scripts/manage-containers.sh \
-  scripts/pipeline-stages.sh \
-  scripts/lib/health.sh \
-  scripts/lib/log.sh; do
-  chown "root:${DEPLOY_USER}" "${PROJECT_ROOT}/${script}"
-  chmod 750 "${PROJECT_ROOT}/${script}"
-  echo "  ${script} -> root:${DEPLOY_USER} 750"
-done
-
-# Nginx upstream 配置（Jenkins 需要读写）
-for conf in "${PROJECT_ROOT}"/config/nginx/snippets/upstream-*.conf; do
-  chown "root:${DEPLOY_USER}" "$conf"
-  chmod 660 "$conf"
-  echo "  $(basename $conf) -> root:${DEPLOY_USER} 660"
-done
-
-# 蓝绿状态文件
-mkdir -p /opt/noda
-chown "root:${DEPLOY_USER}" /opt/noda
-chmod 770 /opt/noda
-for statefile in /opt/noda/active-env*; do
-  [ -f "$statefile" ] || continue
-  chown "root:${DEPLOY_USER}" "$statefile"
-  chmod 660 "$statefile"
-  echo "  $(basename $statefile) -> root:${DEPLOY_USER} 660"
-done
-
-echo "=== 权限锁定完成 ==="
-```
-
-### 6. 审计检查脚本（新建）
-
-| Tool | Purpose | When to Run |
-|------|---------|-------------|
-| `scripts/check-audit.sh` | 检查是否有非 jenkins 用户执行了 docker 命令 | 定期 cron 或手动检查 |
-
-**脚本功能：**
-
-```bash
-#!/bin/bash
-# scripts/check-audit.sh
-# 检查是否有非 jenkins 用户直接执行了 docker/deploy 命令
-# 用途：安全审计，检测绕过 Jenkins Pipeline 的操作
-# 执行：sudo bash scripts/check-audit.sh
-
-JENKINS_UID=$(id -u jenkins 2>/dev/null || echo "1001")
-HOURS="${1:-24}"
-
-echo "=== Docker 操作审计报告（最近 ${HOURS} 小时）==="
-
-echo ""
-echo "--- 非 Jenkins 用户执行的 docker 命令 ---"
-sudo ausearch -k docker-cmd --start $(date -d "${HOURS} hours ago" +%H:%M:%S 2>/dev/null || echo "today") 2>/dev/null | \
-  grep -v "auid=${JENKINS_UID}" | \
-  grep "auid=" | \
-  aureport -x -i 2>/dev/null || echo "  （无异常记录）"
-
-echo ""
-echo "--- 部署脚本执行记录 ---"
-sudo ausearch -k deploy-script --start $(date -d "${HOURS} hours ago" +%H:%M:%S 2>/dev/null || echo "today") 2>/dev/null | \
-  aureport -x -i 2>/dev/null || echo "  （无记录）"
-
-echo ""
-echo "--- Docker socket 写入记录 ---"
-sudo ausearch -k docker-socket --start $(date -d "${HOURS} hours ago" +%H:%M:%S 2>/dev/null || echo "today") 2>/dev/null | \
-  aureport -x -i 2>/dev/null || echo "  （无异常记录）"
-
-echo ""
-echo "=== 审计报告结束 ==="
+# 6. 全量检查（CI 中使用）
+shellcheck scripts/**/*.sh
+shfmt -d scripts/**/*.sh
 ```
 
 ## Alternatives Considered
 
-### Docker 权限控制方案
+### 静态分析工具
 
 | Recommended | Alternative | Why Not |
 |-------------|-------------|---------|
-| docker 组成员控制 | Docker Socket Proxy (Tecnativa) | 引入额外容器组件，单服务器场景下过度复杂；docker 组控制已足够 |
-| docker 组成员控制 | Rootless Docker | 需要完全重新配置 Docker 环境，与现有 docker-compose 配置不兼容，改动范围过大 |
-| docker 组成员控制 | AppArmor/SELinux 策略 | Debian 默认不启用 SELinux；AppArmor 需要 writing 复杂的 profile，维护成本高；docker 组控制足够简单有效 |
-| docker 组成员控制 | `iptables owner` 模块 | docker 命令通过 Unix socket 通信，不是 TCP 连接，iptables owner 模块不适用 |
+| ShellCheck | bashate (OpenStack) | 规则少（约 30 条 vs ShellCheck 300+ 条），不支持 bash 高级特性，已多年不活跃 |
+| ShellCheck | SobboleScan | 学术原型，不维护 |
+| ShellCheck | 自定义 grep/sed 检查 | 不可靠，维护成本高，ShellCheck 已覆盖所有常见错误 |
 
-### 审计日志方案
-
-| Recommended | Alternative | Why Not |
-|-------------|-------------|---------|
-| auditd | `journalctl` + syslog | syslog 记录应用日志，不记录命令执行的完整审计链（谁、什么时候、什么参数）；auditd 是内核级审计，不可被用户空间绕过 |
-| auditd | Docker daemon `--log-driver` | Docker log driver 记录的是容器 stdout/stderr，不是宿主机上谁执行了 docker 命令 |
-| auditd | Falco / Sysdig | 需要安装内核模块，增加系统复杂度和故障面；auditd 是 Linux 内建组件 |
-| auditd | `history` 命令 / `.bash_history` | 用户可以删除/修改自己的 history 文件；auditd 日志只有 root 可以访问 |
-| auditd | 自定义 shell wrapper 替换 docker 命令 | 用户可以绕过 wrapper 直接调用二进制；auditd 在内核层面拦截，不可绕过 |
-
-### 脚本权限锁定方案
+### 格式化工具
 
 | Recommended | Alternative | Why Not |
 |-------------|-------------|---------|
-| chown/chmod | sudoers 命令白名单 | sudoers 限制 sudo 执行的命令，但不阻止直接执行脚本；chmod 750 直接在文件权限层面阻止非授权用户执行 |
-| chown/chmod | Linux ACL (`setfacl`) | ACL 更灵活但更复杂；标准 owner/group/other 权限模型已满足需求（只有 jenkins 需要访问） |
-| chattr +i | Git hooks 防止修改 | Git hooks 可以被 `--no-verify` 跳过；chattr +i 在文件系统层面锁定，无法绕过 |
+| shfmt | beautify_bash (Python) | 已停止维护，不支持 bash 高级语法 |
+| shfmt | editor auto-format | 无法在 CI 中统一执行 |
+| shfmt | 手动格式化 | 不可靠，无法保证一致性 |
+
+### 测试框架
+
+| Recommended | Alternative | Why Not |
+|-------------|-------------|---------|
+| Bats | shellspec | 语法更接近 RSpec 但社区更小；项目现有测试是手写 bash 脚本，迁移到 Bats 改动更小 |
+| Bats | shunit2 | Google 出品但已停止维护（最后 release 2018），功能远不如 Bats |
+| Bats | 手写测试脚本（项目现状） | 项目已有 12 个手写测试脚本，但没有断言框架，测试失败依赖 exit code，不好维护。Bats 的 `assert_output`/`assert_success` 更清晰 |
+
+### 重复代码检测
+
+| Recommended | Alternative | Why Not |
+|-------------|-------------|---------|
+| `diff` + 人工审查 | CPD (PMD Copy-Paste Detector) | CPD 不支持 Shell 语法，只能做纯文本匹配 |
+| `diff` + 人工审查 | SonarQube | 需要安装完整平台，过度工程化 |
+| `diff` + 人工审查 | 自定义脚本检测重复函数 | 投入产出比低，项目只有 65 个脚本，人工审查可控 |
 
 ## What NOT to Use
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| Docker Socket Proxy (Tecnativa) | 引入额外容器，增加故障面；单服务器不需要网络层过滤 | docker 组成员控制 |
-| Rootless Docker | 与现有 docker-compose 配置不兼容，需要重新配置所有服务 | docker 组成员控制 |
-| Falco / Sysdig | 需要安装内核模块，维护成本高，auditd 已满足需求 | auditd |
-| Portainer RBAC | 引入完整的容器管理平台，过度工程化 | docker 组 + auditd |
-| AppArmor Docker profile | 需要编写和维护复杂的 profile，单服务器场景收益低 | docker 组成员控制 |
-| `chmod 666 /var/run/docker.sock` | 允许所有用户访问 Docker socket，安全灾难 | docker 组成员控制 |
-| `.bash_history` 审计 | 用户可控，不可靠 | auditd 内核审计 |
-| `strace`/`ltrace` 监控 | 性能开销大，不适合生产环境持续运行 | auditd |
-| Kubernetes RBAC | 项目是单服务器 Docker Compose 架构，无 K8s | Linux 标准权限 |
+| bashate | 规则太少（30条 vs ShellCheck 300+条），OpenStack 项目已不积极维护 | ShellCheck |
+| shunit2 | 最后 release 2018 年，不支持 TAP 协议，功能远不如 Bats | Bats |
+| ShellCheck `disable=all` | 完全禁用检查，失去静态分析的价值 | 逐条禁用特定 SC 编号 |
+| 大规模自动化重构工具 | Shell 脚本没有安全的 AST 级别自动重构工具，awk/sed 替换会破坏字符串内容 | 手动重构 + ShellCheck 验证 |
+| ctags/cscope | 设计用于 C/C++ 代码浏览，对 Shell 脚本的函数识别不可靠 | `grep -n "^function\|^[a-z_]*() {" scripts/*.sh` |
+| IDE 重构功能 | VS Code/Zed 的 Shell 重构支持极其有限（无 rename symbol、无 extract function） | 手动重构 + shfmt 格式化 |
 
-## 与现有架构的集成点
+## 重构验证策略
 
-| 现有组件 | 集成方式 | 变更范围 | 风险 |
-|---------|---------|---------|------|
-| `setup-jenkins.sh` | 无变更。已有 `usermod -aG docker jenkins`（第 160 行） | 无 | None |
-| `scripts/deploy/*.sh` | chown/chmod 锁定权限，脚本内容不变 | 仅文件权限 | Low |
-| `scripts/manage-containers.sh` | chown/chmod 锁定权限，脚本内容不变 | 仅文件权限 | Low |
-| `scripts/pipeline-stages.sh` | chown/chmod 锁定权限，脚本内容不变 | 仅文件权限 | Low |
-| `config/nginx/snippets/upstream-*.conf` | chown/chmod 锁定，Jenkins 需要读写 | 仅文件权限 | Low |
-| `/opt/noda/active-env*` | chown/chmod 锁定，Jenkins 需要读写 | 仅文件权限 | Low |
-| `jenkins/Jenkinsfile` | 无变更 | 无 | None |
-| `jenkins/Jenkinsfile.infra` | 无变更 | 无 | None |
-| Docker daemon 配置 | 无变更（`/etc/docker/daemon.json`） | 无 | None |
-| 新增: `scripts/lock-permissions.sh` | git pull 后执行权限恢复 | 新文件 | None |
-| 新增: `scripts/check-audit.sh` | 审计报告生成 | 新文件 | None |
-| 新增: `/etc/audit/rules.d/docker-audit.rules` | auditd Docker 审计规则 | 新配置文件 | Low |
+### 分层验证
 
-## Stack Patterns by Variant
+| 层次 | 工具 | 目的 | 何时执行 |
+|------|------|------|---------|
+| L1: 语法 | `bash -n` / ShellCheck | 确保脚本可解析 | 每次保存后 |
+| L2: 格式 | `shfmt -d` | 统一代码风格 | 每次 commit 前 |
+| L3: 语义 | `shellcheck -S warning` | 检测潜在运行时错误 | 每次 commit 前 |
+| L4: 功能 | 手动测试 / Bats | 确保行为不变 | 合并重复代码后 |
+| L5: 集成 | Jenkins Pipeline | 生产环境端到端验证 | phase 完成后 |
 
-**如果服务器有多个管理员用户：**
-- 使用 `/etc/sudoers.d/noda-deploy` 限制每个管理员的 docker 操作范围
-- 只允许通过 sudo 执行部署脚本，不允许直接 docker 命令
-- auditd 记录所有 sudo 操作
+### 重复代码合并的安全流程
 
-**如果只有 root 和 jenkins 两个用户（当前情况）：**
-- 只需 docker 组控制（移除 root 以外非 jenkins 用户）
-- 文件权限锁定（chown/chmod）
-- auditd 审计
-- 无需复杂的 sudoers 配置
+```
+1. shellcheck 原始两个文件（记录 warning 数量）
+2. diff 两个文件，标记差异点
+3. 编写合并后的新文件
+4. shellcheck 新文件（warning 数量不应增加）
+5. shfmt -w 新文件
+6. source 新文件 + 调用函数验证（手动或 Bats）
+7. 更新所有引用点的 source 路径
+8. 删除旧文件
+9. grep 确认无残留引用
+10. git commit（一个逻辑变更一次 commit）
+```
 
-**如果未来迁移到多服务器架构：**
-- 当前方案完全不适用
-- 需要引入集中式配置管理（Ansible）和集中式日志（ELK/Grafana Loki）
-- auditd 日志转发到中央日志服务器
-
-## Version Compatibility
+## 版本兼容性
 
 | Component | Version | Compatible With | Notes |
 |-----------|---------|-----------------|-------|
-| `auditd` | 1:3.0.x (Ubuntu 24.04) | Linux kernel 5.15+ | Debian/Ubuntu 自带，无需额外安装 |
-| `gpasswd` | shadow 4.x | 所有 Linux 发行版 | 系统自带 |
-| `chown`/`chmod` | GNU coreutils 9.x | 所有 Linux 发行版 | 系统自带 |
-| `chattr` | e2fsprogs 1.47.x | ext4 文件系统 | 服务器默认文件系统 |
-| `visudo` | sudo 1.9.x | 所有 Linux 发行版 | 系统自带 |
+| ShellCheck v0.11.0 | 2025-08-03 | macOS (arm64/x86_64), Linux (x86_64/aarch64) | 预编译二进制，无运行时依赖 |
+| shfmt v3.13.1 | 2026-04-06 | macOS, Linux | Go 单二进制文件，无依赖 |
+| Bats v1.13.0 | 2025-11-07 | macOS (bash 3.2+), Linux (bash 4.0+) | macOS 自带 bash 3.2 兼容 |
+| `.shellcheckrc` | ShellCheck 0.7.0+ | 当前 v0.11.0 完全支持 | - |
+| `.editorconfig` | shfmt v3.0+ | 当前 v3.13.1 完全支持 | shfmt 会读取 .editorconfig 中的 indent 设置 |
 
-## Installation
+## 与现有架构的集成点
 
-```bash
-# ============================================
-# v1.6 Pipeline 强制执行 — 一次性安装
-# ============================================
-
-# 1. 安装 auditd（如未安装）
-sudo apt install -y auditd audispd-plugins
-sudo systemctl enable auditd
-sudo systemctl start auditd
-
-# 2. Docker 组权限收敛
-# 审计当前成员
-getent group docker
-# 移除非 jenkins 用户（替换 <username>）
-# sudo gpasswd -d <username> docker
-
-# 3. 部署脚本权限锁定
-# sudo bash scripts/lock-permissions.sh
-
-# 4. 配置 auditd Docker 审计规则
-# 编辑 /etc/audit/rules.d/docker-audit.rules（见上方配置）
-# sudo augenrules --load
-
-# 5. 验证
-sudo auditctl -l | grep docker
-getent group docker
-ls -la scripts/deploy/deploy-infrastructure-prod.sh
-```
+| 现有组件 | 集成方式 | 变更范围 |
+|---------|---------|---------|
+| `scripts/pipeline-stages.sh` (1108行) | ShellCheck 分析 + 函数提取拆分 | 大 — 核心重构目标 |
+| `scripts/setup-jenkins.sh` (1029行) | ShellCheck 分析 + 子命令拆分 | 大 — 核心重构目标 |
+| `scripts/manage-containers.sh` (659行) | ShellCheck 分析 + 函数提取 | 中 |
+| `scripts/lib/log.sh` + `scripts/backup/lib/log.sh` | 合并为单一日志库 | 中 — 需更新所有 source 路径 |
+| `scripts/lib/health.sh` + `scripts/backup/lib/health.sh` | 重命名消除混淆（功能不同） | 小 — 仅重命名 |
+| `scripts/blue-green-deploy.sh` + `scripts/keycloak-blue-green-deploy.sh` | 参数化为单一脚本 | 中 — 核心重构目标 |
+| `scripts/verify/*.sh` (5个脚本) | 评估是否删除（一次性验证脚本） | 小 — 删除或合并 |
+| `jenkins/Jenkinsfile.*` | 可选：添加 ShellCheck 阶段 | 小 — 可在后续 milestone 做 |
+| 现有测试脚本 (`scripts/backup/tests/*.sh`) | 保持现状，不强制迁移 Bats | 无 — 本次不涉及 |
 
 ## Sources
 
-- [Docker Security - Docker Documentation](https://docs.docker.com/engine/security/) — docker 组等同于 root 权限，socket 权限模型，HIGH confidence
-- [Linux auditd Documentation](https://linux.die.net/man/8/auditd) — auditd 配置和规则语法，HIGH confidence
-- [auditctl man page](https://linux.die.net/man/8/auditctl) — 审计规则语法 (-w, -p, -k)，HIGH confidence
-- [ausearch/aureport man page](https://linux.die.net/man/8/ausearch) — 审计日志查询语法，HIGH confidence
-- [Ubuntu auditd Guide](https://ubuntu.com/server/docs/security-the-audit-daemon) — Ubuntu 官方 auditd 配置指南，HIGH confidence
-- [CIS Benchmark Linux](https://www.cisecurity.org/cis-benchmarks) — auditd 配置最佳实践，MEDIUM confidence
-- [sudoers man page](https://linux.die.net/man/5/sudoers) — sudoers 语法，HIGH confidence
-- [Linux File Permissions](https://man7.org/linux/man-pages/man2/chmod.2.html) — chmod 系统调用，HIGH confidence
-- 项目代码: `scripts/setup-jenkins.sh` (第 160 行 docker 组配置), `jenkins/Jenkinsfile`, `jenkins/Jenkinsfile.infra`, `scripts/deploy/*.sh`, `scripts/manage-containers.sh`, `scripts/pipeline-stages.sh` — 现有架构分析
+- [ShellCheck GitHub Releases](https://github.com/koalaman/shellcheck/releases) — v0.11.0 (2025-08-03) 最新稳定版，HIGH confidence
+- [ShellCheck Wiki - Directive](https://github.com/koalaman/shellcheck/wiki/Directive) — .shellcheckrc 配置语法，HIGH confidence
+- [ShellCheck Wiki - Ignore](https://github.com/koalaman/shellcheck/wiki/Ignore) — disable/enable 规则方法，HIGH confidence
+- [Context7 /koalaman/shellcheck] — ShellCheck 安装、配置、规则信息，HIGH confidence
+- [shfmt GitHub Releases](https://github.com/mvdan/sh/releases) — v3.13.1 (2026-04-06) 最新稳定版，HIGH confidence
+- [Bats-core GitHub Releases](https://github.com/bats-core/bats-core/releases) — v1.13.0 (2025-11-07) 最新稳定版，HIGH confidence
+- [GitHub API: /repos/koalaman/shellcheck/releases/latest](https://api.github.com/repos/koalaman/shellcheck/releases/latest) — 版本号验证，HIGH confidence
+- [GitHub API: /repos/mvdan/sh/releases/latest](https://api.github.com/repos/mvdan/sh/releases/latest) — 版本号验证，HIGH confidence
+- [GitHub API: /repos/bats-core/bats-core/releases/latest](https://api.github.com/repos/bats-core/bats-core/releases/latest) — 版本号验证，HIGH confidence
+- 项目代码: `scripts/lib/log.sh`, `scripts/backup/lib/log.sh`, `scripts/lib/health.sh`, `scripts/backup/lib/health.sh`, `scripts/blue-green-deploy.sh`, `scripts/keycloak-blue-green-deploy.sh` — 重复代码分析
 
 ---
-*Stack research for: Noda v1.6 Jenkins Pipeline 强制执行*
-*Researched: 2026-04-17*
+*Stack research for: Noda v1.7 Shell 脚本重构与代码精简*
+*Researched: 2026-04-18*

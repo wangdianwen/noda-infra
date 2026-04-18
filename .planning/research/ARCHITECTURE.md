@@ -1,917 +1,645 @@
-# Architecture Research: v1.6 Docker 权限收敛 + Jenkins Pipeline 强制执行
+# Architecture Research: Shell 脚本精简重构
 
-**Domain:** 单服务器 Linux 权限模型，Docker 访问控制，CI/CD 强制执行
-**Researched:** 2026-04-17
-**Confidence:** HIGH（基于项目代码库完整分析 + Linux/Docker 安全实践）
-
----
-
-## 一、系统总览
-
-### 1.1 当前权限模型（v1.5 已交付）
-
-```
-宿主机 Linux (Debian/Ubuntu)
-┌──────────────────────────────────────────────────────────────┐
-│                                                               │
-│  用户/组:                                                     │
-│  ├── root                ← 全权限                            │
-│  ├── jenkins:docker      ← jenkins 用户，docker 组成员        │
-│  └── admin:docker        ← 管理员用户，docker 组成员          │
-│                                                               │
-│  Docker Socket:                                               │
-│  /var/run/docker.sock  root:docker  660                      │
-│                                                               │
-│  脚本权限:                                                    │
-│  scripts/deploy/*.sh   755  ← 任何用户可执行                 │
-│  scripts/*.sh           755  ← 任何用户可执行                │
-│  config/nginx/snippets/ 644  ← 任何用户可读                  │
-│                                                               │
-│  问题:                                                        │
-│  1. docker 组任何成员 = 完整 root 等价权限                    │
-│  2. 任何 SSH 登录用户可直接 docker compose up/down            │
-│  3. 任何用户可直接运行部署脚本                                │
-│  4. 无操作审计日志                                            │
-└──────────────────────────────────────────────────────────────┘
-```
-
-**核心安全问题：** `docker` 组等价于 `root`。任何 `docker` 组成员可以 `docker run -v /:/host` 获取宿主机完全控制权。当前 `admin` 用户（或其他用户）在 `docker` 组中，可以绕过 Jenkins 直接执行部署操作。
-
-### 1.2 目标权限模型（v1.6）
-
-```
-宿主机 Linux (Debian/Ubuntu)
-┌──────────────────────────────────────────────────────────────┐
-│                                                               │
-│  用户/组:                                                     │
-│  ├── root                ← 全权限（sudoers 保护）            │
-│  ├── jenkins:jenkins     ← docker 访问仅限 jenkins           │
-│  │   └── Docker Socket 访问: 是（通过白名单机制）            │
-│  └── admin:admin         ← 日常管理，无直接 docker 访问      │
-│      └── 只读 docker 命令通过 sudo 白名单                    │
-│      └── 紧急部署通过 break-glass 机制                       │
-│                                                               │
-│  Docker Socket:                                               │
-│  /var/run/docker.sock  root:jenkins  660  ← 仅 jenkins 可访问│
-│                                                               │
-│  脚本权限:                                                    │
-│  scripts/deploy/*.sh   750 root:jenkins  ← 仅 jenkins 可执行│
-│  scripts/pipeline-stages.sh  750 root:jenkins                │
-│  config/nginx/snippets/ 640 root:jenkins  ← 仅 jenkins 可写 │
-│                                                               │
-│  审计:                                                        │
-│  auditd → 记录所有 docker 命令执行                            │
-│  sudoers → 记录所有 sudo 操作                                 │
-│  /var/log/noda-audit/ → 部署操作日志                         │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### 1.3 变更范围总览
-
-| 变更类型 | 组件 | 影响 |
-|----------|------|------|
-| **新增** | Docker socket 权限收敛脚本 | 限制 docker.sock 仅 jenkins 可访问 |
-| **新增** | sudoers 白名单文件 | admin 用户只读 docker + break-glass |
-| **新增** | auditd 规则文件 | 记录所有 docker/sudo 操作 |
-| **新增** | 权限收敛执行脚本 (`scripts/setup-docker-permissions.sh`) | 一键应用所有权限变更 |
-| **修改** | `setup-jenkins.sh` | 调整 docker 组配置逻辑 |
-| **修改** | deploy 脚本文件权限 | 750 root:jenkins |
-| **修改** | nginx snippets 目录权限 | 640/750 root:jenkins |
-| **修改** | `/opt/noda/` 状态文件权限 | root:jenkins 可写 |
+**Domain:** Shell 脚本库架构、蓝绿部署框架、库依赖管理
+**Researched:** 2026-04-18
+**Confidence:** HIGH（基于完整代码库审计，无外部依赖需验证）
 
 ---
 
-## 二、组件边界
+## 一、现状架构
 
-### 2.1 新增组件
+### 1.1 当前目录结构
 
-| 组件 | 职责 | 实现方式 |
-|------|------|---------|
-| Docker socket 权限规则 | 限制 docker.sock 访问仅限 jenkins 用户 | udev 规则 或 systemd override |
-| sudoers 白名单 (`/etc/sudoers.d/noda-docker`) | 定义哪些用户可以执行哪些 docker/sudo 命令 | sudoers 配置文件 |
-| auditd Docker 规则 (`/etc/audit/rules.d/noda-docker.rules`) | 审计所有 docker 命令执行 | auditd 规则文件 |
-| `scripts/setup-docker-permissions.sh` | 一键应用/验证/回滚所有权限配置 | bash 脚本 |
-| break-glass 封条文件 (`/opt/noda/.break-glass-sealed`) | 记录紧急部署封条状态和时间戳 | 空文件 + 时间戳 |
+```
+scripts/
+├── lib/                          # 通用库（2 文件）
+│   ├── log.sh                    # 34 行 — 带颜色日志（info/success/error/warn）
+│   └── health.sh                 # 70 行 — 容器健康检查轮询
+│
+├── backup/lib/                   # 备份专用库（12 文件）
+│   ├── log.sh                    # 87 行 — 日志（info/warn/error/success + progress + json + structured）
+│   ├── health.sh                 # 358 行 — PG 连接检查 + 磁盘空间检查 + 数据库大小
+│   ├── config.sh                 # 374 行 — 配置加载/验证/访问函数
+│   ├── constants.sh              # 75 行 — 退出码 + 测试/监控/校验常量
+│   ├── util.sh                   # 86 行 — 时间戳、权限、清理、校验和、格式化
+│   ├── db.sh                     # 389 行 — 数据库备份操作
+│   ├── cloud.sh                  # 243 行 — B2 云存储操作
+│   ├── restore.sh                # 379 行 — 数据库恢复操作
+│   ├── alert.sh                  # 163 行 — 告警通知
+│   ├── metrics.sh                # 209 行 — 性能指标收集
+│   ├── verify.sh                 # 233 行 — 备份验证
+│   └── test-verify.sh            # 362 行 — 自动化验证测试
+│
+├── blue-green-deploy.sh          # 297 行 — findclass-ssr 蓝绿部署
+├── keycloak-blue-green-deploy.sh # 297 行 — keycloak 蓝绿部署
+├── rollback-findclass.sh         # 200 行 — findclass-ssr 紧急回滚
+├── manage-containers.sh          # 659 行 — 蓝绿容器管理（8 子命令）
+├── pipeline-stages.sh            # 1108 行 — Jenkins Pipeline 函数库
+├── setup-jenkins.sh              # 1029 行 — Jenkins 安装/卸载
+├── setup-jenkins-pipeline.sh     # 490 行 — Jenkins Pipeline 配置
+├── prepare-jenkins-pipeline.sh   # 375 行 — Jenkins Pipeline 准备
+├── setup-postgres-local.sh       # 539 行 — 宿主机 PG 安装
+├── setup-docker-permissions.sh   # 333 行 — Docker 权限配置
+├── apply-file-permissions.sh     # 409 行 — 文件权限应用
+├── undo-permissions.sh           # 279 行 — 权限回退
+├── break-glass.sh                # 324 行 — 紧急访问
+├── init-databases.sh             # 91 行 — 数据库初始化
+├── setup-keycloak-full.sh        # 186 行 — Keycloak 完整设置
+├── install-auditd-rules.sh       # 310 行 — 审计规则安装
+├── install-sudo-log.sh           # 298 行 — sudo 日志配置
+├── install-sudoers-whitelist.sh  # 298 行 — sudoers 白名单
+├── verify-sudoers-whitelist.sh   # 154 行 — sudoers 验证
+│
+├── deploy/                       # 部署脚本（旧版手动回退）
+│   ├── deploy-apps-prod.sh       # 168 行 — 应用部署
+│   ├── deploy-infrastructure-prod.sh
+│   └── ...
+│
+├── utils/                        # 工具脚本
+│   ├── decrypt-secrets.sh
+│   └── validate-docker.sh
+│
+├── verify/                       # 一次性验证脚本（5 文件）
+│   ├── quick-verify.sh
+│   ├── verify-apps.sh
+│   ├── verify-findclass.sh
+│   ├── verify-infrastructure.sh
+│   └── verify-services.sh
+│
+├── jenkins/                      # Jenkins 相关
+│
+└── backup/                       # 备份子系统
+    ├── backup-postgres.sh
+    ├── restore-postgres.sh
+    ├── verify-restore.sh
+    ├── test-verify-weekly.sh
+    ├── lib/                      # 12 个库文件（见上）
+    ├── tests/                    # 12 个测试脚本
+    ├── templates/                # 文档模板
+    └── docker/                   # 测试用 Dockerfile
+```
 
-### 2.2 修改组件
+### 1.2 库依赖关系图（当前）
 
-| 组件 | 修改内容 | 修改范围 |
-|------|---------|---------|
-| `scripts/setup-jenkins.sh` | `cmd_install` 中 `usermod -aG docker jenkins` 改为 socket 权限分配 | 小 — 约 5 行 |
-| `scripts/deploy/deploy-apps-prod.sh` | 文件权限改为 `750 root:jenkins` | 无代码变更 |
-| `scripts/deploy/deploy-infrastructure-prod.sh` | 文件权限改为 `750 root:jenkins` | 无代码变更 |
-| `scripts/pipeline-stages.sh` | 文件权限改为 `750 root:jenkins` | 无代码变更 |
-| `scripts/manage-containers.sh` | 文件权限改为 `750 root:jenkins` | 无代码变更 |
-| `scripts/blue-green-deploy.sh` | 文件权限改为 `750 root:jenkins` | 无代码变更 |
-| `config/nginx/snippets/` | 目录权限改为 `750 root:jenkins`，文件权限 `640` | 无代码变更 |
-| `/opt/noda/` 状态文件 | 文件权限改为 `660 root:jenkins` | 无代码变更 |
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    顶层脚本（source 消费者）                        │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  blue-green-deploy.sh ─────┐                                     │
+│  keycloak-blue-green ──────┤                                     │
+│  rollback-findclass.sh ────┼── source ──> scripts/lib/log.sh     │
+│  manage-containers.sh ─────┤              scripts/lib/health.sh  │
+│  pipeline-stages.sh ───────┤                                     │
+│  deploy-apps-prod.sh ──────┤                                     │
+│  setup-*.sh, install-*.sh ─┘                                     │
+│                                                                  │
+│  backup-postgres.sh ─────── source ──> scripts/backup/lib/*.sh   │
+│  restore-postgres.sh ──────            （独立库链）               │
+│  verify-restore.sh ────────                                      │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
 
-### 2.3 不变组件
+scripts/lib/ （通用库）          scripts/backup/lib/ （备份专用库）
+├── log.sh (34行)                ├── log.sh (87行) ─── 重复 + 增强
+└── health.sh (70行)             ├── health.sh (358行) ── 完全不同的功能
+                                 ├── constants.sh (75行)
+                                 ├── config.sh (374行)
+                                 ├── util.sh (86行)
+                                 └── ... (8个专用库)
+```
 
-| 组件 | 理由 |
-|------|------|
-| `jenkins/Jenkinsfile` | Pipeline 代码不变，通过 jenkins 用户执行 |
-| `jenkins/Jenkinsfile.noda-site` | 同上 |
-| `jenkins/Jenkinsfile.infra` | 同上 |
-| `scripts/lib/log.sh` | 通用日志库，所有用户可读 |
-| `scripts/lib/health.sh` | 通用健康检查库，所有用户可读 |
-| `docker/docker-compose.yml` | Compose 配置不变 |
-| `docker/docker-compose.prod.yml` | 同上 |
+### 1.3 关键发现：重复代码清单
+
+| 重复函数 | 出现位置 | 行数/次 | 总行数 | 差异点 |
+|---------|---------|---------|--------|--------|
+| `http_health_check()` | blue-green-deploy.sh, keycloak-blue-green-deploy.sh, pipeline-stages.sh, rollback-findclass.sh | ~25行 x 4 | ~100 | URL 端口/路径参数化 |
+| `e2e_verify()` | blue-green-deploy.sh, keycloak-blue-green-deploy.sh, pipeline-stages.sh, rollback-findclass.sh | ~45行 x 4 | ~180 | 端口/路径参数化 |
+| `log_*()` 函数组 | scripts/lib/log.sh vs scripts/backup/lib/log.sh | 34行 vs 87行 | 121 | backup 版多 progress/json/structured |
+| 常量定义 | blue-green-deploy.sh, keycloak-blue-green-deploy.sh | 各 ~15行 | ~30 | HEALTH_CHECK_MAX_RETRIES 等 |
+| `cleanup_old_images()` | blue-green-deploy.sh, pipeline-stages.sh, keycloak-blue-green-deploy.sh | ~30行 x 3 | ~90 | 参数/策略不同 |
+
+**总重复代码量：约 520 行**（占 scripts/ 总量 ~5%）
 
 ---
 
-## 三、架构决策：Docker 访问控制方案选择
+## 二、推荐目标架构
 
-### 3.1 方案对比
+### 2.1 重构后的目录结构
 
-| 方案 | 安全性 | 复杂度 | 与 Jenkins 兼容性 | break-glass 难度 |
-|------|--------|--------|------------------|-----------------|
-| **A. docker.sock 属主改为 jenkins** | HIGH | LOW | 完美 | 中等（sudo） |
-| B. Rootless Docker | HIGHEST | HIGH | 需要大量适配 | 复杂 |
-| C. sudoers 全量控制 | MEDIUM | MEDIUM | 需要 sudo 前缀 | 简单 |
-| D. Docker 授权插件 | HIGH | HIGH | 需要插件配置 | 复杂 |
+```
+scripts/
+├── lib/                              # 统一通用库（合并后）
+│   ├── log.sh                        # 统一日志（合并两个 log.sh）
+│   ├── health.sh                     # 容器健康检查（不变）
+│   ├── http-check.sh                 # [新增] HTTP 健康检查 + E2E 验证
+│   └── image-cleanup.sh              # [新增] 镜像清理函数
+│
+├── backup/lib/                       # 备份专用库（保留，仅修改 log 依赖）
+│   ├── config.sh                     # 不变
+│   ├── constants.sh                  # 不变
+│   ├── util.sh                       # 不变
+│   ├── db.sh                         # 改 source ../lib/log.sh
+│   ├── cloud.sh                      # 改 source ../lib/log.sh
+│   ├── restore.sh                    # 改 source ../lib/log.sh
+│   ├── alert.sh                      # 改 source ../lib/log.sh
+│   ├── metrics.sh                    # 改 source ../lib/log.sh
+│   ├── verify.sh                     # 改 source ../lib/log.sh
+│   ├── test-verify.sh                # 改 source ../lib/log.sh
+│   ├── health.sh                     # 保留（功能完全不同，仅名相同）
+│   └── [log.sh 删除]                 # 指向 scripts/lib/log.sh
+│
+├── blue-green-deploy.sh              # [重写] 通用蓝绿部署入口
+├── rollback-findclass.sh             # [重写] 复用 http-check.sh
+├── manage-containers.sh              # 不变（已参数化良好）
+├── pipeline-stages.sh                # [精简] 删除 http_health_check/e2e_verify 内联副本
+└── ...
+```
 
-### 3.2 推荐方案：A. docker.sock 属主改为 jenkins + sudoers 白名单
+### 2.2 统一日志库：合并方案
 
-**核心思路：** 不使用 `docker` 组，而是让 `jenkins` 用户直接拥有 Docker socket 的组访问权。
-
-**为什么不用 Rootless Docker：**
-1. 现有 `docker-compose.yml` 已经假设 rootful Docker（端口映射、网络模式等）
-2. Rootless Docker 的 `--privileged`、某些网络功能受限
-3. 迁移成本高（所有 Compose 文件、所有 docker run 命令都需要测试）
-4. 单服务器场景下，Rootless Docker 的安全优势主要体现在容器逃逸后，但本项目的攻击面很小
-
-**为什么不用纯 sudoers 方案：**
-1. Jenkins Pipeline 中的 `sh` 步骤执行大量 docker 命令，每个都加 `sudo` 前缀改动面大
-2. 环境变量不会通过 sudo 传递（需要 `--preserve-env` 配置）
-3. `docker compose` 命令涉及复杂的子进程调用，sudoers 规则难以精确覆盖
-
-**方案 A 的实现：**
+**策略：** 将 backup/lib/log.sh 的增强功能合并到 scripts/lib/log.sh，删除 backup/lib/log.sh。
 
 ```bash
-# 1. 从 docker 组移除所有非必要用户
-sudo gpasswd -d admin docker 2>/dev/null || true
+# scripts/lib/log.sh — 合并后的统一日志库
 
-# 2. jenkins 也不在 docker 组（改为直接 socket 访问）
-sudo gpasswd -d jenkins docker 2>/dev/null || true
+# === 基础颜色常量 ===
+_GREEN='\033[0;32m'; _YELLOW='\033[1;33m'
+_RED='\033[0;31m';   _BLUE='\033[0;34m'
+_NC='\033[0m'
 
-# 3. 创建专用组 jenkins-docker（可选）或直接修改 socket 属组
-# 方案 A1: 直接让 jenkins 拥有 socket
-sudo chown root:jenkins /var/run/docker.sock
-sudo chmod 660 /var/run/docker.sock
+# === 基础日志函数（原有） ===
+log_info()    { echo -e "${_YELLOW}info  $*${_NC}"; }
+log_success() { echo -e "${_GREEN}ok    $*${_NC}"; }
+log_error()   { echo -e "${_RED}fail  $*${_NC}" >&2; }
+log_warn()    { echo -e "${_YELLOW}warn  $*${_NC}"; }
 
-# 方案 A2: 使用 systemd override 确保 Docker 重启后权限不变
-# /etc/systemd/system/docker.service.d/override.conf
-[Service]
-ExecStartPost=/bin/chown root:jenkins /var/run/docker.sock
-ExecStartPost=/bin/chmod 660 /var/run/docker.sock
+# === 增强日志函数（来自 backup/lib/log.sh） ===
+log_progress() {
+  local current=$1 total=$2 message=$3
+  local percent=$((current * 100 / total))
+  echo "progress [$current/$total] ($percent%) $message"
+}
+
+log_structured() {
+  local level=$1 stage=$2 database=$3 message=$4 details="${5:-}"
+  local timestamp; timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+  echo "[$timestamp] [$level] [$stage] [$database] $message"
+  [[ -n "$details" ]] && echo "Details: $details"
+}
 ```
 
-**systemd override 是关键** — Docker 重启后会重新创建 socket 文件，恢复默认的 `root:docker 660`。必须在 `ExecStartPost` 中覆盖。
+**影响范围：** backup/lib/ 下 7 个 source log.sh 的文件都需要改路径。改动是机械性的搜索替换。
 
-### 3.3 sudoers 白名单设计
+### 2.3 HTTP 健康检查 + E2E 验证：统一方案
 
-**原则：** 非 jenkins 用户不能直接执行 docker 命令，但通过 sudo 可以执行只读命令（用于调试）。紧急部署需要 break-glass 机制。
+**策略：** 提取到 `scripts/lib/http-check.sh`，通过环境变量参数化端口和路径。
 
 ```bash
-# /etc/sudoers.d/noda-docker
-# 由 root 管理，权限 440
+# scripts/lib/http-check.sh — HTTP 健康检查 + E2E 验证（统一版）
+# 依赖：scripts/lib/log.sh
+# 环境变量控制：
+#   SERVICE_PORT  — 服务端口（默认 3001）
+#   HEALTH_PATH   — 健康检查路径（默认 /api/health）
 
-# ============================================
-# 只读 docker 命令 — 所有 admin 组用户可执行
-# ============================================
-Cmnd_Alias DOCKER_READ = \
-    /usr/bin/docker ps, \
-    /usr/bin/docker ps *, \
-    /usr/bin/docker images, \
-    /usr/bin/docker images *, \
-    /usr/bin/docker logs, \
-    /usr/bin/docker logs *, \
-    /usr/bin/docker inspect, \
-    /usr/bin/docker inspect *, \
-    /usr/bin/docker top *, \
-    /usr/bin/docker stats, \
-    /usr/bin/docker stats *, \
-    /usr/bin/docker compose ps, \
-    /usr/bin/docker compose ps *, \
-    /usr/bin/docker compose logs, \
-    /usr/bin/docker compose logs *, \
-    /usr/bin/docker compose config, \
-    /usr/bin/docker compose config *
+# http_health_check - 容器内 HTTP 健康检查
+# 参数：
+#   $1: 容器名
+#   $2: 最大重试次数（默认 30）
+#   $3: 重试间隔秒数（默认 4）
+# 环境变量：SERVICE_PORT, HEALTH_PATH
+http_health_check() {
+  local container="$1"
+  local max_retries="${2:-${HEALTH_CHECK_MAX_RETRIES:-30}}"
+  local interval="${3:-${HEALTH_CHECK_INTERVAL:-4}}"
+  local port="${SERVICE_PORT:-3001}"
+  local path="${HEALTH_PATH:-/api/health}"
+  local attempt=0
 
-%admin ALL=(root) NOPASSWD: DOCKER_READ
+  log_info "HTTP 健康检查: $container (最多 ${max_retries} 次, 间隔 ${interval}s)"
 
-# ============================================
-# Break-glass: 紧急部署 — 需要密码，记录审计日志
-# ============================================
-Cmnd_Alias DOCKER_DEPLOY = \
-    /usr/local/bin/noda-emergency-deploy.sh
+  while [ $attempt -lt $max_retries ]; do
+    attempt=$((attempt + 1))
+    if docker exec "$container" wget --quiet --tries=1 --spider \
+       "http://localhost:${port}${path}" 2>/dev/null; then
+      log_success "$container — HTTP 健康检查通过 (第 ${attempt}/${max_retries} 次)"
+      return 0
+    fi
+    [ $attempt -lt $max_retries ] && sleep "$interval"
+  done
 
-%admin ALL=(root) PASSWD: DOCKER_DEPLOY
+  log_error "$container — HTTP 健康检查失败 (${max_retries} 次尝试)"
+  log_info "最近容器日志:"
+  docker logs "$container" --tail 20 2>&1 | sed 's/^/  /'
+  return 1
+}
 
-# ============================================
-# 部署脚本直接执行 — 禁止
-# ============================================
-# 无条目 = 默认拒绝
-# scripts/deploy/*.sh 通过文件权限（750 root:jenkins）限制
-
-# ============================================
-# sudo 审计日志
-# ============================================
-Defaults log_output
-Defaults iolog_dir=/var/log/sudo-io/%{user}/%{tsout}
-Defaults!/usr/bin/docker*: iolog_dir=/var/log/sudo-io/docker/%{user}
+# e2e_verify - 通过 nginx 容器验证完整请求链路
+# 参数：
+#   $1: 目标环境 (blue 或 green) — 需要 get_container_name（来自 manage-containers.sh）
+#   $2: 最大重试次数（默认 5）
+#   $3: 重试间隔秒数（默认 2）
+# 环境变量：SERVICE_PORT, HEALTH_PATH, NGINX_CONTAINER
+e2e_verify() {
+  local target_env="$1"
+  local max_retries="${2:-${E2E_MAX_RETRIES:-5}}"
+  local interval="${3:-${E2E_INTERVAL:-2}}"
+  # get_container_name 来自 manage-containers.sh，调用者必须已 source
+  local container_name; container_name=$(get_container_name "$target_env")
+  local port="${SERVICE_PORT:-3001}"
+  local path="${HEALTH_PATH:-/api/health}"
+  # ... curl/wget 双模式检测逻辑（同现有实现）
+}
 ```
 
-### 3.4 Break-Glass 紧急部署机制
+**关键设计决策：** `e2e_verify()` 依赖 `get_container_name()`（来自 manage-containers.sh），但不直接 source manage-containers.sh。调用者（blue-green-deploy.sh, pipeline-stages.sh）负责同时 source 两者。这种「依赖注入」模式避免了库之间的循环依赖。
 
-**场景：** Jenkins 不可用（服务宕机、磁盘满、Java 崩溃等），需要紧急手动部署。
+### 2.4 镜像清理：统一方案
 
-**设计：**
+**策略：** 提取到 `scripts/lib/image-cleanup.sh`，合并三种清理策略。
+
+```bash
+# scripts/lib/image-cleanup.sh — 镜像清理（统一版）
+# 依赖：scripts/lib/log.sh
+
+# cleanup_sha_images - 清理超过指定天数的 SHA 标签镜像
+# 参数：$1 = 保留天数（默认 7）
+# 环境变量：SERVICE_NAME, IMAGE_RETENTION_DAYS
+cleanup_sha_images() { ... }
+
+# cleanup_dangling_images - 清理 dangling images
+cleanup_dangling_images() { ... }
+
+# cleanup_old_images - 综合清理（SHA + dangling）
+# 官方镜像服务（SERVICE_IMAGE 已设置）仅清理 dangling
+cleanup_old_images() {
+  if [ -z "${SERVICE_IMAGE:-}" ]; then
+    cleanup_sha_images "${1:-}"
+  fi
+  cleanup_dangling_images
+}
+```
+
+### 2.5 蓝绿部署框架：统一入口
+
+**策略：** 将 blue-green-deploy.sh 和 keycloak-blue-green-deploy.sh 合并为一个参数化脚本。
+
+核心差异点和统一方式：
+
+| 差异点 | findclass-ssr | keycloak | 统一方式 |
+|--------|--------------|----------|---------|
+| 镜像获取 | docker compose build + SHA tag | docker pull 官方镜像 | SERVICE_IMAGE 环境变量区分 |
+| 端口 | 3001 | 8080 | SERVICE_PORT 环境变量 |
+| 健康路径 | /api/health | /realms/master | HEALTH_PATH 环境变量 |
+| 内存限制 | 512m | 1g | CONTAINER_MEMORY 环境变量 |
+| 只读模式 | true | false | CONTAINER_READONLY 环境变量 |
+| 额外参数 | 无 | 主题卷 + data tmpfs | EXTRA_DOCKER_ARGS 环境变量 |
+| 健康检查超时 | 30x4=120s | 45x4=180s | HEALTH_CHECK_MAX_RETRIES 环境变量 |
+| 旧容器迁移 | 无 | 检测 compose 容器 | 统一检测逻辑 |
+
+**统一入口脚本逻辑：**
 
 ```bash
 #!/bin/bash
-# /usr/local/bin/noda-emergency-deploy.sh
-# 紧急部署入口 — 必须通过 sudo 执行
-# 触发时记录封条状态、时间戳、操作者
+# scripts/blue-green-deploy.sh — 通用蓝绿部署（统一版）
+# 通过环境变量参数化支持 findclass-ssr, keycloak, 以及未来服务
 
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-SEAL_FILE="/opt/noda/.break-glass-sealed"
-AUDIT_LOG="/var/log/noda-audit/break-glass.log"
+source "$PROJECT_ROOT/scripts/lib/log.sh"
+source "$PROJECT_ROOT/scripts/lib/http-check.sh"
+source "$PROJECT_ROOT/scripts/lib/image-cleanup.sh"
+source "$PROJECT_ROOT/scripts/manage-containers.sh"
 
-# 记录封条打破
-log_break_glass() {
-  local operator="${SUDO_USER:-$USER}"
-  local timestamp
-  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-  mkdir -p "$(dirname "$AUDIT_LOG")"
-  echo "[${timestamp}] BREAK-GLASS operator=${operator} command=$*" >> "$AUDIT_LOG"
-  logger -p auth.alert -t noda-break-glass "Emergency deploy by ${operator}: $*"
-}
+# 加载 .env
+[ -f "$PROJECT_ROOT/docker/.env" ] && { set -a; source "$PROJECT_ROOT/docker/.env"; set +a; }
 
-# 验证 Jenkins 确实不可用（防止滥用）
-check_jenkins_down() {
-  if curl -sf "http://localhost:8888/login" > /dev/null 2>&1; then
-    echo "ERROR: Jenkins is responding. Use Jenkins Pipeline instead." >&2
-    echo "If you believe this is an error, document the reason and use --force." >&2
-    exit 1
-  fi
-}
-
-case "${1:-}" in
-  --force)
-    shift
-    log_break_glass "$@" "(forced)"
-    ;;
-  *)
-    check_jenkins_down
-    log_break_glass "$@"
-    ;;
-esac
-
-# 将 jenkins 用户加入 docker 组临时（本次会话）
-# 注意：这只是让当前 sudo 会话有效，不影响系统长期配置
-exec "$@"
-```
-
-**封条文件 (`/opt/noda/.break-glass-sealed`)：**
-- 存在 = 封条完整（未被打破）
-- 删除/修改时间戳 = 封条被打破过
-- 部署完成后由脚本重新创建
-
-**Break-glass 工作流：**
-
-```
-1. 管理员发现 Jenkins 不可用
-2. 管理员执行: sudo noda-emergency-deploy.sh bash scripts/deploy/deploy-apps-prod.sh
-3. 脚本验证 Jenkins 确实不可用
-4. 脚本记录审计日志 (operator + timestamp + command)
-5. 脚本临时恢复 jenkins 用户的 docker 访问（或以 root 执行部署脚本）
-6. 部署完成
-7. 管理员恢复 Jenkins 并调查根因
-8. 管理员检查 /var/log/noda-audit/break-glass.log 确认操作
-9. 管理员重新创建封条文件
-```
-
----
-
-## 四、审计日志架构
-
-### 4.1 auditd 规则
-
-```bash
-# /etc/audit/rules.d/noda-docker.rules
-
-# 记录所有 docker 命令执行
--a always,exit -F path=/usr/bin/docker -F perm=x -F auid>=1000 -F auid!=4294967295 -k docker-cmd
-
-# 记录 docker socket 访问
--w /var/run/docker.sock -p rwxa -k docker-socket
-
-# 记录 docker compose 命令
--a always,exit -F path=/usr/libexec/docker/cli-plugins/docker-compose -F perm=x -F auid>=1000 -F auid!=4294967295 -k docker-compose-cmd
-
-# 记录部署脚本执行
--w /opt/noda-infra/scripts/deploy -p x -k deploy-scripts
-
-# 记录 nginx 配置修改
--w /opt/noda-infra/config/nginx -p wa -k nginx-config
-
-# 记录 break-glass 使用
--w /usr/local/bin/noda-emergency-deploy.sh -p x -k break-glass
-
-# 记录 sudoers 文件修改
--w /etc/sudoers.d/ -p wa -k sudoers-modification
-```
-
-### 4.2 日志查询
-
-```bash
-# 查看所有 docker 命令（最近 24 小时）
-ausearch -k docker-cmd -ts yesterday | aureport -x --interpret
-
-# 查看谁在什么时候执行了 docker 命令
-ausearch -k docker-cmd --interpret | grep "auid"
-
-# 查看 break-glass 使用记录
-ausearch -k break-glass --interpret
-
-# 查看部署脚本执行记录
-ausearch -k deploy-scripts --interpret | aureport -x
-
-# 查看 docker socket 异常访问
-ausearch -k docker-socket -sc open -sv no  # 仅失败的访问（说明有人尝试未授权访问）
-```
-
-### 4.3 审计日志轮转
-
-```bash
-# /etc/logrotate.d/noda-audit
-/var/log/noda-audit/*.log {
-    daily
-    rotate 30
-    compress
-    missingok
-    notifempty
-    create 0640 root root
+main() {
+  # 前置检查（Docker daemon + nginx + network）— 通用
+  # 读取活跃环境 — 通用
+  # 根据 SERVICE_IMAGE 是否设置：
+  #   有 SERVICE_IMAGE → docker pull（Keycloak/官方镜像模式）
+  #   无 SERVICE_IMAGE → docker build + SHA tag（findclass-ssr/源码构建模式）
+  # 停旧目标容器 + run_container（通用）
+  # http_health_check（通用，参数化）
+  # update_upstream + nginx -t + reload_nginx（通用）
+  # e2e_verify（通用，参数化）
+  # cleanup_old_images（通用）
 }
 ```
 
----
-
-## 五、文件权限矩阵
-
-### 5.1 需要修改权限的文件
-
-| 文件/目录 | 当前权限 | 目标权限 | 目标属主 | 理由 |
-|-----------|---------|---------|---------|------|
-| `/var/run/docker.sock` | `root:docker 660` | `root:jenkins 660` | jenkins 直接访问 Docker |
-| `scripts/deploy/*.sh` | `755 :staff` | `750 root:jenkins` | 仅 jenkins 可执行 |
-| `scripts/pipeline-stages.sh` | `755 :staff` | `750 root:jenkins` | 仅 jenkins 可执行 |
-| `scripts/manage-containers.sh` | `755 :staff` | `750 root:jenkins` | 仅 jenkins 可执行 |
-| `scripts/blue-green-deploy.sh` | `755 :staff` | `750 root:jenkins` | 仅 jenkins 可执行 |
-| `scripts/keycloak-blue-green-deploy.sh` | `755 :staff` | `750 root:jenkins` | 仅 jenkins 可执行 |
-| `scripts/rollback-findclass.sh` | `755 :staff` | `750 root:jenkins` | 仅 jenkins 可执行 |
-| `config/nginx/snippets/` | `755 :staff` | `750 root:jenkins` | upstream 文件仅 jenkins 可写 |
-| `config/nginx/snippets/upstream-*.conf` | `644 :staff` | `640 root:jenkins` | upstream 配置仅 jenkins 可写 |
-| `/opt/noda/active-env*` | `644 root:root` | `660 root:jenkins` | 状态文件 jenkins 可写 |
-| `docker/.env` | `644 :staff` | `640 root:jenkins` | 环境变量含密码 |
-| `docker/env-*.env` | `644 :staff` | `640 root:jenkins` | env 模板含变量 |
-| `config/secrets.sops.yaml` | `644 :staff` | `640 root:jenkins` | 加密密钥 |
-
-### 5.2 保持不变权限的文件
-
-| 文件/目录 | 当前权限 | 理由 |
-|-----------|---------|------|
-| `scripts/lib/log.sh` | `644` | 通用库，所有用户可读（无安全敏感操作） |
-| `scripts/lib/health.sh` | `644` | 通用库，仅调用 docker inspect（只读） |
-| `scripts/setup-jenkins.sh` | `755` | 初始化脚本，需要 root 执行（含 sudo 命令） |
-| `scripts/setup-dev.sh` | `755` | 开发环境脚本 |
-| `scripts/verify/*.sh` | `755` | 验证脚本，只读操作 |
-| `docker/docker-compose*.yml` | `644` | compose 配置文件，需要可读但不可写 |
-
-### 5.3 Jenkins workspace 文件权限
-
-Jenkins Pipeline 执行 `git checkout` 后，workspace 中的文件属主为 `jenkins:jenkins`。这意味着：
-
-1. Jenkins 可以直接执行 workspace 中的脚本（`sh 'source scripts/pipeline-stages.sh'`）
-2. 脚本中调用 `docker compose`、`docker run` 等命令直接执行（无需 sudo）
-3. `config/nginx/snippets/` 的修改通过 `update_upstream()` 函数直接写入
-
-**关键点：** Jenkins workspace 中的文件属主是 `jenkins`，但 `/opt/noda-infra/` 仓库中的部署脚本需要 `root:jenkins` 权限。Jenkins Pipeline 实际执行的是 workspace 中的脚本副本，不是仓库中的原始文件。因此：
-
-- 仓库文件权限 (`/opt/noda-infra/scripts/`) 用于限制手动执行
-- Jenkins workspace 文件权限由 Git checkout 自动管理
-- 两者互不干扰
-
----
-
-## 六、systemd Docker Socket 权限持久化
-
-### 6.1 问题
-
-Docker daemon 重启时（`systemctl restart docker`）会重新创建 `/var/run/docker.sock`，恢复默认权限 `root:docker 660`。必须通过 systemd override 确保权限持久。
-
-### 6.2 方案
-
-```ini
-# /etc/systemd/system/docker.service.d/socket-permissions.conf
-[Unit]
-Description=Docker Socket Permission Override for Jenkins
-
-[Service]
-# ExecStartPost 在 Docker daemon 启动后执行
-# 修改 socket 属组为 jenkins（而非默认的 docker）
-ExecStartPost=/bin/sh -c 'chown root:jenkins /var/run/docker.sock && chmod 660 /var/run/docker.sock'
-```
-
-**为什么用 `ExecStartPost` 而非 udev 规则：**
-- Docker socket 不是设备节点，udev 规则不适用
-- `ExecStartPost` 直接在 Docker daemon 启动后执行，时序可靠
-- 可以在 `setup-docker-permissions.sh` 中用 `sudo systemctl daemon-reload` 应用
-
-### 6.3 验证
+**Keycloak 调用方式变为（与 pipeline_deploy_keycloak() 现有逻辑一致）：**
 
 ```bash
-# 应用 override
-sudo systemctl daemon-reload
-sudo systemctl restart docker
+SERVICE_NAME=keycloak \
+SERVICE_PORT=8080 \
+UPSTREAM_NAME=keycloak_backend \
+HEALTH_PATH=/realms/master \
+ACTIVE_ENV_FILE=/opt/noda/active-env-keycloak \
+UPSTREAM_CONF=$PROJECT_ROOT/config/nginx/snippets/upstream-keycloak.conf \
+CONTAINER_MEMORY=1g \
+CONTAINER_MEMORY_RESERVATION=512m \
+CONTAINER_READONLY=false \
+SERVICE_GROUP=infra \
+SERVICE_IMAGE=quay.io/keycloak/keycloak:26.2.3 \
+EXTRA_DOCKER_ARGS='-v .../themes:/opt/keycloak/themes/noda:ro --tmpfs /opt/keycloak/data' \
+ENVSUBST_VARS='${POSTGRES_USER} ...' \
+HEALTH_CHECK_MAX_RETRIES=45 \
+bash scripts/blue-green-deploy.sh
+```
 
-# 验证 socket 权限
-ls -la /var/run/docker.sock
-# 期望: srw-rw---- 1 root jenkins 0 ... /var/run/docker.sock
+### 2.6 重构后依赖关系图
 
-# 验证 jenkins 可以执行 docker 命令
-sudo -u jenkins docker ps
-# 期望: 正常输出容器列表
+```
+┌───────────────────────────────────────────────────────────────────┐
+│                       顶层脚本（source 消费者）                     │
+├───────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  blue-green-deploy.sh ──┐                                         │
+│  rollback-findclass.sh ─┤                                         │
+│  manage-containers.sh ──┼── source ──> scripts/lib/log.sh        │
+│  pipeline-stages.sh ────┤              scripts/lib/health.sh     │
+│  deploy-*.sh ───────────┤              scripts/lib/http-check.sh │
+│  setup-*.sh ────────────┘              scripts/lib/image-cleanup │
+│                                                                   │
+│  backup-postgres.sh ──── source ──> scripts/lib/log.sh (统一)    │
+│  restore-postgres.sh ───               scripts/backup/lib/*.sh   │
+│  verify-restore.sh ─────              （独立库链，log 指向统一版） │
+│                                                                   │
+└───────────────────────────────────────────────────────────────────┘
 
-# 验证 admin 用户不能直接执行 docker 命令
-sudo -u admin docker ps
-# 期望: permission denied
+scripts/lib/ （统一通用库）         scripts/backup/lib/ （备份专用库）
+├── log.sh        ← 合并版         ├── config.sh      — 不变
+├── health.sh     ← 不变           ├── constants.sh   — 不变
+├── http-check.sh ← [新增]         ├── util.sh        — 不变
+└── image-cleanup ← [新增]         ├── db.sh          — 改 source
+                                   ├── cloud.sh       — 改 source
+                                   ├── restore.sh     — 改 source
+                                   ├── alert.sh       — 改 source
+                                   ├── metrics.sh     — 改 source
+                                   ├── verify.sh      — 改 source
+                                   ├── test-verify.sh — 改 source
+                                   └── health.sh      — 不变（功能不同）
 ```
 
 ---
 
-## 七、集成点详细分析
+## 三、组件边界与职责
 
-### 7.1 Jenkins Pipeline 执行流（权限收敛后）
+| 组件 | 职责 | 依赖 | 消费者 |
+|------|------|------|--------|
+| `lib/log.sh` | 统一日志输出（基础 + 增强） | 无 | 所有脚本 |
+| `lib/health.sh` | 容器 Docker healthcheck 轮询 | log.sh | manage-containers, deploy-* |
+| `lib/http-check.sh` | HTTP 健康检查 + E2E 验证 | log.sh | blue-green-deploy, pipeline-stages, rollback |
+| `lib/image-cleanup.sh` | 镜像清理（SHA + dangling） | log.sh | blue-green-deploy, pipeline-stages |
+| `manage-containers.sh` | 蓝绿容器生命周期管理 | log.sh, health.sh | 所有蓝绿脚本 |
+| `pipeline-stages.sh` | Jenkins Pipeline 函数 | log.sh, manage-containers, http-check, image-cleanup | Jenkinsfile |
+| `blue-green-deploy.sh` | 通用蓝绿部署入口 | log.sh, http-check, image-cleanup, manage-containers | Jenkinsfile / 手动 |
+| `backup/lib/*` | 备份子系统专用逻辑 | lib/log.sh（统一） | backup-postgres, restore-postgres |
+
+### 组件边界原则
+
+1. **lib/ 层零业务逻辑**：只提供纯工具函数（日志、检查、清理），不包含任何部署流程
+2. **manage-containers.sh 是容器管理的唯一入口**：所有蓝绿容器操作通过此脚本
+3. **backup/lib/ 独立性保持**：备份系统有自己独立的生命周期和配置体系，不与部署脚本耦合
+4. **http-check.sh 不依赖 manage-containers.sh**：`e2e_verify()` 需要 `get_container_name()`，但通过调用者间接获取而非直接依赖
+
+---
+
+## 四、集成点识别
+
+### 4.1 新增文件
+
+| 文件 | 来源 | 内容 |
+|------|------|------|
+| `scripts/lib/http-check.sh` | 从 blue-green-deploy.sh 提取 | `http_health_check()` + `e2e_verify()` 参数化统一版 |
+| `scripts/lib/image-cleanup.sh` | 从 pipeline-stages.sh 提取 | `cleanup_old_images()` + `cleanup_sha_images()` + `cleanup_dangling_images()` |
+
+### 4.2 修改文件
+
+| 文件 | 变更类型 | 具体改动 |
+|------|---------|---------|
+| `scripts/lib/log.sh` | 增强 | 合并 backup/lib/log.sh 的 `log_progress()` + `log_structured()` |
+| `scripts/blue-green-deploy.sh` | 重写 | 改为参数化通用蓝绿部署，source http-check.sh + image-cleanup.sh |
+| `scripts/keycloak-blue-green-deploy.sh` | **删除** | 功能合并入 blue-green-deploy.sh |
+| `scripts/rollback-findclass.sh` | 精简 | 删除内联的 http_health_check/e2e_verify，source http-check.sh |
+| `scripts/pipeline-stages.sh` | 精简 | 删除内联的 http_health_check/e2e_verify/cleanup_old_images，source http-check.sh + image-cleanup.sh |
+| `scripts/backup/lib/log.sh` | **删除** | 内容已合并到 scripts/lib/log.sh |
+| `scripts/backup/lib/db.sh` | 改 source 路径 | `source "$_DB_LIB_DIR/log.sh"` 改为指向 `scripts/lib/log.sh` |
+| `scripts/backup/lib/cloud.sh` | 改 source 路径 | 同上模式 |
+| `scripts/backup/lib/restore.sh` | 改 source 路径 | 同上模式 |
+| `scripts/backup/lib/alert.sh` | 改 source 路径 | 同上模式 |
+| `scripts/backup/lib/metrics.sh` | 改 source 路径 | 同上模式 |
+| `scripts/backup/lib/verify.sh` | 改 source 路径 | 同上模式 |
+| `scripts/backup/lib/test-verify.sh` | 改 source 路径 | 同上模式 |
+
+### 4.3 不变文件
+
+| 文件 | 原因 |
+|------|------|
+| `scripts/lib/health.sh` | 功能无重叠（Docker healthcheck 轮询 vs HTTP 检查） |
+| `scripts/backup/lib/health.sh` | 功能完全不同（PG 连接/磁盘/数据库大小） |
+| `scripts/backup/lib/config.sh` | 备份专用配置体系 |
+| `scripts/backup/lib/constants.sh` | 备份专用退出码 |
+| `scripts/backup/lib/util.sh` | 备份专用工具函数 |
+| `scripts/manage-containers.sh` | 已参数化良好，无需修改 |
+| 所有 setup-*.sh, install-*.sh | 仅 source log.sh，无需改动 |
+| scripts/verify/*.sh | 不 source 自定义库，不参与重构 |
+
+### 4.4 构建顺序（依赖关系决定）
 
 ```
-Jenkins (jenkins 用户)
-    │
-    │ git checkout → workspace 文件属主 jenkins:jenkins
-    │
-    │ sh 'source scripts/lib/log.sh'
-    │ sh 'source scripts/pipeline-stages.sh'
-    │     └── pipeline_build()
-    │         └── docker build ...         ← jenkins 直接执行（socket 属组 jenkins）
-    │     └── pipeline_deploy()
-    │         └── docker run ...           ← jenkins 直接执行
-    │         └── run_container()          ← manage-containers.sh 中的函数
-    │             └── docker run -d ...    ← jenkins 直接执行
-    │     └── pipeline_switch()
-    │         └── update_upstream()        ← 写入 config/nginx/snippets/
-    │             └── echo > snippets dir  ← jenkins 可以写（组权限）
-    │         └── docker exec nginx reload ← jenkins 直接执行
-    │
-    │ 无变化！Pipeline 不需要任何代码修改
+Phase 1: scripts/lib/log.sh（合并增强）
+  | 所有后续改动依赖此文件
+  v
+Phase 2: scripts/lib/http-check.sh + scripts/lib/image-cleanup.sh（新增）
+  | 依赖 log.sh
+  v
+Phase 3: scripts/backup/lib/*.sh（改 source 路径）— 可与 Phase 2 并行
+  | 依赖 log.sh 合并版
+  v
+Phase 4: blue-green-deploy.sh（重写）+ 删除 keycloak-blue-green-deploy.sh
+  | 依赖 http-check.sh + image-cleanup.sh
+  v
+Phase 5: rollback-findclass.sh + pipeline-stages.sh（精简内联副本）
+  | 依赖 http-check.sh + image-cleanup.sh
 ```
 
-**结论：** 方案 A 对 Jenkins Pipeline 的影响为零。`jenkins` 用户通过 socket 属组获得 Docker 访问权，Pipeline 中的所有 `docker` 命令无需修改。
+---
 
-### 7.2 手动部署脚本执行流（权限收敛后）
+## 五、架构模式
 
-```
-admin 用户 SSH 登录
-    │
-    │ 直接执行 docker compose up    ← REJECTED (admin 不在 socket 属组)
-    │ 直接执行 scripts/deploy/*.sh  ← REJECTED (750 root:jenkins)
-    │
-    │ sudo docker ps                 ← ALLOWED (sudoers 白名单)
-    │ sudo docker logs ...           ← ALLOWED (sudoers 白名单)
-    │
-    │ Jenkins 不可用时:
-    │ sudo noda-emergency-deploy.sh bash scripts/deploy/deploy-apps-prod.sh
-    │   ← ALLOWED (break-glass, 需要 admin 密码, 记录审计日志)
-```
+### 模式 1: Source Guard（防重复加载 + 防直接执行）
 
-### 7.3 manage-containers.sh 中的 set_active_env() 适配
+**已使用的模式：**
 
-当前 `set_active_env()` 函数在写入 `/opt/noda/active-env` 时有 sudo 回退逻辑：
-
+manage-containers.sh 底部（可 source 可执行）：
 ```bash
-# 优先尝试直接写入（无 sudo），失败时回退到 sudo
-if [ -w "$dir" ] 2>/dev/null; then
-    echo "$env" > "$tmp_file" && mv "$tmp_file" "$ACTIVE_ENV_FILE"
-elif [ -w "$ACTIVE_ENV_FILE" ] 2>/dev/null; then
-    echo "$env" > "$tmp_file" && mv "$tmp_file" "$ACTIVE_ENV_FILE"
-else
-    sudo mkdir -p "$dir"
-    echo "$env" | sudo tee "$tmp_file" > /dev/null
-    sudo mv "$tmp_file" "$ACTIVE_ENV_FILE"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  case "${1:-}" in
+    init|start|stop|...) ... ;;
+  esac
 fi
 ```
 
-权限收敛后，`/opt/noda/` 目录属主为 `root:jenkins`，权限 `770`。jenkins 用户可以直接写入，不需要 sudo 回退。但回退逻辑无害，保留即可。
+pipeline-stages.sh 底部（仅 source）：
+```bash
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  echo "pipeline-stages.sh 是函数库，不支持直接执行"
+  exit 1
+fi
+```
 
-**但需要注意：** 如果 `/opt/noda/` 不存在，`mkdir -p` 需要 root 权限。在 `setup-docker-permissions.sh` 中应预先创建：
+backup/lib/config.sh 顶部（防重复加载）：
+```bash
+if [[ -n "${_NODA_CONFIG_LOADED:-}" ]]; then return 0; fi
+_NODA_CONFIG_LOADED=1
+```
+
+**推荐：** 新增的 `http-check.sh` 和 `image-cleanup.sh` 使用仅 source 模式，因为它们总被其他脚本调用。
+
+### 模式 2: 环境变量参数化（多态）
+
+**已使用的模式：** manage-containers.sh 通过 SERVICE_NAME/SERVICE_PORT/UPSTREAM_NAME 等环境变量适配不同服务。
+
+**扩展应用：** blue-green-deploy.sh 通过 SERVICE_IMAGE 是否设置来决定构建 vs 拉取模式。
 
 ```bash
-sudo mkdir -p /opt/noda
-sudo chown root:jenkins /opt/noda
-sudo chmod 770 /opt/noda
+# 参数化模式示例
+deploy_service() {
+  if [ -n "${SERVICE_IMAGE:-}" ]; then
+    # 官方镜像模式：拉取
+    docker pull "$SERVICE_IMAGE"
+    local image="$SERVICE_IMAGE"
+  else
+    # 源码构建模式：构建 + SHA 标签
+    docker build -t "${SERVICE_NAME}:${git_sha}" ...
+    local image="${SERVICE_NAME}:${git_sha}"
+  fi
+
+  # 后续流程完全相同
+  run_container "$target_env" "$image"
+  http_health_check "$target_container"
+  ...
+}
 ```
 
-### 7.4 manage-containers.sh 中的 update_upstream() 适配
+### 模式 3: 跨目录库引用（动态路径计算）
 
-当前 `update_upstream()` 写入 nginx snippets 目录。权限收敛后，需要确保 jenkins 用户可以写入。
-
+**当前模式（backup/lib/ 内部）：**
 ```bash
-# get_host_snippets_dir() 返回的路径需要 jenkins 可写
-# Jenkins workspace 中 checkout 的 snippets 目录属主是 jenkins
-# 但 docker inspect 获取的 Mount.Source 可能指向 /opt/noda-infra/config/nginx/snippets
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_LIB_DIR/constants.sh"
 ```
 
-**分析：** Jenkins Pipeline 在 workspace（`/var/lib/jenkins/workspace/xxx/`）中执行，snippets 目录的路径取决于 Docker Compose 中的 volume 挂载配置。当前 `docker-compose.yml` 中：
+**推荐模式（跨目录引用统一库）：**
+```bash
+# backup/lib/db.sh 引用统一 log.sh
+_DB_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 计算上层路径：backup/lib/ -> backup/ -> scripts/ -> scripts/lib/
+_UNIFIED_LIB="$(cd "$_DB_LIB_DIR/../../lib" && pwd)"
 
-```yaml
-volumes:
-  - ../config/nginx/snippets:/etc/nginx/snippets:ro
+# 条件加载统一 log（避免重复 source）
+if ! type log_info &>/dev/null; then
+  source "$_UNIFIED_LIB/log.sh"
+fi
 ```
 
-这意味着 Jenkins 执行 `update_upstream()` 时，写入的是 workspace 中的 `config/nginx/snippets/` 目录（属主 jenkins），而 Docker 容器挂载的是这个目录。所以 jenkins 用户有写权限，不需要修改。
-
-**但如果 Jenkins workspace 使用的是 `/opt/noda-infra/`（直接 checkout 到仓库目录）：** 这时需要确保 `config/nginx/snippets/` 目录 jenkins 可写。目标权限 `750 root:jenkins` 已经覆盖了这个场景。
+这个模式的关键是使用 `cd` + `pwd` 组合获得绝对路径，避免相对路径在不同工作目录下失效。
 
 ---
 
-## 八、数据流
+## 六、Anti-Patterns
 
-### 8.1 权限收敛执行流
+### Anti-Pattern 1: 函数复制粘贴替代 source
 
-```
-执行 scripts/setup-docker-permissions.sh apply
-    │
-    ├── 1. 创建 jenkins-docker 组（可选）或确认 jenkins 用户配置
-    ├── 2. 从 docker 组移除非必要用户
-    ├── 3. 配置 systemd override (docker socket 权限)
-    ├── 4. 重启 Docker daemon
-    ├── 5. 修改文件权限 (deploy scripts → 750 root:jenkins)
-    ├── 6. 修改目录权限 (snippets → 750 root:jenkins)
-    ├── 7. 创建 /opt/noda/ 目录并设置权限
-    ├── 8. 部署 sudoers 白名单
-    ├── 9. 部署 auditd 规则
-    ├── 10. 创建 break-glass 脚本
-    ├── 11. 验证所有权限设置
-    └── 12. 创建封条文件
-```
+**当前问题：** http_health_check 和 e2e_verify 被 4 次复制到不同文件中，每次参数略有不同。
 
-### 8.2 日常 Jenkins 部署流（无变化）
+**后果：** 修改一处忘记同步其他 3 处，导致行为不一致。
 
-```
-开发者 → Jenkins UI → Build Now
-    │
-    ▼
-Jenkins (jenkins 用户)
-    │  1. git checkout
-    │  2. source pipeline-stages.sh
-    │  3. docker build / docker run / docker compose
-    │  4. update_upstream() → 写入 snippets
-    │  5. docker exec nginx -s reload
-    │  6. 审计日志自动记录 (auditd)
-    │
-    ▼
-部署完成
-```
+**正确做法：** 提取到 `lib/http-check.sh`，通过参数和环境变量控制差异。
 
-### 8.3 紧急手动部署流（break-glass）
+### Anti-Pattern 2: 命名相同但功能不同的文件
 
-```
-admin 用户 → SSH → sudo noda-emergency-deploy.sh ...
-    │
-    ├── 1. 验证 Jenkins 不可用
-    ├── 2. 记录审计日志 (operator + timestamp + command)
-    ├── 3. logger -p auth.alert (系统日志)
-    ├── 4. 以 root 执行部署脚本
-    └── 5. 部署完成后重建封条
-```
+**当前问题：** `scripts/lib/health.sh`（Docker healthcheck 轮询）与 `scripts/backup/lib/health.sh`（PG 连接/磁盘检查）同名但功能完全不同。
 
----
+**后果：** 开发者混淆，以为 backup/lib/health.sh 是 scripts/lib/health.sh 的增强版。
 
-## 九、架构模式
+**正确做法：** 保持两文件存在但确保命名或注释明确区分。backup/lib/health.sh 已有清晰注释说明其功能。重构时确保 backup/ 子系统的脚本不会误 source scripts/lib/health.sh。
 
-### Pattern 1: Socket 属组收敛（核心模式）
+### Anti-Pattern 3: 全局变量污染
 
-**内容：** 将 Docker socket 的属组从 `docker` 改为 `jenkins`，直接控制谁能访问 Docker。
+**当前问题：** 多个脚本 source 后在全局命名空间定义大量变量（EXIT_SUCCESS, HEALTH_CHECK_MAX_RETRIES 等）。
 
-**使用条件：** 单服务器，只有一个用户需要 Docker 访问权限。
-
-**权衡：**
-- 优点：实现简单，对现有 Jenkins Pipeline 零影响
-- 优点：不引入额外复杂度（无 rootless、无插件）
-- 缺点：容器逃逸后 jenkins 用户仍然有等效 root 权限（但攻击面很小）
-- 缺点：需要在 Docker 重启后恢复权限（通过 systemd override 解决）
-
-**代码示例：**
-
-```ini
-# /etc/systemd/system/docker.service.d/socket-permissions.conf
-[Service]
-ExecStartPost=/bin/sh -c 'chown root:jenkins /var/run/docker.sock && chmod 660 /var/run/docker.sock'
-```
-
-### Pattern 2: 最小权限 sudoers 白名单
-
-**内容：** 通过 `Cmnd_Alias` 定义只读命令集合，只允许调试操作。
-
-**使用条件：** 需要给管理员提供有限的系统查看能力，但不允许修改。
-
-**权衡：**
-- 优点：精确控制，易于审计
-- 优点：`NOPASSWD` 只读命令方便日常调试
-- 缺点：维护 sudoers 规则需要仔细测试（语法错误会导致 sudo 完全不可用）
-- 缺点：docker compose 的子命令路径可能因安装方式不同而不同
-
-**关键实现细节：**
-
-```bash
-# docker compose 可能是独立二进制文件或 Docker CLI 插件
-# 需要确认路径:
-which docker    # /usr/bin/docker
-docker compose version  # 确认 compose 是 CLI 插件还是独立二进制
-
-# 如果是 CLI 插件，路径是 /usr/libexec/docker/cli-plugins/docker-compose
-# 如果是独立二进制，路径是 /usr/local/bin/docker-compose
-```
-
-### Pattern 3: Break-Glass 封条机制
-
-**内容：** 紧急部署必须通过专用入口脚本，自动记录审计日志并验证前置条件。
-
-**使用条件：** 正常操作路径（Jenkins）不可用时，需要受控的替代路径。
-
-**权衡：**
-- 优点：紧急情况下不阻塞运维
-- 优点：所有操作有审计记录
-- 缺点：需要手动验证封条状态
-- 缺点：break-glass 脚本本身需要安全保护（`chown root:root`，`chmod 755`，不可修改）
-
-### Pattern 4: 多层审计（纵深防御）
-
-**内容：** 同时使用 auditd（内核级）+ sudo 日志（应用级）+ 应用日志（脚本级）三层审计。
-
-**使用条件：** 需要完整的操作审计追踪。
-
-**权衡：**
-- 优点：任何绕过单层的尝试都会被其他层捕获
-- 优点：auditd 日志不可篡改（由内核写入）
-- 缺点：日志量增加（需要 logrotate）
-- 缺点：查询需要学习 `ausearch`/`aureport` 命令
-
----
-
-## 十、反模式
-
-### Anti-Pattern 1: 直接移除 docker 组
-
-**错误做法：** `groupdel docker`，完全移除 docker 组。
-
-**原因：** Docker 安装和更新过程会重新创建 docker 组。如果 docker 组不存在，`apt upgrade docker-ce` 可能失败或创建空的 docker 组。
-
-**正确做法：** 保留 docker 组，但清空其成员。通过 socket 属组控制访问。docker 组存在但无人属于它，等效于禁用。
-
-### Anti-Pattern 2: sudoers 规则过于宽松
-
-**错误做法：**
-```bash
-admin ALL=(root) NOPASSWD: /usr/bin/docker *
-```
-
-**原因：** 通配符 `*` 匹配所有参数。`sudo docker run -v /:/host -it ubuntu bash` 直接给 root shell。
+**后果：** 变量名冲突风险，readonly 变量重复定义导致 source 失败。
 
 **正确做法：**
-```bash
-# 只读命令不需要参数限制（ps, images, logs 本身是安全的）
-admin ALL=(root) NOPASSWD: /usr/bin/docker ps, /usr/bin/docker images, /usr/bin/docker logs
-# 写入命令完全不允许（不列出 = 默认拒绝）
-```
+- 库文件使用 guard 防止重复加载（config.sh 的 `_NODA_CONFIG_LOADED` 模式）
+- 常量使用命名前缀（如 `NODA_EXIT_SUCCESS` 而非 `EXIT_SUCCESS`）— 但当前规模下暂无冲突，低优先级
+- 已有的 readonly 保护是正确的（backup/lib/constants.sh 使用 `readonly` + guard）
 
-### Anti-Pattern 3: 文件权限收得太紧
+### Anti-Pattern 4: 副作用 source
 
-**错误做法：** `scripts/lib/log.sh` 设为 `640 root:jenkins`。
+**当前问题：** `source manage-containers.sh` 不仅定义函数，还执行了 NGINX_CONTAINER 等常量赋值。
 
-**原因：** log.sh 只包含颜色常量和 echo 函数，无安全敏感操作。如果 admin 用户无法 `source log.sh`，那连 `docker ps` 的彩色输出都会失败（因为 log.sh 被 health.sh 引用）。
-
-**正确做法：** 只有包含 docker 写入操作或部署逻辑的脚本需要限制权限。通用库保持可读。
-
-### Anti-Pattern 4: Break-glass 跳过 Jenkins 健康检查
-
-**错误做法：** break-glass 脚本直接执行部署命令，不检查 Jenkins 是否真的不可用。
-
-**原因：** 管理员可能在 Jenkins 正常运行时也使用 break-glass，绕过 Pipeline 的质量门禁（lint、test、健康检查等）。
-
-**正确做法：** break-glash 脚本必须先验证 Jenkins 不可用。只有加 `--force` 参数才能跳过检查，但仍然记录审计日志。
-
-### Anti-Pattern 5: 忘记处理 Docker 重启后 socket 权限
-
-**错误做法：** 手动 `chown root:jenkins /var/run/docker.sock`，不配置 systemd override。
-
-**原因：** 下次 Docker daemon 重启（系统重启、`systemctl restart docker`、Docker 升级），socket 权限恢复为 `root:docker`，jenkins 用户失去 Docker 访问，所有 Pipeline 开始失败。
-
-**正确做法：** 使用 systemd `ExecStartPost` override 确保每次 Docker 启动后都设置正确权限。
+**说明：** manage-containers.sh 当前的模式是合理的 — 常量赋值在全局作用域（source 时执行），函数定义也在全局作用域。这种模式在 shell 中是标准做法。需要注意新增库文件不要在 source 时执行任何有副作用的操作（如网络请求、文件写入）。
 
 ---
 
-## 十一、setup-docker-permissions.sh 脚本设计
+## 七、backup/lib/health.sh 不应合并的理由
 
-### 子命令结构
+两个 health.sh 功能完全不同：
 
-```
-setup-docker-permissions.sh <命令>
+| scripts/lib/health.sh | scripts/backup/lib/health.sh |
+|----------------------|------------------------------|
+| Docker 容器 healthcheck 状态轮询 | PostgreSQL 连接检查 |
+| `wait_container_healthy()` | `check_postgres_connection()` |
+| 依赖：无 | 依赖：constants.sh, config.sh |
+| 消费者：部署脚本 | 消费者：备份脚本 |
+| 端口/协议无关 | PG 特定协议 |
 
-命令:
-  apply     — 应用所有权限收敛配置
-  verify    — 验证所有权限配置是否正确
-  rollback  — 回滚到收敛前的状态（恢复 docker 组访问）
-  status    — 显示当前权限状态
-```
-
-### apply 流程
-
-```
-1. 前置检查（root 执行，Docker 运行中，jenkins 用户存在）
-2. 备份当前状态到 /opt/noda/.permission-backup/
-3. 从 docker 组移除非必要用户
-4. 配置 systemd override
-5. daemon-reload + restart docker
-6. 等待 docker 就绪
-7. 修改文件权限
-8. 部署 sudoers 白名单
-9. 部署 auditd 规则
-10. 创建 break-glass 脚本
-11. 创建 /opt/noda/ 目录结构
-12. 创建封条文件
-13. 验证所有配置
-14. 输出结果摘要
-```
-
-### verify 流程
-
-```
-检查项:
-  [PASS/FAIL] docker.sock 属组: root:jenkins
-  [PASS/FAIL] docker.sock 权限: 660
-  [PASS/FAIL] systemd override 存在
-  [PASS/FAIL] docker 组无非必要成员
-  [PASS/FAIL] jenkins 用户可执行 docker ps
-  [PASS/FAIL] admin 用户不可直接执行 docker ps
-  [PASS/FAIL] admin 用户可通过 sudo docker ps
-  [PASS/FAIL] deploy scripts 权限: 750 root:jenkins
-  [PASS/FAIL] nginx snippets 权限: 750 root:jenkins
-  [PASS/FAIL] /opt/noda/ 权限: 770 root:jenkins
-  [PASS/FAIL] sudoers 白名单文件存在且语法正确
-  [PASS/FAIL] auditd 规则已加载
-  [PASS/FAIL] break-glass 脚本存在且可执行
-  [PASS/FAIL] 封条文件存在
-```
-
-### rollback 流程
-
-```
-1. 将 admin 用户重新加入 docker 组
-2. 移除 systemd override
-3. daemon-reload + restart docker
-4. 恢复文件权限为 755
-5. 移除 sudoers 白名单
-6. 移除 auditd 规则
-7. 验证回滚成功
-```
+**结论：** 保留两文件，仅确保 backup/lib/health.sh 不被非备份脚本误 source。
 
 ---
 
-## 十二、构建顺序建议
+## 八、verify/ 目录处理建议
 
 ```
-Phase 1: Docker socket 权限收敛
-  │  配置 systemd override
-  │  从 docker 组移除非必要用户
-  │  重启 Docker 验证权限持久
-  │  验证: jenkins 用户可执行 docker ps
-  │  验证: admin 用户不可执行 docker ps
-  │
-  ├─ 依赖：无
-  ├─ 风险：低（jenkins 验证后再移除其他用户）
-  └─ 回滚：移除 override，重启 Docker
-
-Phase 2: 部署脚本文件权限锁定
-  │  修改 scripts/deploy/*.sh → 750 root:jenkins
-  │  修改 scripts/pipeline-stages.sh → 750 root:jenkins
-  │  修改 scripts/manage-containers.sh → 750 root:jenkins
-  │  修改 config/nginx/snippets/ → 750 root:jenkins
-  │  验证: admin 用户不可直接执行部署脚本
-  │  验证: Jenkins Pipeline 正常运行（不受影响）
-  │
-  ├─ 依赖：Phase 1（jenkins 用户已有 Docker 访问权）
-  ├─ 风险：低（文件权限变更可立即回滚）
-  └─ 回滚：chmod 755 恢复原始权限
-
-Phase 3: sudoers 白名单 + break-glass
-  │  部署 /etc/sudoers.d/noda-docker
-  │  创建 /usr/local/bin/noda-emergency-deploy.sh
-  │  验证: sudo docker ps 正常工作
-  │  验证: sudo docker run 被拒绝
-  │  验证: break-glash 脚本记录审计日志
-  │
-  ├─ 依赖：Phase 1 + 2
-  ├─ 风险：中（sudoers 语法错误会导致 sudo 完全不可用）
-  │  → 必须使用 visudo -f 验证语法后再部署
-  └─ 回滚：删除 /etc/sudoers.d/noda-docker
-
-Phase 4: auditd 审计日志
-  │  部署 /etc/audit/rules.d/noda-docker.rules
-  │  augenrules --load
-  │  验证: ausearch -k docker-cmd 返回结果
-  │  验证: 日志轮转配置正确
-  │
-  ├─ 依赖：无（独立于其他 Phase）
-  ├─ 风险：低（auditd 规则不影响系统功能）
-  └─ 回滚：删除规则文件，augenrules --load
-
-Phase 5: 统一执行脚本 + 验证
-  │  编写 setup-docker-permissions.sh
-  │  集成 apply/verify/rollback/status 子命令
-  │  端到端验证所有功能
-  │  文档更新
-  │
-  ├─ 依赖：Phase 1-4 全部完成
-  └─ 风险：低（仅整合已有配置）
+scripts/verify/
+├── quick-verify.sh          — 快速全服务验证（一键检查所有）
+├── verify-apps.sh           — 应用服务验证
+├── verify-findclass.sh      — findclass-ssr 验证
+├── verify-infrastructure.sh — 基础设施验证
+└── verify-services.sh       — 服务可达性验证
 ```
 
-**Phase 排序理由：**
-1. Phase 1 是基础 -- 没有 socket 权限收敛，其他所有措施都是空谈
-2. Phase 2 紧跟 Phase 1 -- 确保 jenkins 能正常工作后再锁定脚本
-3. Phase 3 在 Phase 1+2 之后 -- 先确保正常路径工作，再配置替代路径
-4. Phase 4 独立 -- 审计日志是监控层，不影响操作权限
-5. Phase 5 最后 -- 统一脚本整合所有配置
+**建议：** 保留但标记为一次性验证工具。这些脚本不 source 任何自定义库（使用原生 echo），不参与本次重构。后续可考虑合并 quick-verify.sh 为唯一入口，其他作为子函数。
 
 ---
 
-## 十三、与 v1.5 架构的兼容性
+## 九、重构风险评估
 
-### 13.1 不影响的 v1.5 功能
-
-| v1.5 功能 | 权限收敛影响 | 理由 |
-|-----------|-------------|------|
-| Jenkins Pipeline（findclass-ssr） | 无影响 | jenkins 用户通过 socket 属组访问 Docker |
-| Jenkins Pipeline（noda-site） | 无影响 | 同上 |
-| Jenkinsfile.infra | 无影响 | 同上 |
-| Keycloak 蓝绿部署 | 无影响 | manage-containers.sh 属于 jenkins 可执行 |
-| 宿主机 PostgreSQL | 无影响 | 与 Docker 权限无关 |
-| 开发环境 setup-dev.sh | 无影响 | 开发环境不受生产权限限制 |
-
-### 13.2 需要注意的集成点
-
-| 集成点 | 注意事项 |
-|--------|---------|
-| `setup-jenkins.sh install` | 步骤 8 需要修改：不再加入 docker 组，改为 socket 属组 |
-| `manage-containers.sh set_active_env()` | sudo 回退逻辑保留但不应触发（/opt/noda/ 属组 jenkins） |
-| `pipeline-stages.sh pipeline_backup_database()` | 备份文件写入 BACKUP_HOST_DIR，需确认 jenkins 有写权限 |
-| `docker compose` volume 挂载 | snippets 目录只读挂载（`:ro`），jenkins 在宿主机端写入，无冲突 |
+| 风险 | 影响 | 缓解措施 |
+|------|------|---------|
+| backup/lib/ source 路径改动导致备份失败 | **高**（备份是核心价值） | 路径改动后完整运行 backup-postgres.sh 验证 |
+| blue-green-deploy.sh 重写破坏部署流程 | **高** | 保留旧脚本作为回退（类似 deploy-apps-prod.sh 保留策略） |
+| http-check.sh 参数化遗漏差异 | **中** | 对比 4 个现有版本的所有参数差异，确保环境变量覆盖完整 |
+| cleanup_old_images 策略合并不兼容 | **中** | 三种策略都保留为独立函数，通过环境变量选择 |
+| readonly 变量重复定义 | **低** | config.sh 已有 guard，constants.sh 使用 `if -z` 检查 |
 
 ---
 
-## 十四、可扩展性考虑
-
-| 关注点 | 当前（单服务器，1 admin + 1 jenkins） | 增长（3-5 admin） | 大型 |
-|-------|--------------------------------------|-------------------|------|
-| Docker 访问控制 | socket 属组 | 同上 | Rootless Docker 或 K8s |
-| 部署执行 | Jenkins 专用 | 同上 | 多 Jenkins agent |
-| 审计 | auditd 本地 | 同上 + 日志聚合 | SIEM（ELK/Datadog） |
-| break-glass | 单脚本 + 封条文件 | 密码保险库（Vault） | JIT 临时权限（Teleport） |
-| sudoers 规则 | 单文件 | 按角色拆分多个文件 | LDAP/SSSD 集中管理 |
-
-**当前阶段结论：** 单服务器、少量管理员场景下，socket 属组 + sudoers 白名单 + break-glass 脚本是最佳平衡点。不引入额外依赖，运维复杂度最低。
-
----
-
-## 数据源
+## Sources
 
 | 来源 | 置信度 | 用途 |
 |------|--------|------|
-| `docker/docker-compose.yml` | HIGH（直接读取） | Docker 服务定义、volume 挂载 |
-| `scripts/pipeline-stages.sh` | HIGH（直接读取） | Jenkins Pipeline 函数、docker 命令调用 |
-| `scripts/manage-containers.sh` | HIGH（直接读取） | 蓝绿容器管理、set_active_env()、update_upstream() |
-| `scripts/setup-jenkins.sh` | HIGH（直接读取） | Jenkins 安装逻辑、docker 组配置 |
-| `jenkins/Jenkinsfile` | HIGH（直接读取） | Pipeline 结构、sh 步骤调用 |
-| `config/nginx/snippets/upstream-*.conf` | HIGH（直接读取） | upstream 动态切换文件 |
-| `.planning/PROJECT.md` | HIGH（直接读取） | v1.6 里程碑目标 |
-| Linux sudoers 文档 | HIGH（稳定技术） | Cmnd_Alias 语法、Defaults 日志配置 |
-| Docker socket 安全模型 | HIGH（稳定技术） | docker 组 = root 等价权限 |
-| auditd 规则语法 | HIGH（稳定技术） | audit 规则字段、ausearch/aureport 用法 |
-| systemd override 机制 | HIGH（稳定技术） | ExecStartPost 钩子 |
+| 完整代码库审计（2026-04-18） | HIGH | 所有 scripts/ 下 .sh 文件的逐行分析 |
+| 依赖关系 grep 验证 | HIGH | `grep -rn "source.*\.sh"` 确认所有 source 链路 |
+| 重复代码量化 | HIGH | `grep -rn "http_health_check\|e2e_verify\|cleanup_old"` 统计重复量 |
+| 行数统计 | HIGH | `wc -l scripts/**/*.sh` 获取各文件规模 |
 
 ---
-
-*Architecture research for: Noda v1.6 Jenkins Pipeline 强制执行 — Docker 权限收敛*
-*Researched: 2026-04-17*
+*Architecture research for: Shell 脚本精简重构*
+*Researched: 2026-04-18*
