@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 35: 共享库建设** - 提取 3 个共享库文件（deploy-check.sh, platform.sh, image-cleanup.sh），消除多处重复代码 (completed 2026-04-18)
 - [x] **Phase 36: 蓝绿部署统一** - 合并两个蓝绿部署脚本为参数化入口，精简 rollback-findclass.sh (completed 2026-04-19)
-- [ ] **Phase 37: 清理与重命名** - 删除不可用的验证脚本，消除 health.sh 命名混淆
+- [x] **Phase 37: 清理与重命名** - 删除不可用的验证脚本，消除 health.sh 命名混淆 (completed 2026-04-19)
 - [ ] **Phase 38: 质量保证** - ShellCheck 零 error + shfmt 统一格式化
 
 <details>
