@@ -1,6 +1,15 @@
 # Noda 基础设施项目
 
-## Current Milestone: Planning next milestone
+## Current Milestone: v1.8 密钥管理集中化
+
+**目标：** 将分散在多个 .env 文件中的敏感环境变量迁移到统一的密钥管理服务，与 Jenkins Pipeline 集成实现安全注入，并备份到 Backblaze B2。
+
+**目标功能：**
+- 密钥管理方案选型与 Docker 部署（Vault/Infisical/Doppler 对比）
+- Jenkins Pipeline 构建前拉取密钥注入
+- 现有 .env 文件迁移后删除明文文件
+- 密钥数据备份到 Backblaze B2
+- 部署频率支持：~60 次/月
 
 **Last shipped:** v1.7 代码精简与规整 (2026-04-19)
 

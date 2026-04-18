@@ -1,11 +1,11 @@
 ---
 gsd_state_version: 1.0
-milestone: ""
-milestone_name: ""
-status: idle
+milestone: "v1.8"
+milestone_name: "密钥管理集中化"
+status: defining_requirements
 stopped_at: ""
-last_updated: "2026-04-19T17:00:00+12:00"
-last_activity: 2026-04-19 -- v1.7 milestone archived, ready for next milestone
+last_updated: "2026-04-19T18:00:00+12:00"
+last_activity: 2026-04-19 -- v1.8 milestone started
 progress:
   total_phases: 0
   completed_phases: 0
@@ -22,14 +22,14 @@ See: .planning/PROJECT.md (updated 2026-04-19)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** Planning next milestone
+**Current focus:** v1.8 密钥管理集中化
 
 ## Current Position
 
-Phase: —
+Phase: Not started (defining requirements)
 Plan: —
-Status: v1.7 shipped and archived, awaiting next milestone
-Last activity: 2026-04-19 -- v1.7 milestone archived
+Status: Defining requirements
+Last activity: 2026-04-19 -- Milestone v1.8 started
 
 ## Previous Milestones
 
@@ -59,6 +59,6 @@ Items acknowledged and deferred at milestone close on 2026-04-19:
 
 ## Session Continuity
 
-Last session: 2026-04-19T17:00:00+12:00
-v1.7 milestone archived (4 phases, 11 plans)
-Next: /gsd-new-milestone to start v1.8 planning
+Last session: 2026-04-19T18:00:00+12:00
+v1.8 milestone started (密钥管理集中化)
+Next: Research → Requirements → Roadmap
