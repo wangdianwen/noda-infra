@@ -31,9 +31,13 @@ ACTIVE_ENV_FILE="${ACTIVE_ENV_FILE:-/opt/noda/active-env}"
 NGINX_CONTAINER="noda-infra-nginx"
 # UPSTREAM_CONF: nginx upstream 配置文件路径（findclass-ssr 用 upstream-findclass.conf，不是 upstream-findclass-ssr.conf）
 UPSTREAM_CONF="${UPSTREAM_CONF:-$PROJECT_ROOT/config/nginx/snippets/upstream-findclass.conf}"
-ENV_TEMPLATE="$PROJECT_ROOT/docker/env-${SERVICE_NAME}.env"
 NETWORK_NAME="noda-network"
-IMAGE_NAME="${SERVICE_NAME}"
+
+# get_env_template - 延迟获取 env 模板路径（SERVICE_NAME 可能被 wrapper 后设）
+get_env_template()
+{
+    echo "$PROJECT_ROOT/docker/env-${SERVICE_NAME}.env"
+}
 
 # ============================================
 # 辅助函数
@@ -124,7 +128,7 @@ prepare_env_file()
     # 注意：不能在 ${VAR:-...} 内嵌套 ${...}，内层 } 会被误认为外层闭合
     local _default_vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${KEYCLOAK_ACTIVE_CONTAINER} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL}'
     local vars="${ENVSUBST_VARS:-$_default_vars}"
-    envsubst "$vars" <"$ENV_TEMPLATE" >"$tmp_file"
+    envsubst "$vars" <"$(get_env_template)" >"$tmp_file"
     echo "$tmp_file"
 }
 
@@ -185,7 +189,7 @@ run_container()
 
     # 如果有 env 模板文件，准备临时 env 文件（noda-site 等纯静态服务无 env 模板）
     local tmp_env_file=""
-    if [ -f "${ENV_TEMPLATE:-}" ]; then
+    if [ -f "$(get_env_template)" ]; then
         tmp_env_file=$(prepare_env_file "$env")
     fi
 
@@ -197,7 +201,8 @@ run_container()
     local extra_docker_args="${EXTRA_DOCKER_ARGS:-}"
     local container_cmd="${CONTAINER_CMD:-}"
     local container_cap_add="${CONTAINER_CAP_ADD:-}"
-    local container_health_cmd="${CONTAINER_HEALTH_CMD:-node -e \"fetch('http://localhost:${SERVICE_PORT}${HEALTH_PATH}').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"}"
+    local _default_health_cmd="node -e \"fetch('http://localhost:${SERVICE_PORT}${HEALTH_PATH}').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\""
+    local container_health_cmd="${CONTAINER_HEALTH_CMD:-$_default_health_cmd}"
 
     log_info "启动容器: $container_name (镜像: $image${container_cmd:+, 命令: $container_cmd})"
 
@@ -399,7 +404,7 @@ cmd_start()
         exit 1
     fi
 
-    local image="${3:-${IMAGE_NAME}:latest}"
+    local image="${3:-${SERVICE_NAME}:latest}"
     run_container "$env" "$image"
 
     log_info "等待健康检查..."

@@ -144,8 +144,15 @@ pipeline {
             }
         }
 
-        // 无 Cleanup 阶段 — Keycloak 使用固定版本镜像，不需要 SHA 镜像清理
-        // 非活跃容器在下次部署时自动清理（pipeline_deploy 会停止旧目标容器）
+        stage('Cleanup') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_cleanup
+                '''
+            }
+        }
     }
 
     post {
