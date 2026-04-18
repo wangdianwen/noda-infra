@@ -43,7 +43,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod
       DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod
       KEYCLOAK_URL: https://auth.noda.co.nz
-      KEYCLOAK_INTERNAL_URL: http://keycloak-${KEYCLOAK_ACTIVE_ENV:-blue}:8080
+      KEYCLOAK_INTERNAL_URL: http://noda-infra-nginx
       KEYCLOAK_REALM: noda
       KEYCLOAK_CLIENT_ID: noda-frontend
       RESEND_API_KEY: ${RESEND_API_KEY:-}
