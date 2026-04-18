@@ -1,23 +1,25 @@
 # Noda 基础设施项目
 
-## Current Milestone: v1.7 代码精简与规整
+## Current Milestone: Planning next milestone
 
-**Goal:** 在不影响现有功能的前提下，消除重复代码、合并冗余脚本、精简过大单文件，使代码库更简洁易维护
-
-**Target features:**
-- 合并重复库文件（双份 log.sh、双份 health.sh）
-- 合并几乎相同的蓝绿部署脚本（findclass vs keycloak）
-- 清理一次性验证脚本（verify-* 系列）
-- 精简大文件（pipeline-stages.sh、setup-jenkins.sh、manage-containers.sh）
-- 审计安全脚本是否可合并
-- 评估 Docker Compose 文件精简可能性
+**Last shipped:** v1.7 代码精简与规整 (2026-04-19)
 
 ## Current State
 
-**Last shipped:** v1.6 Jenkins Pipeline 强制执行 (2026-04-18)
-**Active milestone:** v1.7 代码精简与规整
+**Last shipped:** v1.7 代码精简与规整 (2026-04-19)
+4 phases, 11 plans, 47 commits, 130 files changed (+15,565/-10,999 LOC)
 
 ## Shipped Milestones
+
+### v1.7 代码精简与规整 ✅ (2026-04-19)
+
+4 phases, 11 plans, 130 files changed (+15,565/-10,999 LOC)
+
+- 3 个共享库提取（deploy-check.sh, platform.sh, image-cleanup.sh），消除跨文件重复
+- 蓝绿部署统一参数化脚本（SERVICE_IMAGE/SERVICE_PORT/HEALTH_PATH）
+- 5 个不可用验证脚本删除 + health.sh 命名混淆消除
+- ShellCheck 零 error + shfmt 统一格式化 56 个 shell 脚本
+- .editorconfig + .shellcheckrc 项目级配置建立
 
 ### v1.5 开发环境本地化 + 基础设施 CI/CD ✅ (2026-04-17)
 
@@ -96,6 +98,15 @@ Docker Compose 项目：
 
 ### Validated
 
+- ✓ http_health_check/e2e_verify 提取到 deploy-check.sh — v1.7
+- ✓ detect_platform 提取到 platform.sh — v1.7
+- ✓ cleanup_old_images 提取到 image-cleanup.sh — v1.7
+- ✓ 蓝绿部署统一参数化脚本 — v1.7
+- ✓ 回滚脚本使用共享函数 — v1.7
+- ✓ 不可用验证脚本已删除 — v1.7
+- ✓ health.sh 命名混淆消除 — v1.7
+- ✓ ShellCheck 零 error + .shellcheckrc — v1.7
+- ✓ shfmt 统一格式化 — v1.7
 - ✓ pg_dump 17.x 版本匹配 — v1.3
 - ✓ 备份 sslmode=disable — v1.3
 - ✓ Keycloak nginx 统一反代 — v1.3
@@ -120,9 +131,11 @@ Docker Compose 项目：
 ### Active
 
 - [ ] Jenkins H2 → 本地 PostgreSQL 迁移
-- [ ] Docker 权限收敛：仅 jenkins 用户可执行 docker 命令
-- [ ] 部署脚本权限锁定：仅 jenkins 用户可执行 deploy 脚本
-- [ ] 操作审计日志
+- [ ] pipeline-stages.sh 拆分（1108行，高风险）
+- [ ] setup-jenkins.sh 拆分（1029行，优先级低）
+- [ ] 安全脚本收敛为单一入口
+- [ ] Bats 测试框架引入
+- [ ] ShellCheck 集成 CI 门禁
 
 ### Out of Scope
 
@@ -158,6 +171,11 @@ Docker Compose 项目：
 | Jenkinsfile Declarative Pipeline | 可读性和可维护性 | ✅ Good |
 | 本地 PostgreSQL 替代 Docker dev | 开发环境与生产分离，Docker 纯线上业务 | ✅ Good |
 | 一键开发环境脚本 | 新开发者运行一个命令即可搭建环境 | ✅ Good |
+| log.sh 不合并 | backup 和 scripts 运行环境不同，合并威胁核心价值 | ✅ Good |
+| 蓝绿部署环境变量参数化 | SERVICE_IMAGE/SERVICE_PORT/HEALTH_PATH 统一入口 | ✅ Good |
+| 旧脚本保留为 wrapper | 向后兼容，渐进式迁移 | ✅ Good |
+| SC2034/SC2155 全局抑制 | 项目模式决定，逐文件修改风险大于收益 | ✅ Good |
+| .editorconfig 作为配置格式 | shfmt 原生支持且编辑器通用 | ✅ Good |
 | Jenkins 迁移到本地 PG | 数据更安全、可备份，消除 H2 风险 | — Pending |
 
 ## Evolution
@@ -178,4 +196,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-18 — v1.7 milestone started*
+*Last updated: 2026-04-19 — v1.7 milestone shipped*
