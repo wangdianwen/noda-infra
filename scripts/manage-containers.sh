@@ -117,7 +117,7 @@ prepare_env_file() {
   # 支持通过 ENVSUBST_VARS 环境变量覆盖需要替换的变量列表
   # 默认值保持 findclass-ssr 兼容
   # 注意：不能在 ${VAR:-...} 内嵌套 ${...}，内层 } 会被误认为外层闭合
-  local _default_vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${KEYCLOAK_ACTIVE_CONTAINER}'
+  local _default_vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${KEYCLOAK_ACTIVE_CONTAINER} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL}'
   local vars="${ENVSUBST_VARS:-$_default_vars}"
   envsubst "$vars" < "$ENV_TEMPLATE" > "$tmp_file"
   echo "$tmp_file"
