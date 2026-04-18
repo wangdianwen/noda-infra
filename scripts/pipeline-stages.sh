@@ -14,6 +14,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/manage-containers.sh"
+source "$PROJECT_ROOT/scripts/lib/deploy-check.sh"
 
 # 加载 .env（envsubst 需要数据库密码等环境变量）
 # Jenkins workspace 可能不包含 .env（gitignored），尝试从多个路径加载
@@ -104,106 +105,6 @@ check_backup_freshness() {
 
   log_info "备份检查通过: 最新备份 ${age_hours} 小时前（阈值: ${max_age_hours} 小时）"
   return 0
-}
-
-# ============================================
-# 函数: http_health_check
-# ============================================
-# 通过 nginx 容器在 Docker 网络中检查目标容器的 HTTP 端点
-# 某些镜像（如 Keycloak）内部没有 wget/curl，改用 nginx 容器作为代理检查
-# 参数:
-#   $1: 容器名
-#   $2: 最大重试次数（默认 30）
-#   $3: 重试间隔秒数（默认 4）
-# 返回：0=健康，1=失败
-http_health_check() {
-  local container="$1"
-  local max_retries="${2:-$HEALTH_CHECK_MAX_RETRIES}"
-  local interval="${3:-$HEALTH_CHECK_INTERVAL}"
-  local attempt=0
-
-  log_info "HTTP 健康检查: $container (最多 ${max_retries} 次, 间隔 ${interval}s)"
-
-  while [ $attempt -lt $max_retries ]; do
-    attempt=$((attempt + 1))
-
-    if docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider "http://${container}:${SERVICE_PORT:-3001}${HEALTH_PATH:-/api/health}" 2>/dev/null; then
-      log_success "$container — HTTP 健康检查通过 (第 ${attempt}/${max_retries} 次)"
-      return 0
-    fi
-
-    if [ $attempt -lt $max_retries ]; then
-      sleep "$interval"
-    fi
-  done
-
-  log_error "$container — HTTP 健康检查失败 (${max_retries} 次尝试)"
-  log_info "最近容器日志:"
-  docker logs "$container" --tail 20 2>&1 | sed 's/^/  /'
-  return 1
-}
-
-# ============================================
-# 函数: e2e_verify
-# ============================================
-# 从 blue-green-deploy.sh 复制（该文件无 source guard，不能 source）
-# 通过 nginx 容器 curl 目标容器，验证完整请求链路
-# 参数:
-#   $1: 目标环境 (blue 或 green)
-#   $2: 最大重试次数（默认 5）
-#   $3: 重试间隔秒数（默认 2）
-# 返回：0=验证通过，1=验证失败
-e2e_verify() {
-  local target_env="$1"
-  local max_retries="${2:-$E2E_MAX_RETRIES}"
-  local interval="${3:-$E2E_INTERVAL}"
-  local container_name
-  container_name=$(get_container_name "$target_env")
-
-  log_info "E2E 验证: nginx -> $container_name (最多 ${max_retries} 次)"
-
-  # 检测 nginx 容器是否有 curl
-  local use_curl=true
-  if ! docker exec "$NGINX_CONTAINER" which curl >/dev/null 2>&1; then
-    log_info "nginx 容器无 curl，使用 wget 备选方案"
-    use_curl=false
-  fi
-
-  local attempt=0
-  while [ $attempt -lt $max_retries ]; do
-    attempt=$((attempt + 1))
-
-    local result=1
-
-    if [ "$use_curl" = true ]; then
-      local http_code
-      http_code=$(docker exec "$NGINX_CONTAINER" \
-        curl -s -o /dev/null -w "%{http_code}" \
-        "http://${container_name}:${SERVICE_PORT:-3001}${HEALTH_PATH:-/api/health}" 2>/dev/null || echo "000")
-
-      if [ "$http_code" = "200" ]; then
-        result=0
-      fi
-    else
-      if docker exec "$NGINX_CONTAINER" \
-        wget --quiet --tries=1 --spider \
-        "http://${container_name}:${SERVICE_PORT:-3001}${HEALTH_PATH:-/api/health}" 2>/dev/null; then
-        result=0
-      fi
-    fi
-
-    if [ $result -eq 0 ]; then
-      log_success "E2E 验证通过 (第 ${attempt}/${max_retries} 次)"
-      return 0
-    fi
-
-    if [ $attempt -lt $max_retries ]; then
-      sleep "$interval"
-    fi
-  done
-
-  log_error "E2E 验证失败 (${max_retries} 次尝试)"
-  return 1
 }
 
 # ============================================
@@ -498,7 +399,7 @@ pipeline_health_check() {
   local target_env="$1"
   local target_container
   target_container=$(get_container_name "$target_env")
-  http_health_check "$target_container" "$HEALTH_CHECK_MAX_RETRIES" "$HEALTH_CHECK_INTERVAL"
+  http_health_check "$target_container" "${SERVICE_PORT:-3001}" "${HEALTH_PATH:-/api/health}" "$HEALTH_CHECK_MAX_RETRIES" "$HEALTH_CHECK_INTERVAL"
 }
 
 # pipeline_switch - 切换流量到目标环境
@@ -526,7 +427,7 @@ pipeline_switch() {
 # 参数: $1 = TARGET_ENV
 pipeline_verify() {
   local target_env="$1"
-  e2e_verify "$target_env" "$E2E_MAX_RETRIES" "$E2E_INTERVAL"
+  e2e_verify "$target_env" "${SERVICE_PORT:-3001}" "${HEALTH_PATH:-/api/health}" "$E2E_MAX_RETRIES" "$E2E_INTERVAL"
 }
 
 # pipeline_purge_cdn - 调用 Cloudflare API 清除 CDN 缓存

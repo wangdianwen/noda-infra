@@ -14,105 +14,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/manage-containers.sh"
-
-# ============================================
-# 函数: http_health_check（独立定义，回滚场景专用）
-# ============================================
-# 通过 docker exec 在目标容器内执行 wget 检测 HTTP 端点
-# 回滚场景参数更激进：默认 10 次 x 3 秒 = 30 秒
-# 参数:
-#   $1: 容器名
-#   $2: 最大重试次数（默认 10）
-#   $3: 重试间隔秒数（默认 3）
-# 返回：0=健康，1=失败
-http_health_check() {
-  local container="$1"
-  local max_retries="${2:-10}"
-  local interval="${3:-3}"
-  local attempt=0
-
-  log_info "HTTP 健康检查: $container (最多 ${max_retries} 次, 间隔 ${interval}s)"
-
-  while [ $attempt -lt $max_retries ]; do
-    attempt=$((attempt + 1))
-
-    if docker exec "$container" wget --quiet --tries=1 --spider "http://localhost:3001/api/health" 2>/dev/null; then
-      log_success "$container — HTTP 健康检查通过 (第 ${attempt}/${max_retries} 次)"
-      return 0
-    fi
-
-    if [ $attempt -lt $max_retries ]; then
-      sleep "$interval"
-    fi
-  done
-
-  log_error "$container — HTTP 健康检查失败 (${max_retries} 次尝试)"
-  log_info "最近容器日志:"
-  docker logs "$container" --tail 20 2>&1 | sed 's/^/  /'
-  return 1
-}
-
-# ============================================
-# 函数: e2e_verify（独立定义，回滚场景专用）
-# ============================================
-# 通过 nginx 容器 curl 目标容器，验证完整请求链路
-# 参数:
-#   $1: 目标环境 (blue 或 green)
-#   $2: 最大重试次数（默认 5）
-#   $3: 重试间隔秒数（默认 2）
-# 返回：0=验证通过，1=验证失败
-e2e_verify() {
-  local target_env="$1"
-  local max_retries="${2:-5}"
-  local interval="${3:-2}"
-  local container_name
-  container_name=$(get_container_name "$target_env")
-
-  log_info "E2E 验证: nginx -> $container_name (最多 ${max_retries} 次)"
-
-  # 检测 nginx 容器是否有 curl
-  local use_curl=true
-  if ! docker exec "$NGINX_CONTAINER" which curl >/dev/null 2>&1; then
-    log_info "nginx 容器无 curl，使用 wget 备选方案"
-    use_curl=false
-  fi
-
-  local attempt=0
-  while [ $attempt -lt $max_retries ]; do
-    attempt=$((attempt + 1))
-
-    local result=1
-
-    if [ "$use_curl" = true ]; then
-      local http_code
-      http_code=$(docker exec "$NGINX_CONTAINER" \
-        curl -s -o /dev/null -w "%{http_code}" \
-        "http://${container_name}:3001/api/health" 2>/dev/null || echo "000")
-
-      if [ "$http_code" = "200" ]; then
-        result=0
-      fi
-    else
-      if docker exec "$NGINX_CONTAINER" \
-        wget --quiet --tries=1 --spider \
-        "http://${container_name}:3001/api/health" 2>/dev/null; then
-        result=0
-      fi
-    fi
-
-    if [ $result -eq 0 ]; then
-      log_success "E2E 验证通过 (第 ${attempt}/${max_retries} 次)"
-      return 0
-    fi
-
-    if [ $attempt -lt $max_retries ]; then
-      sleep "$interval"
-    fi
-  done
-
-  log_error "E2E 验证失败 (${max_retries} 次尝试)"
-  return 1
-}
+source "$PROJECT_ROOT/scripts/lib/deploy-check.sh"
 
 # ============================================
 # 主函数
@@ -157,7 +59,7 @@ main() {
   # 步骤 1/4: 验证回滚目标容器健康
   log_info "步骤 1/4: 验证回滚目标容器健康"
 
-  if ! http_health_check "$rollback_container" 10 3; then
+  if ! http_health_check "$rollback_container" "3001" "/api/health" "10" "3"; then
     log_error "回滚目标容器 $rollback_container 不健康，拒绝回滚"
     log_error "请手动检查容器状态: docker logs $rollback_container --tail 50"
     exit 1
@@ -180,7 +82,7 @@ main() {
   # 步骤 3/4: E2E 验证
   log_info "步骤 3/4: E2E 验证"
 
-  if ! e2e_verify "$rollback_env"; then
+  if ! e2e_verify "$rollback_env" "3001" "/api/health" "5" "2"; then
     log_error "回滚后 E2E 验证失败"
     log_error "流量已切换到 $rollback_env，请手动检查服务状态"
     exit 1
