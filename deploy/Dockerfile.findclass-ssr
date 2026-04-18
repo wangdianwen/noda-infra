@@ -27,7 +27,9 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/shared/tsconfig.json ./packages/shared/
 COPY packages/shared/src ./packages/shared/src
 COPY packages/design-tokens/package.json ./packages/design-tokens/
-COPY packages/design-tokens/build ./packages/design-tokens/build
+COPY packages/design-tokens/sd.config.js ./packages/design-tokens/
+COPY packages/design-tokens/tokens ./packages/design-tokens/tokens
+COPY packages/design-tokens/src ./packages/design-tokens/src
 COPY apps/findclass/web/package.json ./apps/findclass/web/
 COPY apps/findclass/web/tsconfig.json ./apps/findclass/web/
 COPY apps/findclass/web/index.html ./apps/findclass/web/
@@ -48,6 +50,9 @@ RUN pnpm install --ignore-scripts --config.node-linker=hoisted
 
 # 构建 shared 包（NodeNext，生成 dist/）
 RUN cd packages/shared && npx tsc
+
+# 构建 design-tokens 包（style-dictionary，生成 build/）
+RUN cd packages/design-tokens && npm run build
 
 # 构建 database 包（NodeNext，生成 dist/）
 RUN cd packages/database && npx tsc
