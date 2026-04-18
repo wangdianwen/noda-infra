@@ -19,7 +19,7 @@
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 35: 共享库建设** - 提取 3 个共享库文件（deploy-check.sh, platform.sh, image-cleanup.sh），消除多处重复代码 (completed 2026-04-18)
-- [ ] **Phase 36: 蓝绿部署统一** - 合并两个蓝绿部署脚本为参数化入口，精简 rollback-findclass.sh
+- [x] **Phase 36: 蓝绿部署统一** - 合并两个蓝绿部署脚本为参数化入口，精简 rollback-findclass.sh (completed 2026-04-19)
 - [ ] **Phase 37: 清理与重命名** - 删除不可用的验证脚本，消除 health.sh 命名混淆
 - [ ] **Phase 38: 质量保证** - ShellCheck 零 error + shfmt 统一格式化
 
@@ -134,11 +134,11 @@ Plans:
   2. 旧 `scripts/keycloak-blue-green-deploy.sh` 保留为向后兼容 wrapper，调用新脚本并传递正确参数
   3. `scripts/rollback-findclass.sh` 使用 `scripts/lib/deploy-check.sh` 中的共享函数，不再包含内联的健康检查逻辑
   4. findclass-ssr 蓝绿部署通过统一脚本执行，行为与重构前一致（零停机、自动回滚）
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 36-01: 合并蓝绿部署脚本为参数化入口
-- [ ] 36-02: 精简 rollback-findclass.sh 使用共享库
+- [x] 36-01-PLAN.md — 合并蓝绿部署脚本为统一参数化入口（IMAGE_SOURCE/CLEANUP_METHOD 分支 + findclass/keycloak wrapper）
+- [x] 36-02-PLAN.md — 回滚脚本参数化（rollback-deploy.sh 统一脚本 + findclass/keycloak wrapper）
 
 #### Phase 37: 清理与重命名
 **Goal**: 代码库不再包含不可用的遗留脚本，文件命名不再引起混淆
@@ -175,7 +175,7 @@ Phases execute in numeric order: 35 -> 36 -> 37 -> 38
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 35. 共享库建设 | v1.7 | 0/3 | Not started | - |
-| 36. 蓝绿部署统一 | v1.7 | 0/2 | Not started | - |
+| 35. 共享库建设 | v1.7 | 3/3 | Complete | 2026-04-18 |
+| 36. 蓝绿部署统一 | v1.7 | 2/2 | Complete | 2026-04-19 |
 | 37. 清理与重命名 | v1.7 | 0/2 | Not started | - |
 | 38. 质量保证 | v1.7 | 0/2 | Not started | - |
