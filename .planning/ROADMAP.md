@@ -148,11 +148,11 @@ Plans:
   1. `scripts/verify/` 目录下 5 个一次性验证脚本已删除，目录不存在或为空
   2. `scripts/backup/lib/health.sh` 重命名为 `scripts/backup/lib/db-health.sh`，所有 source 引用路径已更新
   3. 项目中无任何文件引用已删除的 verify 脚本或旧的 health.sh 路径
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 37-01: 删除 scripts/verify/ 下 5 个不可用的验证脚本
-- [ ] 37-02: 重命名 backup/lib/health.sh 为 db-health.sh 并更新引用
+- [ ] 37-01-PLAN.md — 删除 scripts/verify/ 下 5 个不可用的验证脚本 + 更新 deploy 脚本引用
+- [ ] 37-02-PLAN.md — 重命名 backup/lib/health.sh 为 db-health.sh 并更新 source 路径（per D-01）
 
 #### Phase 38: 质量保证
 **Goal**: scripts/ 目录下所有 .sh 文件通过 ShellCheck 零 error 检查并有一致的代码风格
