@@ -108,6 +108,8 @@ services:
   # 此定义仅作为配置参考保留
   # ----------------------------------------
   keycloak:
+    profiles:
+      - disabled
     image: quay.io/keycloak/keycloak:26.2.3
     container_name: noda-infra-keycloak-prod
     labels:

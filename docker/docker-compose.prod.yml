@@ -52,9 +52,14 @@ services:
       - /tmp
 
   # ----------------------------------------
-  # Keycloak 认证服务（生产环境）
+  # Keycloak 认证服务（已迁移到蓝绿部署）
+  # 生产环境通过 Jenkins keycloak-deploy Pipeline 管理
+  # 容器名为 keycloak-blue / keycloak-green
+  # 此定义仅作为配置参考保留，profiles: disabled 防止 compose 意外启动
   # ----------------------------------------
   keycloak:
+    profiles:
+      - disabled
     <<: *common-security
     image: quay.io/keycloak/keycloak:26.2.3
     labels:
