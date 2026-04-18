@@ -127,7 +127,7 @@ http_health_check() {
   while [ $attempt -lt $max_retries ]; do
     attempt=$((attempt + 1))
 
-    if docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider "http://${container}:${SERVICE_PORT:-3001}${HEALTH_PATH:-/api/health}" 2>/dev/null; then
+    if docker exec "$NGINX_CONTAINER" wget -S --spider "http://${container}:${SERVICE_PORT:-3001}${HEALTH_PATH:-/api/health}" 2>&1 | grep -q 'HTTP/1.[01] [23]..'; then
       log_success "$container — HTTP 健康检查通过 (第 ${attempt}/${max_retries} 次)"
       return 0
     fi
