@@ -11,30 +11,29 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/log.sh"
+source "$SCRIPT_DIR/lib/secrets.sh"
 
 # 解析活跃 Keycloak 容器名（蓝绿部署后容器名为 keycloak-blue/green）
 KEYCLOAK_ACTIVE_ENV=$(cat /opt/noda/active-env-keycloak 2>/dev/null || echo "blue")
 KEYCLOAK_CONTAINER="keycloak-${KEYCLOAK_ACTIVE_ENV}"
 
 # ============================================
-# 步骤 1: 解密密钥
+# 步骤 1: 加载密钥
 # ============================================
-log_info "步骤 1/6: 解密 Google OAuth 凭据"
+log_info "步骤 1/6: 获取 Google OAuth 凭据"
 
-export SOPS_AGE_KEY_FILE="$PROJECT_ROOT/config/keys/git-age-key.txt"
+load_secrets
 
-# 解密并提取凭据
-SECRETS=$(sops --decrypt "$PROJECT_ROOT/config/secrets.sops.yaml" 2>/dev/null)
-
-GOOGLE_CLIENT_ID=$(echo "$SECRETS" | grep "google_oauth_client_id:" | cut -d' ' -f2)
-GOOGLE_CLIENT_SECRET=$(echo "$SECRETS" | grep "google_oauth_client_secret:" | cut -d' ' -f2)
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
+GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-}"
 
 if [ -z "$GOOGLE_CLIENT_ID" ] || [ -z "$GOOGLE_CLIENT_SECRET" ]; then
-    log_error "无法解密 Google OAuth 凭据"
+    log_error "缺少 Google OAuth 凭据（GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET）"
+    log_error "请确保 DOPPLER_TOKEN 已设置，且 Doppler 中已配置这些密钥"
     exit 1
 fi
 
-log_success "凭据解密成功"
+log_success "凭据已从环境变量获取"
 log_info "Client ID: ${GOOGLE_CLIENT_ID:0:20}..."
 
 # ============================================

@@ -213,7 +213,6 @@ log_info "步骤 1/5: 验证环境配置"
 log_info "=========================================="
 
 # Doppler 密钥已通过上方 load_secrets() 加载（per Phase 40）
-# config/secrets.sops.yaml 检查已移除（SOPS 将在 Phase 41 清理）
 
 if ! command -v docker >/dev/null 2>&1; then
     log_error "Docker 未安装"
