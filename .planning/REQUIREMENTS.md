@@ -15,8 +15,10 @@
 ### B. 构建缓存清理 (CACHE)
 
 - [ ] **CACHE-01**: Jenkins workspace 中 findclass-ssr/noda-site 的 `node_modules` 在部署成功后清理
-- [ ] **CACHE-02**: pnpm store 定期 prune（每 7 天一次，非每次部署），可通过参数强制触发
-- [ ] **CACHE-03**: npm cache 定期清理（`npm cache clean --force`），与 pnpm store prune 同频率
+- [x] **CACHE-02
+**: pnpm store 定期 prune（每 7 天一次，非每次部署），可通过参数强制触发
+- [x] **CACHE-03
+**: npm cache 定期清理（`npm cache clean --force`），与 pnpm store prune 同频率
 
 ### C. 旧文件清理 (FILE)
 
@@ -26,7 +28,8 @@
 ### D. Jenkins Pipeline 清理 (JENK)
 
 - [ ] **JENK-01**: 清理 Jenkins 已完成的旧 Pipeline 构建（保留最近 N 次构建记录，删除更早的 artifacts 和构建目录）
-- [ ] **JENK-02**: 清理 Jenkins workspace 中已完成构建的工作目录（释放磁盘空间）
+- [x] **JENK-02
+**: 清理 Jenkins workspace 中已完成构建的工作目录（释放磁盘空间）
 
 ## Future Requirements
 
