@@ -153,16 +153,10 @@ noda-ops 容器启动流程：
 
 | 文件路径 | 说明 | 提交到 Git |
 |----------|------|-----------|
-| `config/secrets.sops.yaml` | SOPS 加密的密钥存储 | 是（加密后） |
+| Doppler 云端 | 密钥集中管理（项目 `noda`，环境 `prd`） | N/A（Doppler 托管） |
 | `config/secrets.local.yaml` | 本地明文密钥（开发用） | 否 |
-| `config/keys/git-age-key.txt` | age 加密私钥（用于 SOPS 解密） | 否 |
 
-`secrets.sops.yaml` 中存储的密钥：
-- `cloudflare_tunnel_token` - Cloudflare Tunnel Token
-- `postgres_password` - PostgreSQL 密码
-- `keycloak_admin_password` - Keycloak 管理员密码
-- `google_oauth_client_id` - Google OAuth 客户端 ID
-- `google_oauth_client_secret` - Google OAuth 客户端密钥
+密钥通过 Doppler（项目 `noda`，环境 `prd`）集中管理。详见 [secrets-management.md](secrets-management.md)。
 
 ---
 
@@ -260,26 +254,24 @@ docker compose -f docker/docker-compose.app.yml up -d
 
 ## 密钥管理
 
-项目使用 **SOPS + age** 加密敏感信息，详见 [secrets-management.md](secrets-management.md)。
+项目使用 **Doppler** 集中管理敏感信息，详见 [secrets-management.md](secrets-management.md)。
 
 ### 工作流程
 
 ```bash
-# 编辑加密密钥
-sops config/secrets.sops.yaml
+# 设置 Doppler Service Token
+export DOPPLER_TOKEN='dp.st.prd.xxxx'
 
-# 设置解密密钥路径
-export SOPS_AGE_KEY_FILE=config/keys/git-age-key.txt
-
-# 查看解密内容（不修改文件）
-sops --decrypt config/secrets.sops.yaml
+# 加载密钥到环境变量
+source scripts/lib/secrets.sh
+load_secrets
 ```
 
 ### 安全规则
 
-- 加密后的 `config/secrets.sops.yaml` 可以提交到 Git
-- 明文密钥文件（`config/secrets.local.yaml`、`config/keys/`）不提交
-- 部署脚本 (`scripts/deploy/deploy-infrastructure-prod.sh`) 自动处理解密
+- 密钥存储在 Doppler 云端，不提交到 Git
+- 本地明文密钥文件（`config/secrets.local.yaml`）不提交
+- 部署脚本通过 `load_secrets()` 自动从 Doppler 拉取密钥
 - `scripts/backup/.env.backup` 包含 B2 密钥，已在 `.gitignore` 中排除
 
 ---
@@ -294,10 +286,14 @@ sops --decrypt config/secrets.sops.yaml
 
 2. 配置密钥管理：
    ```bash
-   # 设置 SOPS age 密钥路径
-   export SOPS_AGE_KEY_FILE=config/keys/git-age-key.txt
-   # 编辑加密密钥
-   sops config/secrets.sops.yaml
+   # 安装 Doppler CLI
+   bash scripts/install-doppler.sh
+
+   # 设置 Doppler Service Token
+   export DOPPLER_TOKEN='dp.st.prd.xxxx'
+
+   # 验证密钥完整性
+   bash scripts/verify-doppler-secrets.sh
    ```
 
 3. 配置备份系统（可选）：

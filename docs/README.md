@@ -27,7 +27,7 @@
   - **适用场景**：了解 Keycloak 部署脚本
 
 - **[密钥管理指南](/docs/secrets-management.md)**
-  - SOPS + age 加密
+  - Doppler 密钥管理
   - 密钥配置和使用
   - 安全注意事项
   - **适用场景**：管理敏感信息、添加新密钥
@@ -99,8 +99,7 @@ curl -s https://auth.noda.co.nz/realms/noda | jq -r '.realm'
 
 - [Docker Compose 文档](https://docs.docker.com/compose/)
 - [Keycloak 官方文档](https://www.keycloak.org/documentation)
-- [SOPS 加密工具](https://github.com/getsops/sops)
-- [age 加密工具](https://github.com/FiloSottile/age)
+- [Doppler 官方文档](https://docs.doppler.com/docs)
 
 ## 💡 贡献指南
 
@@ -127,13 +126,9 @@ curl -s https://auth.noda.co.nz/realms/noda | jq -r '.realm'
 
 3. **检查配置**：
    ```bash
-   # 验证密钥文件
-   ls -la config/secrets.sops.yaml
-   ls -la config/keys/git-age-key.txt
-
-   # 测试解密
-   export SOPS_AGE_KEY_FILE=/Users/dianwenwang/Project/noda-infra/config/keys/git-age-key.txt
-   sops --decrypt config/secrets.sops.yaml
+   # 验证 Doppler 密钥
+   export DOPPLER_TOKEN='dp.st.prd.xxxx'
+   bash scripts/verify-doppler-secrets.sh
    ```
 
 ---

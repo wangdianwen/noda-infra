@@ -74,7 +74,7 @@ graph TD
 | Supervisord | noda-ops 容器内管理 cron 和 cloudflared 多进程 | `deploy/supervisord.conf` |
 | Vite 构建参数 | `VITE_*` 变量在 `docker build` 时写入前端 JS，运行时不可更改 | `deploy/Dockerfile.findclass-ssr` |
 | Keycloak Hostname SPI v2 | 使用 `KC_HOSTNAME` 完整 URL 配置，自动从 scheme 推导端口 | `docker/docker-compose.yml` keycloak 服务 |
-| SOPS + age | 密钥加密方案，敏感配置存储在 `config/secrets.sops.yaml` | `.sops.yaml`、`config/secrets.sops.yaml` |
+| Doppler | 密钥管理方案，通过 Doppler CLI 集中管理敏感配置 | `scripts/lib/secrets.sh` |
 | Cloudflare Tunnel | 通过 token 认证建立隧道，ingress 规则按域名路由 | `config/cloudflare/config.yml` |
 
 ## 目录结构说明
@@ -85,9 +85,8 @@ noda-infra/
 │   ├── nginx/                 # Nginx 主配置、server blocks、snippets
 │   ├── cloudflare/            # Cloudflare Tunnel ingress 规则
 │   ├── environments/          # .env.example 和 .env.production.template
-│   ├── keys/                  # age 加密密钥（不提交到 Git）
-│   ├── secrets.sops.yaml      # SOPS 加密的敏感配置
-│   └── secrets.local.yaml     # 本地解密配置（不提交到 Git）
+│   ├── keys/                  # age 加密密钥（离线备份用，不提交到 Git）
+│   └── secrets.local.yaml     # 本地开发密钥（不提交到 Git）
 ├── deploy/                    # Dockerfile 和容器启动脚本
 │   ├── Dockerfile.findclass-ssr  # 前端+API 多阶段构建（node:20-alpine）
 │   ├── Dockerfile.noda-ops       # 运维工具集镜像（alpine:3.19）

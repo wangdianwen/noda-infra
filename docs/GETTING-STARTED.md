@@ -15,10 +15,9 @@
 | Docker | 20.10+ | 容器运行时，所有服务基于 Docker 部署 |
 | Docker Compose | v2.0+ | 服务编排工具（随 Docker Desktop 安装） |
 | Git | 任意 | 版本控制 |
-| SOPS | 3.12+ | 密钥加密/解密工具（生产环境部署需要） |
-| age | 1.3+ | SOPS 的加密后端（生产环境部署需要） |
+| Doppler CLI | 3.x+ | 密钥拉取（生产环境部署需要） |
 
-**开发环境只需 Docker 和 Docker Compose**，SOPS 和 age 仅在生产部署解密密钥时需要。
+**开发环境只需 Docker 和 Docker Compose**，Doppler CLI 仅在生产部署拉取密钥时需要。
 
 ---
 
@@ -204,28 +203,34 @@ docker network create noda-network
 lsof -i :8080
 ```
 
-### 问题 4: SOPS 解密失败
+### 问题 4: Doppler 密钥拉取失败
 
-**症状**：`Error: cannot decrypt` 或部署脚本在解密步骤失败
+**症状**：`Doppler 密钥拉取失败` 或部署脚本在密钥加载步骤失败
 
 **解决方案**：
 
-1. 确认 age 密钥文件存在：
+1. 确认 Doppler CLI 已安装：
 
    ```bash
-   ls config/keys/git-age-key.txt
+   doppler --version
    ```
 
-2. 设置环境变量：
+   如未安装：
 
    ```bash
-   export SOPS_AGE_KEY_FILE=config/keys/git-age-key.txt
+   bash scripts/install-doppler.sh
    ```
 
-3. 测试解密：
+2. 设置 Service Token：
 
    ```bash
-   sops --decrypt config/secrets.sops.yaml
+   export DOPPLER_TOKEN='dp.st.prd.xxxx'
+   ```
+
+3. 验证密钥完整性：
+
+   ```bash
+   bash scripts/verify-doppler-secrets.sh
    ```
 
 ### 问题 5: 前端配置修改后未生效
@@ -262,4 +267,4 @@ docker compose -f docker/docker-compose.app.yml build findclass-ssr --no-cache
 - [架构文档](architecture.md) -- 了解系统架构、组件关系和数据流
 - [配置指南](CONFIGURATION.md) -- 完整的环境变量和配置文件说明
 - [部署指南](DEPLOYMENT_GUIDE.md) -- 生产环境完整部署流程和故障排查
-- [密钥管理](secrets-management.md) -- SOPS + age 密钥加密方案
+- [密钥管理](secrets-management.md) -- Doppler 密钥管理方案

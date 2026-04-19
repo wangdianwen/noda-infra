@@ -17,9 +17,6 @@ logs/
 # Docker
 *.log
 
-# SOPS 解密后的文件
-*.decrypted
-
 # 数据库备份文件（不要提交到 git）
 backups/sql/*.sql
 backups/*.sql
@@ -29,12 +26,7 @@ docker/volumes/backup/
 scripts/backup/.env.backup
 
 # ===== 敏感文件 =====
-# 未加密的环境配置
-config/secrets.sops.yaml.bak
 config/keys/
-
-# 允许提交 SOPS 加密文件
-!config/secrets.sops.yaml
 config/secrets.local.yaml
 .env.backup
 config/nginx/snippets/upstream-findclass.conf

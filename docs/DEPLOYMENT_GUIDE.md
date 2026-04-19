@@ -43,12 +43,12 @@ bash scripts/deploy/deploy-infrastructure-prod.sh
 ### 步骤 1: 验证环境
 
 ```bash
-# 检查必需文件
-config/secrets.sops.yaml  # 加密的凭据（Google OAuth, 数据库密码等）
-
 # 检查必需工具
 docker --version
 docker-compose --version
+
+# 确保 Doppler 密钥可访问
+export DOPPLER_TOKEN='dp.st.prd.xxxx'
 ```
 
 ### 步骤 2: 初始化数据库
@@ -78,36 +78,23 @@ docker-compose -f docker/docker-compose.yml up -d postgres keycloak nginx
 
 自动执行 `scripts/setup-keycloak-full.sh`：
 
-1. **解密凭据**: 从 `config/secrets.sops.yaml` 提取 Google OAuth 凭据
+1. **获取凭据**: 从 Doppler 获取 Google OAuth 凭据
 2. **创建 realm**: 创建 `noda` realm
 3. **创建 client**: 创建 `noda-frontend` client
 4. **配置 Google OAuth**: 配置 Google Identity Provider
 
 ## 🔐 密钥管理
 
-### 加密文件位置
+密钥通过 Doppler 云端集中管理（项目 `noda`，环境 `prd`），详见 [密钥管理指南](secrets-management.md)。
 
-```
-config/secrets.sops.yaml  # 加密的凭据文件
-config/keys/git-age-key.txt  # AGE 解密密钥
-```
-
-### 加密内容
-
-- `google_oauth_client_id` - Google OAuth 客户端 ID
-- `google_oauth_client_secret` - Google OAuth 客户端密钥
-- `keycloak_admin_password` - Keycloak 管理员密码
-- `postgres_password` - PostgreSQL 密码
-- `cloudflare_tunnel_token` - Cloudflare Tunnel 令牌
-
-### 解密方式
+### 配置 Doppler 访问
 
 ```bash
-# 设置密钥文件路径
-export SOPS_AGE_KEY_FILE=/path/to/config/keys/git-age-key.txt
+# 设置 Doppler Service Token
+export DOPPLER_TOKEN='dp.st.prd.xxxx'
 
-# 解密查看
-sops --decrypt config/secrets.sops.yaml
+# 验证密钥完整性
+bash scripts/verify-doppler-secrets.sh
 ```
 
 ## 📊 部署验证
@@ -306,22 +293,22 @@ from origin 'https://class.noda.co.nz' has been blocked by CORS policy
    bash scripts/setup-keycloak-full.sh
    ```
 
-### 问题 4: SOPS 解密失败
+### 问题 4: Doppler 密钥拉取失败
 
-**症状**：`Error: cannot decrypt` 或 `Error: data could not be decrypted`
+**症状**：`Doppler 密钥拉取失败` 或 `DOPPLER_TOKEN 未设置`
 
-**原因**：AGE 密钥文件未找到或不匹配
+**原因**：Doppler Service Token 未设置或已过期
 
 **解决方案**：
 ```bash
-# 确认密钥文件存在
-ls -la config/keys/git-age-key.txt
+# 安装 Doppler CLI（如未安装）
+bash scripts/install-doppler.sh
 
-# 设置环境变量
-export SOPS_AGE_KEY_FILE=/Users/dianwenwang/Project/noda-infra/config/keys/git-age-key.txt
+# 设置 Service Token（从 Doppler Dashboard 获取）
+export DOPPLER_TOKEN='dp.st.prd.xxxx'
 
-# 测试解密
-sops --decrypt config/secrets.sops.yaml
+# 验证密钥完整性
+bash scripts/verify-doppler-secrets.sh
 ```
 
 ### 问题 5: 容器启动超时
@@ -368,7 +355,6 @@ docker restart noda-infra-keycloak-1
 ```bash
 # 1. 更新代码或配置文件
 vim docker/docker-compose.yml
-vim config/secrets.sops.yaml
 
 # 2. 重新部署
 bash scripts/deploy/deploy-infrastructure-prod.sh
@@ -379,9 +365,9 @@ bash scripts/deploy/deploy-infrastructure-prod.sh
 部署前：
 - [ ] Docker 已安装
 - [ ] Docker Compose 已安装
-- [ ] `config/secrets.sops.yaml` 文件存在
-- [ ] `config/keys/git-age-key.txt` 密钥文件存在
-- [ ] 可以成功解密 `secrets.sops.yaml`
+- [ ] Doppler CLI 已安装
+- [ ] `DOPPLER_TOKEN` 已设置
+- [ ] `bash scripts/verify-doppler-secrets.sh` 验证通过
 
 部署后：
 - [ ] PostgreSQL 容器运行正常

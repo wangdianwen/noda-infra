@@ -39,7 +39,7 @@
 **`scripts/setup-keycloak-full.sh`**
 - **用途**：配置 Keycloak（realm、client、Google OAuth）
 - **功能**：
-  1. 解密 Google OAuth 凭据
+  1. 从 Doppler 获取 Google OAuth 凭据
   2. 检查 Keycloak 容器是否运行
   3. 登录 Keycloak 管理员
   4. 创建/更新 noda realm
@@ -185,15 +185,11 @@ bash scripts/verify/verify-infrastructure.sh
 ### 首次部署
 
 ```bash
-# 1. 确保密钥文件存在
-ls -la config/secrets.sops.yaml
-ls -la config/keys/git-age-key.txt
+# 1. 确保密钥可访问
+export DOPPLER_TOKEN='dp.st.prd.xxxx'
+bash scripts/verify-doppler-secrets.sh
 
-# 2. 测试解密
-export SOPS_AGE_KEY_FILE=/Users/dianwenwang/Project/noda-infra/config/keys/git-age-key.txt
-sops --decrypt config/secrets.sops.yaml
-
-# 3. 执行部署
+# 2. 执行部署
 bash scripts/deploy/deploy-infrastructure-prod.sh
 ```
 
@@ -231,7 +227,7 @@ deploy-infrastructure-prod.sh（主脚本）
 │   └── 检查并创建 keycloak 数据库
 │
 └── setup-keycloak-full.sh（Keycloak 配置）
-    ├── 解密 secrets.sops.yaml（提取 Google OAuth 凭据）
+    ├── 从 Doppler 获取 Google OAuth 凭据
     ├── 创建 noda realm
     ├── 创建 noda-frontend client（含 CORS 配置）
     └── 配置 Google Identity Provider

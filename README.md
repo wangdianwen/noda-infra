@@ -22,7 +22,7 @@ cp config/environments/.env.example config/environments/.env
 
 - Docker 29.1.3+
 - Docker Compose v2.40.3+
-- SOPS 3.12.2 + age 1.3.1（密钥加密，生产环境需要）
+- Doppler CLI 3.x+（密钥管理，生产环境需要）
 
 ## 快速开始
 
@@ -97,7 +97,7 @@ noda-infra/
 │   ├── backup/         # 备份与恢复脚本（backup-postgres.sh, restore-postgres.sh）
 │   ├── deploy/         # 部署脚本（deploy-infrastructure-prod.sh, deploy-apps-prod.sh）
 │   ├── verify/         # 验证脚本（verify-infrastructure.sh, quick-verify.sh）
-│   ├── utils/          # 工具脚本（validate-docker.sh, decrypt-secrets.sh）
+│   ├── utils/          # 工具脚本（validate-docker.sh）
 │   └── lib/            # 共享库（log.sh）
 ├── services/           # 服务专用配置
 │   ├── postgres/       # PostgreSQL 初始化脚本和配置（init/, conf/）
@@ -137,7 +137,7 @@ scripts/backup/backup-postgres.sh
 - [测试指南](docs/TESTING.md) — 测试框架和运行方式
 - [配置说明](docs/CONFIGURATION.md) — 环境变量和配置文件详解
 - [部署指南](docs/DEPLOYMENT_GUIDE.md) — 完整的生产/开发环境部署流程
-- [密钥管理](docs/secrets-management.md) — SOPS + age 密钥加密方案
+- [密钥管理](docs/secrets-management.md) — Doppler 密钥管理方案
 - [Keycloak 脚本](docs/KEYCLOAK_SCRIPTS.md) — Keycloak 配置和 realm 初始化脚本
 
 ## 许可证
