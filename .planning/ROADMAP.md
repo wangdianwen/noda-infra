@@ -132,12 +132,12 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
   3. Pipeline 部署成功后，Jenkins workspace 中的 noda-apps/node_modules 被自动删除
   4. Pipeline 部署前后分别输出 `df -h` 和 `docker system df` 磁盘快照到日志，可对比清理效果
   5. infra-pipeline 目录下超过 30 天的旧备份文件被自动清理，deploy-failure-*.log 临时文件在部署成功后被删除
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 43-01: 新建 scripts/lib/cleanup.sh 共享库（Docker/Node.js/文件清理函数 + 磁盘快照）
-- [ ] 43-02: 增强 pipeline_cleanup() 和 pipeline_infra_cleanup()（集成 cleanup.sh）
-- [ ] 43-03: 验证与测试（手动触发 Pipeline 验证清理效果）
+- [ ] 43-01-PLAN.md -- 新建 scripts/lib/cleanup.sh 共享库（9 个清理函数 + 2 个 wrapper + 磁盘快照）
+- [ ] 43-02-PLAN.md -- 增强 pipeline-stages.sh（source cleanup.sh + 4 处函数增强）
+- [ ] 43-03-PLAN.md -- 手动触发 Pipeline 端到端验证
 
 ### Phase 44: Jenkins 维护清理 + 定期任务
 **Goal**: 低频维护类清理自动化 -- Jenkins 旧构建记录定期清理、pnpm store 和 npm cache 定期 prune
@@ -161,5 +161,5 @@ Phases execute in numeric order: 43 -> 44
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 43. 清理共享库 + Pipeline 集成 | 0/3 | Not started | - |
+| 43. 清理共享库 + Pipeline 集成 | 0/3 | Planned | - |
 | 44. Jenkins 维护清理 + 定期任务 | 0/2 | Not started | - |
