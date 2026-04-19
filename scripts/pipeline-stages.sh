@@ -884,7 +884,7 @@ pipeline_infra_verify()
             ;;
         nginx)
             # 通过 nginx 容器 wget 自身验证
-            docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://localhost/ 2>/dev/null
+            docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://127.0.0.1/ 2>/dev/null
             log_success "Nginx E2E 验证通过"
             ;;
         noda-ops)
