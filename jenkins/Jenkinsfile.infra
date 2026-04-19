@@ -12,6 +12,8 @@ pipeline {
         PROJECT_ROOT = "${WORKSPACE}"
         COMPOSE_BASE = "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml"
         BACKUP_HOST_DIR = "${WORKSPACE}/docker/volumes/backup"
+        // Doppler Service Token（Phase 40，per D-06/D-07）
+        DOPPLER_TOKEN = credentials('doppler-service-token')
     }
 
     options {
