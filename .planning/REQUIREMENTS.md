@@ -27,7 +27,8 @@
 
 ### D. Jenkins Pipeline 清理 (JENK)
 
-- [ ] **JENK-01**: 清理 Jenkins 已完成的旧 Pipeline 构建（保留最近 N 次构建记录，删除更早的 artifacts 和构建目录）
+- [x] **JENK-01
+**: 清理 Jenkins 已完成的旧 Pipeline 构建（保留最近 N 次构建记录，删除更早的 artifacts 和构建目录）
 - [x] **JENK-02
 **: 清理 Jenkins workspace 中已完成构建的工作目录（释放磁盘空间）
 
