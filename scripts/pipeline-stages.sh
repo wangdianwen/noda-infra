@@ -897,14 +897,15 @@ pipeline_infra_cleanup()
 
     case "$service" in
         keycloak)
-            # 清理 dangling images（keycloak 使用 SERVICE_IMAGE，不会产生 SHA 标签）
             cleanup_dangling
             ;;
-        nginx | noda-ops)
-            log_info "$service 无需额外清理"
+        nginx)
+            log_info "$service 无需额外清理（dangling 清理由通用 wrapper 处理）"
+            ;;
+        noda-ops)
+            cleanup_by_date_threshold "noda-ops"
             ;;
         postgres)
-            # 无额外清理
             log_info "PostgreSQL 无需额外清理"
             ;;
         *)
