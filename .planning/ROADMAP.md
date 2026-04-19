@@ -105,7 +105,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 **Milestone Goal:** 将分散在多个 .env 文件中的敏感环境变量迁移到 Doppler 集中管理，与 Jenkins Pipeline 集成实现安全注入，备份到 Backblaze B2，并清理 Git 历史中的密钥泄露。
 
 - [x] **Phase 39: Doppler 基础设施搭建** (3/3 plans) -- completed 2026-04-19
-- [ ] **Phase 40: Jenkins Pipeline 集成** -- Doppler 双模式密钥加载、Jenkinsfile 凭据绑定、手动脚本支持
+- [x] **Phase 40: Jenkins Pipeline 集成** (3/3 plans) -- completed 2026-04-19
 - [ ] **Phase 41: 迁移与清理** -- .env 文件迁移、明文删除、SOPS 代码清理
 - [ ] **Phase 42: 备份与安全** -- B2 密钥快照、Git 历史 BFG 清理
 
@@ -139,9 +139,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 40-01-PLAN.md -- 创建 scripts/lib/secrets.sh 共享密钥加载库 + 改造 pipeline-stages.sh
-- [ ] 40-02-PLAN.md -- 3 个 Jenkinsfile 添加 DOPPLER_TOKEN credentials 注入
-- [ ] 40-03-PLAN.md -- 3 个手动部署脚本 Doppler 双模式支持
+- [x] 40-01-PLAN.md -- 创建 scripts/lib/secrets.sh 共享密钥加载库 + 改造 pipeline-stages.sh
+- [x] 40-02-PLAN.md -- 3 个 Jenkinsfile 添加 DOPPLER_TOKEN credentials 注入
+- [x] 40-03-PLAN.md -- 3 个手动部署脚本 Doppler 双模式支持
 
 ### Phase 41: 迁移与清理
 **Goal**: 所有密钥已在 Doppler 验证通过后，删除明文 .env 文件和废弃的 SOPS 代码
@@ -171,6 +171,6 @@ Phases execute in numeric order: 39 -> 40 -> 41 -> 42
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 39. Doppler 基础设施搭建 | 3/3 | Complete | 2026-04-19 |
-| 40. Jenkins Pipeline 集成 | 0/3 | Not started | - |
+| 40. Jenkins Pipeline 集成 | 3/3 | Complete | 2026-04-19 |
 | 41. 迁移与清理 | 0/TBD | Not started | - |
 | 42. 备份与安全 | 0/TBD | Not started | - |

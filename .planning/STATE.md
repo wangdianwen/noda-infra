@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: 密钥管理集中化
-status: planning
-last_updated: "2026-04-19T00:16:32.756Z"
-last_activity: "2026-04-19 -- Phase 39 executed: 3/3 plans complete"
+status: executing
+last_updated: "2026-04-19T12:00:00.000Z"
+last_activity: "2026-04-19 -- Phase 40 executed: 3/3 plans complete"
 progress:
   total_phases: 4
-  completed_phases: 1
-  total_plans: 6
-  completed_plans: 3
-  percent: 50
+  completed_phases: 2
+  total_plans: 9
+  completed_plans: 6
+  percent: 67
 ---
 
 # Project State
@@ -26,21 +26,22 @@ See: .planning/PROJECT.md (updated 2026-04-19)
 ## Current Position
 
 Phase: 40 of 42 (Jenkins Pipeline 集成)
-Status: Ready to plan
-Last activity: 2026-04-19 -- Phase 39 executed: 3/3 plans complete
+Status: Executed — 3/3 plans complete
+Last activity: 2026-04-19 -- Phase 40 executed: 3/3 plans complete
 
-Progress: [██░░░░░░░░] 25%
+Progress: [████████░░] 67%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 3 (Phase 39)
+- Total plans completed: 6 (Phase 39 + Phase 40)
 - Previous milestone (v1.7): 11 plans in 4 phases
 
 **Recent Trend:**
 
 - v1.8 Phase 39: 3 plans in 1 session
+- v1.8 Phase 40: 3 plans in 1 session
 - Trend: Fast
 
 *Updated after each plan completion*
@@ -56,6 +57,9 @@ Progress: [██░░░░░░░░] 25%
 - [Phase 39 context]: 离线备份 = 密码管理器 + B2 加密快照
 - [Phase 39 execution]: Doppler config 名为 `prd`（非 `prod`），已同步更新所有脚本
 - [Phase 39 execution]: Service Token: DOPPLER_TOKEN_REDACTED
+- [Phase 40 execution]: scripts/lib/secrets.sh 双模式密钥加载库 — DOPPLER_TOKEN 存在时从 Doppler 拉取，否则回退 docker/.env
+- [Phase 40 execution]: 3 个 Jenkinsfile 添加 DOPPLER_TOKEN = credentials('doppler-service-token')
+- [Phase 40 execution]: 3 个手动部署脚本改为调用 load_secrets()
 - [v1.8 planning]: 备份系统 (scripts/backup/.env.backup) 保持独立明文文件，不迁移
 - [v1.8 planning]: VITE_* 公开信息不纳入密钥管理，保持 --build-arg 硬编码
 - [v1.8 planning]: docker/.env 曾提交到 Git 历史 (commit c15faba)，Phase 42 用 BFG 清理
@@ -79,6 +83,6 @@ Items acknowledged and deferred at v1.7 milestone close on 2026-04-19:
 
 ## Session Continuity
 
-Last session: 2026-04-19T00:16:32.754Z
-Phase 39 executed — Doppler CLI installed, project created, 15 secrets imported, backup script ready
-Next: `/gsd-plan-phase 40` to plan Jenkins Pipeline Doppler integration
+Last session: 2026-04-19T12:00:00.000Z
+Phase 40 executed — Doppler 双模式密钥加载库 + Jenkinsfile 凭据注入 + 手动脚本改造
+Next: `/gsd-plan-phase 41` to plan .env 迁移与清理
