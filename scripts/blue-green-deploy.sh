@@ -18,13 +18,11 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/lib/health.sh"
+source "$PROJECT_ROOT/scripts/lib/secrets.sh"
 
-# 加载 .env（envsubst 需要 POSTGRES_USER 等环境变量）
-if [ -f "$PROJECT_ROOT/docker/.env" ]; then
-    set -a
-    source "$PROJECT_ROOT/docker/.env"
-    set +a
-fi
+# 加载密钥（Doppler 双模式，per D-03/D-08/D-10）
+# envsubst 需要 POSTGRES_USER 等环境变量
+load_secrets
 
 source "$PROJECT_ROOT/scripts/manage-containers.sh"
 source "$PROJECT_ROOT/scripts/lib/deploy-check.sh"
