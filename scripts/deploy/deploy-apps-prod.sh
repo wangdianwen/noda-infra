@@ -19,6 +19,10 @@ cd "$PROJECT_ROOT"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/lib/health.sh"
+source "$PROJECT_ROOT/scripts/lib/secrets.sh"
+
+# 加载密钥（Doppler 双模式，per D-08/D-09/D-10）
+load_secrets
 
 # 应用服务使用独立的 compose 文件（noda-apps 项目）
 COMPOSE_FILE="-f docker/docker-compose.app.yml"
