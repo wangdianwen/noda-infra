@@ -423,17 +423,19 @@ load_secrets()
 
 **If this table is empty:** All claims in this research were verified or cited -- no user confirmation needed.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **doppler CLI PATH 可用性**
+1. **doppler CLI PATH 可用性** — RESOLVED: Plan 40-01 Task 1 包含 `command -v doppler` 检查，不存在时给出明确错误信息并回退到 docker/.env
    - What we know: Phase 39 用 `brew install dopplerhq/cli/doppler` 安装，Homebrew 通常安装在 `/opt/homebrew/bin`（macOS）或 `/home/linuxbrew/.linuxbrew/bin`（Linux）
    - What's unclear: Jenkins 的 jenkins 用户 PATH 是否包含 Homebrew 路径。服务器是 Linux，Jenkins 以 systemd 服务运行
    - Recommendation: 在 pipeline-stages.sh 的 load_secrets() 中检测 doppler 命令是否存在，不存在时给出安装指引
+   - Resolution: load_secrets() 中添加 `command -v doppler` 检测，不可用时自动回退 docker/.env
 
-2. **deploy-infrastructure-prod.sh 是否也 source pipeline-stages.sh**
+2. **deploy-infrastructure-prod.sh 是否也 source pipeline-stages.sh** — RESOLVED: Plan 40-01 创建 `scripts/lib/secrets.sh` 共享库，所有脚本 source 此文件复用 load_secrets()
    - What we know: deploy-infrastructure-prod.sh 当前不 source pipeline-stages.sh，它直接 source log.sh 和 health.sh
    - What's unclear: 是否应该让手动脚本也复用 pipeline-stages.sh 的 load_secrets() 函数
    - Recommendation: 独立实现 load_secrets() 逻辑（手动脚本可能在没有 pipeline-stages.sh 的环境运行），或将其提取到 scripts/lib/secrets.sh 共享库
+   - Resolution: 采用 scripts/lib/secrets.sh 共享库方案，pipeline-stages.sh 和手动脚本都 source 此文件
 
 ## Environment Availability
 
