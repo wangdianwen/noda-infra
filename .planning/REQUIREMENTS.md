@@ -1,85 +1,72 @@
-# Requirements: Noda 密钥管理集中化
+# Requirements: v1.9 部署后磁盘清理自动化
 
 **Defined:** 2026-04-19
-**Core Value:** 数据库永不丢失。密钥管理不能影响备份系统的独立性。
+**Core Value:** 数据库永不丢失。清理操作不得影响持久化数据卷和备份系统。
 
 ## v1 Requirements
 
-### A. Infisical 基础设施 (INFRA)
+### A. Docker 清理增强 (DOCK)
 
-- [ ] **INFRA-01**: 在 Jenkins 宿主机安装 Infisical CLI，通过脚本自动化安装
-- [ ] **INFRA-02**: 创建 Infisical Cloud 项目（noda-infra），按消费方分组管理密钥（infra / apps / backup 环境隔离）
-- [ ] **INFRA-03**: 配置 Infisical Universal Auth（Machine Identity），将 Client ID + Secret 存储到 Jenkins Credentials
-- [ ] **INFRA-04**: Infisical 凭据离线备份到密码管理器 + B2 加密快照
+- [ ] **DOCK-01**: Pipeline 部署成功后自动清理 Docker build cache（`docker buildx prune --filter until=24h`），保留 24h 内的热缓存
+- [ ] **DOCK-02**: Pipeline 部署成功后自动清理已停止的容器（`docker container prune -f`）
+- [ ] **DOCK-03**: Pipeline 部署成功后自动清理未使用的匿名卷（`docker volume prune -f`，不含 `--all`，保护命名卷如 postgres_data）
+- [ ] **DOCK-04**: Pipeline 部署前后记录磁盘用量对比（`df -h` + `docker system df`），输出到日志
 
-### B. Jenkins Pipeline 集成 (PIPE)
+### B. 构建缓存清理 (CACHE)
 
-- [ ] **PIPE-01**: Jenkinsfile 添加 "Fetch Secrets" stage，Pipeline 启动时通过 `infisical export` 拉取密钥生成 .env 文件
-- [ ] **PIPE-02**: 使用 `withCredentials` 绑定 Infisical Machine Identity 凭据，确保不暴露到构建日志
-- [ ] **PIPE-03**: Docker Compose 服务通过生成的 .env 文件获取运行时密钥，现有 `envsubst` 模板机制不变
-- [ ] **PIPE-04**: VITE_* 构建时变量通过 `docker build --build-arg` 从 Infisical 拉取的密钥注入
+- [ ] **CACHE-01**: Jenkins workspace 中 findclass-ssr/noda-site 的 `node_modules` 在部署成功后清理
+- [ ] **CACHE-02**: pnpm store 定期 prune（每 7 天一次，非每次部署），可通过参数强制触发
+- [ ] **CACHE-03**: npm cache 定期清理（`npm cache clean --force`），与 pnpm store prune 同频率
 
-### C. 迁移与清理 (MIGR)
+### C. 旧文件清理 (FILE)
 
-- [ ] **MIGR-01**: 将 .env.production、docker/.env、scripts/backup/.env.backup 中所有密钥迁移到 Infisical
-- [ ] **MIGR-02**: 备份系统（scripts/backup/.env.backup）保持独立明文文件不变，作为最后防线
-- [ ] **MIGR-03**: 迁移验证通过后删除 .env.production 和 docker/.env 明文文件
-- [ ] **MIGR-04**: 删除旧的 SOPS 相关代码（scripts/utils/decrypt-secrets.sh 及相关引用）
+- [ ] **FILE-01**: 清理 `infra-pipeline/` 目录下超过 N 天的旧备份文件（可配置保留天数，默认 30 天）
+- [ ] **FILE-02**: Pipeline 结束后清理 `deploy-failure-*.log` 临时日志文件
 
-### D. 备份与安全 (BACKUP)
+### D. Jenkins Pipeline 清理 (JENK)
 
-- [ ] **BACKUP-01**: 创建定期 cron 任务，将 Infisical 密钥快照导出到 Backblaze B2
-- [ ] **BACKUP-02**: Git 历史清理 docker/.env 中泄露的真实密钥（BFG Repo Cleaner）
+- [ ] **JENK-01**: 清理 Jenkins 已完成的旧 Pipeline 构建（保留最近 N 次构建记录，删除更早的 artifacts 和构建目录）
+- [ ] **JENK-02**: 清理 Jenkins workspace 中已完成构建的工作目录（释放磁盘空间）
 
-## v2 Requirements
+## Future Requirements
 
-### 密钥轮换
+### 高级清理
 
-- **ROTA-01**: PostgreSQL 密码双用户交替轮换脚本
-- **ROTA-02**: Keycloak Admin 密码定期轮换
-- **ROTA-03**: B2 Application Key 定期轮换（当前建议 6 个月）
-
-### 高级安全
-
-- **SEC-01**: Infisical 审计日志定期审查
-- **SEC-02**: 密钥访问权限最小化（按服务分配不同读取权限）
-- **SEC-03**: Secret Versioning（需 Infisical Pro 版本）
+- **DOCK-F01**: `docker system prune -a --volumes` 全量清理（风险高，需人工确认）
+- **CACHE-F01**: 构建产物 `dist/` 清理策略
+- **MON-F01**: 磁盘用量超过阈值时发送告警（邮件/webhook）
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| HashiCorp Vault 自托管 | 单服务器资源不足（需 512MB+ 额外内存），运维复杂（unseal） |
-| Infisical 自托管 | 需 3 个额外容器 ~1.5GB 内存，形成循环依赖 |
-| 实时密钥轮换 | 项目规模小，手动轮换足够 |
-| Docker Secrets（Swarm） | 项目使用 Docker Compose 非 Swarm 模式 |
-| 迁移备份系统 | 备份系统是核心价值保障，必须保持独立 |
-| 多环境密钥（staging） | 当前只有生产环境，暂不需要 |
+| `docker system prune -a` 全量清理 | 会删除所有未使用镜像（含回滚镜像），风险过高 |
+| `docker volume prune --all` | 会删除命名卷，威胁 postgres_data 等持久化数据 |
+| Jenkins 构建历史清理 | 改为 JENK-01 纳入 v1.9 范围 |
+| 备份系统文件清理 | 备份系统是核心价值保障，必须保持独立 |
+| 删除正在运行的容器 | 安全底线，只清理已停止的容器 |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | Phase 39 | Pending |
-| INFRA-02 | Phase 39 | Pending |
-| INFRA-03 | Phase 39 | Pending |
-| INFRA-04 | Phase 39 | Pending |
-| PIPE-01 | Phase 40 | Pending |
-| PIPE-02 | Phase 40 | Pending |
-| PIPE-03 | Phase 40 | Pending |
-| PIPE-04 | Phase 40 | Pending |
-| MIGR-01 | Phase 41 | Pending |
-| MIGR-02 | Phase 41 | Pending |
-| MIGR-03 | Phase 41 | Pending |
-| MIGR-04 | Phase 41 | Pending |
-| BACKUP-01 | Phase 42 | Pending |
-| BACKUP-02 | Phase 42 | Pending |
+| DOCK-01 | — | Pending |
+| DOCK-02 | — | Pending |
+| DOCK-03 | — | Pending |
+| DOCK-04 | — | Pending |
+| CACHE-01 | — | Pending |
+| CACHE-02 | — | Pending |
+| CACHE-03 | — | Pending |
+| FILE-01 | — | Pending |
+| FILE-02 | — | Pending |
+| JENK-01 | — | Pending |
+| JENK-02 | — | Pending |
 
 **Coverage:**
-- v1 requirements: 14 total
-- Mapped to phases: 14
-- Unmapped: 0
+- v1 requirements: 11 total
+- Mapped to phases: 0
+- Unmapped: 11
 
 ---
 *Requirements defined: 2026-04-19*
-*Last updated: 2026-04-19 -- roadmap created, all requirements mapped to phases 39-42*
+*Last updated: 2026-04-19 -- v1.9 requirements defined*
