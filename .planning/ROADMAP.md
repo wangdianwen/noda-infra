@@ -107,7 +107,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [x] **Phase 39: Doppler 基础设施搭建** (3/3 plans) -- completed 2026-04-19
 - [x] **Phase 40: Jenkins Pipeline 集成** (3/3 plans) -- completed 2026-04-19
 - [x] **Phase 41: 迁移与清理** (3/3 plans) -- completed 2026-04-19
-- [ ] **Phase 42: 备份与安全** -- B2 密钥快照、Git 历史 BFG 清理
+- [ ] **Phase 42: 备份与安全** (0/2 plans) -- B2 密钥快照、Git 历史 BFG 清理
 
 ## Phase Details
 
