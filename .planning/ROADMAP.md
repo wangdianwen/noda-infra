@@ -165,8 +165,12 @@ Plans:
 **Requirements**: BACKUP-01, BACKUP-02
 **Success Criteria** (what must be TRUE):
   1. cron 任务定期将 Doppler 密钥快照（`doppler secrets download` 输出）上传到 Backblaze B2
-  2. Git 历史中 docker/.env 的明文密钥已被 BFG Repo Cleaner 清除，`git log --all -- docker/.env` 不再显示密钥内容
-**Plans**: TBD
+  2. Git 历史中 .env.production、.sops.yaml、config/secrets.sops.yaml 已被 git-filter-repo 清除，`git log --all -- .env.production` 不再显示内容
+**Plans**: 2 plans
+
+Plans:
+- [ ] 42-01-PLAN.md -- Doppler 密钥备份 cron 集成（rclone + Dockerfile + crontab + docker-compose）
+- [ ] 42-02-PLAN.md -- Git 历史敏感文件清理脚本（git-filter-repo 替代 BFG）
 
 ## Progress
 
@@ -178,4 +182,4 @@ Phases execute in numeric order: 39 -> 40 -> 41 -> 42
 | 39. Doppler 基础设施搭建 | 3/3 | Complete | 2026-04-19 |
 | 40. Jenkins Pipeline 集成 | 3/3 | Complete | 2026-04-19 |
 | 41. 迁移与清理 | 3/3 | Complete | 2026-04-19 |
-| 42. 备份与安全 | 0/TBD | Not started | - |
+| 42. 备份与安全 | 0/2 | Planned | - |
