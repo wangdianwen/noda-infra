@@ -18,6 +18,7 @@ cd "$PROJECT_ROOT"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/lib/health.sh"
+source "$PROJECT_ROOT/scripts/lib/secrets.sh"
 
 # 解析命令行参数
 SKIP_BACKUP=false
@@ -199,6 +200,11 @@ run_pre_deploy_backup()
     return 0
 }
 
+# 加载密钥（Doppler 双模式，per D-08/D-09/D-10）
+# Docker Compose 不会自动读取 .env（因为 compose 文件在 docker/ 子目录）
+# 需要显式加载密钥到环境中
+load_secrets
+
 # ============================================
 # 步骤 1/5: 验证环境
 # ============================================
@@ -206,10 +212,8 @@ log_info "=========================================="
 log_info "步骤 1/5: 验证环境配置"
 log_info "=========================================="
 
-if [ ! -f "config/secrets.sops.yaml" ]; then
-    log_error "加密配置文件不存在: config/secrets.sops.yaml"
-    exit 1
-fi
+# Doppler 密钥已通过上方 load_secrets() 加载（per Phase 40）
+# config/secrets.sops.yaml 检查已移除（SOPS 将在 Phase 41 清理）
 
 if ! command -v docker >/dev/null 2>&1; then
     log_error "Docker 未安装"
