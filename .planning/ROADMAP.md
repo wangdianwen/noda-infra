@@ -152,7 +152,12 @@ Plans:
   2. 备份系统 scripts/backup/.env.backup 保持独立的明文文件不变，不受密钥管理迁移影响
   3. .env.production 和 docker/.env 明文文件已从文件系统删除，服务仍能通过 Doppler 正常部署
   4. scripts/utils/decrypt-secrets.sh 及所有 SOPS 相关代码和引用已清理干净
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 41-01-PLAN.md -- 密钥验证扩展 + secrets.sh Doppler-only 化 + backup 脚本公钥来源改造
+- [ ] 41-02-PLAN.md -- 脚本 SOPS 引用清理 + 文档更新 + .gitignore 清理
+- [ ] 41-03-PLAN.md -- 验证后删除明文文件和 SOPS 文件
 
 ### Phase 42: 备份与安全
 **Goal**: Doppler 密钥有定期 B2 快照备份，Git 历史中的密钥泄露已清除
@@ -172,5 +177,5 @@ Phases execute in numeric order: 39 -> 40 -> 41 -> 42
 |-------|----------------|--------|-----------|
 | 39. Doppler 基础设施搭建 | 3/3 | Complete | 2026-04-19 |
 | 40. Jenkins Pipeline 集成 | 3/3 | Complete | 2026-04-19 |
-| 41. 迁移与清理 | 0/TBD | Not started | - |
+| 41. 迁移与清理 | 0/3 | Not started | - |
 | 42. 备份与安全 | 0/TBD | Not started | - |
