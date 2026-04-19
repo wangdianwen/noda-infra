@@ -194,7 +194,7 @@ run_container()
     fi
 
     # 支持通过环境变量覆盖容器参数（Keycloak 等服务需要更大内存、非只读、额外卷挂载）
-    local container_memory="${CONTAINER_MEMORY:-512m}"
+    local container_memory="${CONTAINER_MEMORY:-1g}"
     local container_memory_reservation="${CONTAINER_MEMORY_RESERVATION:-128m}"
     local container_readonly="${CONTAINER_READONLY:-true}"
     local service_group="${SERVICE_GROUP:-apps}"

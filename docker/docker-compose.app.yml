@@ -62,7 +62,7 @@ services:
       resources:
         limits:
           cpus: '1'
-          memory: 512M
+          memory: 1G
         reservations:
           cpus: '0.25'
           memory: 128M
@@ -71,6 +71,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - /app/scripts/logs
 
   # ----------------------------------------
   # NODA Site（静态 Landing Page）
