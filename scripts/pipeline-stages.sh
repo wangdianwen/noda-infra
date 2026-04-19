@@ -14,19 +14,12 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/manage-containers.sh"
+source "$PROJECT_ROOT/scripts/lib/secrets.sh"
 source "$PROJECT_ROOT/scripts/lib/deploy-check.sh"
 source "$PROJECT_ROOT/scripts/lib/image-cleanup.sh"
 
-# 加载 .env（envsubst 需要数据库密码等环境变量）
-# Jenkins workspace 可能不包含 .env（gitignored），尝试从多个路径加载
-for _env_path in "$PROJECT_ROOT/docker/.env" "$HOME/Project/noda-infra/docker/.env"; do
-    if [ -f "$_env_path" ]; then
-        set -a
-        source "$_env_path"
-        set +a
-        break
-    fi
-done
+# 加载密钥（Doppler 双模式，per D-03/D-04/D-10）
+load_secrets
 
 # ============================================
 # 常量
