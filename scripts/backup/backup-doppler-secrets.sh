@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
             echo "选项:"
             echo "  --dry-run        仅下载和加密，不上传 B2"
             echo "  --project NAME   Doppler 项目名（默认: noda）"
-            echo "  --config NAME    Doppler 环境名（默认: prod）"
+            echo "  --config NAME    Doppler 环境名（默认: prd）"
             echo "  -h, --help       显示帮助"
             exit 0
             ;;
@@ -55,9 +55,8 @@ for cmd in doppler age; do
 done
 
 if [[ "$DRY_RUN" == "false" ]]; then
-    if ! command -v b2 &>/dev/null; then
-        error "缺少依赖: b2（非 dry-run 模式需要）"
-        error "安装: brew install b2"
+    if ! command -v rclone &>/dev/null; then
+        error "缺少依赖: rclone（非 dry-run 模式需要）"
         exit 1
     fi
 fi
@@ -74,8 +73,6 @@ fi
 # 生成输出文件名
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 OUTPUT_FILE="/tmp/doppler-backup-${TIMESTAMP}.env.age"
-B2_BUCKET="noda-backups"
-B2_PATH="doppler-backup/doppler-backup-${TIMESTAMP}.env.age"
 
 info "开始 Doppler 密钥备份..."
 info "项目: $PROJECT | 环境: $CONFIG | 模式: $([ "$DRY_RUN" = true ] && echo 'dry-run' || echo '生产')"
@@ -100,19 +97,48 @@ fi
 FILE_SIZE=$(stat -f%z "$OUTPUT_FILE" 2>/dev/null || stat -c%s "$OUTPUT_FILE" 2>/dev/null)
 info "加密文件大小: ${FILE_SIZE} bytes"
 
+# B2 云存储配置（从环境变量或 docker-compose 注入）
+B2_BUCKET="${B2_BUCKET_NAME:-noda-backups}"
+B2_REMOTE_PATH="doppler-backup/doppler-backup-${TIMESTAMP}.env.age"
+
 # 上传到 B2
 if [[ "$DRY_RUN" == "false" ]]; then
     info "上传到 Backblaze B2..."
-    info "Bucket: $B2_BUCKET | 路径: $B2_PATH"
+    info "Bucket: $B2_BUCKET | 路径: $B2_REMOTE_PATH"
 
-    if b2 upload-file "$B2_BUCKET" "$OUTPUT_FILE" "$B2_PATH"; then
+    # 容器内使用 entrypoint-ops.sh 配置的 rclone，本地使用临时配置
+    local_rclone_config=""
+    if [[ -z "${RCLONE_CONFIG:-}" ]] || [[ ! -f "${RCLONE_CONFIG:-}" ]]; then
+        if [[ -z "${B2_ACCOUNT_ID:-}" ]] || [[ -z "${B2_APPLICATION_KEY:-}" ]]; then
+            error "B2_ACCOUNT_ID 和 B2_APPLICATION_KEY 环境变量未设置"
+            exit 1
+        fi
+        local_rclone_config=$(mktemp)
+        chmod 600 "$local_rclone_config"
+        cat >"$local_rclone_config" <<EOF
+[b2remote]
+type = b2
+account = $B2_ACCOUNT_ID
+key = $B2_APPLICATION_KEY
+EOF
+    fi
+
+    RCLONE_FLAGS=("--log-level" "INFO")
+    if [[ -n "$local_rclone_config" ]]; then
+        RCLONE_FLAGS+=("--config" "$local_rclone_config")
+    fi
+
+    if rclone copy "$OUTPUT_FILE" "b2remote:${B2_BUCKET}/doppler-backup/" \
+        "${RCLONE_FLAGS[@]}"; then
         info "上传成功"
     else
-        error "B2 上传失败"
+        error "rclone 上传失败"
+        rm -f "$local_rclone_config"
         warn "加密文件仍保留在本地: $OUTPUT_FILE"
-        warn "可手动上传: b2 upload-file $B2_BUCKET $OUTPUT_FILE $B2_PATH"
         exit 1
     fi
+
+    rm -f "$local_rclone_config"
 else
     info "[dry-run] 跳过 B2 上传"
     info "[dry-run] 加密文件保留在: $OUTPUT_FILE"

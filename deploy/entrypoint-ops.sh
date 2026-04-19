@@ -62,6 +62,16 @@ else
   sed -i 's/autostart=true/autostart=false/' /tmp/supervisord.conf 2>/dev/null || true
 fi
 
+# 验证 Doppler 密钥备份配置
+if [ -n "$DOPPLER_TOKEN" ]; then
+  echo "✓ Doppler 密钥备份配置验证通过"
+  if command -v doppler &>/dev/null; then
+    echo "  Doppler CLI: $(doppler --version 2>/dev/null | head -1 || echo '未知版本')"
+  fi
+else
+  echo "⚠ DOPPLER_TOKEN 未配置，密钥备份将禁用"
+fi
+
 # 显示定时任务
 echo ""
 echo "已配置的定时任务:"

@@ -20,6 +20,7 @@ RUN apk add --no-cache \
     ca-certificates \
     postgresql17-client \
     gnupg \
+    age \
     && rm -rf /var/cache/apk/*
 
 # 安装 cloudflared
@@ -30,6 +31,11 @@ RUN ARCH=$(uname -m) && \
     wget -q "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CLOUDFLARED_ARCH}" -O /usr/local/bin/cloudflared && \
     chmod +x /usr/local/bin/cloudflared && \
     cloudflared --version
+
+# 安装 Doppler CLI
+RUN wget -q -t3 'https://packages.doppler.com/public/cli/rsa.8004D9FF50437357.key' -O /etc/apk/keys/cli@doppler-8004D9FF50437357.rsa.pub && \
+    echo 'https://packages.doppler.com/public/cli/alpine/any-version/main' | tee -a /etc/apk/repositories && \
+    apk add doppler
 
 # 设置工作目录
 WORKDIR /app

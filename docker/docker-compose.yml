@@ -86,6 +86,8 @@ services:
       PGSSLMODE: disable
       # Cloudflare Tunnel 配置
       CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+      # Doppler 密钥备份配置
+      DOPPLER_TOKEN: ${DOPPLER_TOKEN}
     volumes:
       - ./volumes/backup:/tmp/postgres_backups
       - ./volumes/history:/app/history
