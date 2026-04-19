@@ -666,32 +666,52 @@ pipeline_deploy_nginx()
     docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
         up -d --force-recreate --no-deps nginx
 
-    # 等待 nginx 容器进入 running 状态（per D-02）
-    log_info "等待 nginx 容器就绪..."
-    local _wait_count=0
-    local _max_wait=30
-    while [ $_wait_count -lt $_max_wait ]; do
-        local _container_status
-        _container_status=$(docker inspect --format='{{.State.Running}}' noda-infra-nginx 2>/dev/null || echo "false")
-        if [ "$_container_status" = "true" ]; then
-            break
+    # 等待 nginx 容器稳定运行（per D-02）
+    # --force-recreate 后容器可能短暂 Running 后因 DNS 解析失败进入 restart 循环
+    # 需要确认容器连续 3 秒保持 Running 状态
+    log_info "等待 nginx 容器稳定运行..."
+    local _max_wait=60
+    local _elapsed=0
+    while [ $_elapsed -lt $_max_wait ]; do
+        local _running1
+        _running1=$(docker inspect --format='{{.State.Running}}' noda-infra-nginx 2>/dev/null || echo "false")
+        if [ "$_running1" = "true" ]; then
+            sleep 2
+            local _running2
+            _running2=$(docker inspect --format='{{.State.Running}}' noda-infra-nginx 2>/dev/null || echo "false")
+            if [ "$_running2" = "true" ]; then
+                log_info "nginx 容器已稳定运行（等待 ${_elapsed} 秒）"
+                break
+            fi
         fi
         sleep 1
-        _wait_count=$((_wait_count + 1))
+        _elapsed=$((_elapsed + 1))
     done
-    if [ $_wait_count -ge $_max_wait ]; then
-        log_error "nginx 容器未在 ${_max_wait} 秒内就绪"
+    if [ $_elapsed -ge $_max_wait ]; then
+        log_error "nginx 容器未在 ${_max_wait} 秒内稳定运行"
+        docker logs noda-infra-nginx --tail 20 2>/dev/null || true
         return 1
     fi
-    log_info "nginx 容器已就绪（等待 ${_wait_count} 秒）"
 
     # 触发 DNS 重新解析（per D-02）
+    # 容器可能在 reload 瞬间再次进入 restarting，添加重试
     log_info "触发 nginx DNS 重新解析..."
-    if ! docker exec noda-infra-nginx nginx -s reload; then
-        log_error "nginx reload 失败，DNS 可能未就绪"
-        return 1
-    fi
-    log_success "nginx DNS 刷新完成"
+    local _reload_retries=3
+    local _reload_attempt=0
+    while [ $_reload_attempt -lt $_reload_retries ]; do
+        if docker exec noda-infra-nginx nginx -s reload 2>/dev/null; then
+            log_success "nginx DNS 刷新完成"
+            break
+        fi
+        _reload_attempt=$((_reload_attempt + 1))
+        if [ $_reload_attempt -lt $_reload_retries ]; then
+            log_info "reload 第 ${_reload_attempt} 次失败，等待 3 秒后重试..."
+            sleep 3
+        else
+            log_error "nginx reload 失败（${_reload_retries} 次重试后）"
+            return 1
+        fi
+    done
 
     log_success "Nginx 重建完成"
 }
