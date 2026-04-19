@@ -11,6 +11,7 @@
 - **v1.6 Jenkins Pipeline 强制执行** -- Phases 31-34 (shipped 2026-04-18)
 - **v1.7 代码精简与规整** -- Phases 35-38 (shipped 2026-04-19) -- [详情](milestones/v1.7-ROADMAP.md)
 - **v1.8 密钥管理集中化** -- Phases 39-42 (shipped 2026-04-19)
+- **v1.9 部署后磁盘清理自动化** -- Phases 43-44 (in progress)
 
 ## Phases
 
@@ -100,86 +101,65 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 </details>
 
-### v1.8 密钥管理集中化 (Complete)
+<details>
+<summary>v1.8 密钥管理集中化 (Phases 39-42) -- SHIPPED 2026-04-19</summary>
 
-**Milestone Goal:** 将分散在多个 .env 文件中的敏感环境变量迁移到 Doppler 集中管理，与 Jenkins Pipeline 集成实现安全注入，备份到 Backblaze B2，并清理 Git 历史中的密钥泄露。
+**Milestone Goal:** 将分散在多个 .env 文件中的敏感环境变量迁移到 Doppler 集中管理
 
 - [x] **Phase 39: Doppler 基础设施搭建** (3/3 plans) -- completed 2026-04-19
 - [x] **Phase 40: Jenkins Pipeline 集成** (3/3 plans) -- completed 2026-04-19
 - [x] **Phase 41: 迁移与清理** (3/3 plans) -- completed 2026-04-19
 - [x] **Phase 42: 备份与安全** (2/2 plans) -- completed 2026-04-19
 
+</details>
+
+### v1.9 部署后磁盘清理自动化 (In Progress)
+
+**Milestone Goal:** 每次 Pipeline 部署成功后，自动清理所有构建残留和缓存，保持系统磁盘占用最小
+
+- [ ] **Phase 43: 清理共享库 + Pipeline 集成** - 新建 cleanup.sh 共享库，增强 pipeline_cleanup/pipeline_infra_cleanup，部署后自动清理 Docker/Node.js/文件残留
+- [ ] **Phase 44: Jenkins 维护清理 + 定期任务** - Jenkins 旧构建清理 + pnpm/npm 定期清理 cron
+
 ## Phase Details
 
-### Phase 39: Doppler 基础设施搭建
-**Goal**: Jenkins 宿主机可以通过 Doppler CLI 认证并拉取所有密钥
-**Depends on**: Nothing (v1.8 第一个阶段)
-**Requirements**: INFRA-01, INFRA-02, INFRA-03, INFRA-04
+### Phase 43: 清理共享库 + Pipeline 集成
+**Goal**: Pipeline 每次部署成功后自动清理 Docker build cache、已停止容器、匿名卷、node_modules 和旧备份文件，并通过磁盘快照记录清理效果
+**Depends on**: Phase 42 (v1.8 完成，Pipeline 和共享库体系已建立)
+**Requirements**: DOCK-01, DOCK-02, DOCK-03, DOCK-04, CACHE-01, FILE-01, FILE-02
 **Success Criteria** (what must be TRUE):
-  1. Jenkins 宿主机上 `doppler --version` 返回有效版本号 >= 3.75（CLI 安装成功）
-  2. `doppler secrets download --format=env --no-file --project noda --config prod` 输出包含所有 15 个预期密钥的 .env 格式内容（项目创建 + 密钥录入成功）
-  3. 通过 Service Token 认证（非交互式）可以执行 `doppler secrets download`，无需手动登录
-  4. Doppler 凭据（Service Token）已离线备份到密码管理器和 B2 加密快照
-**Plans**: 3 plans
+  1. Pipeline 部署成功后，超过 24 小时的 Docker build cache 被自动清理，日志记录清理前后磁盘占用
+  2. Pipeline 部署成功后，已停止的容器和匿名卷被自动清理（命名卷如 postgres_data 不受影响）
+  3. Pipeline 部署成功后，Jenkins workspace 中的 noda-apps/node_modules 被自动删除
+  4. Pipeline 部署前后分别输出 `df -h` 和 `docker system df` 磁盘快照到日志，可对比清理效果
+  5. infra-pipeline 目录下超过 30 天的旧备份文件被自动清理，deploy-failure-*.log 临时文件在部署成功后被删除
+**Plans**: TBD
 
 Plans:
-- [ ] 39-01-PLAN.md -- Doppler CLI 安装脚本 + 宿主机安装验证
-- [ ] 39-02-PLAN.md -- Doppler 项目创建 + 密钥导入 + Service Token + Jenkins Credentials
-- [ ] 39-03-PLAN.md -- Doppler 密钥离线备份脚本（age 加密 + B2 上传）
+- [ ] 43-01: 新建 scripts/lib/cleanup.sh 共享库（Docker/Node.js/文件清理函数 + 磁盘快照）
+- [ ] 43-02: 增强 pipeline_cleanup() 和 pipeline_infra_cleanup()（集成 cleanup.sh）
+- [ ] 43-03: 验证与测试（手动触发 Pipeline 验证清理效果）
 
-### Phase 40: Jenkins Pipeline 集成
-**Goal**: Jenkins Pipeline 启动时自动从 Doppler 拉取密钥，Docker Compose 和 docker build 都能正确获取所需环境变量
-**Depends on**: Phase 39
-**Requirements**: PIPE-01, PIPE-02, PIPE-03, PIPE-04
+### Phase 44: Jenkins 维护清理 + 定期任务
+**Goal**: 低频维护类清理自动化 -- Jenkins 旧构建记录定期清理、pnpm store 和 npm cache 定期 prune
+**Depends on**: Phase 43 (cleanup.sh 共享库已建立，清理函数可直接复用)
+**Requirements**: JENK-01, JENK-02, CACHE-02, CACHE-03
 **Success Criteria** (what must be TRUE):
-  1. pipeline-stages.sh 的 load_secrets() 在 DOPPLER_TOKEN 存在时从 Doppler 拉取密钥，不存在时回退 docker/.env
-  2. 3 个 Jenkinsfile 的 environment 块包含 DOPPLER_TOKEN = credentials('doppler-service-token')，构建日志中 token 值被遮蔽
-  3. 手动部署脚本（deploy-infrastructure-prod.sh、deploy-apps-prod.sh、blue-green-deploy.sh）都支持 Doppler 双模式
-  4. VITE_* 构建参数保持 Dockerfile ARG 硬编码，不受 Doppler 影响
-**Plans**: 3 plans
+  1. Jenkins 保留最近 N 次构建记录，更早的 artifacts 和构建目录被自动删除
+  2. Jenkins workspace 中已完成构建的工作目录被自动清理，释放磁盘空间
+  3. pnpm store 每 7 天自动 prune 一次，可通过环境参数强制触发
+  4. npm cache 每 7 天自动清理一次，与 pnpm store prune 同频率执行
+**Plans**: TBD
 
 Plans:
-- [x] 40-01-PLAN.md -- 创建 scripts/lib/secrets.sh 共享密钥加载库 + 改造 pipeline-stages.sh
-- [x] 40-02-PLAN.md -- 3 个 Jenkinsfile 添加 DOPPLER_TOKEN credentials 注入
-- [x] 40-03-PLAN.md -- 3 个手动部署脚本 Doppler 双模式支持
-
-### Phase 41: 迁移与清理
-**Goal**: 所有密钥已在 Doppler 验证通过后，删除明文 .env 文件和废弃的 SOPS 代码
-**Depends on**: Phase 40
-**Requirements**: MIGR-01, MIGR-02, MIGR-03, MIGR-04
-**Success Criteria** (what must be TRUE):
-  1. .env.production 和 docker/.env 中的所有密钥已录入 Doppler，且通过 `doppler secrets download` 验证完整
-  2. 备份系统 scripts/backup/.env.backup 保持独立的明文文件不变，不受密钥管理迁移影响
-  3. .env.production 和 docker/.env 明文文件已从文件系统删除，服务仍能通过 Doppler 正常部署
-  4. scripts/utils/decrypt-secrets.sh 及所有 SOPS 相关代码和引用已清理干净
-**Plans**: 3 plans
-
-Plans:
-- [x] 41-01-PLAN.md -- 密钥验证扩展 + secrets.sh Doppler-only 化 + backup 脚本公钥来源改造
-- [x] 41-02-PLAN.md -- 脚本 SOPS 引用清理 + 文档更新 + .gitignore 清理
-- [x] 41-03-PLAN.md -- 验证后删除明文文件和 SOPS 文件
-
-### Phase 42: 备份与安全
-**Goal**: Doppler 密钥有定期 B2 快照备份，Git 历史中的密钥泄露已清除
-**Depends on**: Phase 41
-**Requirements**: BACKUP-01, BACKUP-02
-**Success Criteria** (what must be TRUE):
-  1. cron 任务定期将 Doppler 密钥快照（`doppler secrets download` 输出）上传到 Backblaze B2
-  2. Git 历史中 .env.production、.sops.yaml、config/secrets.sops.yaml 已被 git-filter-repo 清除，`git log --all -- .env.production` 不再显示内容
-**Plans**: 2 plans
-
-Plans:
-- [x] 42-01-PLAN.md -- Doppler 密钥备份 cron 集成（rclone + Dockerfile + crontab + docker-compose）
-- [x] 42-02-PLAN.md -- Git 历史敏感文件清理脚本（git-filter-repo 替代 BFG）
+- [ ] 44-01: Jenkins 旧构建清理函数（cleanup.sh 扩展 + Pipeline 集成）
+- [ ] 44-02: pnpm/npm 定期清理 cron 任务（crontab 配置 + 强制触发参数）
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 39 -> 40 -> 41 -> 42
+Phases execute in numeric order: 43 -> 44
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 39. Doppler 基础设施搭建 | 3/3 | Complete | 2026-04-19 |
-| 40. Jenkins Pipeline 集成 | 3/3 | Complete | 2026-04-19 |
-| 41. 迁移与清理 | 3/3 | Complete | 2026-04-19 |
-| 42. 备份与安全 | 2/2 | Complete | 2026-04-19 |
+| 43. 清理共享库 + Pipeline 集成 | 0/3 | Not started | - |
+| 44. Jenkins 维护清理 + 定期任务 | 0/2 | Not started | - |

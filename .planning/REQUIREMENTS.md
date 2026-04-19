@@ -50,23 +50,23 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DOCK-01 | — | Pending |
-| DOCK-02 | — | Pending |
-| DOCK-03 | — | Pending |
-| DOCK-04 | — | Pending |
-| CACHE-01 | — | Pending |
-| CACHE-02 | — | Pending |
-| CACHE-03 | — | Pending |
-| FILE-01 | — | Pending |
-| FILE-02 | — | Pending |
-| JENK-01 | — | Pending |
-| JENK-02 | — | Pending |
+| DOCK-01 | Phase 43 | Pending |
+| DOCK-02 | Phase 43 | Pending |
+| DOCK-03 | Phase 43 | Pending |
+| DOCK-04 | Phase 43 | Pending |
+| CACHE-01 | Phase 43 | Pending |
+| CACHE-02 | Phase 44 | Pending |
+| CACHE-03 | Phase 44 | Pending |
+| FILE-01 | Phase 43 | Pending |
+| FILE-02 | Phase 43 | Pending |
+| JENK-01 | Phase 44 | Pending |
+| JENK-02 | Phase 44 | Pending |
 
 **Coverage:**
 - v1 requirements: 11 total
-- Mapped to phases: 0
-- Unmapped: 11
+- Mapped to phases: 11
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-19*
-*Last updated: 2026-04-19 -- v1.9 requirements defined*
+*Last updated: 2026-04-19 -- v1.9 roadmap created, traceability updated*

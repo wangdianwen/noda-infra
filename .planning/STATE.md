@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: 部署后磁盘清理自动化
-status: defining requirements
-last_updated: "2026-04-19T19:00:00.000Z"
-last_activity: "2026-04-19 -- Milestone v1.9 started"
+status: roadmap created
+last_updated: "2026-04-19T20:00:00.000Z"
+last_activity: "2026-04-19 -- Roadmap created: 2 phases, 5 plans"
 progress:
-  total_phases: 0
+  total_phases: 2
   completed_phases: 0
-  total_plans: 0
+  total_plans: 5
   completed_plans: 0
   percent: 0
 ---
@@ -21,29 +21,28 @@ See: .planning/PROJECT.md (updated 2026-04-19)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** v1.9 部署后磁盘清理自动化 -- 定义需求中
+**Current focus:** v1.9 部署后磁盘清理自动化 -- Phase 43 待规划
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-04-19 — Milestone v1.9 started
+Phase: 43 of 44 (清理共享库 + Pipeline 集成)
+Plan: 0 of 3 in current phase
+Status: Ready to plan
+Last activity: 2026-04-19 -- Roadmap created
 
 Progress: [ ] 0%
 
 ## Performance Metrics
 
 **Velocity:**
-
-- Total plans completed: 9 (Phase 39 + Phase 40 + Phase 41)
-- Previous milestone (v1.7): 11 plans in 4 phases
+- Total plans completed (v1.8): 11 plans in 4 phases
+- Previous milestone (v1.7): 9 plans in 4 phases
 
 **Recent Trend:**
-
-- v1.8 Phase 39: 3 plans in 1 session
-- v1.8 Phase 40: 3 plans in 1 session
-- v1.8 Phase 41: 3 plans in 1 session
+- v1.8 Phase 39: 3 plans
+- v1.8 Phase 40: 3 plans
+- v1.8 Phase 41: 3 plans
+- v1.8 Phase 42: 2 plans
 - Trend: Fast
 
 *Updated after each plan completion*
@@ -52,31 +51,19 @@ Progress: [ ] 0%
 
 ### Decisions
 
-- [Phase 39 context]: **工具变更** — Doppler Developer Free 替代 Infisical Cloud（认证更简单，CLI 安装更简洁）
-- [Phase 39 context]: brew install dopplerhq/cli/doppler 安装到 Jenkins 宿主机
-- [Phase 39 context]: 单项目 "noda" + 单环境 "prd"（Doppler 默认），所有密钥平铺管理
-- [Phase 39 context]: Service Token → Jenkins Credentials（Secret text），withCredentials 读取
-- [Phase 39 context]: 离线备份 = 密码管理器 + B2 加密快照
-- [Phase 39 execution]: Doppler config 名为 `prd`（非 `prod`），已同步更新所有脚本
-- [Phase 39 execution]: Service Token: DOPPLER_TOKEN_REDACTED
-- [Phase 40 execution]: scripts/lib/secrets.sh 双模式密钥加载库 — DOPPLER_TOKEN 存在时从 Doppler 拉取，否则回退 docker/.env
-- [Phase 40 execution]: 3 个 Jenkinsfile 添加 DOPPLER_TOKEN = credentials('doppler-service-token')
-- [Phase 40 execution]: 3 个手动部署脚本改为调用 load_secrets()
-- [Phase 41 execution]: secrets.sh 改为 Doppler-only，移除 docker/.env 回退
-- [Phase 41 execution]: docker/.env 和 .env.production 已删除，Doppler 成为唯一密钥源
-- [Phase 41 execution]: 所有 SOPS 文件和代码已清理（.sops.yaml, config/secrets.sops.yaml, decrypt-secrets.sh）
-- [Phase 41 execution]: backup-doppler-secrets.sh 使用硬编码 age 公钥，不再依赖 .sops.yaml
-- [v1.8 planning]: 备份系统 (scripts/backup/.env.backup) 保持独立明文文件，不迁移
-- [v1.8 planning]: VITE_* 公开信息不纳入密钥管理，保持 --build-arg 硬编码
-- [v1.8 planning]: docker/.env 曾提交到 Git 历史 (commit c15faba)，Phase 42 用 BFG 清理
-- [Phase 42 execution]: backup-doppler-secrets.sh 从 b2 CLI 迁移到 rclone copy（与数据库备份共享基础设施）
-- [Phase 42 execution]: crontab 每天 3:30 密钥备份（错开数据库备份 3:00），DOPPLER_TOKEN 通过 docker-compose 注入
-- [Phase 42 execution]: git-filter-repo 替代 BFG 清理 Git 历史，脚本已创建待用户手动执行
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
+
+- [v1.9 research]: 分步 prune 替代 docker system prune（细粒度控制 + 可追溯日志）
+- [v1.9 research]: build cache 保留 24h 热缓存（--filter "until=24h"），避免首次构建变慢
+- [v1.9 research]: docker volume prune -f 不加 --all（保护 postgres_data 命名卷）
+- [v1.9 research]: pnpm store prune 每 7 天一次（非每次部署），避免 prune + install 冲突
+- [v1.9 research]: cleanup.sh 独立共享库（与 image-cleanup.sh 并列）
 
 ### Blockers/Concerns
 
-- Doppler 作为 SaaS 外部依赖，服务宕机时无法部署（手动部署脚本作为回退）
-- BFG Repo Cleaner 清理 Git 历史属于不可逆操作，需确保所有密钥已轮换
+- 清理操作不得影响 postgres_data 命名卷（核心价值红线）
+- 清理操作不得删除蓝绿 standby 镜像（回滚安全网）
 
 ## Deferred Items
 
@@ -92,6 +79,6 @@ Items acknowledged and deferred at v1.7 milestone close on 2026-04-19:
 
 ## Session Continuity
 
-Last session: 2026-04-19T19:00:00.000Z
-v1.9 部署后磁盘清理自动化 milestone 启动 — 正在定义需求
-Next: 完成需求定义 → 创建 roadmap
+Last session: 2026-04-19T20:00:00.000Z
+Stopped at: Roadmap created for v1.9 (2 phases, 5 plans)
+Resume file: None
