@@ -120,7 +120,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [ ] **Phase 43: 清理共享库 + Pipeline 集成** - 新建 cleanup.sh 共享库，增强 pipeline_cleanup/pipeline_infra_cleanup，部署后自动清理 Docker/Node.js/文件残留
 - [ ] **Phase 44: Jenkins 维护清理 + 定期任务** - Jenkins 旧构建清理 + pnpm/npm 定期清理 cron
 - [ ] **Phase 45: Infra Pipeline 镜像清理补全** - 补全 noda-ops/nginx 旧镜像清理逻辑，确保所有服务部署后无残留镜像
-- [ ] **Phase 46: nginx 蓝绿部署支持** - 修复 nginx infra Pipeline --force-recreate 后 DNS 解析失败导致的容器重启循环
+- [x] **Phase 46: nginx 蓝绿部署支持** - 修复 nginx infra Pipeline --force-recreate 后 DNS 解析失败导致的容器重启循环 (completed 2026-04-20)
 
 ## Phase Details
 
@@ -182,7 +182,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 46-01-PLAN.md -- nginx.conf 添加 resolver + pipeline_deploy_nginx 添加 DNS 刷新步骤
+- [x] 46-01-PLAN.md -- nginx.conf 添加 resolver + pipeline_deploy_nginx 添加 DNS 刷新步骤 (completed 2026-04-20)
 
 ## Progress
 
@@ -194,4 +194,4 @@ Phases execute in numeric order: 43 -> 44 -> 45 -> 46
 | 43. 清理共享库 + Pipeline 集成 | 0/3 | Planned | - |
 | 44. Jenkins 维护清理 + 定期任务 | 0/2 | Not started | - |
 | 45. Infra Pipeline 镜像清理补全 | 0/2 | Not started | - |
-| 46. nginx 蓝绿部署支持 | 0/1 | Planned | - |
+| 46. nginx 蓝绿部署支持 | 1/1 | Complete | 2026-04-20 |
