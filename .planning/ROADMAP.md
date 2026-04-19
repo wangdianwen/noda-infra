@@ -171,6 +171,19 @@ Plans:
 - [ ] 45-01-PLAN.md -- pipeline_infra_cleanup 增加 noda-ops/nginx 镜像清理调用
 - [ ] 45-02-PLAN.md -- 手动触发 infra Pipeline 端到端验证
 
+### Phase 46: nginx 蓝绿部署支持
+**Goal**: 修复 nginx infra Pipeline --force-recreate 后 DNS 解析失败导致的容器重启循环
+**Depends on**: Phase 43-45 (Pipeline 清理体系已建立)
+**Requirements**: DNS-01, DNS-02
+**Success Criteria** (what must be TRUE):
+  1. nginx.conf http 块包含 `resolver 127.0.0.11 valid=30s;` 和 `resolver_timeout 5s;`，nginx 使用 Docker 内置 DNS 解析容器名称
+  2. pipeline_deploy_nginx() 在 docker compose up --force-recreate 后等待 5 秒再执行 nginx -s reload
+  3. reload 失败时函数返回非零退出码，Pipeline 失败处理机制接管
+**Plans**: 1 plan
+
+Plans:
+- [ ] 46-01-PLAN.md -- nginx.conf 添加 resolver + pipeline_deploy_nginx 添加 DNS 刷新步骤
+
 ## Progress
 
 **Execution Order:**
@@ -181,4 +194,4 @@ Phases execute in numeric order: 43 -> 44 -> 45 -> 46
 | 43. 清理共享库 + Pipeline 集成 | 0/3 | Planned | - |
 | 44. Jenkins 维护清理 + 定期任务 | 0/2 | Not started | - |
 | 45. Infra Pipeline 镜像清理补全 | 0/2 | Not started | - |
-| 46. nginx 蓝绿部署支持 | 0 | Not started | - |
+| 46. nginx 蓝绿部署支持 | 0/1 | Planned | - |
