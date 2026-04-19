@@ -1,24 +1,29 @@
 # Noda 基础设施项目
 
-## Current Milestone: v1.8 密钥管理集中化
+## Current Milestone: v1.9 部署后磁盘清理自动化
 
-**目标：** 将分散在多个 .env 文件中的敏感环境变量迁移到统一的密钥管理服务，与 Jenkins Pipeline 集成实现安全注入，并备份到 Backblaze B2。
+**目标：** 每次 Pipeline 部署成功后，自动清理所有构建残留和缓存，保持系统磁盘占用最小
 
 **目标功能：**
-- 密钥管理方案选型与 Docker 部署（Vault/Infisical/Doppler 对比）
-- Jenkins Pipeline 构建前拉取密钥注入
-- 现有 .env 文件迁移后删除明文文件
-- 密钥数据备份到 Backblaze B2
-- 部署频率支持：~60 次/月
+- 增强 Pipeline cleanup 覆盖全面的 Docker 清理（build cache、dangling、未使用网络/卷）
+- 清理 pnpm store、npm cache、node_modules 等前端构建缓存
+- 清理 Jenkins workspace 旧构建产物
+- 清理 `infra-pipeline/` 旧备份文件
+- 添加磁盘用量监控（部署前后对比）
+- 可配置的保留策略（天数、数量）
 
-**Last shipped:** v1.7 代码精简与规整 (2026-04-19)
+**Last shipped:** v1.8 密钥管理集中化 (2026-04-19)
 
 ## Current State
 
-**Last shipped:** v1.7 代码精简与规整 (2026-04-19)
-4 phases, 11 plans, 47 commits, 130 files changed (+15,565/-10,999 LOC)
+**Last shipped:** v1.8 密钥管理集中化 (2026-04-19)
+4 phases, 11 plans
 
 ## Shipped Milestones
+
+### v1.8 密钥管理集中化 ✅ (2026-04-19)
+
+4 phases, 11 plans — Doppler 密钥管理（CLI 安装 + Pipeline 集成 + 迁移清理 + B2 备份 + Git 历史清理）
 
 ### v1.7 代码精简与规整 ✅ (2026-04-19)
 
@@ -205,4 +210,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-19 — v1.7 milestone shipped*
+*Last updated: 2026-04-19 — v1.9 milestone started*
