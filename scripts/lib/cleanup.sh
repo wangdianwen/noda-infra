@@ -296,3 +296,134 @@ cleanup_after_infra_deploy()
 
     log_success "=== 基础设施部署后清理完成 (${service}) ==="
 }
+
+# -------------------------------------------
+# Jenkins Workspace 清理 (JENK-02)
+# -------------------------------------------
+# 参数:
+#   $1: Jenkins workspace 根路径（默认 /var/lib/jenkins/workspace）
+# 返回：无（清理 @tmp 残留目录，释放磁盘空间）
+cleanup_jenkins_workspace()
+{
+    local workspace_root="${1:-/var/lib/jenkins/workspace}"
+
+    if [ ! -d "$workspace_root" ]; then
+        log_info "Jenkins workspace 目录不存在: $workspace_root"
+        return 0
+    fi
+
+    log_info "检查 Jenkins workspace: $workspace_root"
+
+    local cleaned=0
+    for dir in "$workspace_root"/*/; do
+        [ -d "$dir" ] || continue
+        local dirname
+        dirname=$(basename "$dir")
+        # 清理策略: 删除 @tmp 目录（Jenkins SCM checkout 临时目录残留）
+        if [[ "$dirname" == *@tmp ]]; then
+            local size
+            size=$(du -sh "$dir" 2>/dev/null | awk '{print $1}' || echo "unknown")
+            log_info "清理 @tmp 目录: $dirname ($size)"
+            rm -rf "$dir" || true
+            cleaned=$((cleaned + 1))
+        fi
+    done
+
+    log_success "Jenkins workspace 清理完成: ${cleaned} 个临时目录已清理"
+}
+
+# -------------------------------------------
+# pnpm Store 定期清理 (CACHE-02)
+# -------------------------------------------
+# 参数:
+#   $1: 强制模式（"force" 忽略 7 天间隔检查，per D-06）
+# 返回：无（移除未引用的 pnpm 包）
+# 间隔：7 天（可通过 FORCE 参数强制执行）
+cleanup_pnpm_store()
+{
+    local force_mode="${1:-}"
+    local marker_file="${HOME}/.cache/noda-cleanup/pnpm-prune-marker"
+
+    # 间隔检查：非强制模式下，距上次 prune 不足 7 天则跳过
+    if [ "$force_mode" != "force" ]; then
+        if [ -f "$marker_file" ]; then
+            local last_epoch
+            last_epoch=$(stat -f '%m' "$marker_file" 2>/dev/null || stat -c '%Y' "$marker_file" 2>/dev/null || echo "0")
+            local now_epoch
+            now_epoch=$(date +%s)
+            local age_days=$(( (now_epoch - last_epoch) / 86400 ))
+            if [ "$age_days" -lt 7 ]; then
+                log_info "pnpm store prune 跳过（距上次仅 ${age_days} 天，需 >= 7 天）"
+                return 0
+            fi
+        fi
+    fi
+
+    log_info "pnpm store prune（清理未引用包）..."
+
+    local store_path
+    store_path=$(pnpm store path 2>/dev/null || echo "unknown")
+    if [ "$store_path" != "unknown" ]; then
+        local before_size
+        before_size=$(du -sh "$store_path" 2>/dev/null | awk '{print $1}' || echo "unknown")
+        log_info "pnpm store 当前大小: ${before_size}"
+    fi
+
+    pnpm store prune 2>/dev/null || true
+
+    # 更新标记文件时间戳
+    mkdir -p "$(dirname "$marker_file")" 2>/dev/null || true
+    touch "$marker_file" 2>/dev/null || true
+
+    log_success "pnpm store prune 完成"
+}
+
+# -------------------------------------------
+# npm Cache 定期清理 (CACHE-03)
+# -------------------------------------------
+# 参数：无
+# 返回：无（清理 npm 缓存目录）
+cleanup_npm_cache()
+{
+    log_info "npm cache clean --force..."
+
+    local cache_path
+    cache_path=$(npm config get cache 2>/dev/null || echo "unknown")
+    if [ "$cache_path" != "unknown" ]; then
+        local before_size
+        before_size=$(du -sh "$cache_path" 2>/dev/null | awk '{print $1}' || echo "unknown")
+        log_info "npm cache 当前大小: ${before_size}"
+    fi
+
+    npm cache clean --force 2>/dev/null || true
+
+    log_success "npm cache 清理完成"
+}
+
+# -------------------------------------------
+# 定期维护清理 wrapper
+# -------------------------------------------
+# 参数:
+#   $1: 强制模式（"force" 忽略间隔限制，per D-06）
+# 返回：无（编排 Jenkins workspace + pnpm store + npm cache 清理）
+cleanup_periodic_maintenance()
+{
+    local force_mode="${1:-}"
+
+    log_info "=== 开始定期维护清理 ==="
+
+    cleanup_jenkins_workspace
+
+    if [ "$force_mode" = "force" ]; then
+        cleanup_pnpm_store "force"
+    else
+        cleanup_pnpm_store
+    fi
+
+    cleanup_npm_cache
+
+    # 磁盘快照不可跳过
+    disk_snapshot "定期清理后"
+
+    log_success "=== 定期维护清理完成 ==="
+}
