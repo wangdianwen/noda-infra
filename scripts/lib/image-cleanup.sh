@@ -50,27 +50,42 @@ cleanup_by_tag_count()
     log_success "旧镜像清理完成"
 }
 
-# cleanup_by_date_threshold - 删除超过指定天数的旧镜像和 dangling images
+# cleanup_by_date_threshold - 删除不被任何容器使用的旧镜像和 dangling images
+# 策略：只保留正在被容器使用的镜像 + latest 标签，删除所有其他旧标签镜像
 # 参数:
 #   $1: 镜像名（如 findclass-ssr 或 keycloak）
-#   $2: 保留天数（默认 7）
-# 返回：无（删除旧镜像）
+#   $2: 保留天数（已弃用，保留参数兼容性）
+# 返回：无（删除未使用的旧镜像）
 cleanup_by_date_threshold()
 {
     local image_name="$1"
     local retention_days="${2:-7}"
 
-    log_info "镜像清理: 删除超过 ${retention_days} 天的旧镜像..."
+    log_info "镜像清理: 清理 ${image_name} 未使用的旧镜像..."
 
-    # macOS 兼容：BSD date 使用 -v-${retention_days}d
-    local cutoff_epoch
-    if date -v-1d >/dev/null 2>&1; then
-        cutoff_epoch=$(date -v-"${retention_days}"d +%s)
-    else
-        cutoff_epoch=$(date -d "${retention_days} days ago" +%s)
+    # 收集所有容器实际引用的镜像 ID（精确匹配：按容器名过滤）
+    local in_use_ids=""
+    local container_names
+    container_names=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep "^${image_name}" || true)
+
+    for cname in $container_names; do
+        local cid
+        cid=$(docker inspect --format '{{.Image}}' "$cname" 2>/dev/null || echo "")
+        if [ -n "$cid" ]; then
+            in_use_ids="${in_use_ids}${cid}"$'\n'
+        fi
+    done
+
+    # 始终保留 latest 标签对应的镜像 ID
+    local latest_id
+    latest_id=$(docker inspect --format '{{.Id}}' "${image_name}:latest" 2>/dev/null || echo "")
+    if [ -n "$latest_id" ]; then
+        in_use_ids="${in_use_ids}${latest_id}"$'\n'
     fi
 
-    # 1. 清理带 Git SHA 标签的旧镜像（排除 latest）
+    in_use_ids=$(echo "$in_use_ids" | sort -u)
+
+    # 列出所有非 latest 标签
     local sha_tags
     sha_tags=$(docker images "$image_name" --format '{{.Tag}}' |
         grep -v '^latest$' |
@@ -78,44 +93,21 @@ cleanup_by_date_threshold()
 
     local deleted=0
     for tag in $sha_tags; do
-        # 使用 docker inspect 获取 ISO 8601 创建时间
-        local created_iso
-        created_iso=$(docker inspect --format '{{.Created}}' "${image_name}:${tag}" 2>/dev/null || echo "")
+        local tag_id
+        tag_id=$(docker inspect --format '{{.Id}}' "${image_name}:${tag}" 2>/dev/null || echo "")
 
-        if [ -z "$created_iso" ]; then
+        # 检查此镜像是否在用（ID 在 in_use_ids 中）
+        if [ -n "$tag_id" ] && echo "$in_use_ids" | grep -qF "$tag_id"; then
+            log_info "  保留 ${image_name}:${tag}（正在使用）"
             continue
         fi
 
-        # 将 ISO 8601 转为 epoch（macOS 兼容）
-        local image_epoch
-        if date -j -f "%Y-%m-%dT%H:%M:%S" "" >/dev/null 2>&1; then
-            # macOS: 截取 ISO 8601 到秒级精度
-            local created_short
-            created_short=$(echo "$created_iso" | sed 's/\..*//' | sed 's/Z$//')
-            image_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "$created_short" +%s 2>/dev/null || echo "0")
-        else
-            image_epoch=$(date -d "$created_iso" +%s 2>/dev/null || echo "0")
-        fi
-
-        if [ "$image_epoch" -eq 0 ]; then
-            continue
-        fi
-
-        if [ "$image_epoch" -lt "$cutoff_epoch" ]; then
-            # macOS 兼容的日期显示
-            local image_date
-            if date -r 0 >/dev/null 2>&1; then
-                image_date=$(date -r "$image_epoch" +"%Y-%m-%d")
-            else
-                image_date=$(date -d "@$image_epoch" +"%Y-%m-%d")
-            fi
-            log_info "  删除 ${image_name}:${tag} ($image_date)"
-            docker rmi "${image_name}:${tag}" 2>/dev/null || true
-            deleted=$((deleted + 1))
-        fi
+        log_info "  删除 ${image_name}:${tag}"
+        docker rmi "${image_name}:${tag}" 2>/dev/null || true
+        deleted=$((deleted + 1))
     done
 
-    # 2. 清理 dangling images
+    # 清理 dangling images
     local dangling_ids
     dangling_ids=$(docker images -f "dangling=true" --format '{{.ID}}' 2>/dev/null || true)
     for img_id in $dangling_ids; do
