@@ -51,7 +51,7 @@ cleanup_dangling_images()
     log_info "检查 dangling images..."
 
     local count
-    count=$(docker images -f "dangling=true" -q 2>/dev/null | grep -c . || echo "0")
+    count=$(docker images -f "dangling=true" -q 2>/dev/null | grep -c . || true)
 
     if [ "$count" -gt 0 ]; then
         docker image prune -f 2>/dev/null || true
