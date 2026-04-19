@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: 密钥管理集中化
-status: ready to execute
-last_updated: "2026-04-19T17:00:00.000Z"
-last_activity: "2026-04-19 -- Phase 42 planned (2 plans)"
+status: milestone complete
+last_updated: "2026-04-19T18:10:00.000Z"
+last_activity: "2026-04-19 -- Phase 42 complete (2/2 plans), v1.8 milestone shipped"
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 11
-  completed_plans: 9
-  percent: 75
+  completed_plans: 11
+  percent: 100
 ---
 
 # Project State
@@ -21,15 +21,15 @@ See: .planning/PROJECT.md (updated 2026-04-19)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** v1.8 密钥管理集中化 -- Phase 42 备份与安全（planned, 2 plans）
+**Current focus:** v1.8 密钥管理集中化 -- 全部完成，milestone shipped
 
 ## Current Position
 
 Phase: 42 of 42 (备份与安全)
-Status: Ready to execute
-Last activity: 2026-04-19 -- Phase 42 planned (2 plans)
+Status: Complete
+Last activity: 2026-04-19 -- Phase 42 complete (2/2 plans), v1.8 shipped
 
-Progress: [█████████░] 75%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -68,6 +68,9 @@ Progress: [█████████░] 75%
 - [v1.8 planning]: 备份系统 (scripts/backup/.env.backup) 保持独立明文文件，不迁移
 - [v1.8 planning]: VITE_* 公开信息不纳入密钥管理，保持 --build-arg 硬编码
 - [v1.8 planning]: docker/.env 曾提交到 Git 历史 (commit c15faba)，Phase 42 用 BFG 清理
+- [Phase 42 execution]: backup-doppler-secrets.sh 从 b2 CLI 迁移到 rclone copy（与数据库备份共享基础设施）
+- [Phase 42 execution]: crontab 每天 3:30 密钥备份（错开数据库备份 3:00），DOPPLER_TOKEN 通过 docker-compose 注入
+- [Phase 42 execution]: git-filter-repo 替代 BFG 清理 Git 历史，脚本已创建待用户手动执行
 
 ### Blockers/Concerns
 
@@ -88,6 +91,6 @@ Items acknowledged and deferred at v1.7 milestone close on 2026-04-19:
 
 ## Session Continuity
 
-Last session: 2026-04-19T17:00:00.000Z
-Phase 42 planned — 2 plans (cron 备份 + git-filter-repo 清理)
-Next: Phase 42 execution — /gsd-execute-phase 42
+Last session: 2026-04-19T18:10:00.000Z
+v1.8 密钥管理集中化 milestone 完成 — 4 phases, 11 plans, 全部 shipped
+Next: 开始新 milestone 或使用 /gsd-new-milestone 规划下一步

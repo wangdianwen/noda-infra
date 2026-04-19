@@ -10,7 +10,7 @@
 - **v1.5 开发环境本地化 + 基础设施 CI/CD** -- Phases 26-30 (shipped 2026-04-17) -- [详情](milestones/v1.5-ROADMAP.md)
 - **v1.6 Jenkins Pipeline 强制执行** -- Phases 31-34 (shipped 2026-04-18)
 - **v1.7 代码精简与规整** -- Phases 35-38 (shipped 2026-04-19) -- [详情](milestones/v1.7-ROADMAP.md)
-- **v1.8 密钥管理集中化** -- Phases 39-42 (in progress)
+- **v1.8 密钥管理集中化** -- Phases 39-42 (shipped 2026-04-19)
 
 ## Phases
 
@@ -100,14 +100,14 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 </details>
 
-### v1.8 密钥管理集中化 (In Progress)
+### v1.8 密钥管理集中化 (Complete)
 
 **Milestone Goal:** 将分散在多个 .env 文件中的敏感环境变量迁移到 Doppler 集中管理，与 Jenkins Pipeline 集成实现安全注入，备份到 Backblaze B2，并清理 Git 历史中的密钥泄露。
 
 - [x] **Phase 39: Doppler 基础设施搭建** (3/3 plans) -- completed 2026-04-19
 - [x] **Phase 40: Jenkins Pipeline 集成** (3/3 plans) -- completed 2026-04-19
 - [x] **Phase 41: 迁移与清理** (3/3 plans) -- completed 2026-04-19
-- [ ] **Phase 42: 备份与安全** (0/2 plans) -- B2 密钥快照、Git 历史 BFG 清理
+- [x] **Phase 42: 备份与安全** (2/2 plans) -- completed 2026-04-19
 
 ## Phase Details
 
@@ -169,8 +169,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 42-01-PLAN.md -- Doppler 密钥备份 cron 集成（rclone + Dockerfile + crontab + docker-compose）
-- [ ] 42-02-PLAN.md -- Git 历史敏感文件清理脚本（git-filter-repo 替代 BFG）
+- [x] 42-01-PLAN.md -- Doppler 密钥备份 cron 集成（rclone + Dockerfile + crontab + docker-compose）
+- [x] 42-02-PLAN.md -- Git 历史敏感文件清理脚本（git-filter-repo 替代 BFG）
 
 ## Progress
 
@@ -182,4 +182,4 @@ Phases execute in numeric order: 39 -> 40 -> 41 -> 42
 | 39. Doppler 基础设施搭建 | 3/3 | Complete | 2026-04-19 |
 | 40. Jenkins Pipeline 集成 | 3/3 | Complete | 2026-04-19 |
 | 41. 迁移与清理 | 3/3 | Complete | 2026-04-19 |
-| 42. 备份与安全 | 0/2 | Planned | - |
+| 42. 备份与安全 | 2/2 | Complete | 2026-04-19 |
