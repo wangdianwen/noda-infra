@@ -86,3 +86,4 @@ Resume file: .planning/phases/45-infra-image-cleanup/45-CONTEXT.md
 ### Roadmap Evolution
 
 - Phase 45 added: Infra Pipeline 镜像清理补全
+- Phase 46 added: nginx 蓝绿部署支持

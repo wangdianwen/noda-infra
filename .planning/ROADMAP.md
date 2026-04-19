@@ -11,7 +11,7 @@
 - **v1.6 Jenkins Pipeline 强制执行** -- Phases 31-34 (shipped 2026-04-18)
 - **v1.7 代码精简与规整** -- Phases 35-38 (shipped 2026-04-19) -- [详情](milestones/v1.7-ROADMAP.md)
 - **v1.8 密钥管理集中化** -- Phases 39-42 (shipped 2026-04-19)
-- **v1.9 部署后磁盘清理自动化** -- Phases 43-44 (in progress)
+- **v1.9 部署后磁盘清理自动化** -- Phases 43-46 (in progress)
 
 ## Phases
 
@@ -120,6 +120,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [ ] **Phase 43: 清理共享库 + Pipeline 集成** - 新建 cleanup.sh 共享库，增强 pipeline_cleanup/pipeline_infra_cleanup，部署后自动清理 Docker/Node.js/文件残留
 - [ ] **Phase 44: Jenkins 维护清理 + 定期任务** - Jenkins 旧构建清理 + pnpm/npm 定期清理 cron
 - [ ] **Phase 45: Infra Pipeline 镜像清理补全** - 补全 noda-ops/nginx 旧镜像清理逻辑，确保所有服务部署后无残留镜像
+- [ ] **Phase 46: nginx 蓝绿部署支持** - 修复 nginx infra Pipeline --force-recreate 后 DNS 解析失败导致的容器重启循环
 
 ## Phase Details
 
@@ -173,10 +174,11 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 43 -> 44 -> 45
+Phases execute in numeric order: 43 -> 44 -> 45 -> 46
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 43. 清理共享库 + Pipeline 集成 | 0/3 | Planned | - |
 | 44. Jenkins 维护清理 + 定期任务 | 0/2 | Not started | - |
 | 45. Infra Pipeline 镜像清理补全 | 0/2 | Not started | - |
+| 46. nginx 蓝绿部署支持 | 0 | Not started | - |
