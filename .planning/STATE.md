@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: 密钥管理集中化
 status: executing
-last_updated: "2026-04-19T14:00:00.000Z"
-last_activity: "2026-04-19 -- Phase 41 executing: Wave 1 (Plan 01 + Plan 02 parallel)"
+last_updated: "2026-04-19T15:00:00.000Z"
+last_activity: "2026-04-19 -- Phase 41 complete: 3/3 plans"
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 9
-  completed_plans: 6
-  percent: 67
+  completed_plans: 9
+  percent: 75
 ---
 
 # Project State
@@ -21,27 +21,28 @@ See: .planning/PROJECT.md (updated 2026-04-19)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** v1.8 密钥管理集中化 -- Phase 41 迁移与清理
+**Current focus:** v1.8 密钥管理集中化 -- Phase 42 备份与安全
 
 ## Current Position
 
-Phase: 41 of 42 (迁移与清理)
-Status: Executing — Wave 1 (Plan 01 + Plan 02 parallel)
-Last activity: 2026-04-19 -- Phase 41 executing
+Phase: 42 of 42 (备份与安全)
+Status: Ready for planning
+Last activity: 2026-04-19 -- Phase 41 complete
 
-Progress: [████████░░] 67%
+Progress: [█████████░] 75%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 6 (Phase 39 + Phase 40)
+- Total plans completed: 9 (Phase 39 + Phase 40 + Phase 41)
 - Previous milestone (v1.7): 11 plans in 4 phases
 
 **Recent Trend:**
 
 - v1.8 Phase 39: 3 plans in 1 session
 - v1.8 Phase 40: 3 plans in 1 session
+- v1.8 Phase 41: 3 plans in 1 session
 - Trend: Fast
 
 *Updated after each plan completion*
@@ -60,6 +61,10 @@ Progress: [████████░░] 67%
 - [Phase 40 execution]: scripts/lib/secrets.sh 双模式密钥加载库 — DOPPLER_TOKEN 存在时从 Doppler 拉取，否则回退 docker/.env
 - [Phase 40 execution]: 3 个 Jenkinsfile 添加 DOPPLER_TOKEN = credentials('doppler-service-token')
 - [Phase 40 execution]: 3 个手动部署脚本改为调用 load_secrets()
+- [Phase 41 execution]: secrets.sh 改为 Doppler-only，移除 docker/.env 回退
+- [Phase 41 execution]: docker/.env 和 .env.production 已删除，Doppler 成为唯一密钥源
+- [Phase 41 execution]: 所有 SOPS 文件和代码已清理（.sops.yaml, config/secrets.sops.yaml, decrypt-secrets.sh）
+- [Phase 41 execution]: backup-doppler-secrets.sh 使用硬编码 age 公钥，不再依赖 .sops.yaml
 - [v1.8 planning]: 备份系统 (scripts/backup/.env.backup) 保持独立明文文件，不迁移
 - [v1.8 planning]: VITE_* 公开信息不纳入密钥管理，保持 --build-arg 硬编码
 - [v1.8 planning]: docker/.env 曾提交到 Git 历史 (commit c15faba)，Phase 42 用 BFG 清理
@@ -83,6 +88,6 @@ Items acknowledged and deferred at v1.7 milestone close on 2026-04-19:
 
 ## Session Continuity
 
-Last session: 2026-04-19T14:00:00.000Z
-Phase 41 executing — Wave 1 (Plan 01 + Plan 02 parallel)
-Next: Wave 2 (Plan 03 — 文件删除)
+Last session: 2026-04-19T15:00:00.000Z
+Phase 41 complete — 迁移与清理 (3/3 plans)
+Next: Phase 42 (备份与安全) — B2 密钥快照 + Git 历史 BFG 清理

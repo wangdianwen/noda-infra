@@ -106,7 +106,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 - [x] **Phase 39: Doppler 基础设施搭建** (3/3 plans) -- completed 2026-04-19
 - [x] **Phase 40: Jenkins Pipeline 集成** (3/3 plans) -- completed 2026-04-19
-- [ ] **Phase 41: 迁移与清理** -- .env 文件迁移、明文删除、SOPS 代码清理
+- [x] **Phase 41: 迁移与清理** (3/3 plans) -- completed 2026-04-19
 - [ ] **Phase 42: 备份与安全** -- B2 密钥快照、Git 历史 BFG 清理
 
 ## Phase Details
@@ -155,9 +155,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 41-01-PLAN.md -- 密钥验证扩展 + secrets.sh Doppler-only 化 + backup 脚本公钥来源改造
-- [ ] 41-02-PLAN.md -- 脚本 SOPS 引用清理 + 文档更新 + .gitignore 清理
-- [ ] 41-03-PLAN.md -- 验证后删除明文文件和 SOPS 文件
+- [x] 41-01-PLAN.md -- 密钥验证扩展 + secrets.sh Doppler-only 化 + backup 脚本公钥来源改造
+- [x] 41-02-PLAN.md -- 脚本 SOPS 引用清理 + 文档更新 + .gitignore 清理
+- [x] 41-03-PLAN.md -- 验证后删除明文文件和 SOPS 文件
 
 ### Phase 42: 备份与安全
 **Goal**: Doppler 密钥有定期 B2 快照备份，Git 历史中的密钥泄露已清除
@@ -177,5 +177,5 @@ Phases execute in numeric order: 39 -> 40 -> 41 -> 42
 |-------|----------------|--------|-----------|
 | 39. Doppler 基础设施搭建 | 3/3 | Complete | 2026-04-19 |
 | 40. Jenkins Pipeline 集成 | 3/3 | Complete | 2026-04-19 |
-| 41. 迁移与清理 | 0/3 | Not started | - |
+| 41. 迁移与清理 | 3/3 | Complete | 2026-04-19 |
 | 42. 备份与安全 | 0/TBD | Not started | - |
