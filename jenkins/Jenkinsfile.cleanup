@@ -33,10 +33,10 @@ pipeline {
     stages {
         stage('Pre-flight') {
             steps {
+                echo "清理模式: FORCE=${params.FORCE}"
+                echo "触发原因: ${currentBuild.buildCauses}"
                 sh '''
                     source scripts/lib/log.sh
-                    echo "清理模式: FORCE=${FORCE:-false}"
-                    echo "触发原因: ${currentBuild.buildCauses}"
                     # 验证基础命令可用
                     docker info >/dev/null 2>&1 || { echo "警告: Docker 不可用"; }
                 '''
