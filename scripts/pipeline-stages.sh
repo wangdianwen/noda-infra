@@ -666,6 +666,18 @@ pipeline_deploy_nginx()
     docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
         up -d --force-recreate --no-deps nginx
 
+    # 等待 Docker DNS 就绪（per D-02）
+    log_info "等待 Docker DNS 就绪..."
+    sleep 5
+
+    # 触发 DNS 重新解析（per D-02）
+    log_info "触发 nginx DNS 重新解析..."
+    if ! docker exec noda-infra-nginx nginx -s reload; then
+        log_error "nginx reload 失败，DNS 可能未就绪"
+        return 1
+    fi
+    log_success "nginx DNS 刷新完成"
+
     log_success "Nginx 重建完成"
 }
 
