@@ -140,6 +140,63 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 4. Pipeline 自动执行 9 阶段：Pre-flight -> Build -> Test -> Deploy -> Health Check -> Switch -> Verify -> CDN Purge -> Cleanup
 5. 查看 Stage View 确认各阶段状态
 
+### Jenkins API 远程触发（curl Runbook）
+
+Jenkins 运行在本机 `http://localhost:8888`，可通过 curl 直接触发 Pipeline。
+
+**凭据：** `scripts/jenkins/config/jenkins-admin.env`
+
+```bash
+# 加载凭据
+source scripts/jenkins/config/jenkins-admin.env
+JENKINS_URL="http://localhost:8888"
+
+# 获取 CSRF Crumb（每次请求前必须获取）
+CRUMB=$(curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  "$JENKINS_URL/crumbIssuer/api/json" | \
+  python3 -c "import sys,json; d=json.load(sys.stdin); print(d['crumbRequestField']+':'+d['crumb'])")
+
+# 触发 findclass-ssr 部署
+curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  -X POST -H "$CRUMB" \
+  "$JENKINS_URL/job/findclass-ssr-deploy/build"
+
+# 触发 keycloak 部署
+curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  -X POST -H "$CRUMB" \
+  "$JENKINS_URL/job/keycloak-deploy/build"
+
+# 触发基础设施部署（noda-ops）
+curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  -X POST -H "$CRUMB" \
+  "$JENKINS_URL/job/infra-deploy/build-withParameters?SERVICE=noda-ops"
+
+# 查询构建状态（将 N 替换为构建号）
+curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  "$JENKINS_URL/job/findclass-ssr-deploy/N/api/json" | \
+  python3 -c "import sys,json; d=json.load(sys.stdin); print('building:', d['building'], 'result:', d.get('result','running'))"
+
+# 查看构建日志（最后 100 行）
+curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  "$JENKINS_URL/job/findclass-ssr-deploy/N/consoleText" | tail -100
+
+# 获取最新构建号
+curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  "$JENKINS_URL/job/findclass-ssr-deploy/api/json" | \
+  python3 -c "import sys,json; d=json.load(sys.stdin); print('nextBuild:', d['nextBuildNumber'], 'lastBuild:', d['lastBuild']['number'])"
+
+# 列出所有 Pipeline 任务
+curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  "$JENKINS_URL/api/json?tree=jobs[name,color]" | \
+  python3 -c "import sys,json; [print(j['name']) for j in json.load(sys.stdin)['jobs']]"
+```
+
+**注意事项：**
+- HTTP 201 = 构建已排队（成功）
+- HTTP 200 + `building: True` = 构建进行中
+- 构建号从 `nextBuildNumber` 获取（触发后减 1 即为刚排队的构建号）
+- 参数化构建用 `build-withParameters?PARAM=value`
+
 ### 紧急回退：手动部署脚本
 
 Jenkins 不可用时，可使用旧部署脚本手动部署：
