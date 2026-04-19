@@ -216,6 +216,7 @@ run_container()
         ${container_cap_add:+--cap-add "$container_cap_add"} \
         $([ "$container_readonly" = "true" ] && echo "--read-only") \
         --tmpfs /tmp \
+        --tmpfs /app/scripts/logs \
         --memory "$container_memory" \
         --memory-reservation "$container_memory_reservation" \
         --cpus 1 \
