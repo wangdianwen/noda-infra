@@ -38,6 +38,8 @@ pipeline {
             returnStdout: true
         ).trim()
         TARGET_ENV = "${env.ACTIVE_ENV == 'blue' ? 'green' : 'blue'}"
+        // Doppler Service Token（Phase 40，per D-06/D-07）
+        DOPPLER_TOKEN = credentials('doppler-service-token')
     }
 
     options {
