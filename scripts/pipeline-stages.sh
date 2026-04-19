@@ -17,6 +17,7 @@ source "$PROJECT_ROOT/scripts/manage-containers.sh"
 source "$PROJECT_ROOT/scripts/lib/secrets.sh"
 source "$PROJECT_ROOT/scripts/lib/deploy-check.sh"
 source "$PROJECT_ROOT/scripts/lib/image-cleanup.sh"
+source "$PROJECT_ROOT/scripts/lib/cleanup.sh"
 
 # 加载密钥（Doppler 双模式，per D-03/D-04/D-10）
 load_secrets
@@ -290,6 +291,8 @@ pipeline_pull_image()
 #   SERVICE_IMAGE - 官方镜像名（设置后忽略 GIT_SHA，用于 Keycloak 等）
 pipeline_deploy()
 {
+    disk_snapshot "部署前"
+
     local target_env="$1"
     local git_sha="${2:-}"
     local service="${SERVICE_NAME:-findclass-ssr}"
@@ -438,6 +441,9 @@ pipeline_cleanup()
         # 仅清理 dangling images
         cleanup_dangling
     fi
+
+    # === 部署后全面清理（per D-03）===
+    cleanup_after_deploy "${WORKSPACE:-$PWD}"
 }
 
 # pipeline_failure_cleanup - 部署失败时捕获日志并清理
@@ -588,6 +594,8 @@ pipeline_backup_database()
 # 返回: 由子函数决定
 pipeline_infra_deploy()
 {
+    disk_snapshot "部署前"
+
     local service="$1"
 
     case "$service" in
@@ -903,6 +911,9 @@ pipeline_infra_cleanup()
             log_info "未知服务: $service，跳过清理"
             ;;
     esac
+
+    # === 基础设施部署后全面清理（per D-03）===
+    cleanup_after_infra_deploy "$service" "${WORKSPACE:-$PWD}"
 }
 
 # ============================================
