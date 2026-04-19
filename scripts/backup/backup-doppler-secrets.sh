@@ -62,19 +62,12 @@ if [[ "$DRY_RUN" == "false" ]]; then
     fi
 fi
 
-# 获取 age 公钥（优先环境变量，其次从 .sops.yaml 读取）
-AGE_PUBLIC_KEY="${AGE_PUBLIC_KEY:-}"
-if [[ -z "$AGE_PUBLIC_KEY" ]]; then
-    SOPS_FILE="${SOPS_FILE:-.sops.yaml}"
-    if [[ -f "$SOPS_FILE" ]]; then
-        AGE_PUBLIC_KEY=$(grep '^age:' "$SOPS_FILE" | awk '{print $2}')
-        info "从 $SOPS_FILE 读取 age 公钥"
-    fi
-fi
+# Doppler 备份加密公钥（age 公钥，可安全公开）
+AGE_PUBLIC_KEY="${AGE_PUBLIC_KEY:-age1869smm93r878hzgarhv5uggkg58mttaz54l05wwc0s3zmp264e7qw7rc3w}"
 
 if [[ -z "$AGE_PUBLIC_KEY" ]]; then
-    error "AGE_PUBLIC_KEY 未设置且无法从 .sops.yaml 读取"
-    error "使用方法: export AGE_PUBLIC_KEY='age1xxx...' 或确保 .sops.yaml 存在"
+    error "AGE_PUBLIC_KEY 未设置"
+    error "使用方法: export AGE_PUBLIC_KEY='age1xxx...'"
     exit 1
 fi
 
