@@ -150,11 +150,12 @@ Plans:
   2. Jenkins workspace 中已完成构建的工作目录被自动清理，释放磁盘空间
   3. pnpm store 每 7 天自动 prune 一次，可通过环境参数强制触发
   4. npm cache 每 7 天自动清理一次，与 pnpm store prune 同频率执行
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 44-01: Jenkins 旧构建清理函数（cleanup.sh 扩展 + Pipeline 集成）
-- [ ] 44-02: pnpm/npm 定期清理 cron 任务（crontab 配置 + 强制触发参数）
+- [ ] 44-01-PLAN.md -- cleanup.sh 扩展 3 个清理函数 + 定期清理 wrapper（JENK-02, CACHE-02, CACHE-03）
+- [ ] 44-02-PLAN.md -- 新建 Jenkinsfile.cleanup 定期清理 Pipeline（cron trigger + FORCE 参数）
+- [ ] 44-03-PLAN.md -- 手动触发 cleanup Pipeline 端到端验证
 
 ### Phase 45: Infra Pipeline 镜像清理补全
 **Goal**: 补全 infra Pipeline 中 noda-ops 和 nginx 的旧镜像清理逻辑，确保所有服务部署后无残留镜像堆积
@@ -192,6 +193,6 @@ Phases execute in numeric order: 43 -> 44 -> 45 -> 46
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 43. 清理共享库 + Pipeline 集成 | 0/3 | Planned | - |
-| 44. Jenkins 维护清理 + 定期任务 | 0/2 | Not started | - |
+| 44. Jenkins 维护清理 + 定期任务 | 0/3 | Planned | - |
 | 45. Infra Pipeline 镜像清理补全 | 0/2 | Not started | - |
 | 46. nginx 蓝绿部署支持 | 1/1 | Complete | 2026-04-20 |
