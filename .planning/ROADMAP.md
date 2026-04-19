@@ -119,6 +119,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 - [ ] **Phase 43: 清理共享库 + Pipeline 集成** - 新建 cleanup.sh 共享库，增强 pipeline_cleanup/pipeline_infra_cleanup，部署后自动清理 Docker/Node.js/文件残留
 - [ ] **Phase 44: Jenkins 维护清理 + 定期任务** - Jenkins 旧构建清理 + pnpm/npm 定期清理 cron
+- [ ] **Phase 45: Infra Pipeline 镜像清理补全** - 补全 noda-ops/nginx 旧镜像清理逻辑，确保所有服务部署后无残留镜像
 
 ## Phase Details
 
@@ -154,12 +155,28 @@ Plans:
 - [ ] 44-01: Jenkins 旧构建清理函数（cleanup.sh 扩展 + Pipeline 集成）
 - [ ] 44-02: pnpm/npm 定期清理 cron 任务（crontab 配置 + 强制触发参数）
 
+### Phase 45: Infra Pipeline 镜像清理补全
+**Goal**: 补全 infra Pipeline 中 noda-ops 和 nginx 的旧镜像清理逻辑，确保所有服务部署后无残留镜像堆积
+**Depends on**: Phase 43 (cleanup.sh 和 image-cleanup.sh 已建立，cleanup_by_date_threshold 已修复)
+**Requirements**: IMG-01, IMG-02
+**Success Criteria** (what must be TRUE):
+  1. noda-ops 部署后旧镜像自动清理，只保留当前在用镜像 + latest
+  2. nginx 部署后旧镜像自动清理（dangling images）
+  3. 手动触发 infra Pipeline 验证清理日志包含镜像清理输出
+  4. postgres_data 卷安全不受影响
+**Plans**: 2 plans
+
+Plans:
+- [ ] 45-01-PLAN.md -- pipeline_infra_cleanup 增加 noda-ops/nginx 镜像清理调用
+- [ ] 45-02-PLAN.md -- 手动触发 infra Pipeline 端到端验证
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 43 -> 44
+Phases execute in numeric order: 43 -> 44 -> 45
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 43. 清理共享库 + Pipeline 集成 | 0/3 | Planned | - |
 | 44. Jenkins 维护清理 + 定期任务 | 0/2 | Not started | - |
+| 45. Infra Pipeline 镜像清理补全 | 0/2 | Not started | - |
