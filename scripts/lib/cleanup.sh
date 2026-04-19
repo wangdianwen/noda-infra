@@ -180,9 +180,7 @@ cleanup_old_infra_backups()
     log_info "清理 ${service} 旧备份（保留 ${retention_days} 天）..."
 
     local deleted=0
-    while read -r _f; do
-        deleted=$((deleted + 1))
-    done < <(find "$backup_dir" -name "*.sql.gz" -type f -mtime +"${retention_days}" -print -delete 2>/dev/null || true)
+    deleted=$(find "$backup_dir" -name "*.sql.gz" -type f -mtime +"${retention_days}" -delete -print 2>/dev/null | wc -l | tr -d ' ')
 
     log_success "备份清理完成: ${service}，删除 ${deleted} 个超过 ${retention_days} 天的备份"
 }
