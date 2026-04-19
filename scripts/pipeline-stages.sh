@@ -666,9 +666,24 @@ pipeline_deploy_nginx()
     docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
         up -d --force-recreate --no-deps nginx
 
-    # 等待 Docker DNS 就绪（per D-02）
-    log_info "等待 Docker DNS 就绪..."
-    sleep 5
+    # 等待 nginx 容器进入 running 状态（per D-02）
+    log_info "等待 nginx 容器就绪..."
+    local _wait_count=0
+    local _max_wait=30
+    while [ $_wait_count -lt $_max_wait ]; do
+        local _container_status
+        _container_status=$(docker inspect --format='{{.State.Running}}' noda-infra-nginx 2>/dev/null || echo "false")
+        if [ "$_container_status" = "true" ]; then
+            break
+        fi
+        sleep 1
+        _wait_count=$((_wait_count + 1))
+    done
+    if [ $_wait_count -ge $_max_wait ]; then
+        log_error "nginx 容器未在 ${_max_wait} 秒内就绪"
+        return 1
+    fi
+    log_info "nginx 容器已就绪（等待 ${_wait_count} 秒）"
 
     # 触发 DNS 重新解析（per D-02）
     log_info "触发 nginx DNS 重新解析..."
