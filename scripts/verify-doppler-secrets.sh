@@ -31,7 +31,7 @@ fi
 PROJECT="${1:-noda}"
 CONFIG="${2:-prd}"
 
-# 预期密钥列表（15 个，排除 VITE_* 和备份系统密钥）
+# 预期密钥列表（17 个，排除 VITE_* 和备份系统密钥）
 EXPECTED_SECRETS=(
     "POSTGRES_USER"
     "POSTGRES_PASSWORD"
@@ -48,6 +48,8 @@ EXPECTED_SECRETS=(
     "SMTP_USER"
     "SMTP_PASSWORD"
     "RESEND_API_KEY"
+    "GOOGLE_CLIENT_ID"
+    "GOOGLE_CLIENT_SECRET"
 )
 
 info "验证 Doppler 项目 '${PROJECT}' 环境 '${CONFIG}' 的密钥完整性..."
