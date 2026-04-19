@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.8
 milestone_name: 密钥管理集中化
 status: executing
-last_updated: "2026-04-19T12:00:00.000Z"
-last_activity: "2026-04-19 -- Phase 40 executed: 3/3 plans complete"
+last_updated: "2026-04-19T13:00:00.000Z"
+last_activity: "2026-04-19 -- Phase 41 planned: 3 plans in 2 waves"
 progress:
   total_phases: 4
   completed_phases: 2
@@ -21,13 +21,13 @@ See: .planning/PROJECT.md (updated 2026-04-19)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** v1.8 密钥管理集中化 -- Phase 40 Jenkins Pipeline 集成
+**Current focus:** v1.8 密钥管理集中化 -- Phase 41 迁移与清理
 
 ## Current Position
 
-Phase: 40 of 42 (Jenkins Pipeline 集成)
-Status: Executed — 3/3 plans complete
-Last activity: 2026-04-19 -- Phase 40 executed: 3/3 plans complete
+Phase: 41 of 42 (迁移与清理)
+Status: Planned — 3 plans in 2 waves
+Last activity: 2026-04-19 -- Phase 41 planned: 3 plans in 2 waves
 
 Progress: [████████░░] 67%
 
@@ -83,6 +83,6 @@ Items acknowledged and deferred at v1.7 milestone close on 2026-04-19:
 
 ## Session Continuity
 
-Last session: 2026-04-19T12:00:00.000Z
-Phase 40 executed — Doppler 双模式密钥加载库 + Jenkinsfile 凭据注入 + 手动脚本改造
-Next: `/gsd-plan-phase 41` to plan .env 迁移与清理
+Last session: 2026-04-19T13:00:00.000Z
+Phase 41 planned — 密钥验证扩展 + SOPS 引用清理 + 明文文件删除（3 plans / 2 waves）
+Next: `/gsd-execute-phase 41` to execute migration cleanup
