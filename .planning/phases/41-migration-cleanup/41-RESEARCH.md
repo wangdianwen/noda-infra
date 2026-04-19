@@ -332,22 +332,16 @@ fi
 - A1：Google OAuth 凭据是否已录入 Doppler？verify-doppler-secrets.sh 的 EXPECTED_SECRETS 中不包含 GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET
 - A2：是否保留 config/keys/ 目录和 age 私钥？还是改用其他方案？
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Google OAuth 密钥是否在 Doppler 中？**
-   - What we know: verify-doppler-secrets.sh 列出 15 个预期密钥，不包含 GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET。config/secrets.sops.yaml 包含这两个密钥。
-   - What's unclear: 这两个密钥是否已手动录入 Doppler？Phase 39 的 EXECUTION 确认录入了 15 个密钥，但未明确列出是否包含 Google OAuth。
-   - Recommendation: 在 verify-doppler-secrets.sh 中添加 GOOGLE_CLIENT_ID 和 GOOGLE_CLIENT_SECRET 验证。如果 Doppler 中缺少，先补充录入再继续清理。
+1. **Google OAuth 密钥是否在 Doppler 中？** → RESOLVED by Plan 41-01 Task 1
+   - Plan 41-01 Task 1 将 verify-doppler-secrets.sh 扩展到 17 个密钥（+GOOGLE_CLIENT_ID/SECRET）。如果 Doppler 中缺少这两个密钥，验证脚本会报告缺失，执行时会先补充录入。
 
-2. **config/keys/ 目录和 age 私钥是否保留？**
-   - What we know: backup-doppler-secrets.sh 使用 age 公钥加密备份文件。age 私钥（git-age-key.txt）用于解密备份恢复。
-   - What's unclear: 删除 SOPS 后，age 工具链是否仍需要。Doppler 备份脚本只用公钥加密，私钥只在恢复时需要。
-   - Recommendation: 保留 config/keys/ 目录和 age 私钥，但在 .gitignore 中继续忽略。在 backup-doppler-secrets.sh 中将公钥硬编码为默认值。
+2. **config/keys/ 目录和 age 私钥是否保留？** → RESOLVED by Plan 41-01 Task 3 + Plan 41-03 Task 2
+   - Plan 41-01 Task 3 在 backup-doppler-secrets.sh 中将 age 公钥硬编码为默认值（公钥可安全公开）。Plan 41-03 Task 2 确认 config/keys/ 目录保留。age 私钥继续用于备份恢复。
 
-3. **verify-doppler-secrets.sh 是否需要更新？**
-   - What we know: 当前验证 15 个密钥。docker/.env 有 13 个有效 key（B2_PATH 只在 verify 脚本中出现但不在 docker/.env 中？需确认），.env.production 有 SMTP_* 等额外密钥。加上 Google OAuth 可能有 17+ 个密钥。
-   - What's unclear: Doppler 中实际存储了多少个密钥？
-   - Recommendation: 执行 `doppler secrets --only-names` 对比确认，然后更新 verify 脚本。
+3. **verify-doppler-secrets.sh 是否需要更新？** → RESOLVED by Plan 41-01 Task 1
+   - Plan 41-01 Task 1 将密钥列表从 15 个扩展到 17 个，覆盖 .env.production 的 SMTP_* 和 Google OAuth 密钥。
 
 ## Environment Availability
 
