@@ -8,15 +8,19 @@
 
 FROM postgres:17-alpine
 
-# 安装必要工具
+# 合并为单个 RUN：安装工具 + 创建目录 + 设置权限
+# 注意：移除 curl（脚本中未使用），per D-08
 RUN apk add --no-cache \
     bash \
-    curl \
     jq \
     coreutils \
     rclone \
     dcron \
-    ca-certificates
+    ca-certificates \
+    && mkdir -p /var/log/noda-backup /app/history \
+    && touch /var/log/noda-backup/backup.log \
+             /var/log/noda-backup/test.log \
+    && chmod 666 /var/log/noda-backup/*.log
 
 # 设置工作目录
 WORKDIR /app
@@ -30,15 +34,6 @@ COPY deploy/crontab /etc/crontabs/root
 # 复制启动脚本
 COPY deploy/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
-
-# 创建日志目录
-RUN mkdir -p /var/log/noda-backup && \
-    touch /var/log/noda-backup/backup.log && \
-    touch /var/log/noda-backup/test.log && \
-    chmod 666 /var/log/noda-backup/*.log
-
-# 创建历史记录目录
-RUN mkdir -p /app/history
 
 # 设置环境变量
 ENV BACKUP_DIR=/tmp/postgres_backups \
