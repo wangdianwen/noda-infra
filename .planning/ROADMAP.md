@@ -11,7 +11,7 @@
 - **v1.6 Jenkins Pipeline 强制执行** -- Phases 31-34 (shipped 2026-04-18)
 - **v1.7 代码精简与规整** -- Phases 35-38 (shipped 2026-04-19) -- [详情](milestones/v1.7-ROADMAP.md)
 - **v1.8 密钥管理集中化** -- Phases 39-42 (shipped 2026-04-19)
-- **v1.9 部署后磁盘清理自动化** -- Phases 43-46 (in progress)
+- **v1.9 部署后磁盘清理自动化** -- Phases 43-46 (shipped 2026-04-20) -- [详情](milestones/v1.9-MILESTONE.md)
 
 ## Phases
 
@@ -92,8 +92,6 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 <details>
 <summary>v1.7 代码精简与规整 (Phases 35-38) -- SHIPPED 2026-04-19</summary>
 
-**Milestone Goal:** 在不影响现有功能的前提下，消除重复代码、合并冗余脚本、统一代码风格
-
 - [x] **Phase 35: 共享库建设** (3/3 plans) -- completed 2026-04-18
 - [x] **Phase 36: 蓝绿部署统一** (2/2 plans) -- completed 2026-04-19
 - [x] **Phase 37: 清理与重命名** (2/2 plans) -- completed 2026-04-19
@@ -104,8 +102,6 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 <details>
 <summary>v1.8 密钥管理集中化 (Phases 39-42) -- SHIPPED 2026-04-19</summary>
 
-**Milestone Goal:** 将分散在多个 .env 文件中的敏感环境变量迁移到 Doppler 集中管理
-
 - [x] **Phase 39: Doppler 基础设施搭建** (3/3 plans) -- completed 2026-04-19
 - [x] **Phase 40: Jenkins Pipeline 集成** (3/3 plans) -- completed 2026-04-19
 - [x] **Phase 41: 迁移与清理** (3/3 plans) -- completed 2026-04-19
@@ -113,86 +109,23 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 </details>
 
-### v1.9 部署后磁盘清理自动化 (In Progress)
+<details>
+<summary>v1.9 部署后磁盘清理自动化 (Phases 43-46) -- SHIPPED 2026-04-20</summary>
 
 **Milestone Goal:** 每次 Pipeline 部署成功后，自动清理所有构建残留和缓存，保持系统磁盘占用最小
 
-- [ ] **Phase 43: 清理共享库 + Pipeline 集成** - 新建 cleanup.sh 共享库，增强 pipeline_cleanup/pipeline_infra_cleanup，部署后自动清理 Docker/Node.js/文件残留
-- [ ] **Phase 44: Jenkins 维护清理 + 定期任务** - Jenkins 旧构建清理 + pnpm/npm 定期清理 cron
-- [ ] **Phase 45: Infra Pipeline 镜像清理补全** - 补全 noda-ops/nginx 旧镜像清理逻辑，确保所有服务部署后无残留镜像
-- [x] **Phase 46: nginx 蓝绿部署支持** - 修复 nginx infra Pipeline --force-recreate 后 DNS 解析失败导致的容器重启循环 (completed 2026-04-20)
+- [x] **Phase 43: 清理共享库 + Pipeline 集成** (3/3 plans) -- completed 2026-04-20
+- [x] **Phase 44: Jenkins 维护清理 + 定期任务** (3/3 plans) -- completed 2026-04-20
+- [x] **Phase 45: Infra Pipeline 镜像清理补全** (2/2 plans) -- completed 2026-04-20
+- [x] **Phase 46: nginx 蓝绿部署支持** (1/1 plans) -- completed 2026-04-20
 
-## Phase Details
-
-### Phase 43: 清理共享库 + Pipeline 集成
-**Goal**: Pipeline 每次部署成功后自动清理 Docker build cache、已停止容器、匿名卷、node_modules 和旧备份文件，并通过磁盘快照记录清理效果
-**Depends on**: Phase 42 (v1.8 完成，Pipeline 和共享库体系已建立)
-**Requirements**: DOCK-01, DOCK-02, DOCK-03, DOCK-04, CACHE-01, FILE-01, FILE-02
-**Success Criteria** (what must be TRUE):
-  1. Pipeline 部署成功后，超过 24 小时的 Docker build cache 被自动清理，日志记录清理前后磁盘占用
-  2. Pipeline 部署成功后，已停止的容器和匿名卷被自动清理（命名卷如 postgres_data 不受影响）
-  3. Pipeline 部署成功后，Jenkins workspace 中的 noda-apps/node_modules 被自动删除
-  4. Pipeline 部署前后分别输出 `df -h` 和 `docker system df` 磁盘快照到日志，可对比清理效果
-  5. infra-pipeline 目录下超过 30 天的旧备份文件被自动清理，deploy-failure-*.log 临时文件在部署成功后被删除
-**Plans**: 3 plans
-
-Plans:
-- [ ] 43-01-PLAN.md -- 新建 scripts/lib/cleanup.sh 共享库（9 个清理函数 + 2 个 wrapper + 磁盘快照）
-- [ ] 43-02-PLAN.md -- 增强 pipeline-stages.sh（source cleanup.sh + 4 处函数增强）
-- [ ] 43-03-PLAN.md -- 手动触发 Pipeline 端到端验证
-
-### Phase 44: Jenkins 维护清理 + 定期任务
-**Goal**: 低频维护类清理自动化 -- Jenkins 旧构建记录定期清理、pnpm store 和 npm cache 定期 prune
-**Depends on**: Phase 43 (cleanup.sh 共享库已建立，清理函数可直接复用)
-**Requirements**: JENK-01, JENK-02, CACHE-02, CACHE-03
-**Success Criteria** (what must be TRUE):
-  1. Jenkins 保留最近 N 次构建记录，更早的 artifacts 和构建目录被自动删除
-  2. Jenkins workspace 中已完成构建的工作目录被自动清理，释放磁盘空间
-  3. pnpm store 每 7 天自动 prune 一次，可通过环境参数强制触发
-  4. npm cache 每 7 天自动清理一次，与 pnpm store prune 同频率执行
-**Plans**: 3 plans
-
-Plans:
-- [ ] 44-01-PLAN.md -- cleanup.sh 扩展 3 个清理函数 + 定期清理 wrapper（JENK-02, CACHE-02, CACHE-03）
-- [ ] 44-02-PLAN.md -- 新建 Jenkinsfile.cleanup 定期清理 Pipeline（cron trigger + FORCE 参数）
-- [ ] 44-03-PLAN.md -- 手动触发 cleanup Pipeline 端到端验证
-
-### Phase 45: Infra Pipeline 镜像清理补全
-**Goal**: 补全 infra Pipeline 中 noda-ops 和 nginx 的旧镜像清理逻辑，确保所有服务部署后无残留镜像堆积
-**Depends on**: Phase 43 (cleanup.sh 和 image-cleanup.sh 已建立，cleanup_by_date_threshold 已修复)
-**Requirements**: IMG-01, IMG-02
-**Success Criteria** (what must be TRUE):
-  1. noda-ops 部署后旧镜像自动清理，只保留当前在用镜像 + latest
-  2. nginx 部署后旧镜像自动清理（dangling images）
-  3. 手动触发 infra Pipeline 验证清理日志包含镜像清理输出
-  4. postgres_data 卷安全不受影响
-**Plans**: 2 plans
-
-Plans:
-- [ ] 45-01-PLAN.md -- pipeline_infra_cleanup 增加 noda-ops/nginx 镜像清理调用
-- [ ] 45-02-PLAN.md -- 手动触发 infra Pipeline 端到端验证
-
-### Phase 46: nginx 蓝绿部署支持
-**Goal**: 修复 nginx infra Pipeline --force-recreate 后 DNS 解析失败导致的容器重启循环
-**Depends on**: Phase 43-45 (Pipeline 清理体系已建立)
-**Requirements**: DNS-01, DNS-02
-**Success Criteria** (what must be TRUE):
-  1. nginx.conf http 块包含 `resolver 127.0.0.11 valid=30s;` 和 `resolver_timeout 5s;`，nginx 使用 Docker 内置 DNS 解析容器名称
-  2. pipeline_deploy_nginx() 在 docker compose up --force-recreate 后等待 5 秒再执行 nginx -s reload
-  3. reload 失败时函数返回非零退出码，Pipeline 失败处理机制接管
-**Plans**: 1 plan
-
-Plans:
-- [x] 46-01-PLAN.md -- nginx.conf 添加 resolver + pipeline_deploy_nginx 添加 DNS 刷新步骤 (completed 2026-04-20)
+</details>
 
 ## Progress
 
-**Execution Order:**
-Phases execute in numeric order: 43 -> 44 -> 45 -> 46
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 43. 清理共享库 + Pipeline 集成 | 0/3 | Planned | - |
-| 44. Jenkins 维护清理 + 定期任务 | 0/3 | Planned | - |
-| 45. Infra Pipeline 镜像清理补全 | 0/2 | Not started | - |
-| 46. nginx 蓝绿部署支持 | 1/1 | Complete | 2026-04-20 |
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 43. 清理共享库 + Pipeline 集成 | v1.9 | 3/3 | Complete | 2026-04-20 |
+| 44. Jenkins 维护清理 + 定期任务 | v1.9 | 3/3 | Complete | 2026-04-20 |
+| 45. Infra Pipeline 镜像清理补全 | v1.9 | 2/2 | Complete | 2026-04-20 |
+| 46. nginx 蓝绿部署支持 | v1.9 | 1/1 | Complete | 2026-04-20 |

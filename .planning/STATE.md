@@ -2,79 +2,52 @@
 gsd_state_version: 1.0
 milestone: v1.9
 milestone_name: 部署后磁盘清理自动化
-status: verifying
-stopped_at: Completed 44-02-PLAN.md
-last_updated: "2026-04-19T20:23:57.227Z"
-last_activity: 2026-04-19
+status: archived
+stopped_at: Milestone v1.9 archived
+last_updated: "2026-04-20T22:10:00.000Z"
+last_activity: 2026-04-20
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 9
-  completed_plans: 8
-  percent: 89
+  completed_plans: 9
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-19)
+See: .planning/PROJECT.md (updated 2026-04-20)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** v1.9 部署后磁盘清理自动化 -- Phase 46 complete
+**Current focus:** v1.9 archived — ready for next milestone
 
 ## Current Position
 
-Phase: 46 of 46 (nginx 蓝绿部署支持)
-Plan: 1 of 1 in current phase
-Status: Phase complete — ready for verification
-Last activity: 2026-04-19
+Phase: 46 of 46 (LAST in v1.9)
+Status: Milestone v1.9 archived
+Last activity: 2026-04-20
 
-Progress: [█████████░] 89%
-
-## Performance Metrics
-
-**Velocity:**
-
-- Total plans completed (v1.8): 11 plans in 4 phases
-- Previous milestone (v1.7): 9 plans in 4 phases
-
-**Recent Trend:**
-
-- v1.8 Phase 39: 3 plans
-- v1.8 Phase 40: 3 plans
-- v1.8 Phase 41: 3 plans
-- v1.8 Phase 42: 2 plans
-- Trend: Fast
-
-*Updated after each plan completion*
+Progress: [██████████] 100%
 
 ## Accumulated Context
 
 ### Decisions
 
-Decisions are logged in PROJECT.md Key Decisions table.
-Recent decisions affecting current work:
-
-- [v1.9 research]: 分步 prune 替代 docker system prune（细粒度控制 + 可追溯日志）
-- [v1.9 research]: build cache 保留 24h 热缓存（--filter "until=24h"），避免首次构建变慢
-- [v1.9 research]: docker volume prune -f 不加 --all（保护 postgres_data 命名卷）
-- [v1.9 research]: pnpm store prune 每 7 天一次（非每次部署），避免 prune + install 冲突
-- [v1.9 research]: cleanup.sh 独立共享库（与 image-cleanup.sh 并列）
-- stat 命令同时兼容 macOS 和 Linux，确保跨平台开发
-- pnpm store prune 使用标记文件避免与 install 并发冲突
-- 清理 Pipeline 不包含 COMPOSE_BASE 和 DOPPLER_TOKEN（清理操作无需部署能力）
-- 清理 Pipeline 直接调用 cleanup.sh 函数，不依赖 pipeline-stages.sh 中间层
+- [v1.9]: 分步 prune 替代 docker system prune（细粒度控制 + 可追溯日志）
+- [v1.9]: docker volume prune -f 不加 --all（保护 postgres_data 命名卷）
+- [v1.9]: pnpm store prune 每 7 天一次 + 标记文件避免与 install 冲突
+- [v1.9]: 清理 Pipeline 不包含 COMPOSE_BASE 和 DOPPLER_TOKEN
 
 ### Blockers/Concerns
 
 - 清理操作不得影响 postgres_data 命名卷（核心价值红线）
-- 清理操作不得删除蓝绿 standby 镜像（回滚安全网）
 
 ## Deferred Items
 
-Items acknowledged and deferred at v1.7 milestone close on 2026-04-19:
+Items acknowledged and deferred:
 
 | Category | Item | Status |
 |----------|------|--------|
@@ -83,16 +56,9 @@ Items acknowledged and deferred at v1.7 milestone close on 2026-04-19:
 | verification | Phase 32 (32-VERIFICATION.md) | human_needed |
 | verification | Phase 34 (34-VERIFICATION.md) | human_needed |
 | quick_task | rename-pipelines | missing |
-| Phase 44 P01 | 1min | 1 tasks | 1 files |
-| Phase 44 P02 | 1min | 1 tasks | 1 files |
 
 ## Session Continuity
 
-Last session: 2026-04-19T20:23:57.224Z
-Stopped at: Completed 44-02-PLAN.md
+Last session: 2026-04-20T22:10:00.000Z
+Stopped at: Milestone v1.9 archived, ready for /gsd-new-milestone
 Resume file: None
-
-### Roadmap Evolution
-
-- Phase 45 added: Infra Pipeline 镜像清理补全
-- Phase 46 added: nginx 蓝绿部署支持
