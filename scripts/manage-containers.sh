@@ -203,8 +203,23 @@ run_container()
     local container_cap_add="${CONTAINER_CAP_ADD:-}"
     local _default_health_cmd="node -e \"fetch('http://localhost:${SERVICE_PORT}${HEALTH_PATH}').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\""
     local container_health_cmd="${CONTAINER_HEALTH_CMD:-$_default_health_cmd}"
+    # 健康检查时序参数化（noda-site 等轻量容器需要更短的间隔和启动等待）
+    local container_health_interval="${CONTAINER_HEALTH_INTERVAL:-30s}"
+    local container_health_timeout="${CONTAINER_HEALTH_TIMEOUT:-10s}"
+    local container_health_retries="${CONTAINER_HEALTH_RETRIES:-3}"
+    local container_health_start_period="${CONTAINER_HEALTH_START_PERIOD:-60s}"
+    # CPU 限制参数化（noda-site 只需 0.25 核，findclass-ssr 默认 1 核）
+    local container_cpus="${CONTAINER_CPUS:-1}"
+    # tmpfs 路径参数化（noda-site 等 nginx 容器不需要 /app/scripts/logs）
+    local container_tmpfs="${CONTAINER_TMPFS:-/tmp /app/scripts/logs}"
 
     log_info "启动容器: $container_name (镜像: $image${container_cmd:+, 命令: $container_cmd})"
+
+    # 构建 tmpfs 参数列表
+    local tmpfs_args=""
+    for t in $container_tmpfs; do
+        tmpfs_args="$tmpfs_args --tmpfs $t"
+    done
 
     docker run -d \
         --name "$container_name" \
@@ -215,11 +230,10 @@ run_container()
         --cap-drop ALL \
         ${container_cap_add:+--cap-add "$container_cap_add"} \
         $([ "$container_readonly" = "true" ] && echo "--read-only") \
-        --tmpfs /tmp \
-        --tmpfs /app/scripts/logs \
+        $tmpfs_args \
         --memory "$container_memory" \
         --memory-reservation "$container_memory_reservation" \
-        --cpus 1 \
+        --cpus "$container_cpus" \
         --log-driver json-file \
         --log-opt max-size=10m \
         --log-opt max-file=3 \
@@ -230,10 +244,10 @@ run_container()
         --label com.docker.compose.project=noda-apps \
         --label "com.docker.compose.service=${SERVICE_NAME}" \
         --health-cmd "$container_health_cmd" \
-        --health-interval 30s \
-        --health-timeout 10s \
-        --health-retries 3 \
-        --health-start-period 60s \
+        --health-interval "$container_health_interval" \
+        --health-timeout "$container_health_timeout" \
+        --health-retries "$container_health_retries" \
+        --health-start-period "$container_health_start_period" \
         ${extra_docker_args} \
         "$image" \
         ${container_cmd:+"$container_cmd"}

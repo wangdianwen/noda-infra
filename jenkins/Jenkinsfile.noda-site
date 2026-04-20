@@ -22,6 +22,14 @@ pipeline {
         // nginx 运行时内存更低（per D-09）
         CONTAINER_MEMORY = "32m"
         CONTAINER_MEMORY_RESERVATION = "8m"
+        // nginx 容器健康检查时序（匹配 docker-compose.app.yml 中的配置）
+        CONTAINER_HEALTH_INTERVAL = "10s"
+        CONTAINER_HEALTH_TIMEOUT = "3s"
+        CONTAINER_HEALTH_START_PERIOD = "3s"
+        // nginx 静态站点 CPU 限制（匹配 docker-compose.app.yml 中的 0.25 核）
+        CONTAINER_CPUS = "0.25"
+        // nginx 容器只需要 /tmp tmpfs（不需要 Node.js 的 /app/scripts/logs）
+        CONTAINER_TMPFS = "/tmp"
         // 蓝绿状态
         ACTIVE_ENV = sh(
             script: 'cat /opt/noda/active-env-noda-site 2>/dev/null || echo blue',
