@@ -128,7 +128,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 - [x] **Phase 47: noda-site 镜像优化** - 从 node:20-alpine 切换到 nginx:1.25-alpine，适配蓝绿部署 (completed 2026-04-20)
 - [x] **Phase 48: 全局 Docker 卫生实践** - .dockerignore、COPY --chown、基础镜像版本统一 (completed 2026-04-20)
-- [ ] **Phase 49: findclass-ssr 爬虫审计与决策** - 审计 Python 调用链路，制定分离方案
+- [x] **Phase 49: findclass-ssr 爬虫审计与决策** - 审计 Python 调用链路，制定分离方案 (completed 2026-04-20)
 - [ ] **Phase 50: findclass-ssr 瘦身执行** - 移除 Python/Chromium 死重，端到端验证
 - [ ] **Phase 51: findclass-ssr 深度优化** - Alpine 切换、devDeps 清理、层缓存优化
 - [ ] **Phase 52: 基础设施镜像清理** - noda-ops 依赖审计、backup Dockerfile 清理
@@ -172,7 +172,7 @@ Plans:
   3. crawl-scheduler.ts 的 spawn('python3', ...) 调用处理方案确定（移除或改为 HTTP fetch）
 **Plans**: 1 plan
 Plans:
-- [ ] 49-01-PLAN.md -- 验证审计完整性 + 产出决策文档（SSR-01, SSR-02）
+- [x] 49-01-PLAN.md -- 验证审计完整性 + 产出决策文档（SSR-01, SSR-02）
 
 ### Phase 50: findclass-ssr 瘦身执行
 **Goal**: 执行 Phase 49 制定的方案，移除 findclass-ssr 中 ~3GB 的 Python/Chromium 死重
@@ -223,7 +223,7 @@ Phase 47/48/52 可并行执行，Phase 49 先于 Phase 50，Phase 51 依赖 Phas
 |-------|-----------|----------------|--------|-----------|
 | 47. noda-site 镜像优化 | v1.10 | 2/2 | Complete    | 2026-04-20 |
 | 48. 全局 Docker 卫生实践 | v1.10 | 2/2 | Complete    | 2026-04-20 |
-| 49. findclass-ssr 爬虫审计与决策 | v1.10 | 0/? | Not started | - |
+| 49. findclass-ssr 爬虫审计与决策 | v1.10 | 1/1 | Complete    | 2026-04-20 |
 | 50. findclass-ssr 瘦身执行 | v1.10 | 0/? | Not started | - |
 | 51. findclass-ssr 深度优化 | v1.10 | 0/? | Not started | - |
 | 52. 基础设施镜像清理 | v1.10 | 0/? | Not started | - |

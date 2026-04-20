@@ -19,8 +19,8 @@
 
 ### SSR — findclass-ssr 核心瘦身
 
-- [ ] **SSR-01**: 审计 findclass-ssr 中所有 Python 脚本的调用链路（crawl-skykiwi.py、llm_extract.py、db_import.py 等），确认是否有 API 端点直接调用
-- [ ] **SSR-02**: 根据审计结果，制定 Python/Chromium/patchright 移除或分离方案（直接移除 vs 独立容器）
+- [x] **SSR-01**: 审计 findclass-ssr 中所有 Python 脚本的调用链路（crawl-skykiwi.py、llm_extract.py、db_import.py 等），确认是否有 API 端点直接调用
+- [x] **SSR-02**: 根据审计结果，制定 Python/Chromium/patchright 移除或分离方案（直接移除 vs 独立容器）
 - [ ] **SSR-03**: 执行 Python/Chromium/patchright 运行时移除（估计 5GB → ~2GB，节省 ~3GB）
 - [ ] **SSR-04**: 移除后端到端验证：API 健康检查、SSR 渲染、静态文件服务、爬虫功能（如保留）
 
@@ -67,8 +67,8 @@
 | HYGIENE-01 | Phase 48 | Complete |
 | HYGIENE-02 | Phase 48 | Complete |
 | HYGIENE-03 | Phase 48 | Complete |
-| SSR-01 | Phase 49 | Pending |
-| SSR-02 | Phase 49 | Pending |
+| SSR-01 | Phase 49 | Complete |
+| SSR-02 | Phase 49 | Complete |
 | SSR-03 | Phase 50 | Pending |
 | SSR-04 | Phase 50 | Pending |
 | SSR-DEEP-01 | Phase 51 | Pending |
