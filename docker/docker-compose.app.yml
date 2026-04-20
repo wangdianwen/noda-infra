@@ -98,18 +98,18 @@ services:
       - noda-network
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:3000/ || exit 1"]
-      interval: 30s
-      timeout: 10s
+      interval: 10s
+      timeout: 3s
       retries: 3
-      start_period: 10s
+      start_period: 3s
     deploy:
       resources:
         limits:
           cpus: '0.25'
-          memory: 64M
+          memory: 32M
         reservations:
           cpus: '0.05'
-          memory: 16M
+          memory: 8M
     cap_drop:
       - ALL
     read_only: true
