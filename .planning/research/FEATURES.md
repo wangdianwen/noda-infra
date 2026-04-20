@@ -1,332 +1,430 @@
-# 特性模式分析：密钥管理集中化
+# Docker 镜像瘦身优化 -- Feature 研究
 
-**领域：** Jenkins + Docker Compose 环境下的集中密钥管理
-**研究日期：** 2026-04-19
-**总体置信度：** HIGH（基于 Context7 官方文档 + 项目代码实际审计 + 已验证的架构分析）
+**Domain:** Docker 镜像体积优化
+**Researched:** 2026-04-20
+**Confidence:** HIGH（基于镜像实际大小分析、Dockerfile 代码审查、static-web-server GitHub 验证）
 
----
+## 当前镜像现状
 
-## 当前密钥分布审计
+| 镜像 | 当前大小 | 基础镜像 | 主要体积来源 |
+|------|----------|----------|-------------|
+| findclass-ssr | **5.02 GB** | node:22-slim | Python 3 + pip + Chromium + patchright 浏览器（约 3GB） |
+| noda-site | **218 MB** | node:20-alpine + npm serve | Node.js 运行时（~180MB）仅用于 serve 静态文件 |
+| noda-ops | **336 MB** | alpine:3.21 | cloudflared 二进制 + postgresql17-client + doppler |
+| backup | 未构建 | postgres:17-alpine | postgres 客户端工具 + rclone + dcron |
+| test-verify | 未构建 | postgres:**15**-alpine | postgres 客户端工具 + rclone（版本与 backup 不一致） |
 
-研究特性之前，必须先理解"从什么迁移到什么"。以下是项目当前所有密钥存储位置和注入方式的完整审计：
-
-### 密钥文件分布
-
-| 文件 | 包含的密钥 | 注入方式 | 被谁使用 |
-|------|-----------|---------|---------|
-| `docker/.env` | POSTGRES_PASSWORD, KEYCLOAK_ADMIN_PASSWORD, KEYCLOAK_DB_PASSWORD, CLOUDFLARE_TUNNEL_TOKEN, B2_ACCOUNT_ID, B2_APPLICATION_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL | Docker Compose `environment:` 中 `${VAR}` 变量替换 | postgres, noda-ops, keycloak (compose 启动时) |
-| `docker/env-findclass-ssr.env` | DATABASE_URL(含密码), RESEND_API_KEY, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL (均为 `${VAR}` 模板) | `manage-containers.sh` 的 `envsubst` 生成临时 env-file -> `docker run --env-file` | findclass-ssr 蓝绿容器 |
-| `docker/env-keycloak.env` | KC_DB_PASSWORD, KEYCLOAK_ADMIN_PASSWORD, SMTP_PASSWORD (均为 `${VAR}` 模板) | 同上 envsubst 机制 | keycloak 蓝绿容器 |
-| `.env.production` | VITE_KEYCLOAK_URL, POSTGRES_PASSWORD, KEYCLOAK_ADMIN_PASSWORD, KEYCLOAK_DB_PASSWORD | `docker build --build-arg` 的 VITE_* 值 | findclass-ssr 前端构建 |
-| `scripts/backup/.env.backup` | POSTGRES_PASSWORD, B2_ACCOUNT_ID, B2_APPLICATION_KEY | noda-ops 容器内 `source` | 备份系统 |
-| Jenkins Credentials Store | cf-api-token, cf-zone-id, noda-apps-git-credentials | `withCredentials([string(...)])` | CDN Purge stage, Git checkout |
-| `scripts/jenkins/config/jenkins-admin.env` | JENKINS_ADMIN_ID, JENKINS_API_TOKEN | Jenkins 脚本 `source` | setup-jenkins-pipeline.sh |
-
-### 密钥注入链路
-
-```
-docker/.env（宿主机明文文件）
-  |
-  +--> docker compose up --> ${VAR} 替换 --> postgres/noda-ops 容器环境变量
-  |
-  +--> pipeline-stages.sh source docker/.env --> envsubst 模板 --> 临时 /tmp/*.env.$$
-       |
-       +--> docker run --env-file --> findclass-ssr/keycloak 蓝绿容器
-```
-
-### 核心问题
-
-1. **明文存储**：`docker/.env` 包含所有生产密码，仅靠 `.gitignore` 和文件权限 `600` 保护
-2. **分散冗余**：同一密码（如 POSTGRES_PASSWORD）在 3+ 个文件中重复出现
-3. **无审计**：谁读了密码、什么时候改的，无记录
-4. **无轮换**：密码从不轮换，B2 key 文件中甚至有注释建议"每 6 个月轮换一次"但从未执行
-5. **Pipeline 脆弱**：`pipeline-stages.sh` 通过硬编码路径 fallback 查找 `.env` 文件
+**总潜在优化空间：约 4.5 GB**（findclass-ssr 占 80% 以上）
 
 ---
 
-## 基本要求（Table Stakes）
+## Table Stakes（必须做的优化）
 
-不做就等于没完成密钥管理集中化的特性。
+这些是 Docker 镜像优化的基本要求。不做 = 镜像不专业、部署慢、磁盘浪费。
 
-| # | 特性 | 为什么期望有 | 复杂度 | 依赖 | 优先级 |
-|---|------|------------|--------|------|--------|
-| T-01 | **Jenkins Pipeline 构建前密钥拉取** -- 在每个 Pipeline 的 Pre-flight 阶段从密钥管理服务拉取密钥，注入为环境变量 | 当前 source docker/.env 的方式要求明文文件存在于 workspace。集中化后 Pipeline 必须能从服务拉取密钥，否则蓝绿部署无法工作 | Medium | 密钥管理服务已部署 | P0 |
-| T-02 | **Docker Compose 密钥注入** -- postgres 和 noda-ops 通过 compose 启动时从密钥管理服务获取环境变量 | 这两个服务不走蓝绿部署，由 `docker compose up` 直接启动。必须有机制让 compose 文件从密钥服务获取变量，否则基础设施起不来 | Medium | T-01 | P0 |
-| T-03 | **env 模板 envsubst 替换机制保留** -- findclass-ssr 和 keycloak 的 `env-*.env` 模板 + `envsubst` 机制必须继续工作 | 蓝绿部署依赖 `manage-containers.sh` 的 `prepare_env_file()` 用 envsubst 生成临时 env-file。密钥集中化不能破坏这个核心部署流程 | Low | T-01 | P0 |
-| T-04 | **迁移后删除明文 .env 文件** -- 迁移完成后删除 `docker/.env`、`.env.production` 中的实际密码值 | 如果迁移后仍保留明文文件，集中化就失去了意义。但 `.env.production` 的 VITE_* 值在构建时写入 JS，必须特殊处理 | Low | T-01, T-02, T-03 | P0 |
-| T-05 | **密钥数据备份到 B2** -- 密钥管理服务的存储数据定期备份到 Backblaze B2 | 项目核心价值"数据库永不丢失"的延伸。密钥丢失等同于服务不可恢复 | Medium | B2 备份系统已就绪 | P0 |
-| T-06 | **传输加密 (TLS)** -- 密钥管理服务与 Jenkins/Docker 之间通信加密 | 密钥在传输中明文等于没有集中化。Docker 内部网络通信必须 TLS 或至少验证服务身份 | Low | -- | P0 |
-| T-07 | **静态加密** -- 密钥在存储时加密 | 密钥服务使用的数据库/文件必须是加密的。如果服务崩溃/磁盘被盗，密钥不能明文泄露 | Low | -- | P0 |
+### TS-1: 多阶段构建确保构建依赖不泄漏到运行时
 
-### 特性依赖关系
-
-```
-密钥管理服务部署（独立，无特性依赖）
-  |
-  +--> T-01 Jenkins Pipeline 密钥拉取
-  |      |
-  |      +--> T-03 envsubst 机制保留（依赖 T-01 拉取的变量）
-  |
-  +--> T-02 Docker Compose 密钥注入
-  |
-  +--> T-04 删除明文 .env（依赖 T-01 + T-02 + T-03 全部验证通过）
-  |
-  +--> T-05 B2 备份（依赖服务部署完成）
-  |
-  T-06 传输加密 + T-07 静态加密（服务自带，无额外依赖）
-```
-
----
-
-## 差异化特性（Differentiators）
-
-做了会让密钥管理明显超越"把 .env 换个地方存"的特性。
-
-| # | 特性 | 价值主张 | 复杂度 | 依赖 | 优先级 |
-|---|------|----------|--------|------|--------|
-| D-01 | **PostgreSQL 密码自动轮换** -- 使用双用户交替轮换模式（user1/user2），无停机更换数据库密码 | B2 key 文件注释"每 6 个月轮换一次"但从未执行。自动轮换消除人为疏忽。Vault 和 Infisical 均原生支持此模式 | Medium | T-01, T-02 | P1 |
-| D-02 | **审计日志** -- 记录谁在什么时候读取/修改了哪个密钥 | 当前无法追踪密钥访问。审计日志是安全合规的基本要求，也为故障排查提供线索 | Low | -- | P1 |
-| D-03 | **环境隔离 (prod/dev)** -- 密钥按环境分路径存储，Pipeline 通过参数选择环境 | 项目已有 prod/dev 双环境概念（docker-compose.dev.yml / docker-compose.prod.yml），密钥也应隔离 | Low | T-01 | P1 |
-| D-04 | **密钥版本管理** -- 密钥变更后保留历史版本，可回滚 | 错误修改密码时可以回滚到上一个版本。Vault KV v2 和 Infisical 均原生支持 | Low | -- | P1 |
-| D-05 | **Jenkins Credentials Provider 集成** -- 密钥管理服务作为 Jenkins Credential Provider，`withCredentials` 直接从服务拉取 | 当前的 cf-api-token、cf-zone-id 等存在 Jenkins 内部凭据存储。如果密钥服务能作为 Provider，所有凭据统一管理 | Medium | 密钥管理服务插件支持 | P2 |
-| D-06 | **密钥模板引用** -- 一个密钥引用另一个密钥的值（如 DATABASE_URL 引用 POSTGRES_USER + POSTGRES_PASSWORD） | 消除 `env-*.env` 模板中 DATABASE_URL 手动拼接密码的冗余。Infisical 原生支持 secret references | Low | T-03 | P2 |
-| D-07 | **轮换 webhook 通知** -- 密钥轮换成功/失败时发送通知 | 轮换是高风险操作，失败意味着服务可能无法连接数据库。通知机制确保及时响应 | Low | D-01 | P2 |
-
----
-
-## 反特性（Anti-Features）
-
-明确不应该做的事情。做了会适得其反或过度工程化。
-
-| # | 反特性 | 原因 | 替代方案 |
-|---|--------|------|----------|
-| A-01 | **不要删除 Jenkins Credentials Store** | Jenkins 的 Git SSH key（noda-apps-git-credentials）、Cloudflare API token（cf-api-token）已经安全存储在 Jenkins 内部。这些与 Docker 服务密钥的生命周期不同（Jenkins 操作 vs 容器运行），强行统一增加攻击面 | Jenkins Credentials 保留不动，仅迁移 Docker/应用密钥到集中服务 |
-| A-02 | **不要使用 Vault 动态密钥（Dynamic Secrets）** | 动态密钥（按请求生成临时数据库凭证）需要应用代码配合（连接池回收、新凭证重新连接）。findclass-ssr 和 Keycloak 都不支持这种模式，引入后会导致连接中断 | 使用静态密钥 + 定期轮换（D-01 的双用户交替模式） |
-| A-03 | **不要替换 envsubst 模板机制** | `manage-containers.sh` 的 `prepare_env_file()` 是蓝绿部署的核心。重写为密钥服务直接注入会导致 manage-containers.sh、pipeline-stages.sh、所有 Jenkinsfile 大面积重写。风险远超收益 | 保持 envsubst 模板不变，仅将 `source docker/.env` 改为从密钥服务拉取 |
-| A-04 | **不要引入 Kubernetes** | 项目是单服务器 Docker Compose 架构，引入 K8s 仅为密钥管理是极度过度工程化。Vault 的 K8s Agent Injector 不适用 | 使用 CLI/API 方式拉取密钥 |
-| A-05 | **不要使用 Doppler（SaaS-only 方案）** | Doppler 不支持自托管，所有密钥必须上传到 Doppler 云。项目已有自托管基础设施的要求（PostgreSQL、Keycloak 均在本地），密钥不应离开服务器 | 使用 Vault 或 Infisical 自托管 |
-| A-06 | **不要同时部署 Vault + Infisical** | 两个系统职责重叠，增加运维复杂度。选择一个并用好它 | 根据复杂度评估选择其一 |
-| A-07 | **不要为密钥管理服务引入独立的 Consul 集群** | Vault 可以使用 Integrated Storage (Raft)，不需要 Consul。对单服务器场景，Consul 是不必要的依赖 | Vault Raft 存储后端 |
-| A-08 | **不要在密钥服务不可用时阻塞所有部署** | 密钥服务是新的单点故障。如果服务挂了，必须有 break-glass 机制让紧急部署继续进行 | 保留本地密钥文件作为 fallback（加密存储，紧急时解密使用） |
-
----
-
-## 密钥注入模式对比
-
-项目中有 3 种不同的密钥注入场景，每种需要不同的集成方式。
-
-### 场景 1：Docker Compose 服务启动
-
-```
-密钥服务 → shell 脚本拉取 → export 环境变量 → docker compose up（${VAR} 替换）
-```
-
-**现状**：`source docker/.env` -> `docker compose up`
-**迁移后**：`vault kv get -format=json secret/noda/prod` -> `eval $(vault kv get ...)` -> `docker compose up`
-
-**关键约束**：compose 文件的 `environment:` 块中 `${POSTGRES_PASSWORD}` 语法必须工作。密钥服务的输出必须是可 export 的 shell 变量格式。
-
-### 场景 2：蓝绿容器部署
-
-```
-密钥服务 → pipeline-stages.sh 拉取 → export 环境变量
-  → manage-containers.sh prepare_env_file() → envsubst 模板 → docker run --env-file
-```
-
-**现状**：`source docker/.env` -> envsubst 替换 `${VAR}` -> `docker run --env-file /tmp/*.env.$$`
-**迁移后**：从密钥服务拉取 -> export 到当前 shell -> envsubst 替换 -> `docker run --env-file`（envsubst 机制完全不变）
-
-**关键约束**：`prepare_env_file()` 中 `ENVSUBST_VARS` 定义的变量列表必须全部从密钥服务可用。
-
-### 场景 3：前端构建时密钥
-
-```
-密钥服务 → Jenkins Pipeline 拉取 → docker build --build-arg VITE_KEYCLOAK_URL=...
-```
-
-**现状**：从 `.env.production` 读取 VITE_* 值 -> build-arg 传入 Dockerfile
-**迁移后**：从密钥服务拉取 VITE_* 值 -> build-arg 传入（Dockerfile 不变）
-
-**关键约束**：VITE_* 变量在 `docker build` 时写入 JS 文件，运行时环境变量无法覆盖。密钥服务必须在 Build stage 前提供这些值。
-
----
-
-## 密钥清单与分类
-
-项目当前使用以下密钥，按安全等级和轮换频率分类：
-
-### 高敏感度密钥（数据库密码、管理密码）
-
-| 密钥 | 当前位置 | 使用者 | 轮换建议 |
-|------|---------|--------|---------|
-| POSTGRES_PASSWORD | docker/.env, .env.production, scripts/backup/.env.backup | postgres, findclass-ssr, noda-ops, keycloak, 备份系统 | 季度 |
-| KEYCLOAK_ADMIN_PASSWORD | docker/.env, .env.production | keycloak 管理控制台 | 季度 |
-| KEYCLOAK_DB_PASSWORD | docker/.env | keycloak 数据库连接 | 季度 |
-
-### API 密钥和令牌
-
-| 密钥 | 当前位置 | 使用者 | 轮换建议 |
-|------|---------|--------|---------|
-| CLOUDFLARE_TUNNEL_TOKEN | docker/.env | noda-ops (cloudflared) | 年度 |
-| B2_ACCOUNT_ID | docker/.env, scripts/backup/.env.backup | noda-ops 备份系统 | 半年 |
-| B2_APPLICATION_KEY | docker/.env, scripts/backup/.env.backup | noda-ops 备份系统 | 半年 |
-| RESEND_API_KEY | (envsubst 模板引用) | findclass-ssr 邮件发送 | 年度 |
-| ANTHROPIC_AUTH_TOKEN | docker/.env, env-findclass-ssr.env | findclass-ssr AI 功能 | 年度 |
-| CF_API_TOKEN | Jenkins Credentials | CDN 缓存清除 | 年度 |
-| CF_ZONE_ID | Jenkins Credentials | CDN 缓存清除 | 不需要轮换 |
-| SMTP_PASSWORD | (envsubst 模板引用) | keycloak 邮件 | 年度 |
-
-### 非敏感配置（不需要集中管理）
-
-| 变量 | 原因 |
+| 属性 | 说明 |
 |------|------|
-| VITE_KEYCLOAK_URL, VITE_KEYCLOAK_REALM, VITE_KEYCLOAK_CLIENT_ID | 公开信息，嵌入前端 JS |
-| POSTGRES_USER, POSTGRES_DB | 非敏感配置值 |
-| B2_BUCKET_NAME, B2_PATH | 非敏感配置值 |
+| 适用镜像 | findclass-ssr, noda-site |
+| 为什么必须做 | 当前 findclass-ssr 的 Stage 2 已经是 node:22-slim，但仍然包含了完整的 node_modules（含 devDependencies）。noda-site 构建阶段用了完整的 node:20-alpine |
+| 复杂度 | LOW -- findclass-ssr 已有多阶段，只需确保运行时阶段不复制 devDependencies |
+| 实施要点 | 在 builder 阶段运行 `pnpm prune --prod`，运行时阶段只复制生产依赖 |
+| 预期收益 | 中等（~200-500MB，取决于 devDependencies 占比） |
+| 置信度 | HIGH |
+
+### TS-2: 分离 Python/Chromium 爬虫到独立容器
+
+| 属性 | 说明 |
+|------|------|
+| 适用镜像 | findclass-ssr（5.02GB -- 项目最大瓶颈） |
+| 为什么必须做 | 主 API 服务不应该包含 ~3GB 的 Chromium 浏览器运行时。爬虫是定时任务，不是实时服务。每次部署 findclass-ssr 都要推送/拉取包含 Chromium 的巨大镜像 |
+| 复杂度 | **HIGH** -- 需要拆分容器、调整爬虫调用方式、可能涉及网络通信方式变更 |
+| 实施要点 | 两种方案：(A) 独立爬虫容器，API 通过 HTTP 调用；(B) 独立定时任务容器，直接连数据库写入 |
+| 预期收益 | **巨大（~3GB）** -- findclass-ssr 从 5GB 降到 ~2GB |
+| 置信度 | HIGH |
+
+### TS-3: 替换 npm serve 为轻量静态文件服务器
+
+| 属性 | 说明 |
+|------|------|
+| 适用镜像 | noda-site（218MB 用 Node.js 服务静态 HTML） |
+| 为什么必须做 | 用 ~180MB 的 Node.js 运行时服务纯静态文件是资源浪费。nginx:alpine 才 76.5MB，专门为静态文件设计的 Rust 服务器只需 5-10MB |
+| 复杂度 | LOW -- 只需更换 Dockerfile 的运行时阶段 |
+| 实施要点 | 替换为 `joseluisq/static-web-server`（scratch 镜像，4MB 二进制）或直接用 nginx:alpine |
+| 预期收益 | 大（~200MB 降到 ~15-30MB，减少 85-95%） |
+| 置信度 | HIGH |
+
+### TS-4: 统一基础镜像版本
+
+| 属性 | 说明 |
+|------|------|
+| 适用镜像 | backup（postgres:17-alpine）vs test-verify（postgres:15-alpine） |
+| 为什么必须做 | 不同版本的基础镜像意味着 Docker 不能共享层缓存，浪费磁盘和拉取时间 |
+| 复杂度 | LOW -- 仅需修改 Dockerfile 的 FROM 行 |
+| 实施要点 | 将 test-verify 的 `postgres:15-alpine` 改为 `postgres:17-alpine`，验证 SQL 兼容性 |
+| 预期收益 | 小（~100-200MB 共享层缓存） |
+| 置信度 | HIGH |
+
+### TS-5: 优化层缓存顺序
+
+| 属性 | 说明 |
+|------|------|
+| 适用镜像 | findclass-ssr, noda-ops, backup |
+| 为什么必须做 | 依赖文件（package.json, requirements.txt）变更频率远低于源码。先复制依赖文件再复制源码，可以最大化缓存命中 |
+| 复杂度 | LOW -- 仅调整 Dockerfile 中 COPY/RUN 指令的顺序 |
+| 实施要点 | findclass-ssr 已部分做到（requirements.txt 先复制），但 node_modules 的复制顺序可以进一步优化 |
+| 预期收益 | 中等（构建时间减少 30-50%，镜像体积无变化） |
+| 置信度 | HIGH |
 
 ---
 
-## 密钥服务方案对比（项目场景）
+## Differentiators（差异化优化）
 
-基于项目的实际约束（单服务器、Docker Compose、~60 部署/月、已有 SOPS 加密经验），对比三个方案。
+这些优化不是必须的，但能显著提升运维效率。
 
-### 评估维度
+### D-1: 使用 static-web-server 替代 npm serve（noda-site）
 
-| 维度 | HashiCorp Vault | Infisical (自托管) | SOPS + age (当前方案增强) |
-|------|-----------------|-------------------|--------------------------|
-| **部署复杂度** | 中 -- 单节点 Raft，需 seal/unseal 流程 | 高 -- 需要 PostgreSQL + Redis + 多个微服务 | 极低 -- 已在用，无新服务 |
-| **内存占用** | ~200-400MB (单节点) | ~1GB+ (backend + frontend + worker + DB + Redis) | 0 (CLI 工具) |
-| **Jenkins 集成** | HIGH -- 官方 Jenkins 插件，withCredentials 原生支持 | MEDIUM -- 通过 CLI `infisical export` 拉取 | LOW -- 通过 shell 脚本 `sops --decrypt` |
-| **密钥轮换** | 原生支持静态轮换 + 数据库引擎 | 原生支持 PostgreSQL 密码轮换 | 不支持 -- 纯手动 |
-| **审计日志** | 原生 file/socket audit device | 内置审计日志 + API | 不支持 |
-| **环境隔离** | 路径隔离 (secret/noda/prod, secret/noda/dev) | 原生环境概念 (dev/staging/prod) | 目录隔离 |
-| **学习曲线** | 高 -- policies, auth methods, seal/unseal | 低 -- Web UI, 简单 CLI | 已掌握 |
-| **运维负担** | 中 -- 监控 seal 状态、备份 Raft 存储 | 高 -- 5+ 个容器、数据库维护、升级 | 极低 -- 仅文件管理 |
-| **单服务器可行性** | 可行但偏重 -- 200MB+ 内存开销 | 不可行 -- 资源需求超出单服务器余量 | 完美适配 |
+| 属性 | 说明 |
+|------|------|
+| 适用镜像 | noda-site |
+| 价值主张 | Rust 编写，4MB 静态二进制，scratch 镜像，HTTP/2 + TLS + 压缩 + CORS 全支持 |
+| 复杂度 | LOW |
+| 实施要点 | `FROM joseluisq/static-web-server:2` + COPY dist 到 `/public` |
+| 预期收益 | noda-site 从 218MB 降到 ~15-20MB（包含静态文件），减少 90%+ |
+| 置信度 | HIGH -- GitHub 2.2k stars，活跃维护（v2.42.0, 2026-03-28），Docker scratch 镜像 |
 
-### 推荐方案评估
+**推荐 Dockerfile 变更：**
+```dockerfile
+# Stage 1: 构建（保持不变）
+FROM node:20-alpine AS builder
+# ... 构建步骤不变
 
-**对 Noda 项目的推荐排序：**
-
-1. **SOPS + age (增强版)** -- 最适合当前项目规模
-2. **Vault (单节点)** -- 如果未来需要审计日志和自动轮换
-3. **Infisical** -- 资源需求过高，不适合单服务器
-
-**理由**：
-- 项目只有 ~20 个密钥，60 次部署/月
-- 单服务器资源有限（findclass-ssr 512MB、Keycloak 1GB、PostgreSQL 2GB 已占用大部分内存）
-- 已有 SOPS + age 加密机制（`decrypt-secrets.sh` 存在但未在 Pipeline 中使用）
-- SOPS 没有运行时服务，不存在单点故障
-- 迁移成本最低 -- 增强现有 `decrypt-secrets.sh` 并集成到 Pipeline 即可
-
----
-
-## B2 备份策略对比
-
-密钥数据备份到 B2 的三种策略：
-
-| 策略 | 方式 | 优点 | 缺点 | 推荐度 |
-|------|------|------|------|--------|
-| **SOPS 加密后直接上传** | `sops --encrypt` + `rclone copy` | 文件已加密，B2 上零风险；复用现有备份基础设施 | 需要定期同步 | 推荐 |
-| **Vault Raft 快照** | `vault operator raft snapshot` | 原生备份机制 | 需要 Vault 运行才能恢复 | 仅 Vault 方案 |
-| **数据库 pg_dump** | 备份密钥服务的 PostgreSQL | 标准 pg_dump 流程 | 密钥服务可能有非 PG 存储后端 | 备选 |
-
----
-
-## MVP 建议
-
-### Phase 1：Pipeline 集成 SOPS 解密（必须完成，解决 80% 的安全问题）
-
-1. **T-01**：在 `pipeline-stages.sh` 的密钥加载部分（第 20-29 行）替换 `source docker/.env` 为 SOPS 解密
-2. **T-02**：`deploy-infrastructure-prod.sh` 和 `deploy-apps-prod.sh` 同样改为 SOPS 解密
-3. **T-03**：验证 envsubst 模板机制不受影响（仅替换变量来源）
-4. **T-04**：将所有密钥文件用 SOPS 加密，明文文件加入 .gitignore
-5. **T-05**：加密后的密钥文件通过现有 B2 备份流程上传
-
-### Phase 2：增强特性（建议完成，提升安全性）
-
-1. **D-02**：在 SOPS 解密时记录审计日志（简单的 access.log 文件）
-2. **D-03**：为 prod/dev 环境创建独立的加密文件
-3. **D-04**：SOPS + git 天然支持版本管理
-
-### Phase 3：如果未来需要（锦上添花）
-
-1. **D-01**：PostgreSQL 密码自动轮换（需要额外工具，如自定义脚本 + cron）
-2. **D-05**：如果迁移到 Vault，使用 Jenkins Vault Plugin 作为 Credentials Provider
-3. **D-06**：密钥模板引用（需要 Vault/Infisical 支持）
-
-### 明确推迟
-
-- **Vault 部署**：项目规模不需要，SOPS 增强版已满足所有 P0 需求。Vault 的 seal/unseal、内存开销、运维复杂度对单服务器场景是不必要的负担
-- **Infisical 部署**：资源需求过高（需要独立的 PostgreSQL + Redis + 多微服务），不适合单服务器
-- **动态密钥**：应用不支持，收益不明确
-- **Jenkins Credentials 统一**：现有 Jenkins Credentials Store 工作正常，不需要迁移
-
----
-
-## 特性依赖图
-
-```
-Phase 1（MVP）
-  |
-  T-05 B2 备份 ───────────────────── 独立，可最先或最后做
-  |
-  T-06 传输加密 ──────────────────── SOPS 文件级加密，天然满足
-  T-07 静态加密 ──────────────────── SOPS + age，天然满足
-  |
-  T-01 Pipeline 密钥拉取 ─────────── 核心特性，替换 source .env
-  |   |
-  |   +-- T-03 envsubst 机制保留 ── 验证 T-01 不破坏模板替换
-  |
-  T-02 Compose 密钥注入 ─────────── 与 T-01 并行，替换 deploy 脚本中的 .env
-  |
-  T-04 删除明文 .env ────────────── 最后做，依赖 T-01 + T-02 + T-03 验证通过
-
-Phase 2（增强）
-  |
-  D-02 审计日志 ──────────────────── 独立，可随时添加
-  D-03 环境隔离 ──────────────────── 独立，需要规划文件结构
-  D-04 版本管理 ──────────────────── SOPS + git 天然支持
-
-Phase 3（可选）
-  |
-  D-01 密码轮换 ──────────────────── 需要 cron + 自定义脚本
-  D-05 Jenkins Provider ──────────── 需要 Vault
-  D-06 密钥引用 ──────────────────── 需要 Vault/Infisical
+# Stage 2: 轻量运行时（替换 node:20-alpine + serve）
+FROM joseluisq/static-web-server:2
+COPY --from=builder /app/apps/site/dist /public
+EXPOSE 3000
 ```
 
+### D-2: findclass-ssr 从 node:22-slim 降级到 node:22-alpine
+
+| 属性 | 说明 |
+|------|------|
+| 适用镜像 | findclass-ssr（分离爬虫后） |
+| 价值主张 | alpine 基础镜像比 slim 小约 70MB（180MB vs 250MB），且攻击面更小 |
+| 复杂度 | **MEDIUM** -- 需要验证 Node.js 应用在 musl libc 下运行正常，特别是原生模块 |
+| 实施要点 | 切换到 alpine 后测试：(1) Hono 框架兼容性；(2) Drizzle ORM 的 pg 驱动；(3) pnpm workspace 符号链接解析 |
+| 预期收益 | 小到中等（~70MB，分离爬虫后才有意义） |
+| 置信度 | MEDIUM -- 需要验证原生依赖兼容性 |
+
+### D-3: noda-ops 审查并精简依赖
+
+| 属性 | 说明 |
+|------|------|
+| 适用镜像 | noda-ops（336MB） |
+| 价值主张 | 336MB 的 alpine 镜像偏大，可能有冗余依赖 |
+| 复杂度 | LOW |
+| 实施要点 | 审查当前安装的包（见下方分析表） |
+| 预期收益 | 小（~10-30MB） |
+| 置信度 | MEDIUM -- 需要确认哪些工具实际被脚本使用 |
+
+**noda-ops 当前依赖分析：**
+
+| 包 | 大小估算 | 是否必要 | 说明 |
+|----|---------|---------|------|
+| bash | ~5MB | 是 | 脚本依赖 |
+| curl | ~3MB | 是（与 wget 二选一） | 健康检查用，但 compose 用 wget |
+| wget | ~2MB | 否（可用 curl 替代） | compose 健康检查用 wget --spider |
+| jq | ~2MB | 是 | JSON 解析 |
+| coreutils | ~10MB | 待确认 | sha256sum 等工具 |
+| rclone | ~30MB | 是 | B2 备份上传 |
+| dcron | ~1MB | 是 | 定时任务 |
+| supervisor | ~5MB | 是 | 进程管理 |
+| ca-certificates | ~1MB | 是 | HTTPS 证书 |
+| postgresql17-client | ~30MB | 是 | pg_dump 备份 |
+| gnupg | ~15MB | 待确认 | 可能用于加密 |
+| age | ~3MB | 待确认 | 加密工具 |
+| doppler | ~20MB | 是 | 密钥备份 |
+| cloudflared | ~40MB | 是 | Tunnel |
+
+### D-4: 使用 .dockerignore 排除不必要文件
+
+| 属性 | 说明 |
+|------|------|
+| 适用镜像 | 所有自建镜像 |
+| 价值主张 | 减少 Docker 构建上下文大小，加速构建 |
+| 复杂度 | LOW |
+| 实施要点 | 确保每个构建上下文都有 .dockerignore，排除 .git, node_modules, .env, test 等 |
+| 预期收益 | 小（加速构建，不减少镜像体积） |
+| 置信度 | HIGH |
+
+### D-5: 清理包管理器缓存
+
+| 属性 | 说明 |
+|------|------|
+| 适用镜像 | 所有镜像 |
+| 价值主张 | 确保 apt/apk/pip 缓存在同一 RUN 层中清理 |
+| 复杂度 | LOW |
+| 实施要点 | noda-ops 的 `rm -rf /var/cache/apk/*` 已有。backup 镜像缺少清理步骤 |
+| 预期收益 | 小（~5-10MB） |
+| 置信度 | HIGH |
+
+### D-6: 使用 COPY --chown 合并层
+
+| 属性 | 说明 |
+|------|------|
+| 适用镜像 | findclass-ssr, noda-site |
+| 价值主张 | `COPY --chown=user:group` 替代 `COPY + RUN chown`，减少一个镜像层 |
+| 复杂度 | LOW |
+| 实施要点 | 替换 `COPY ... RUN chown -R` 为 `COPY --chown=nodejs:nodejs` |
+| 预期收益 | 极小（一个层） |
+| 置信度 | HIGH |
+
 ---
 
-## 置信度评估
+## Anti-Features（不应该做的优化）
 
-| 区域 | 置信度 | 原因 |
-|------|--------|------|
-| 当前密钥分布审计 | HIGH | 基于对所有 .env 文件、Jenkinsfile、pipeline-stages.sh 的完整代码阅读 |
-| SOPS 增强方案可行性 | HIGH | 项目已有 decrypt-secrets.sh 和 SOPS + age 加密机制，仅需要集成到 Pipeline |
-| Vault/Infisical 评估 | MEDIUM | 基于 Context7 官方文档 + 训练数据，WebSearch 不可用，但两个产品的架构特征已充分了解 |
-| 资源需求估算 | MEDIUM | Vault ~200-400MB 为经验值，Infisical ~1GB+ 为多微服务架构的合理估计 |
-| 密钥轮换可行性 | MEDIUM | 双用户交替轮换模式是标准做法，但需要实际验证 PostgreSQL 角色切换 |
+### AF-1: distroless 基础镜像
+
+| 属性 | 说明 |
+|------|------|
+| 为什么想用 | 更小的镜像体积，更小的攻击面 |
+| 为什么不该用 | (1) 没有 shell，调试困难（`docker exec -it` 不可用）；(2) 没有 wget/curl，健康检查需要额外处理；(3) 现有项目已有完善的健康检查和调试流程；(4) 收益有限（alpine 已经很精简） |
+| 替代方案 | 继续使用 alpine 基础镜像，已经足够精简 |
+
+### AF-2: docker build --squash
+
+| 属性 | 说明 |
+|------|------|
+| 为什么想用 | 将所有层合并为一个，减少镜像体积 |
+| 为什么不该用 | (1) 需要 BuildKit 实验性功能支持；(2) 破坏层缓存机制，每次构建都要完整推送；(3) 官方不推荐用于生产；(4) 在多阶段构建中收益极小 |
+| 替代方案 | 使用多阶段构建，确保最终阶段只包含必要文件 |
+
+### AF-3: 单一基础镜像统一所有服务
+
+| 属性 | 说明 |
+|------|------|
+| 为什么想用 | "所有镜像都基于 debian:slim" 看似简化维护 |
+| 为什么不该用 | 不同服务有不同需求：Node.js 服务需要 node 基础，备份服务需要 postgres 客户端，运维服务需要 alpine 工具。强行统一反而增加体积 |
+| 替代方案 | 按服务类型选择最优基础镜像，同类服务（backup/test-verify）统一版本 |
+
+### AF-4: Chromium 保留在 findclass-ssr 中但"压缩"
+
+| 属性 | 说明 |
+|------|------|
+| 为什么想用 | 不想拆分容器，觉得可以"优化"Chromium 安装 |
+| 为什么不该用 | Chromium 本身就是 ~700MB，patchright 的浏览器二进制也很大，这不是层缓存能解决的。根本问题是架构：爬虫不属于实时 API 服务 |
+| 替代方案 | 将爬虫拆分到独立容器（TS-2） |
+
+### AF-5: 在 CI/CD 中每次重建镜像不缓存
+
+| 属性 | 说明 |
+|------|------|
+| 为什么想用 | "确保镜像最新"，`--no-cache` |
+| 为什么不该用 | 完全绕过 Docker 层缓存机制，每次都要从零构建。findclass-ssr 完整构建可能需要 10+ 分钟 |
+| 替代方案 | 优化 Dockerfile 层顺序（TS-5），依赖变更时才重建依赖层 |
 
 ---
 
-## 来源
+## Feature Dependencies
 
-### Primary (HIGH confidence)
+```
+[TS-2: 分离 Python/Chromium 爬虫]
+    |
+    +--blocks--> [D-2: findclass-ssr 降级到 alpine]
+    |              （分离爬虫前，slim 是必要的因为需要 Python manylinux wheels）
+    |
+    +--enables--> [TS-1: prune devDependencies]
+                    （分离后 node_modules 体量显著减小，prune 收益更明显）
 
-- [Context7 /websites/developer_hashicorp_vault] -- Vault KV v2 读写操作、Docker 部署、Raft 存储后端、审计日志 [VERIFIED]
-- [Context7 /websites/jenkins_io_doc] -- Jenkins `withCredentials` 用法、Declarative Pipeline `environment` 块、`credentials()` 函数 [VERIFIED]
-- [Context7 /websites/infisical] -- Infisical CLI `export`/`run` 命令、自托管部署模型、PostgreSQL 密码轮换 API、审计日志结构 [VERIFIED]
-- [Context7 /infisical/cli] -- Infisical CLI CI/CD 集成、machine identity token、`infisical export --token` [VERIFIED]
-- [Context7 /websites/getsops_io] -- SOPS 加密文件格式、age 后端、.env 文件支持 [VERIFIED]
-- 项目代码审计 -- `docker/.env`, `docker/env-findclass-ssr.env`, `docker/env-keycloak.env`, `scripts/pipeline-stages.sh` (第 20-29 行), `scripts/manage-containers.sh` (prepare_env_file), `jenkins/Jenkinsfile.findclass-ssr`, `scripts/utils/decrypt-secrets.sh` [VERIFIED: 代码阅读]
+[TS-3: 替换 npm serve] --same_as--> [D-1: static-web-server]
+    （TS-3 是需求，D-1 是具体实现方案）
 
-### Secondary (MEDIUM confidence)
+[TS-4: 统一基础镜像版本] --independent--> [所有其他优化]
 
-- WebSearch 不可用（API 余额不足），Vault/Infisical 对比基于训练数据 + Context7 文档综合判断
-- Vault 内存占用 ~200-400MB 为社区经验值，未经生产环境实测验证
-- Infisical 自托管资源需求基于 Docker 镜像分析（backend + frontend + worker + PostgreSQL + Redis）
+[D-3: noda-ops 精简依赖] --independent--> [所有其他优化]
+
+[D-4: .dockerignore] --independent--> [所有其他优化]
+
+[TS-5: 层缓存顺序] --independent--> [所有其他优化]
+
+[D-5: 清理缓存] --independent--> [所有其他优化]
+
+[D-6: COPY --chown] --independent--> [所有其他优化]
+```
+
+### Dependency Notes
+
+- **TS-2 阻塞 D-2:** 当前 findclass-ssr 使用 `node:22-slim`（Debian）是因为 Python manylinux wheels 需要 glibc。如果使用 `node:22-alpine`（musl libc），Python pip 安装 scrapling/patchright 可能失败。只有在分离爬虫后，才能安全切换到 alpine。
+- **TS-2 放大 TS-1 收益:** 分离爬虫后，findclass-ssr 的 node_modules 不再包含 Python 相关依赖，`pnpm prune --prod` 的效果更显著。
+- **TS-3 和 D-1 实质相同:** TS-3 是"替换 serve"的需求，D-1 是"用 static-web-server 替换"的具体实现方案。
+- **D-4, D-5, D-6 互相独立:** 这些是小的"卫生"优化，可以随时做，不影响其他优化。
 
 ---
 
-*Feature research for: Noda v1.8 密钥管理集中化*
-*Researched: 2026-04-19*
+## MVP 定义
+
+### Phase 1: 立即执行（低风险高收益）
+
+这些优化互不依赖，可以并行执行。
+
+- [ ] **TS-3/D-1: noda-site 替换为 static-web-server** -- 218MB -> ~15MB，90%+ 减少
+- [ ] **TS-4: test-verify 统一到 postgres:17-alpine** -- 与 backup 共享层缓存
+- [ ] **D-5: 清理包管理器缓存** -- backup 镜像缺少清理步骤
+- [ ] **D-6: COPY --chown 合并层** -- findclass-ssr, noda-site
+
+### Phase 2: 核心优化（高风险高收益）
+
+这是整个里程碑的核心价值。
+
+- [ ] **TS-2: 分离 Python/Chromium 爬虫** -- 5GB -> ~2GB，必须完成
+  - 需要先确认爬虫调用方式和数据流
+  - 设计新的容器架构（独立爬虫容器 vs 定时任务容器）
+
+### Phase 3: 分离后优化（依赖 Phase 2）
+
+- [ ] **D-2: findclass-ssr 降级到 alpine** -- 依赖爬虫已分离
+- [ ] **TS-1: prune devDependencies** -- 分离后效果更好
+- [ ] **D-3: noda-ops 精简依赖** -- 独立但优先级低
+- [ ] **D-4: 审查 .dockerignore** -- 独立但优先级低
+
+### Future Consideration
+
+- [ ] **Dive 工具集成** -- 在 CI 中用 dive 分析镜像效率评分，作为质量门禁
+- [ ] **多架构构建** -- 如需 ARM 支持（当前服务器是 x86，暂不需要）
+
+---
+
+## Feature Prioritization Matrix
+
+| Feature | User Value | Implementation Cost | Priority | 预期体积变化 |
+|---------|------------|---------------------|----------|-------------|
+| TS-2: 分离爬虫 | HIGH | HIGH | **P1** | -3GB |
+| TS-3/D-1: static-web-server | HIGH | LOW | **P1** | -200MB |
+| TS-4: 统一基础镜像 | MEDIUM | LOW | **P1** | ~0（共享缓存） |
+| TS-1: prune devDeps | MEDIUM | LOW | **P2** | -200~500MB |
+| D-2: alpine 降级 | LOW | MEDIUM | **P2** | -70MB |
+| D-3: noda-ops 精简 | LOW | LOW | **P2** | -10~30MB |
+| TS-5: 层缓存顺序 | MEDIUM | LOW | **P2** | 0（加速构建） |
+| D-4: .dockerignore | LOW | LOW | **P3** | 0（加速构建） |
+| D-5: 清理缓存 | LOW | LOW | **P3** | -5~10MB |
+| D-6: COPY --chown | LOW | LOW | **P3** | 极小 |
+
+**Priority key:**
+- **P1**: 必须完成，构成里程碑核心价值
+- **P2**: 应该完成，但依赖 P1 或优先级较低
+- **P3**: 可以做，锦上添花
+
+---
+
+## 各镜像优化策略汇总
+
+### findclass-ssr (5.02GB -> 目标 ~1.5-2GB)
+
+| 策略 | 预期减少 | 优先级 | 风险 |
+|------|---------|--------|------|
+| 分离 Python/Chromium 爬虫到独立容器 | ~3GB | P1 | HIGH（架构变更） |
+| pnpm prune --prod | ~200-500MB | P2 | LOW |
+| 降级到 node:22-alpine | ~70MB | P2 | MEDIUM（需验证兼容性） |
+| COPY --chown 合并层 | 极小 | P3 | LOW |
+
+### noda-site (218MB -> 目标 ~15-20MB)
+
+| 策略 | 预期减少 | 优先级 | 风险 |
+|------|---------|--------|------|
+| 替换 npm serve 为 static-web-server | ~200MB | P1 | LOW |
+
+### noda-ops (336MB -> 目标 ~300MB)
+
+| 策略 | 预期减少 | 优先级 | 风险 |
+|------|---------|--------|------|
+| 审查精简依赖（wget/curl 二选一） | ~10-30MB | P2 | LOW |
+
+### backup + test-verify
+
+| 策略 | 预期减少 | 优先级 | 风险 |
+|------|---------|--------|------|
+| test-verify 统一到 postgres:17-alpine | 0（共享缓存） | P1 | LOW |
+| backup 添加 apt/apk 缓存清理 | ~5-10MB | P3 | LOW |
+
+---
+
+## static-web-server 技术评估
+
+**为什么选择 static-web-server 而非其他方案：**
+
+| 方案 | 镜像大小 | TLS | 压缩 | SPA 支持 | 复杂度 |
+|------|---------|-----|------|---------|--------|
+| **static-web-server (Rust)** | **~5MB (scratch)** | 是 | Gzip/Brotli/Zstd | 是（fallback page） | 极低 |
+| nginx:alpine | ~25MB | 是 | 是 | 是（需配置 try_files） | 中等 |
+| Caddy | ~40MB | 是（自动 HTTPS） | 是 | 是 | 低 |
+| npm serve (当前) | ~180MB | 否 | 否 | 否 | 低 |
+
+**static-web-server 优势：**
+- scratch 镜像，零 OS 层，攻击面极小
+- 4MB 静态二进制，无依赖
+- 活跃维护（v2.42.0, 2026-03-28 发布）
+- Docker Hub 每日拉取量高，社区活跃（2.2k GitHub stars）
+- 内置 CORS、压缩、缓存头、健康检查端点
+
+**推荐 Dockerfile：**
+```dockerfile
+FROM node:20-alpine AS builder
+# ... 构建步骤保持不变 ...
+
+FROM joseluisq/static-web-server:2
+COPY --from=builder /app/apps/site/dist /public
+# 环境变量配置
+ENV SERVER_PORT=3000
+ENV SERVER_ROOT=/public
+```
+
+---
+
+## 爬虫容器分离方案对比
+
+### 方案 A: 独立爬虫服务容器（长期运行）
+
+```
+findclass-ssr (API)  --HTTP-->  skykiwi-crawler (独立容器)
+     |                                |
+     +-- 调用爬虫 API                    +-- 直接访问数据库
+```
+
+- 优点：解耦彻底，独立部署/扩缩容
+- 缺点：多一个长期运行的容器，需要维护服务发现
+- 适合：爬虫调用频率高（每小时多次）
+
+### 方案 B: 定时任务容器（推荐）
+
+```
+skykiwi-crawler (cron 触发)  --直接-->  PostgreSQL
+    |
+    +-- docker run --rm 或 cron/systemd timer
+    +-- 独立镜像：python:3.12-slim + chromium + scrapling
+```
+
+- 优点：只在需要时运行，不占用常驻内存；镜像体积不影响主服务部署
+- 缺点：需要外部调度器（cron/systemd timer/Jenkins Pipeline）
+- 适合：爬虫调用频率低（每天 1-2 次）
+
+**推荐方案 B**，原因：
+1. 从 noda-apps 代码看，爬虫是定时任务（`crawl-skykiwi.py`），不是实时 API 调用
+2. 项目已有 Jenkins Pipeline 和 cron 基础设施
+3. 单服务器资源有限，不需要常驻的爬虫服务
+4. 与现有 backup 容器的 cron 模式一致
+
+---
+
+## Sources
+
+- 项目代码审查：`deploy/Dockerfile.findclass-ssr`, `deploy/Dockerfile.noda-site`, `deploy/Dockerfile.noda-ops`, `deploy/Dockerfile.backup`, `scripts/backup/docker/Dockerfile.test-verify`
+- Docker Compose 配置：`docker/docker-compose.yml`, `docker/docker-compose.app.yml`
+- 当前镜像大小数据：`docker images` 输出（2026-04-20）
+- [static-web-server GitHub](https://github.com/static-web-server/static-web-server) -- v2.42.0, 2.2k stars, 活跃维护, scratch 镜像
+- [Docker 多阶段构建官方文档](https://docs.docker.com/build/building/multi-stage/) -- 多阶段构建最佳实践
+- [Docker 构建缓存优化](https://docs.docker.com/build/cache/optimize/) -- 层缓存顺序最佳实践
+
+---
+*Feature research for: Docker 镜像瘦身优化*
+*Researched: 2026-04-20*

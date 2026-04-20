@@ -1,484 +1,392 @@
-# Pitfalls Research: 密钥管理集中化
+# Pitfalls Research: Docker 镜像瘦身优化
 
-**Domain:** 向现有 Docker Compose + Jenkins 单服务器基础设施添加集中式密钥管理
-**Researched:** 2026-04-19
-**Confidence:** MEDIUM-HIGH（基于完整代码审计 + Context7 文档验证；WebSearch 服务不可用，部分生态数据来自训练知识，已标注 LOW confidence）
+**Domain:** 生产环境 Docker 镜像体积优化（Node.js、Python/Chromium、静态站点、Alpine 基础镜像）
+**Researched:** 2026-04-20
+**Confidence:** HIGH（基于代码库完整审计 + Docker 官方文档 Context7 验证 + pip wheel 兼容性实测；WebSearch 配额耗尽，部分生态数据来自训练知识，已标注）
 
 ---
 
 ## Critical Pitfalls
 
-### Pitfall 1: 密钥服务故障导致完全无法部署 -- 单点故障
+### Pitfall 1: findclass-ssr 切换 Alpine 后 Python 原生扩展无法安装
 
 **What goes wrong:**
-无论选择 Vault、Infisical 还是 Doppler，如果密钥管理服务不可用，Jenkins Pipeline 无法获取密钥，导致：
-- `docker compose build` 缺少 `VITE_*` 构建时变量，前端构建产物中 Keycloak URL 为空
-- `docker run` 缺少 `POSTGRES_PASSWORD` 等运行时变量，容器启动失败
-- `envsubst` 模板渲染失败，蓝绿部署 env 文件生成错误
-- `rclone` 缺少 B2 凭据，备份上传失败
+findclass-ssr 运行时包含 Python 爬虫（patchright/scrapling），其依赖 lxml、orjson、greenlet 等包含 C 扩展的包。这些包在 PyPI 上只提供 `manylinux` 格式的预编译 wheel（针对 glibc）。Alpine 使用 musl libc，需要 `musllinux` 格式的 wheel。
+
+**实测验证（2026-04-20）：**
+- `lxml==6.0.3`：PyPI 无 `musllinux_1_1_aarch64` wheel，只有 `manylinux2014` wheel。Alpine 上最新可用的 musllinux 版本仅到 `5.2.2`
+- `orjson==3.11.8`：PyPI 无 `musllinux` wheel，最新可用 musllinux 版本仅到 `3.9.12`
+- `greenlet==3.3.0`：PyPI 无 `musllinux` wheel，aarch64 平台最新版本仅到 `3.2.5`
+
+在 Alpine 上安装这些包会触发从源码编译，需要安装 `gcc musl-dev libxml2-dev libxslt-dev` 等构建工具链，编译时间长且可能失败。
 
 **Why it happens:**
-当前系统从 `docker/.env` 文件加载密钥（`pipeline-stages.sh` 第 22-29 行），文件在本地磁盘上，始终可用。迁移到集中式服务后，每次部署都需要网络请求获取密钥。如果密钥服务宕机（容器崩溃、OOM killed、磁盘满、网络分区），所有部署被阻塞。
+manylinux 是 Python 打包标准（PEP 599），假设 glibc 环境。PEP 656 引入了 musllinux 标准，但很多包的 CI 不构建 musllinux wheel，尤其是小众或更新频率高的包。Alpine 的 musl libc 与 glibc 二进制不兼容，manylinux wheel 无法直接加载。
 
 **Consequences:**
-- 紧急修复（如安全补丁）无法部署
-- 备份系统如果依赖密钥服务获取 B2 凭据，恢复操作也被阻塞
-- 形成恶性循环：密钥服务故障 -> 无法部署 -> 无法修复密钥服务
+- `pip install` 失败或耗时极长（编译 lxml 需要数分钟）
+- 编译依赖使镜像体积不降反升（需要保留 gcc 等构建工具，或增加复杂的多阶段构建）
+- 运行时可能出现 musl 特有的微妙 bug（DNS 解析、线程调度、内存分配差异）
 
 **How to avoid:**
-1. **本地缓存优先**：密钥拉取后写入本地 `.env` 文件作为缓存。Pipeline 启动时先检查缓存是否存在且新鲜（如 24 小时内），如果新鲜则使用缓存，否则从密钥服务拉取
-2. **优雅降级**：如果密钥服务不可达，回退到本地缓存文件（即使过期），在日志中标记警告
-3. **密钥服务高可用**：设置 `restart: unless-stopped` + 健康检查 + 内存限制，确保容器自动重启
-4. **紧急回退路径**：保留手动部署脚本（`deploy-apps-prod.sh`）作为完全独立的回退方案，不依赖密钥服务
+1. **findclass-ssr 保持 `node:22-slim`（Debian-based）**：当前 Dockerfile 第 69 行已经是 `FROM node:22-slim AS runner`，这是正确的选择。Python 原生依赖 + Chromium 在 Debian 上开箱即用
+2. **分离 Python 爬虫为独立容器**：如果需要瘦身，将 Python 爬虫拆分为独立的 `python:3.12-slim` 容器，主 Node.js 容器使用 `node:22-alpine`。这样两边都使用各自最佳的 base image
+3. **如果必须在 Alpine 上运行 Python**：用 `pip download --platform musllinux_1_1_aarch64` 预检每个依赖的 wheel 可用性，对缺少 musllinux wheel 的包准备从源码编译的完整工具链
 
 **Warning signs:**
-- 密钥服务容器的 `docker inspect` 显示 `RestartCount > 0`
-- Jenkins Pipeline 在 Pre-flight 阶段超时
-- `infisical export` 或 `vault kv get` 命令响应时间 > 5 秒
+- `pip install` 日志中出现 `Building wheel for lxml/orjson/greenlet`（源码编译）
+- Docker 构建时间突然增加数分钟
+- `ImportError: Error loading shared library` 运行时错误
 
 **Phase to address:**
-Phase 1（密钥服务部署）-- 设计缓存和降级机制
-
-**Recovery:**
-| Step | Action |
-|------|--------|
-| 1 | `docker compose` 重启密钥服务容器 |
-| 2 | 如果容器无法启动，从 B2 备份恢复密钥数据 |
-| 3 | 如果 B2 也无法访问，从本地 `.env.bak` 恢复（迁移前的备份） |
-| 4 | 临时回退到手动部署脚本 |
+findclass-ssr 优化阶段 -- 决定是否分离 Python 爬虫
 
 ---
 
-### Pitfall 2: 密钥迁移时遗漏密钥导致服务启动失败
+### Pitfall 2: Chromium 在 read_only 容器中的沙箱和共享内存问题
 
 **What goes wrong:**
-当前系统有至少 3 个独立的 `.env` 文件，密钥分散在不同位置：
+当前 `docker-compose.app.yml` 第 71-74 行配置了 `read_only: true` 和有限 tmpfs：
 
-| 文件 | 密钥数量 | 用途 |
-|------|---------|------|
-| `docker/.env` | 12 个变量 | Docker Compose 基础设施（PostgreSQL、Keycloak、B2、Cloudflare、Anthropic） |
-| `.env.production` | 14 个变量 | findclass-ssr 应用（VITE_*、SMTP、ReSend） |
-| `scripts/backup/.env.backup` | 7 个变量 | 备份系统（PostgreSQL、B2） |
-| `docker/env-findclass-ssr.env`（模板） | 14+ 变量 | 蓝绿部署 envsubst 模板 |
-
-如果迁移时遗漏任何一个密钥：
-- PostgreSQL 容器启动失败（缺少 `POSTGRES_PASSWORD`）
-- Keycloak 无法连接数据库（缺少 `KC_DB_PASSWORD` / `KEYCLOAK_DB_PASSWORD`）
-- 备份无法上传到 B2（缺少 `B2_APPLICATION_KEY`）
-- findclass-ssr 构建产物中 Keycloak URL 为空（缺少 `VITE_KEYCLOAK_URL`）
-
-**Why it happens:**
-- `docker/.env` 和 `.env.production` 中有重复但值不同的变量（如 `POSTGRES_PASSWORD` 在两个文件中值相同，但 `KEYCLOAK_ADMIN_USER` 在 `.env.production` 中为空）
-- `pipeline-stages.sh` 第 22-29 行有多路径加载逻辑（`$PROJECT_ROOT/docker/.env` 和 `$HOME/Project/noda-infra/docker/.env`），第二个路径是硬编码的本地开发路径
-- `scripts/backup/lib/config.sh` 有独立的配置加载逻辑，与主 `.env` 文件无关
-- `docker/.env` 曾被提交到 git 历史（commit `c15faba` 和 `240c59e`），历史中可能包含实际密码
-
-**How to avoid:**
-1. **迁移前审计**：`grep -rh '^\w+=' docker/.env .env.production scripts/backup/.env.backup | cut -d= -f1 | sort -u` 列出所有密钥名
-2. **建立密钥清单**：为每个密钥记录名称、来源文件、使用方（哪个容器/脚本）、是否构建时需要
-3. **迁移后验证脚本**：部署后自动检查所有关键变量是否已注入（类似现有 `decrypt-secrets.sh` 的 `VALIDATE_VARS` 模式）
-4. **分阶段迁移**：先迁移一个服务（如 findclass-ssr），验证通过后再迁移其他服务
-
-**Warning signs:**
-- `docker compose config` 输出中某个环境变量值为空
-- 容器日志中出现 `password authentication failed`
-- `envsubst` 渲染后的 env 文件中存在空行或 `${VAR}` 未展开
-
-**Phase to address:**
-Phase 2（.env 迁移）-- 密钥清单 + 逐文件验证
-
-**Recovery:**
-| Step | Action |
-|------|--------|
-| 1 | 从 git 历史中的 `.env` 文件（commit `c15faba` 前）恢复 |
-| 2 | 或从 B2 备份中恢复加密的密钥文件 |
-| 3 | 逐个比对密钥值，确保与迁移前一致 |
-
----
-
-### Pitfall 3: VITE_* 构建时密钥注入失败 -- 前端白屏
-
-**What goes wrong:**
-`VITE_*` 变量在 `docker build` 时通过 `ARG` 写入 JS 文件，运行时环境变量无法覆盖。如果密钥管理服务在构建阶段不可用或注入方式错误：
-- 前端 JS 中 `VITE_KEYCLOAK_URL` 为空字符串或 `undefined`
-- 用户看到白屏或登录按钮无响应
-- 浏览器控制台报错 `Cannot read properties of undefined`
-
-当前构建命令在 `pipeline-stages.sh` 第 240-242 行：
-```bash
---build-arg VITE_KEYCLOAK_URL=https://auth.noda.co.nz \
---build-arg VITE_KEYCLOAK_REALM=noda \
---build-arg VITE_KEYCLOAK_CLIENT_ID=noda-frontend
+```yaml
+read_only: true
+tmpfs:
+  - /tmp
+  - /app/scripts/logs
 ```
 
-这些值当前是**硬编码在 shell 脚本中**的，不来自 `.env` 文件。
+Chromium 在此环境下需要：
+1. **写入 `/dev/shm`**（共享内存，默认 64MB，Chromium 需要至少 256MB）
+2. **写入用户数据目录**（默认 `~/.config/chromium` 或 `/tmp` 下）
+3. **用户命名空间**（用于沙箱，`--no-sandbox` 可绕过但降低安全性）
+
+如果 Python 爬虫被分离为独立容器，新容器也面临同样的问题。
 
 **Why it happens:**
-- `VITE_*` 变量的特殊性：构建时固化，运行时不可变。不同于其他密钥可以在容器启动时注入
-- 如果将 `VITE_*` 值存入密钥服务但不在 `docker build` 阶段正确取出，就会出问题
-- 当前的硬编码值实际上是"非敏感配置"（Keycloak URL 是公开的），但如果未来需要通过密钥管理统一管理，需要注意注入时机
+- `read_only: true` 使整个文件系统只读，只有 tmpfs 挂载点可写
+- Chromium 默认使用 `/dev/shm` 进行进程间通信，64MB 不够会导致崩溃（`session deleted because of page crash`）
+- Docker 的 `--shm-size` 参数控制 `/dev/shm` 大小，docker-compose 中通过 `shm_size` 设置
+- Chromium 的沙箱机制（SuidSandbox、NamespaceSandbox）在 Docker 容器中可能不可用
+
+**Consequences:**
+- Chromium 启动失败或随机崩溃
+- 爬虫静默失败（patchright 超时）
+- 生产环境中难以复现（本地开发没有 `read_only`）
 
 **How to avoid:**
-1. **区分密钥类型**：`VITE_KEYCLOAK_URL`/`VITE_KEYCLOAK_REALM`/`VITE_KEYCLOAK_CLIENT_ID` 不是密钥（公开信息），可以保留在构建脚本或 docker-compose.yml 中
-2. **如果必须纳入密钥管理**：确保 `docker build --build-arg` 之前已从密钥服务获取值，不能只在 `docker run` 时注入
-3. **构建验证**：构建后用 `docker run --rm <image> grep -r "auth.noda.co.nz" /app/` 检查 JS 文件中是否包含正确的 URL
+1. **如果分离爬虫容器**：新容器必须配置 `shm_size: '256m'`，不需要 `read_only: true`（爬虫容器可以不用只读文件系统）
+2. **如果保持合一容器**：在 `docker-compose.app.yml` 中添加 `shm_size: '256m'`，并确认 `/tmp` tmpfs 足够大
+3. **传递 `--no-sandbox` 参数**：在 patchright 启动参数中添加 `args=["--no-sandbox", "--disable-setuid-sandbox"]`。在 Docker 容器内这是可接受的安全折衷
+4. **设置 `PLAYWRIGHT_BROWSERS_PATH`**：确保浏览器二进制文件路径在可写目录下（`/tmp` 或 tmpfs）
 
 **Warning signs:**
-- 构建日志中 `--build-arg VITE_KEYCLOAK_URL=` 后面为空
-- 新镜像部署后 Chrome DevTools 中看到空的 keycloak 配置
+- Chromium 日志：`Running as root without --no-sandbox is not supported`
+- `Browser closed unexpectedly` 或 `Target closed` 错误
+- `/dev/shm` 空间不足的 dmesg 日志
 
 **Phase to address:**
-Phase 2（密钥注入设计）-- 明确区分构建时配置 vs 运行时密钥
-
-**Recovery:**
-| Step | Action |
-|------|--------|
-| 1 | 回滚到上一个构建正确的镜像（蓝绿部署保留旧镜像） |
-| 2 | 重新构建，确保 `--build-arg` 值正确传入 |
-| 3 | 构建后验证 JS 产物 |
+Python 爬虫分离阶段（无论分离与否都需要解决）
 
 ---
 
-### Pitfall 4: 密钥轮换导致运行中服务中断
+### Pitfall 3: noda-site 从 serve 换 nginx 后健康检查和蓝绿部署端口不匹配
 
 **What goes wrong:**
-如果在密钥管理服务中轮换了数据库密码，但运行中的 Docker 容器仍在使用旧密码：
-- PostgreSQL 连接池中的旧密码在重连时认证失败
-- Keycloak 数据库连接断开后无法重连
-- noda-ops 备份 cron 任务使用旧密码，备份静默失败
+当前 noda-site 使用 `serve -s dist -l 3000`（Node.js serve），健康检查和蓝绿部署都基于端口 3000：
+
+- `Jenkinsfile.noda-site` 第 14 行：`SERVICE_PORT = "3000"`
+- `manage-containers.sh` 第 657 行：`SERVICE_PORT=3000`
+- `upstream-noda-site.conf`：`server noda-site-blue:3000`
+- `docker-compose.app.yml` 第 100 行：`wget --quiet --tries=1 --spider http://localhost:3000/`
+- `Dockerfile.noda-site` 第 59 行：`HEALTHCHECK ... wget ... http://localhost:3000/`
+
+如果切换到 `nginx:alpine` 静态文件服务：
+- nginx 默认监听端口 80（不是 3000）
+- Dockerfile 的 `HEALTHCHECK` URL 需要改为 `http://localhost:80/`
+- Compose 健康检查需要改为 80 端口
+- Jenkinsfile 的 `SERVICE_PORT` 需要改为 `"80"`
+- nginx upstream 配置的端口需要改为 80
+- `manage-containers.sh` 中 noda-site 的默认端口需要更新
 
 **Why it happens:**
-Docker Compose 的 `environment` 值在容器启动时写入，运行中不会自动更新。即使密钥管理服务中更新了值，已运行的容器仍然使用启动时注入的环境变量。密码轮换通常只更新密钥存储，不同步更新所有消费者。
+端口 3000 是 Node.js serve 的默认配置，nginx 默认是 80。端口变更影响 6 个不同位置的配置文件，容易遗漏。
+
+**Consequences:**
+- 健康检查失败导致容器被标记为 unhealthy
+- 蓝绿部署的 `wait_container_healthy` 超时（检查错误端口）
+- nginx upstream 无法连接到新容器
+- Pipeline 部署失败但回滚也可能失败（如果旧镜像已被清理）
 
 **How to avoid:**
-1. **双凭据轮换模式**：
-   - 步骤 1：在 PostgreSQL 中创建新用户/密码（保留旧用户）
-   - 步骤 2：重新部署所有使用数据库的服务（使用新凭据）
-   - 步骤 3：验证所有服务正常后，删除旧用户
-2. **自动检测密钥变更**：密钥管理服务中标记密钥版本，Pipeline 在部署前检查版本是否变更
-3. **蓝绿部署天然支持**：新容器使用新密码，旧容器继续运行直到切换完成
+1. **统一端口变量**：noda-site 的新 Dockerfile 中 nginx 监听端口应通过环境变量控制，或在所有配置中统一改为 80
+2. **逐一检查所有引用端口 3000 的位置**：`grep -rn "3000" --include="*.yml" --include="*.conf" --include="*.sh" --include="Jenkinsfile*"` 并确认哪些是 noda-site 相关的
+3. **蓝绿部署测试**：修改后必须通过 Jenkins Pipeline 完整走一遍部署流程，不能只验证 `docker build`
+4. **保留端口 3000 的选项**：在 nginx 配置中 `listen 3000` 而非 80，保持与现有蓝绿架构兼容，减少修改范围
 
 **Warning signs:**
-- PostgreSQL 日志：`FATAL: password authentication failed`
-- Keycloak 日志：`Connection refused` 或 `Authentication failed`
-- 备份日志：`pg_dump: error: connection to server failed`
+- `docker inspect` 显示容器 `unhealthy`
+- Jenkins Pipeline Health Check 阶段超时
+- nginx 日志无请求（upstream 端口错误）
 
 **Phase to address:**
-Phase 3（密钥轮换策略设计）
-
-**Recovery:**
-| Step | Action |
-|------|--------|
-| 1 | 如果是 PostgreSQL 密码：`docker exec` 进入 postgres 容器，`ALTER USER` 恢复旧密码 |
-| 2 | 如果是 B2 密钥：在 Backblaze 控制台重新生成 application key |
-| 3 | 如果是 Cloudflare token：在 Cloudflare Dashboard 回滚 |
+noda-site 优化阶段 -- 替换 serve 为 nginx 时
 
 ---
 
-### Pitfall 5: 备份系统与密钥管理的循环依赖
+### Pitfall 4: 多阶段构建 COPY 遗漏运行时依赖
 
 **What goes wrong:**
-备份系统需要密钥才能运行（B2 凭据、PostgreSQL 密码），而密钥管理服务本身也需要备份（密钥数据备份到 B2）。如果密钥管理服务的数据库损坏且备份也依赖密钥服务，就形成死锁：
-- 密钥服务需要恢复 -> 需要 B2 备份 -> 需要 B2 凭据 -> 凭据在密钥服务中 -> 密钥服务不可用
+findclass-ssr 的当前 Dockerfile 第 92-131 行有大量 `COPY --from=builder` 指令。优化过程中如果遗漏了任何运行时依赖：
+
+- **遗漏 `package.json`**：Node.js 无法解析模块路径
+- **遗漏符号链接重建**：第 109-112 行的 `ln -s` 创建的 workspace 解析链接，pnpm workspace 依赖这些链接查找 `@noda-apps/*` 包
+- **遗漏 `tsconfig.base.json`**：如果运行时需要类型检查（不常见但 SSR 可能需要）
+- **遗漏 Python 虚拟环境或 site-packages**：如果 Python 依赖安装位置不在 `scripts/` 下
+- **遗漏 patchright 浏览器二进制**：`python3 -m patchright install chromium` 下载的 Chromium 二进制文件（约 200-400MB），如果 Python 爬虫被分离但遗漏了浏览器安装
 
 **Why it happens:**
-当前备份系统通过 `scripts/backup/.env.backup` 独立获取 B2 凭据，不依赖任何外部服务。迁移后如果 B2 凭据也存入密钥服务，备份系统就必须先访问密钥服务才能备份，包括备份密钥服务本身。
+- pnpm workspace 的依赖解析依赖符号链接结构，而 Docker 的 `COPY` 指令默认不保留符号链接的目标，只复制链接本身
+- `node_modules` 中的嵌套依赖可能在 builder 阶段被 hoisted，运行时结构不同
+- 多阶段构建的心理盲区：开发者只复制自己写的代码的产物，忘记依赖也需要精确复制
+
+**Consequences:**
+- 运行时 `MODULE_NOT_FOUND` 错误
+- SSR 渲染失败（白屏）
+- Python 爬虫运行时 ImportError
+- 只在特定请求路径下触发（不是所有请求都用到所有模块）
 
 **How to avoid:**
-1. **备份系统独立于密钥管理**：B2 凭据和 PostgreSQL 密码保留在 `scripts/backup/.env.backup` 或 `.pgpass` 中，不迁移到密钥服务。备份系统是"最后防线"，不能依赖任何其他服务
-2. **密钥服务自备份**：密钥服务的数据（如 Vault 的 Raft 存储、Infisical 的数据库）通过独立机制备份（直接文件系统备份到 B2），不经过密钥服务本身
-3. **"根密钥"保护**：密钥服务的加密密钥（如 Vault unseal key、SOPS age 私钥）必须离线保存（不在任何自动化系统中）
+1. **构建后验证脚本**：`docker run --rm findclass-ssr:latest node -e "require('./apps/findclass/api/dist/api.js')"` 验证所有模块可加载
+2. **比对构建产物**：构建后 `docker run --rm builder ls -laR /app/ > /tmp/builder.txt` 和 `docker run --rm runner ls -laR /app/ > /tmp/runner.txt` 比对文件列表
+3. **使用 `COPY --from=builder /app /app` 全量复制**：如果不确定精确需要哪些文件，先全量复制验证运行正常，再逐步删除不需要的文件
+4. **Python 依赖测试**：`docker run --rm findclass-ssr:latest python3 -c "import scrapling; import patchright"`
 
 **Warning signs:**
-- 密钥服务恢复文档中提到"从 B2 恢复"但 B2 凭据存储在密钥服务中
-- 备份脚本中出现 `infisical` 或 `vault` 命令调用
+- 容器启动后 `docker logs` 显示 `Cannot find module`
+- SSR 页面返回 500 错误
+- 特定 API 端点返回 500（依赖了被遗漏的模块）
 
 **Phase to address:**
-Phase 1（密钥服务部署）-- 设计独立备份路径
-
-**Recovery:**
-| Step | Action |
-|------|--------|
-| 1 | 从离线保存的根密钥恢复密钥服务 |
-| 2 | 如果根密钥丢失，从 B2 备份恢复密钥数据库，但 B2 凭据需要从 `.env.backup` 缓存获取 |
-| 3 | 如果两者都丢失，需要重新生成所有密钥（重建 PostgreSQL 用户、重新生成 B2 key 等） |
+findclass-ssr 多阶段优化阶段
 
 ---
 
-### Pitfall 6: 单服务器资源耗尽 -- 密钥服务 OOM
+### Pitfall 5: 蓝绿部署镜像命名策略被破坏
 
 **What goes wrong:**
-在单服务器上添加密钥管理服务会占用额外资源：
+当前蓝绿部署流程（`blue-green-deploy.sh` 第 98-111 行）使用以下镜像命名策略：
 
-| 方案 | 额外内存需求 | 额外磁盘 | 额外 CPU |
-|------|------------|---------|---------|
-| Vault (dev mode) | ~150-300 MB | ~100 MB | 极低 |
-| Vault (Raft production) | ~512 MB - 1 GB | ~500 MB+ | 低 |
-| Infisical (self-hosted) | ~2-4 GB | ~10-20 GB | 中等 |
-| SOPS + age (无服务) | 0 | ~10 MB | 0 |
-
-当前服务器已运行：PostgreSQL、Keycloak（蓝绿 x2）、Nginx、noda-ops、findclass-ssr（蓝绿 x2），总内存使用约 4-6 GB。如果添加 Infisical self-hosted（需要 Node.js 后端 + PostgreSQL + Redis），可能导致 OOM。
-
-**Why it happens:**
-- Vault 需要 `IPC_LOCK` 能力（mlock 系统调用），Docker 中需要 `--cap-add=IPC_LOCK` 或 `disable_mlock = true`
-- Infisical self-hosted 至少需要 3 个容器（backend + PostgreSQL + Redis），在单服务器上不现实
-- Keycloak 蓝绿部署已经有两个 `1g` 内存的 Java 容器
-
-**How to avoid:**
-1. **选择轻量级方案**：SOPS + age（无服务端）或 Vault dev mode（仅用于单服务器场景）或 Infisical Cloud（免费 SaaS，不自托管）
-2. **设置内存限制**：在 docker-compose 中为密钥服务设置 `mem_limit`
-3. **监控资源使用**：部署前用 `docker stats` 确认当前资源余量
-4. **避免 self-hosted Infisical**：单服务器不适合运行 3 个额外容器
-
-**Warning signs:**
-- `docker stats` 显示总内存使用 > 80%
-- `dmesg` 中出现 `Out of memory: Killed process`
-- 密钥服务容器频繁重启（OOM killed）
-
-**Phase to address:**
-Phase 1（方案选型）-- 资源评估决定方案
-
-**Recovery:**
-| Step | Action |
-|------|--------|
-| 1 | `docker stop` 密钥服务容器释放内存 |
-| 2 | 使用本地 `.env` 缓存文件继续部署 |
-| 3 | 重新评估方案（降级到 SOPS + age 无服务端方案） |
-
----
-
-### Pitfall 7: Jenkins withCredentials 与密钥服务集成的 masking 盲区
-
-**What goes wrong:**
-当前 Jenkins Pipeline 已使用 `withCredentials` 管理 Cloudflare API token（`Jenkinsfile.findclass-ssr` 第 134-136 行）。如果迁移到集中式密钥管理，可能出现：
-- Jenkins 的 `withCredentials` masking 只对精确字符串值生效。如果密钥值被 base64 编码、URL 编码或作为 URL 参数传递，原始值被 mask 但转换后的值不被 mask
-- `infisical run` 或 `vault kv get` 的输出中密钥值可能出现在 Jenkins console log 中
-- shell 脚本中的 `set -x`（debug 模式）会将密钥值打印到日志
-
-**Why it happens:**
-- Jenkins 的 secret masking 是字符串替换，不是真正的安全机制
-- `pipeline-stages.sh` 中的 `set -euo pipefail` 包含了 `set -e`，某些错误场景下 bash 会打印导致失败的命令行
-- 当前 `pipeline-stages.sh` 第 24-26 行的 `set -a; source "$_env_path"; set +a` 会将所有变量导出到环境中，包括密钥
-
-**How to avoid:**
-1. **不要在 Pipeline 中直接输出密钥值**：使用 `infisical export --output-file=/tmp/secrets.env` 写入文件，不输出到 stdout
-2. **禁用 set -x**：确保在处理密钥的代码段前后不开启 debug 模式
-3. **使用 `withCredentials` 而非环境变量**：对于 Jenkins 管理的密钥，继续使用 `withCredentials` binding，不通过 `source .env` 加载
-4. **审查所有日志输出**：`grep -n 'echo.*$\|print.*$\|log.*$' scripts/pipeline-stages.sh` 确认没有泄漏密钥的 echo 语句
-
-**Warning signs:**
-- Jenkins console log 中出现 `****` masking（说明值被正确 mask）
-- Jenkins console log 中出现实际的密钥值（说明 masking 失败）
-- 构建日志被标记为包含敏感信息
-
-**Phase to address:**
-Phase 2（Jenkins 集成设计）
-
-**Recovery:**
-| Step | Action |
-|------|--------|
-| 1 | 立即轮换泄漏的密钥 |
-| 2 | 清除 Jenkins 构建日志（Manage Jenkins -> 构建历史管理） |
-| 3 | 审计谁在泄漏期间访问了构建日志 |
-
----
-
-### Pitfall 8: Docker Compose 启动顺序依赖密钥服务 -- 启动超时
-
-**What goes wrong:**
-如果所有服务的环境变量都从密钥服务获取，`docker compose up` 的启动链变为：
-1. 密钥服务启动 -> 健康检查通过
-2. PostgreSQL 启动（需要 `POSTGRES_PASSWORD`） -> 健康检查通过
-3. noda-ops 启动（需要 PostgreSQL 连接 + B2 凭据） -> 健康检查通过
-4. Nginx 启动
-
-如果密钥服务启动慢（如 Vault 需要执行 unseal 操作），PostgreSQL 等待密钥超时，整个 compose stack 无法启动。
-
-**Why it happens:**
-- Docker Compose 的 `depends_on` 只保证容器启动顺序，不保证服务就绪
-- 密钥服务可能有特殊的初始化步骤（Vault unseal、Infisical database migration）
-- 当前系统没有这个问题因为所有密钥都在本地 `.env` 文件中
-
-**How to avoid:**
-1. **密钥预注入模式**：在 `docker compose up` 之前，先从密钥服务获取所有密钥写入 `.env` 文件，然后 compose 从文件读取
-2. **不修改 docker-compose.yml 的 `environment` 加载方式**：保持 `${VAR}` 语法从 `.env` 文件读取，只改变 `.env` 文件的生成方式（从密钥服务生成 vs 手动维护）
-3. **密钥服务不加入 Docker Compose**：如果使用 SaaS 方案（Infisical Cloud）或 CLI 工具（SOPS），不需要运行本地服务
-
-**Warning signs:**
-- `docker compose up` 日志中出现 `POSTGRES_PASSWORD is not set`
-- 容器启动后立即退出（exit code 1）
-- `docker compose ps` 显示密钥服务 `health: starting` 但其他服务已经是 `unhealthy`
-
-**Phase to address:**
-Phase 2（密钥注入架构设计）
-
-**Recovery:**
-| Step | Action |
-|------|--------|
-| 1 | 手动创建 `.env` 文件（使用备份的密钥值） |
-| 2 | `docker compose up` 不依赖密钥服务 |
-| 3 | 修复密钥服务启动问题 |
-
----
-
-### Pitfall 9: 加密密钥管理失误 -- 数据永久丢失
-
-**What goes wrong:**
-项目已有 `scripts/utils/decrypt-secrets.sh` 使用 SOPS + age 加密方案（第 74-112 行）。如果引入新的密钥管理方案并改变加密方式：
-- age 私钥丢失 -> 所有 SOPS 加密文件（`secrets/.env.production.enc` 等）无法解密
-- Vault unseal key 丢失 -> Vault 存储的所有密钥无法恢复
-- Infisical encryption key 丢失 -> 自托管实例的所有密钥无法解密
-
-`decrypt-secrets.sh` 第 88-102 行的密钥查找逻辑：
 ```bash
-# 1. SOPS_AGE_KEY_FILE 环境变量
-# 2. team-keys/age-key-${USER}.txt 本地文件
+# 构建产生 latest 标签
+docker compose -f "$COMPOSE_FILE" build "$SERVICE_NAME"
+# 给 latest 打上 git SHA 标签
+docker tag "${SERVICE_NAME}:latest" "${SERVICE_NAME}:${short_sha}"
+deploy_image="${SERVICE_NAME}:${short_sha}"
 ```
 
-如果迁移后 age 私钥不再被正确引用，现有加密文件无法解密。
+然后 `run_container` 使用 `deploy_image` 启动新容器。如果 Dockerfile 优化改变了构建上下文或输出：
+
+- **Dockerfile 路径变更**：`Jenkinsfile.noda-site` 第 18 行硬编码 `DOCKERFILE = "deploy/Dockerfile.noda-site"`。如果文件名或路径变了，Pipeline 找不到 Dockerfile
+- **构建上下文变更**：`docker-compose.app.yml` 中 `context: ../../noda-apps` 和 `dockerfile: ../noda-infra/deploy/Dockerfile.findclass-ssr`。如果 noda-site 改为不依赖 noda-apps 构建上下文，compose build 会失败
+- **镜像标签不一致**：如果优化后使用不同的 `--tag` 参数，`cleanup_by_tag_count` 可能找不到旧镜像进行清理
+- **回滚镜像丢失**：`cleanup_by_tag_count` 保留最近 5 个标签（`CLEANUP_KEEP_COUNT=5`）。如果优化过程中重新构建了多次，旧的回滚镜像可能被清理
 
 **Why it happens:**
-- 加密密钥（根密钥）通常不存储在密钥管理系统中（鸡生蛋问题）
-- 开发者机器上的 age 私钥可能在清理项目时被误删
-- Vault 的 unseal 过程需要法定数量的 unseal key，单个 key 无法恢复
+蓝绿部署的镜像管理逻辑（`image-cleanup.sh`、`manage-containers.sh`、`blue-green-deploy.sh`）都假设镜像名为 `${SERVICE_NAME}:latest` + `${SERVICE_NAME}:${git_sha}`。改变这个假设会影响整个部署链路。
+
+**Consequences:**
+- Pipeline Build 阶段失败（Dockerfile 路径错误）
+- 部署成功但旧镜像被意外清理，无法回滚
+- `run_container` 启动失败（镜像名格式不匹配）
 
 **How to avoid:**
-1. **保留现有 SOPS + age 方案**：已验证可用（`decrypt-secrets.sh` 存在且逻辑完整），不要替换加密方案
-2. **根密钥离线备份**：age 私钥至少保存 2 份副本在不同物理位置（如加密 U 盘 + 密码管理器）
-3. **新方案使用现有加密密钥**：如果使用 Vault 或 Infisical，其内部加密密钥也必须离线备份
-4. **迁移前测试恢复流程**：从备份恢复密钥服务至少做一次全流程演练
+1. **保持 Dockerfile 路径不变**：如果必须重命名，同步更新 `docker-compose.app.yml` 和所有 Jenkinsfile 中的路径
+2. **保持镜像命名约定**：`SERVICE_NAME:latest` + `SERVICE_NAME:git_sha` 的约定不应改变
+3. **优化前后各运行一次完整 Pipeline**：验证蓝绿部署全流程正常
+4. **保留回滚镜像**：优化过程中不要清理旧镜像，至少保留一个可回滚的版本
 
 **Warning signs:**
-- `sops --decrypt` 报错 `could not find matching private key`
-- Vault `operator init` 后 unseal key 未保存
-- `team-keys/` 目录中 age 密钥文件不存在
+- `docker compose build` 报错 `failed to solve: failed to read dockerfile`
+- `docker tag` 报错 `Error: No such image`
+- `cleanup_by_tag_count` 日志显示 "清理了所有旧镜像"（包括可能需要回滚的）
 
 **Phase to address:**
-Phase 1（根密钥备份策略）
-
-**Recovery:**
-| Step | Action |
-|------|--------|
-| 1 | 从离线备份恢复 age 私钥 |
-| 2 | 如果离线备份也丢失：密钥数据永久丢失，必须重新生成所有密码 |
-| 3 | 重建成本极高：PostgreSQL ALTER USER、Keycloak 管理员密码重置、B2 key 重新生成、Cloudflare token 重新生成 |
+每个镜像优化的验证阶段
 
 ---
 
-### Pitfall 10: 迁移后 docker/.env 文件删除时机错误
+### Pitfall 6: Alpine 的 DNS 解析差异导致服务间通信失败
 
 **What goes wrong:**
-迁移完成后删除 `docker/.env` 文件，但：
-- 还有脚本通过 `source "$PROJECT_ROOT/docker/.env"` 加载密钥（`pipeline-stages.sh` 第 22-29 行、`blue-green-deploy.sh` 第 23-25 行）
-- Jenkins workspace 中的 `.env` 是 gitignored 的，新 checkout 不会有这个文件
-- `docker/.env` 曾被提交到 git（commit `c15faba`），`git clone` 可能拉到旧版本
+如果 findclass-ssr 的 Node.js 运行时切换到 Alpine（`node:22-alpine`），musl 的 DNS 解析器与 glibc 有关键差异：
+
+1. **无 DNS 缓存**：每次 `getaddrinfo()` 都直接查询 DNS 服务器
+2. **不支持 `/etc/nsswitch.conf`**：无法配置解析顺序
+3. **串行 AAAA/A 查询**：不并行查询 IPv6 和 IPv4，DNS 解析更慢
+4. **对 `/etc/resolv.conf` 选项的有限支持**：`options rotate`、`options timeout` 等被忽略
+
+findclass-ssr 运行时需要连接：
+- PostgreSQL（`noda-infra-postgres-prod:5432`）-- Docker 内部 DNS
+- Keycloak（`http://noda-infra-nginx`）-- Docker 内部 DNS
+- 外部 API（ReSend、Anthropic）-- 外部 DNS
+
+Docker 内部 DNS 通常不会出问题（解析非常简单），但外部 DNS 查询可能在网络不稳定时表现不同。
 
 **Why it happens:**
-- 密钥文件在 `.gitignore` 中但不排除已经 tracked 的文件（`git rm --cached` 未执行）
-- 多个脚本有独立的 `.env` 加载逻辑，不是通过共享函数
-- `pipeline-stages.sh` 有硬编码的备用路径 `$HOME/Project/noda-infra/docker/.env`
+Node.js 的 `dns.lookup()` 使用操作系统的 `getaddrinfo()`，在 Alpine 上走 musl 实现。`dns.resolve()` 使用 c-ares 库，不受影响。大多数 Node.js 代码（包括 HTTP 客户端）默认使用 `dns.lookup()`。
+
+**Consequences:**
+- 间歇性 `EAI_AGAIN` 错误（DNS 解析超时）
+- 外部 API 调用延迟增加
+- 在网络压力大时更容易出现连接失败
 
 **How to avoid:**
-1. **不要删除 `.env` 文件，改为自动生成**：Pipeline 在部署前从密钥服务拉取密钥写入 `.env` 文件，脚本保持现有的 `source` 逻辑不变
-2. **清理 git 历史**：`git filter-branch` 或 `BFG Repo Cleaner` 清除历史中的密钥文件
-3. **迁移分两步**：(a) 先让 `.env` 文件由密钥服务自动生成（脚本不变），(b) 确认稳定后再删除旧的手动维护的 `.env` 文件
-4. **修改所有硬编码路径**：`pipeline-stages.sh` 第 22 行的 `$HOME/Project/noda-infra/docker/.env` 需要改为相对路径
+1. **findclass-ssr 保持 `node:22-slim`**：避免引入 musl DNS 问题
+2. **如果 Node.js 部分必须用 Alpine**：设置 `NODE_OPTIONS='--dns-result-order=ipv4first'`，跳过 IPv6 查询
+3. **分离后 Node.js 容器无外部 DNS 需求**：如果 Node.js 容器只连接 Docker 内部服务（PostgreSQL、Keycloak），Alpine 的 DNS 差异影响极小
 
 **Warning signs:**
-- `docker compose config` 输出变量值为空（`.env` 文件不存在或为空）
-- `pipeline-stages.sh` 日志中 "loading .env" 但实际没加载到任何变量
-- `git status` 显示 `.env` 文件被修改（说明文件仍被 tracked）
+- Node.js 日志中出现 `getaddrinfo EAI_AGAIN`
+- 外部 API 调用偶尔超时
+- 仅在 Alpine 镜像中出现，slim 镜像正常
 
 **Phase to address:**
-Phase 2（迁移执行）-- 先生成后删除
+findclass-ssr 基础镜像决策阶段
 
-**Recovery:**
-| Step | Action |
-|------|--------|
-| 1 | 从 B2 备份恢复 `.env` 文件 |
-| 2 | 或从 `git stash` / `git show HEAD:docker/.env` 恢复（如果已 commit） |
-| 3 | 或从 git 历史恢复（`git show c15faba~1:docker/.env`） |
+---
+
+### Pitfall 7: noda-site 切换 nginx 后 CSP 和安全头丢失
+
+**What goes wrong:**
+当前 `config/nginx/conf.d/default.conf` 第 110-161 行为 noda-site 定义了完整的安全头：
+
+```nginx
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-Frame-Options "SAMEORIGIN" always;
+add_header X-XSS-Protection "1; mode=block" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+```
+
+以及 gzip 压缩和缓存策略（Vite 带 hash 资源 1 年缓存，HTML 不缓存）。
+
+如果 noda-site 容器内部改为 nginx 服务静态文件，而外部 nginx 仍然做反向代理：
+
+1. **双重 nginx 问题**：请求经过两层 nginx（外部 nginx 反代 -> 内部 nginx 静态文件），安全头可能在任一层被覆盖
+2. **缓存策略冲突**：内部 nginx 和外部 nginx 可能设置不同的缓存头
+3. **gzip 双重压缩**：如果两层都启用 gzip，可能导致性能问题或内容损坏
+
+**Why it happens:**
+nginx 的 `add_header` 指令在 location 块中会覆盖上层 server 块的同名 header。两层 nginx 之间没有协调机制。
+
+**How to avoid:**
+1. **内部 nginx 只做静态文件服务，不设置安全头**：安全头由外部 nginx 统一管理（当前配置已存在）
+2. **内部 nginx 不启用 gzip**：压缩由外部 nginx 统一处理
+3. **或者绕过外部 nginx**：noda-site 直接通过 Cloudflare Tunnel 暴露，不再经过外部 nginx。但这需要重新配置 Tunnel 路由
+4. **最简方案**：内部 nginx 最小配置（`server { listen 3000; root /app/dist; }`），所有安全和缓存策略在外部 nginx 管理
+
+**Warning signs:**
+- HTTP 响应头中出现重复的 header
+- `curl -I https://noda.co.nz/` 显示安全头缺失
+- PageSpeed Insights 报告缺少 gzip
+
+**Phase to address:**
+noda-site nginx 配置阶段
+
+---
+
+### Pitfall 8: patchright 浏览器二进制在多阶段构建中遗漏
+
+**What goes wrong:**
+当前 Dockerfile.findclass-ssr 第 127 行：
+
+```dockerfile
+RUN python3 -m patchright install chromium
+```
+
+这会下载约 200-400MB 的 Chromium 浏览器二进制文件。`PLAYWRIGHT_BROWSERS_PATH=0`（第 85 行）本意是使用系统 Chromium，但注释说"对 patchright 无效"。
+
+如果优化多阶段构建，将 Python 安装放在 builder 阶段，运行时阶段需要知道浏览器二进制文件的确切安装位置：
+
+- patchright 默认安装到 `~/.cache/ms-playwright/` 或 `PLAYWRIGHT_BROWSERS_PATH` 指定的路径
+- 以 `nodejs` 用户（UID 1001）运行时，缓存目录在 `/home/nodejs/.cache/`
+- 如果构建阶段以 root 运行但运行时以 nodejs 运行，路径和权限不匹配
+
+**Why it happens:**
+patchright 是 Playwright 的 fork，浏览器安装机制与标准 Playwright 相同但版本号不同。`PLAYWRIGHT_BROWSERS_PATH=0` 在 Playwright 中表示"使用系统浏览器"，但 patchright 可能不尊重这个环境变量。
+
+**Consequences:**
+- `patchright` 运行时报错 `Executable doesn't exist`
+- 浏览器下载在构建阶段完成但运行时找不到（路径不同）
+- 镜像体积没有减少（浏览器二进制仍然很大）
+
+**How to avoid:**
+1. **在运行时阶段直接安装浏览器**（当前做法）：保持 `RUN python3 -m patchright install chromium` 在 runner 阶段，不放在 builder
+2. **如果必须多阶段复制**：先用 `docker run` 查明安装路径，然后精确 COPY
+3. **分离爬虫后**：Python 爬虫容器使用 `mcr.microsoft.com/playwright/python` 预构建镜像（已包含 Chromium），不需要手动安装
+4. **验证安装路径**：`docker run --rm findclass-ssr:latest python3 -c "from patchright.sync_api import sync_playwright; print(sync_playwright().chromium.executable_path)"` （需要实际启动浏览器，在 CI 中可简化为检查文件存在性）
+
+**Warning signs:**
+- `browserType.launch: Executable doesn't exist at /home/nodejs/.cache/ms-playwright/chromium-*/chrome-linux/chrome`
+- Docker 构建日志中 patchright install 步骤缺失
+- 运行时 `ls /home/nodejs/.cache/ms-playwright/` 为空
+
+**Phase to address:**
+findclass-ssr Python 爬虫分离或优化阶段
 
 ---
 
 ## Moderate Pitfalls
 
-### Pitfall 11: Infisical/Vault 免费额度超限
+### Pitfall 9: noda-ops 从 Alpine 切换基础镜像的必要性存疑
 
 **What goes wrong:**
-- **Infisical Cloud 免费版**：限制 5 个项目、3 个环境、基础 RBAC。~60 次/月部署频率可能接近 API 调用限制
-- **Vault Community**：无 API 限制但需要自行运维。单节点无 HA
-- **SOPS + age**：无服务端限制，纯 CLI 工具
+noda-ops 已经使用 `alpine:3.21`（Dockerfile.noda-ops 第 8 行），体积约 306MB。看起来不小，但主要是 `postgresql17-client`（~50MB）、`rclone`（~30MB）、`cloudflared`（~40MB）等必要工具。如果错误地追求更小体积而删除必要工具，会导致备份或 Tunnel 功能失效。
 
 **Prevention:**
-1. 评估每月密钥读取次数：60 次部署 x 平均每次读取 3-5 个密钥 = 180-300 次 API 调用/月。Infisical 免费版应足够
-2. 监控 API 使用量
-3. 如果超限，降级到 SOPS + age 本地方案
+noda-ops 的优化重点不是切换基础镜像（已经是 Alpine），而是审查 `apk add` 列表中是否有不必要的包。例如 `wget` 和 `curl` 是否可以只保留一个。
 
-### Pitfall 12: noda-ops 容器内备份脚本无法访问密钥服务
+### Pitfall 10: Docker BuildKit 缓存导致 Dockerfile 修改未生效
 
 **What goes wrong:**
-`noda-ops` 容器运行备份 cron 任务，需要 B2 凭据和 PostgreSQL 密码。如果密钥存储在外部服务（如 Infisical Cloud），容器内需要：
-- 安装 Infisical CLI 或 Vault CLI
-- 配置认证（machine identity token 或 universal auth）
-- 网络访问密钥服务（通过 Cloudflare Tunnel 出站或直接公网访问）
+CLAUDE.md 中已记录此问题："docker compose build 可能使用 BuildKit 缓存导致 Dockerfile 修改未生效"。多阶段构建尤其容易受影响，因为 builder 阶段的层可能被复用。
 
 **Prevention:**
-1. noda-ops 容器保持从环境变量获取密钥（`docker-compose.yml` 第 75-83 行已配置）
-2. 密钥在 `docker compose up` 前注入到 `.env` 文件，compose 自动传递给容器
-3. 不在容器内安装密钥客户端
+关键修改后使用 `docker build --no-cache` 验证。或在 `docker compose build` 时加 `--no-cache` 参数。
 
-### Pitfall 13: envsubst 模板中的密钥引用缺失
+### Pitfall 11: test-verify 容器使用 postgres:15-alpine 而非 postgres:17-alpine
 
 **What goes wrong:**
-`manage-containers.sh` 的 `prepare_env_file()` 使用 `envsubst` 渲染 env 模板。当前模板路径为 `docker/env-${SERVICE_NAME}.env`。Jenkinsfile.keycloak 第 29 行定义了：
+`Dockerfile.test-verify` 第 1 行使用 `postgres:15-alpine`，而主备份容器（`Dockerfile.backup`）使用 `postgres:17-alpine`。版本不一致意味着：
+- `pg_dump`/`pg_restore` 版本不匹配可能导致备份验证失败
+- 两个镜像无法共享基础层，浪费磁盘空间
+
+**Prevention:**
+统一为 `postgres:17-alpine`，与主数据库和备份容器保持一致。
+
+### Pitfall 12: pnpm workspace 的符号链接在 Docker COPY 中丢失
+
+**What goes wrong:**
+Dockerfile.findclass-ssr 第 109-112 行手动重建了符号链接：
+
+```dockerfile
+RUN mkdir -p node_modules/@noda-apps && \
+    ln -s /app/packages/shared node_modules/@noda-apps/shared && \
+    ln -s /app/packages/database node_modules/@noda-apps/database && \
+    ln -s /app/packages/design-tokens node_modules/@noda-apps/design-tokens
 ```
-ENVSUBST_VARS = '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${SMTP_HOST} ${SMTP_PORT} ${SMTP_FROM} ${SMTP_USER} ${SMTP_PASSWORD}'
-```
 
-如果密钥注入改为从密钥服务获取，但 `envsubst` 需要的环境变量在渲染时不存在，模板中的 `${VAR}` 会变成空字符串。
+如果优化时遗漏了这些链接重建，`require('@noda-apps/shared')` 会失败。pnpm 的 `node_modules` 结构与 npm 不同，依赖精确的符号链接树。
 
 **Prevention:**
-1. `envsubst` 执行前确保所有引用的变量已设置（从密钥服务拉取后 export）
-2. 在 `prepare_env_file()` 中添加变量存在性检查
-3. 不改变 `envsubst` 的工作方式，只改变变量的来源
+任何涉及 `COPY --from=builder` 的修改都必须验证这 3 个符号链接存在且指向正确。
 
-### Pitfall 14: Jenkins workspace 中密钥文件残留
+### Pitfall 13: Docker 层缓存排序不当导致构建效率下降
 
 **What goes wrong:**
-如果 Pipeline 将密钥写入文件（如 `infisical export --output-file=.env`），构建完成后文件残留在 Jenkins workspace 中。其他项目的构建（如果共享同一个 node）可能读取到这些文件。
+Dockerfile.findclass-ssr 将 `COPY scripts/requirements.txt`（第 123 行）放在 `COPY scripts/`（第 130 行）之前，利用层缓存优化依赖安装。如果优化时改变了 COPY 顺序，每次代码变更都会重新安装 Python 依赖。
 
 **Prevention:**
-1. 使用 `post { always { sh 'rm -f .env.* secrets/**' } }` 清理密钥文件
-2. 将密钥文件写入 `/tmp/` 而非 workspace（已有 `decrypt-secrets.sh` 使用 `/tmp/noda-secrets/`）
-3. 设置文件权限 `chmod 600`
-
-### Pitfall 15: 密钥值中的特殊字符破坏 shell 脚本
-
-**What goes wrong:**
-密钥值可能包含 shell 特殊字符（如 B2 Application Key `K0048667N4HUsLs35TYfyJzlY8i/Gx8` 中的 `/`，Cloudflare JWT token 中的 `.` 和 `-`）。如果通过 shell 变量传递时引号处理不当：
-- `source .env` 时，值中的空格、`$`、反引号会导致解析错误
-- `docker run -e PASSWORD=$VALUE` 中，特殊字符可能被 shell 展开
-
-**Prevention:**
-1. `.env` 文件中的值始终用双引号包裹：`KEY="value/with+special=chars"`
-2. `source` 后使用变量时始终加双引号：`"$PASSWORD"` 而非 `$PASSWORD`
-3. 使用 `docker run --env-file` 而非 `-e` 传递密钥（env-file 中不需要引号）
-
-### Pitfall 16: 多个 env 文件中同一密钥值不同步
-
-**What goes wrong:**
-当前 `POSTGRES_PASSWORD` 同时存在于 `docker/.env`、`.env.production` 和 `scripts/backup/.env.backup` 三个文件中。如果只更新了其中一个：
-- 备份系统使用旧密码，备份失败
-- findclass-ssr 使用新密码，连接失败
-- Keycloak 使用旧密码，登录失败
-
-集中式密钥管理应解决这个问题，但如果迁移不彻底（部分文件仍手动维护），值不一致问题会更严重。
-
-**Prevention:**
-1. 迁移时确保同一密钥只有一个 source of truth
-2. 使用密钥引用（如 Infisical 的 secret references）而非复制值
-3. 部署前自动检查所有文件中的关键密钥值是否一致
+保持"先复制依赖声明文件 -> 安装依赖 -> 再复制源码"的模式。这是 Docker 最佳实践，不应为减少层数而合并这些步骤。
 
 ---
 
@@ -486,11 +394,11 @@ ENVSUBST_VARS = '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| 只用 SOPS + age 不部署服务端 | 零资源消耗，零运维负担 | 无自动轮换、无审计日志、无 Web UI | 永远可接受 -- 单服务器、低频率部署场景 |
-| 保留 `.env` 文件作为缓存 | Pipeline 兼容性不变，脚本改动最少 | 需要同步密钥服务和文件 | 迁移过渡期可接受 |
-| 密钥服务使用 dev 模式（无 TLS） | 简化配置，Docker 内部网络已隔离 | 无法验证密钥服务身份 | 仅限 Docker 内部网络，永不暴露到公网 |
-| 不加密 `.env` 缓存文件 | 简化部署流程 | 服务器被入侵时密钥泄露 | 不接受 -- `.env` 文件应 `chmod 600` + 文件系统加密 |
-| 密钥服务不自备份 | 减少运维复杂度 | 密钥服务数据丢失需重建所有密钥 | 不接受 -- 密钥数据必须备份 |
+| 不分离 Python 爬虫，只优化 Node.js 层 | 零架构变更，风险最低 | 主镜像仍然 1GB+（Chromium 占 400MB） | MVP 阶段可接受，长期不可接受 |
+| `--no-sandbox` 运行 Chromium | 立即解决沙箱兼容问题 | 降低安全边界，容器逃逸风险增加 | read_only 容器 + 无 privileged 时勉强可接受 |
+| 保持 serve 不换 nginx | 零风险，零改动 | noda-site 镜像约 150MB（node:alpine + serve）vs 25MB（nginx:alpine） | 永远可接受 -- 镜像差异对部署时间和磁盘影响有限 |
+| 不统一 postgres 基础镜像版本 | 零改动 | test-verify 容器约 80MB 不必要的额外镜像层 | 应在本次优化中修复 |
+| 全量 COPY node_modules 而非精确复制 | 构建成功率高 | 镜像体积未优化（包含 devDependencies） | 绝不可接受 -- 应使用 `--frozen-lockfile --prod` 或精确复制 |
 
 ---
 
@@ -498,12 +406,12 @@ ENVSUBST_VARS = '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| Jenkins + Infisical | 在 `sh '''...'''` 块中直接调用 `infisical` CLI | 用 `withCredentials` 包装 machine identity token，在 `sh` 中 `infisical export --token=$TOKEN --output-file=.env` |
-| Jenkins + Vault | 在 Declarative Pipeline `environment` 块中调用 vault CLI | `environment` 块不支持复杂 shell 命令，应在 `sh` 步骤中获取密钥 |
-| Docker Compose + 密钥服务 | 在 compose 中使用 `secrets:` 指令 | `secrets:` 在非 Swarm 模式下是 bind-mount 文件，不如预生成 `.env` 文件简单 |
-| envsubst + 密钥服务 | envsubst 执行时变量不存在 | 先 `source` 生成的 `.env` 文件，再执行 `envsubst` |
-| rclone + B2 | 动态生成 rclone config 中暴露密钥 | rclone config 文件应 `chmod 600` 且在 `/tmp/` 中使用后立即删除 |
-| Keycloak 蓝绿部署 | 新容器使用新密码但数据库中仍是旧密码 | 蓝绿部署时先更新数据库密码（通过 `ALTER USER`），再启动新容器 |
+| nginx 反代 -> noda-site(nginx) | 两层 nginx 都设置安全头，导致重复或覆盖 | 内部 nginx 只做静态文件服务，安全头由外部 nginx 统一管理 |
+| Jenkins Pipeline + 镜像构建 | Dockerfile 路径变更后未同步 Jenkinsfile | `grep -r "Dockerfile" jenkins/` 确认所有引用 |
+| 蓝绿部署 + 新镜像 | 新镜像健康检查端口/路径变更未更新 manage-containers.sh | 修改 SERVICE_PORT 和 HEALTH_PATH 后全量 Pipeline 测试 |
+| Docker Compose + read_only | Chromium 写入 `/dev/shm` 失败但无明确错误 | 添加 `shm_size: '256m'` 和 `--no-sandbox` |
+| patchright + 系统 Chromium | `PLAYWRIGHT_BROWSERS_PATH=0` 对 patchright 无效 | 使用 `python3 -m patchright install chromium` 单独安装 |
+| Docker BuildKit + 多阶段 | 修改 builder 阶段但 runner 阶段使用了缓存的旧产物 | 关键修改后 `docker build --no-cache` 验证 |
 
 ---
 
@@ -511,10 +419,10 @@ ENVSUBST_VARS = '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| 密钥服务 API 调用延迟 | 每次部署额外增加 5-30 秒（密钥拉取时间） | 本地缓存 + 批量获取（`infisical export` 一次获取所有） | 部署频率 > 10 次/天 |
-| 密钥服务内存泄漏 | 服务器可用内存逐渐减少，最终 OOM | `mem_limit: 512m` + 定期 `docker restart` | 连续运行 > 30 天 |
-| 大量密钥版本的存储膨胀 | 磁盘使用持续增长 | 设置版本保留策略（保留最近 10 个版本） | 密钥数量 > 100 |
-| Vault unseal 操作耗时 | 每次重启 Vault 需要 30-60 秒 unseal | 使用 auto-unshare（需付费）或 `disable_mlock` + 文件加密 | 每次服务器重启 |
+| Chromium /dev/shm 不足 | 页面崩溃、爬虫超时、`session deleted because of page crash` | `shm_size: '256m'` 在 compose 中配置 | 爬取页面数量增加或页面内存需求增大 |
+| 多阶段构建复制了全部 node_modules | 镜像体积未减少，可能比优化前更大 | 精确复制运行时需要的文件，用 `du -sh` 比对每层 | 依赖数量增长时镜像膨胀 |
+| Alpine 上 Python 从源码编译 | Docker 构建时间增加 5-10 分钟 | 使用 Debian-based 镜像或预检 musllinux wheel 可用性 | 依赖版本更新后编译失败 |
+| nginx 双层反代 gzip 冲突 | 响应体乱码或 Content-Encoding 错误 | 内部 nginx 不启用 gzip | 外部 nginx 启用 gzip 时 |
 
 ---
 
@@ -522,23 +430,22 @@ ENVSUBST_VARS = '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${
 
 | Mistake | Risk | Prevention |
 |---------|------|------------|
-| 密钥文件权限 644（世界可读） | 服务器上任何用户可读取所有密钥 | `chmod 600 .env` + `chown root:docker .env` |
-| 在 git commit message 或 PR 中粘贴密钥值 | 密钥永久暴露在 git 历史中 | 使用 `git secrets` pre-commit hook |
-| docker/.env 曾被提交到 git（commit `c15faba`） | 历史中包含真实密钥 | `git filter-branch` 清除历史 + 轮换所有密钥 |
-| Jenkins 构建日志中泄露密钥 | 任何有 Jenkins 访问权限的人可看到 | `withCredentials` masking + 避免 `set -x` + 避免 `echo $VAR` |
-| age 私钥存储在项目目录中 | `git add .` 时可能意外提交 | `team-keys/` 加入 `.gitignore` + 离线备份 |
+| Chromium `--no-sandbox` 在特权容器中 | 容器逃逸风险 | `read_only: true` + `cap_drop: ALL` + 非特权用户，`--no-sandbox` 仅在以上保护到位时使用 |
+| 镜像中包含构建工具链（gcc、make） | 攻击者可编译提权工具 | 多阶段构建中构建工具链留在 builder 阶段，不进入 runner |
+| Python pip 使用 `--break-system-packages` | 系统级包被覆盖 | 使用虚拟环境（`python3 -m venv`），或确保 Docker 容器内无所谓系统包 |
+| noda-site nginx 配置暴露 `.git` 或隐藏文件 | 源码泄露 | nginx location 块中添加 `location ~ /\. { deny all; }` |
 
 ---
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **密钥迁移完成**: 看起来所有密钥已迁移，但 backup 系统仍在读 `scripts/backup/.env.backup` -- 验证所有 3 个 `.env` 文件的密钥都已迁移
-- [ ] **Pipeline 正常**: 手动触发一次 Pipeline 成功，但 `set -a; source .env` 的路径硬编码在 pipeline-stages.sh 中 -- 验证 Jenkins workspace 路径正确
-- [ ] **密钥服务运行**: `docker ps` 显示密钥服务容器 running，但健康检查未通过 -- 验证健康检查端点返回 200
-- [ ] **B2 备份正常**: 手动运行 `backup-postgres.sh` 成功，但 cron 任务在 noda-ops 容器内运行时密钥不可用 -- 验证容器内环境变量已注入
-- [ ] **密钥已删除旧文件**: 旧的 `.env` 文件已删除，但 git 中仍 tracked -- `git ls-files | grep '\.env'` 确认无 tracked 的密钥文件
-- [ ] **加密密钥已备份**: age 私钥在本地存在，但未离线备份 -- 验证至少有 2 份不同物理位置的副本
-- [ ] **Jenkins credentials 已更新**: `withCredentials` 中的 credential ID 已更新，但旧 ID 仍被其他 Pipeline 引用 -- `grep -r credentialsId jenkins/` 确认所有引用一致
+- [ ] **镜像体积减少**: `docker images` 显示更小体积，但运行时模块加载失败 -- 用 `docker run --rm <image> node -e "require('./path')"` 验证所有关键路径
+- [ ] **健康检查通过**: `docker ps` 显示 healthy，但实际 HTTP 请求返回 500 -- `curl http://localhost:PORT/api/health` 端到端验证
+- [ ] **蓝绿部署成功**: 新容器启动正常，但 nginx upstream 端口不匹配导致 502 -- 切换后 `curl -H "Host: class.noda.co.nz" http://localhost/api/health` 验证
+- [ ] **Python 爬虫分离**: 独立容器构建成功，但 patchright 找不到 Chromium 二进制 -- `docker run --rm <image> python3 -c "from patchright.sync_api import sync_playwright"` 验证
+- [ ] **noda-site nginx 配置**: 静态文件可访问，但缺少 gzip 或安全头 -- `curl -I https://noda.co.nz/` 检查响应头
+- [ ] **CDN 缓存清除**: Pipeline CDN Purge 阶段成功，但旧版本 index.html 仍在 CDN 缓存中 -- 部署后在无痕窗口验证新版本
+- [ ] **Docker 层缓存有效**: 第二次构建很快，但第一次构建因为缓存未命中而极慢 -- 全新机器上测试完整构建
 
 ---
 
@@ -546,16 +453,14 @@ ENVSUBST_VARS = '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| 密钥服务故障（Pitfall 1） | LOW | 重启容器或使用本地 `.env` 缓存 |
-| 密钥遗漏（Pitfall 2） | MEDIUM | 从 git 历史或 B2 备份恢复，逐个验证 |
-| VITE_* 构建失败（Pitfall 3） | LOW | 重新构建镜像（蓝绿部署保留旧镜像） |
-| 密钥轮换中断（Pitfall 4） | MEDIUM | 双凭据回退或 ALTER USER 恢复旧密码 |
-| 备份循环依赖（Pitfall 5） | HIGH | 需要离线根密钥 + 重建 B2 连接 |
-| 资源耗尽（Pitfall 6） | LOW | 停止密钥服务容器 + 使用 SOPS 本地方案 |
-| 日志泄露（Pitfall 7） | MEDIUM | 轮换泄露密钥 + 清除 Jenkins 日志 |
-| 启动顺序超时（Pitfall 8） | LOW | 手动创建 `.env` 文件 |
-| 加密密钥丢失（Pitfall 9） | **CRITICAL** | 如果无离线备份，需重建所有密钥 |
-| .env 删除过早（Pitfall 10） | LOW | 从 B2 或 git 历史恢复文件 |
+| Python wheel 不兼容 Alpine（P1） | LOW | 回退到 `node:22-slim`，或使用 `python:slim` 分离容器 |
+| Chromium 沙箱崩溃（P2） | LOW | 添加 `shm_size` 和 `--no-sandbox`，重新部署 |
+| 端口不匹配（P3） | LOW | 统一端口配置，重新构建和部署 |
+| COPY 遗漏依赖（P4） | MEDIUM | 回退到全量 COPY，逐步精简 |
+| 镜像命名破坏（P5） | MEDIUM | 恢复旧 Dockerfile 路径，手动 `docker tag` 修复 |
+| DNS 解析失败（P6） | LOW | 回退到 slim 镜像，或设置 `--dns-result-order=ipv4first` |
+| 安全头丢失（P7） | LOW | 修复 nginx 配置，`nginx -s reload` 即可 |
+| patchright 浏览器遗漏（P8） | MEDIUM | 重新构建镜像，确保浏览器在 runner 阶段安装 |
 
 ---
 
@@ -563,16 +468,14 @@ ENVSUBST_VARS = '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| 单点故障（P1） | Phase 1: 密钥服务部署 | 模拟密钥服务宕机，验证 Pipeline 仍可用缓存部署 |
-| 密钥遗漏（P2） | Phase 2: 迁移执行 | 部署后 `docker compose config` 对比所有变量值 |
-| VITE_* 注入（P3） | Phase 2: Jenkins 集成 | 构建后 `docker run --rm <img> grep -r auth.noda.co.nz /app/` |
-| 密钥轮换（P4） | Phase 3: 轮换策略 | 执行一次完整的 PostgreSQL 密码轮换演练 |
-| 备份循环（P5） | Phase 1: 架构设计 | 验证备份系统完全不依赖密钥服务 |
-| 资源耗尽（P6） | Phase 1: 方案选型 | `docker stats` 确认总内存 < 80% |
-| 日志泄露（P7） | Phase 2: Jenkins 集成 | 审查 Jenkins console log 无明文密钥 |
-| 启动顺序（P8） | Phase 2: 注入架构 | `docker compose up` 完整测试 |
-| 加密密钥（P9） | Phase 1: 备份策略 | 验证 age 私钥至少有 2 份离线副本 |
-| .env 删除（P10） | Phase 2: 迁移过渡 | 保留 `.env.bak` 一个里程碑周期 |
+| Python wheel 不兼容（P1） | findclass-ssr 基础镜像选型 | `pip download --platform musllinux` 预检，确认保持 slim |
+| Chromium 沙箱（P2） | Python 爬虫分离/优化 | `docker run` 启动爬虫并抓取一个页面验证 |
+| 端口不匹配（P3） | noda-site nginx 迁移 | Jenkins Pipeline 完整流程验证 |
+| COPY 遗漏（P4） | findclass-ssr 多阶段优化 | `docker run` 验证所有模块可加载 |
+| 镜像命名（P5） | 每个镜像优化的验证 | `docker images` 确认标签格式正确 |
+| DNS 差异（P6） | Node.js 容器基础镜像选型 | 保持 slim 即可规避 |
+| 安全头（P7） | noda-site nginx 配置 | `curl -I` 验证响应头 |
+| patchright 浏览器（P8） | Python 爬虫分离 | `python3 -c "from patchright..."` 验证 |
 
 ---
 
@@ -580,55 +483,50 @@ ENVSUBST_VARS = '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${
 
 | Phase Topic | Likely Pitfall | Mitigation |
 |-------------|---------------|------------|
-| 密钥方案选型 | P6: Infisical self-hosted 资源不足 | 优先评估 SOPS + age 或 Infisical Cloud（免费 SaaS） |
-| 密钥服务部署 | P5: 备份循环依赖 | 备份系统保持独立于密钥服务 |
-| 密钥服务部署 | P9: 加密密钥未备份 | 部署前先备份 age 私钥到离线介质 |
-| .env 文件迁移 | P2: 密钥遗漏 | 先审计所有密钥，建立清单 |
-| .env 文件迁移 | P10: 删除过早 | 先自动生成 .env，确认稳定后再删旧文件 |
-| Jenkins Pipeline 集成 | P3: VITE_* 构建时注入 | 保持构建时 `--build-arg` 不变 |
-| Jenkins Pipeline 集成 | P7: 日志泄露 | 审查所有 `echo`/`log` 语句 |
-| 密钥轮换设计 | P4: 运行中服务中断 | 设计双凭据轮换模式 |
-| B2 备份集成 | P12: 容器内密钥访问 | 容器通过环境变量获取，不在容器内安装 CLI |
+| findclass-ssr 基础镜像决策 | P1: Python wheel 不兼容 | 保持 `node:22-slim`，或分离 Python 为独立 `python:3.12-slim` 容器 |
+| Python 爬虫分离 | P2: Chromium /dev/shm + P8: 浏览器路径 | 使用 `mcr.microsoft.com/playwright/python` 预构建镜像 |
+| noda-site serve -> nginx | P3: 端口不匹配 + P7: 安全头 | 保持端口 3000，最小 nginx 配置，安全头由外部 nginx 管理 |
+| 多阶段构建优化 | P4: COPY 遗漏 + P12: 符号链接 | 先全量 COPY 验证，再逐步精简 |
+| 基础镜像版本统一 | P11: postgres 版本不一致 | 统一为 `postgres:17-alpine` |
+| 蓝绿部署验证 | P5: 镜像命名 | 每个镜像优化后运行完整 Pipeline |
 
 ---
 
-## 方案建议：最小风险路径
+## 优化优先级矩阵
 
-基于以上 10 个 Critical Pitfall 的分析，推荐最小风险的实施方案：
+基于风险和收益的分析：
 
-### 推荐：SOPS + age + Infisical Cloud（混合方案）
-
-**原理：**
-- **SOPS + age**（已有）：加密密钥文件存入 git（`secrets/*.enc`），CLI 工具解密到本地 `.env` 文件
-- **Infisical Cloud 免费版**（新增）：Web UI 管理、审计日志、密钥版本历史、团队协作
-- 两者同步：密钥值在 Infisical 中管理，`infisical export` 写入 `.env`，同时 `sops --encrypt` 加密版本存入 git
-
-**避免的 Pitfall：**
-- P1（单点故障）：SOPS 本地文件始终可用，Infisical 只是辅助
-- P5（备份循环）：git 中的加密文件就是备份，不依赖密钥服务
-- P6（资源耗尽）：无额外容器
-- P8（启动顺序）：无本地服务依赖
-
-**仍需处理的 Pitfall：**
-- P2（密钥遗漏）：需要完整审计
-- P3（VITE_*）：构建时注入逻辑不变
-- P4（密钥轮换）：需要设计轮换流程
-- P7（日志泄露）：需要审查日志输出
-- P9（加密密钥）：age 私钥必须离线备份
-- P10（.env 删除）：分阶段过渡
+| 优化项 | 预计体积节省 | 风险等级 | 实施复杂度 | 推荐顺序 |
+|--------|------------|---------|-----------|---------|
+| test-verify 统一 postgres:17-alpine | ~80MB（共享层） | 极低 | 极低（改一行） | 1 |
+| noda-site serve -> nginx:alpine | ~120MB -> ~25MB | 中 | 中（端口+蓝绿+nginx配置） | 2 |
+| noda-ops 审查 apk 依赖 | ~10-20MB | 低 | 低 | 3 |
+| findclass-ssr 分离 Python 爬虫 | ~400MB（Chromium） | 高 | 高（新容器+网络+部署流程） | 4 |
+| findclass-ssr 多阶段精简 node_modules | ~50-100MB | 中 | 中 | 5 |
 
 ---
 
 ## Sources
 
-- 项目代码库审计：`docker/.env`、`.env.production`、`scripts/backup/.env.backup`、`docker/docker-compose.yml`、`scripts/pipeline-stages.sh`、`scripts/utils/decrypt-secrets.sh`
-- [Context7: Infisical CLI 文档](https://context7.com/infisical/cli/llms.txt) -- `infisical export`、`infisical run`、machine identity 认证，HIGH confidence
-- [Context7: Infisical 平台文档](https://context7.com/websites/infisical/llms.txt) -- self-hosted 部署、定价层级、SSO 功能，HIGH confidence
-- HashiCorp Vault Docker 资源需求 -- 基于训练知识（WebSearch 不可用），MEDIUM confidence
-- Jenkins `withCredentials` 常见问题 -- 基于训练知识（WebSearch 不可用），MEDIUM confidence
-- Docker Compose `secrets:` 指令限制 -- 基于训练知识，HIGH confidence（Docker 官方文档长期稳定）
-- git 历史分析：`docker/.env` 曾在 commit `c15faba` 和 `240c59e` 中被提交
+### HIGH confidence
+- Dockerfile 完整审计：`deploy/Dockerfile.findclass-ssr`、`deploy/Dockerfile.noda-site`、`deploy/Dockerfile.noda-ops`、`deploy/Dockerfile.backup`、`scripts/backup/docker/Dockerfile.test-verify`
+- Docker Compose 配置审计：`docker/docker-compose.app.yml`、`docker/docker-compose.yml`
+- nginx 配置审计：`config/nginx/conf.d/default.conf`、`config/nginx/snippets/upstream-*.conf`
+- Jenkins Pipeline 配置审计：`jenkins/Jenkinsfile.noda-site`
+- 蓝绿部署脚本审计：`scripts/blue-green-deploy.sh`、`scripts/manage-containers.sh`、`scripts/blue-green-deploy-findclass.sh`
+- [Context7: Docker 官方文档 -- Alpine 镜像兼容性](https://docs.docker.com/) -- musl vs glibc 差异、manylinux 兼容性说明，HIGH confidence
+- [Context7: Docker 官方文档 -- 多阶段构建](https://docs.docker.com/) -- COPY --from 最佳实践，HIGH confidence
+- [Context7: Docker 官方文档 -- glibc 和 musl 选择指南](https://docs.docker.com/) -- 明确推荐 Python + 原生依赖使用 glibc 镜像，HIGH confidence
+- pip wheel 兼容性实测（`pip download --platform musllinux`）-- lxml/orjson/greenlet 最新版本无 musllinux wheel，HIGH confidence
+
+### MEDIUM confidence
+- Chromium Docker read_only 兼容性 -- 基于训练知识和 Playwright 文档，未通过 WebSearch 验证
+- patchright `PLAYWRIGHT_BROWSERS_PATH=0` 行为 -- 基于 Dockerfile 注释（"对 patchright 无效"），实际行为未独立验证
+- Alpine musl DNS 解析差异影响范围 -- 基于训练知识，Docker 内部 DNS 影响可能被低估
+
+### LOW confidence
+- 具体镜像体积数值（如 node:22-alpine ~130MB）-- 未在目标服务器上实测，不同架构和版本有差异
 
 ---
-*Pitfalls research for: Noda v1.8 密钥管理集中化*
-*Researched: 2026-04-19*
+*Pitfalls research for: Noda v1.10 Docker 镜像瘦身优化*
+*Researched: 2026-04-20*
