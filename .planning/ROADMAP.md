@@ -170,7 +170,9 @@ Plans:
   1. 所有 Python 脚本（crawl-skykiwi.py、llm_extract.py、db_import.py 等）的调用链路完整记录，确认哪些有 API 端点直接调用
   2. 产出明确的决策文档：Python/Chromium 是直接移除还是分离为独立容器，附理由和影响范围
   3. crawl-scheduler.ts 的 spawn('python3', ...) 调用处理方案确定（移除或改为 HTTP fetch）
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 49-01-PLAN.md -- 验证审计完整性 + 产出决策文档（SSR-01, SSR-02）
 
 ### Phase 50: findclass-ssr 瘦身执行
 **Goal**: 执行 Phase 49 制定的方案，移除 findclass-ssr 中 ~3GB 的 Python/Chromium 死重
@@ -182,7 +184,9 @@ Plans:
   3. SSR 页面渲染功能正常（首页、课程页面等）
   4. 静态文件服务正常（CSS/JS/图片加载无 404）
   5. 如爬虫功能保留，crawl 相关 API 端点正常工作
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 49-01-PLAN.md -- 验证审计完整性 + 产出决策文档（SSR-01, SSR-02）
 
 ### Phase 51: findclass-ssr 深度优化
 **Goal**: 在 Python 分离完成后，进一步优化 findclass-ssr 镜像（Alpine 切换 + devDeps 清理 + 层缓存优化）
@@ -193,7 +197,9 @@ Plans:
   2. 运行时镜像不包含 devDependencies（pnpm prune --prod 或等效方案执行）
   3. Dockerfile COPY 层顺序优化：低频变更的依赖声明在前，高频变更的源码在后
   4. findclass-ssr 端到端功能验证通过（API + SSR + 静态文件）
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 49-01-PLAN.md -- 验证审计完整性 + 产出决策文档（SSR-01, SSR-02）
 
 ### Phase 52: 基础设施镜像清理
 **Goal**: noda-ops 和 backup Dockerfile 遵循精简最佳实践，构建工具不泄漏到运行时
@@ -203,7 +209,9 @@ Plans:
   1. noda-ops 中 wget/gnupg/coreutils 等非必需运行时依赖移到构建阶段或确认必需性
   2. backup Dockerfile 冗余层合并、RUN 指令统一、.dockerignore 添加
   3. 两个镜像的现有功能（备份、B2 上传、健康检查）不受影响
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 49-01-PLAN.md -- 验证审计完整性 + 产出决策文档（SSR-01, SSR-02）
 
 ## Progress
 
