@@ -41,14 +41,11 @@ FROM nginx:1.25-alpine AS runner
 RUN rm /etc/nginx/conf.d/default.conf
 
 # 复制自定义 nginx 配置（非 root + 日志/PID 指向 /tmp）
-COPY deploy/nginx/nginx.conf /etc/nginx/nginx.conf
-COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY --chown=nginx:nginx deploy/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY --chown=nginx:nginx deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
 
 # 仅复制构建产物
-COPY --from=builder /app/apps/site/dist /usr/share/nginx/html
-
-# 设置目录权限（Phase 48 可优化为 COPY --chown）
-RUN chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx
+COPY --from=builder --chown=nginx:nginx /app/apps/site/dist /usr/share/nginx/html
 
 USER nginx
 

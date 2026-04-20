@@ -1,4 +1,4 @@
-FROM postgres:15-alpine
+FROM postgres:17-alpine
 
 # 安装必需工具
 RUN apk add --no-cache \
