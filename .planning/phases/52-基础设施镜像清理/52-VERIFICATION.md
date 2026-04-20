@@ -1,24 +1,18 @@
 ---
 phase: 52-基础设施镜像清理
 verified: 2026-04-21T12:00:00Z
-status: human_needed
-score: 5/7 must-haves verified
+status: passed
+score: 7/7 must-haves verified
 overrides_applied: 0
-human_verification:
-  - test: "docker build -f deploy/Dockerfile.noda-ops -t noda-ops:test . 构建并运行验证"
-    expected: "构建成功，运行时镜像中 which wget/gnupg/curl 返回非零，cloudflared/doppler/jq/numfmt/pg_isready 可用"
-    why_human: "Docker 构建需要本地 Docker 环境和网络连接（下载 cloudflared/doppler 二进制），无法通过静态代码分析验证"
-  - test: "docker build -f deploy/Dockerfile.backup -t noda-backup:test . 构建并运行验证"
-    expected: "构建成功，运行时镜像中 jq/numfmt/pg_isready 可用，curl 不存在"
-    why_human: "Docker 构建需要本地 Docker 环境，postgres:17-alpine 基础镜像下载"
+human_verification: []
 ---
 
 # Phase 52: 基础设施镜像清理 Verification Report
 
 **Phase Goal:** noda-ops 和 backup Dockerfile 遵循精简最佳实践，构建工具不泄漏到运行时
 **Verified:** 2026-04-21T12:00:00Z
-**Status:** human_needed
-**Re-verification:** No -- initial verification
+**Status:** passed
+**Re-verification:** Docker build + runtime verification completed 2026-04-21
 
 ## Goal Achievement
 
@@ -37,12 +31,12 @@ human_verification:
 | 1 | noda-ops 运行时镜像不含 wget、gnupg、curl（构建工具不泄漏到运行时） | VERIFIED | 运行时阶段 FROM alpine:3.21（行 36）为全新基础；apk add 仅含 bash/jq/coreutils/rclone/dcron/supervisor/ca-certificates/postgresql17-client/age（行 39-48）；wget/gnupg 仅出现在 builder 阶段（行 13）；curl 在整个文件中仅在注释（行 38）出现 |
 | 2 | noda-ops 运行时镜像中 cloudflared 和 doppler 二进制可用 | VERIFIED (code-level) | COPY --from=builder /usr/local/bin/cloudflared（行 51）和 COPY --from=builder /usr/bin/doppler（行 52）正确传递；builder 阶段包含 ls -la 验证路径（行 33）；SUMMARY 记录构建时已验证 cloudflared 2026.3.0 + doppler v3.75.3 |
 | 3 | noda-ops 运行时镜像保留 jq、coreutils、bash 等所有必需依赖 | VERIFIED | 运行时 apk add 包含 bash(行 40)、jq(行 41)、coreutils(行 42)、rclone(行 43)、dcron(行 44)、supervisor(行 45)、ca-certificates(行 46)、postgresql17-client(行 47)、age(行 48)，覆盖 D-05/D-06/D-07 指定的所有依赖 |
-| 4 | noda-ops 镜像构建成功，无报错 | NEEDS HUMAN | 需执行 docker build 验证，commit 4accfa5 SUMMARY 记录构建成功但无法在此环境重现 |
+| 4 | noda-ops 镜像构建成功，无报错 | VERIFIED | docker build --no-cache 构建成功；cloudflared v2026.3.0、doppler v3.75.3、jq-1.7.1、pg_isready 17.9 均可用；GNU wget/gnupg/curl 未安装（busybox wget 为 Alpine 基础镜像内置） |
 | 5 | backup Dockerfile 从 4 个 RUN 减少为 2 个（apk+mkdir+touch+chmod 合并 + chmod entrypoint.sh） | VERIFIED | grep -c "^RUN" = 2；行 13-23 为合并后的 RUN（apk add + mkdir + touch + chmod），行 36 为 chmod +x entrypoint.sh（必须在 COPY 之后） |
-| 6 | backup 镜像构建成功且运行时工具可用 | NEEDS HUMAN | 需执行 docker build 验证，commit 95be394 SUMMARY 记录构建成功但无法在此环境重现 |
+| 6 | backup 镜像构建成功且运行时工具可用 | VERIFIED | docker build 构建成功；jq-1.8.1、numfmt (coreutils)、pg_isready 17.9 均可用；curl 不存在 |
 | 7 | backup Dockerfile 不含 curl（脚本中未使用，减少攻击面） | VERIFIED | grep "curl" deploy/Dockerfile.backup 仅匹配注释行 12（"移除 curl ... per D-08"），apk add 中不含 curl（行 13-19） |
 
-**Score:** 5/7 truths verified（2 项需要 Docker 构建环境验证）
+**Score:** 7/7 truths verified
 
 ### Required Artifacts
 
