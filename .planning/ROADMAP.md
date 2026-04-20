@@ -144,7 +144,10 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
   2. noda-site 容器在端口 3000 提供静态文件服务，蓝绿部署全流程（构建 -> 健康检查 -> 切换 -> 验证）正常工作
   3. Jenkins Pipeline noda-site 部署流程适配新 Dockerfile（构建参数、健康检查端点）并成功部署
   4. docker images 显示 noda-site 镜像体积 < 30MB
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 47-01-PLAN.md -- Dockerfile 重写 + nginx 配置文件（SITE-01, SITE-02）
+- [ ] 47-02-PLAN.md -- Pipeline 适配 + docker-compose 配置更新（SITE-03）
 
 ### Phase 48: 全局 Docker 卫生实践
 **Goal**: 所有自建 Dockerfile 遵循 Docker 最佳实践，减少镜像层数、加速构建、统一基础镜像版本
@@ -207,7 +210,7 @@ Phase 47/48/52 可并行执行，Phase 49 先于 Phase 50，Phase 51 依赖 Phas
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 47. noda-site 镜像优化 | v1.10 | 0/? | Not started | - |
+| 47. noda-site 镜像优化 | v1.10 | 0/2 | Planned | - |
 | 48. 全局 Docker 卫生实践 | v1.10 | 0/? | Not started | - |
 | 49. findclass-ssr 爬虫审计与决策 | v1.10 | 0/? | Not started | - |
 | 50. findclass-ssr 瘦身执行 | v1.10 | 0/? | Not started | - |
