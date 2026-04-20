@@ -154,10 +154,13 @@ Plans:
 **Depends on**: 无（独立阶段）
 **Requirements**: HYGIENE-01, HYGIENE-02, HYGIENE-03
 **Success Criteria** (what must be TRUE):
-  1. 所有自建 Dockerfile 的同级目录存在 .dockerignore，排除 .git、.planning、node_modules、worktrees
+  1. 项目根目录存在 .dockerignore，排除 .git、.planning 等，不排除构建所需文件
   2. 所有 COPY 指令使用 --chown 标志替代单独的 RUN chown，镜像层数不增加
   3. test-verify 基础镜像从 postgres:15-alpine 更新为 postgres:17-alpine，与 backup 容器共享层缓存
-**Plans**: TBD
+**Plans**: 2 plans
+Plans:
+- [ ] 48-01-PLAN.md -- .dockerignore 创建 + COPY --chown 优化 + 基础镜像升级（HYGIENE-01, HYGIENE-02, HYGIENE-03）
+- [ ] 48-02-PLAN.md -- 构建验证 + 部署确认（HYGIENE-01, HYGIENE-02, HYGIENE-03）
 
 ### Phase 49: findclass-ssr 爬虫审计与决策
 **Goal**: 完整审计 findclass-ssr 中所有 Python 脚本的调用链路，制定 Python/Chromium 移除或分离的最终方案
@@ -211,7 +214,7 @@ Phase 47/48/52 可并行执行，Phase 49 先于 Phase 50，Phase 51 依赖 Phas
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 47. noda-site 镜像优化 | v1.10 | 2/2 | Complete    | 2026-04-20 |
-| 48. 全局 Docker 卫生实践 | v1.10 | 0/? | Not started | - |
+| 48. 全局 Docker 卫生实践 | v1.10 | 0/2 | Ready to execute | - |
 | 49. findclass-ssr 爬虫审计与决策 | v1.10 | 0/? | Not started | - |
 | 50. findclass-ssr 瘦身执行 | v1.10 | 0/? | Not started | - |
 | 51. findclass-ssr 深度优化 | v1.10 | 0/? | Not started | - |
