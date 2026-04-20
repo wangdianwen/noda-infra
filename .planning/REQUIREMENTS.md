@@ -61,27 +61,27 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SITE-01 | — | Pending |
-| SITE-02 | — | Pending |
-| SITE-03 | — | Pending |
-| HYGIENE-01 | — | Pending |
-| HYGIENE-02 | — | Pending |
-| HYGIENE-03 | — | Pending |
-| SSR-01 | — | Pending |
-| SSR-02 | — | Pending |
-| SSR-03 | — | Pending |
-| SSR-04 | — | Pending |
-| SSR-DEEP-01 | — | Pending |
-| SSR-DEEP-02 | — | Pending |
-| SSR-DEEP-03 | — | Pending |
-| INFRA-01 | — | Pending |
-| INFRA-02 | — | Pending |
+| SITE-01 | Phase 47 | Pending |
+| SITE-02 | Phase 47 | Pending |
+| SITE-03 | Phase 47 | Pending |
+| HYGIENE-01 | Phase 48 | Pending |
+| HYGIENE-02 | Phase 48 | Pending |
+| HYGIENE-03 | Phase 48 | Pending |
+| SSR-01 | Phase 49 | Pending |
+| SSR-02 | Phase 49 | Pending |
+| SSR-03 | Phase 50 | Pending |
+| SSR-04 | Phase 50 | Pending |
+| SSR-DEEP-01 | Phase 51 | Pending |
+| SSR-DEEP-02 | Phase 51 | Pending |
+| SSR-DEEP-03 | Phase 51 | Pending |
+| INFRA-01 | Phase 52 | Pending |
+| INFRA-02 | Phase 52 | Pending |
 
 **Coverage:**
 - v1.10 requirements: 15 total
-- Mapped to phases: 0
-- Unmapped: 15 ⚠️
+- Mapped to phases: 15
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-20*
-*Last updated: 2026-04-20 after initial definition*
+*Last updated: 2026-04-20 — traceability updated after roadmap creation*

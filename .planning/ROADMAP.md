@@ -12,6 +12,7 @@
 - **v1.7 代码精简与规整** -- Phases 35-38 (shipped 2026-04-19) -- [详情](milestones/v1.7-ROADMAP.md)
 - **v1.8 密钥管理集中化** -- Phases 39-42 (shipped 2026-04-19)
 - **v1.9 部署后磁盘清理自动化** -- Phases 43-46 (shipped 2026-04-20) -- [详情](milestones/v1.9-MILESTONE.md)
+- **v1.10 Docker 镜像瘦身优化** -- Phases 47-52 (in progress)
 
 ## Phases
 
@@ -121,11 +122,94 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 
 </details>
 
+### v1.10 Docker 镜像瘦身优化 (In Progress)
+
+**Milestone Goal:** 全面优化所有自建 Docker 镜像体积，减少构建时间、磁盘占用和部署带宽
+
+- [ ] **Phase 47: noda-site 镜像优化** - 从 node:20-alpine 切换到 nginx:1.25-alpine，适配蓝绿部署
+- [ ] **Phase 48: 全局 Docker 卫生实践** - .dockerignore、COPY --chown、基础镜像版本统一
+- [ ] **Phase 49: findclass-ssr 爬虫审计与决策** - 审计 Python 调用链路，制定分离方案
+- [ ] **Phase 50: findclass-ssr 瘦身执行** - 移除 Python/Chromium 死重，端到端验证
+- [ ] **Phase 51: findclass-ssr 深度优化** - Alpine 切换、devDeps 清理、层缓存优化
+- [ ] **Phase 52: 基础设施镜像清理** - noda-ops 依赖审计、backup Dockerfile 清理
+
+## Phase Details
+
+### Phase 47: noda-site 镜像优化
+**Goal**: noda-site 运行时从 Node.js 切换到 nginx，镜像体积从 ~218MB 降至 ~25MB，蓝绿部署不受影响
+**Depends on**: 无（独立阶段）
+**Requirements**: SITE-01, SITE-02, SITE-03
+**Success Criteria** (what must be TRUE):
+  1. noda-site Dockerfile 使用 nginx:1.25-alpine 基础镜像，多阶段构建保留 Puppeteer prerender 阶段
+  2. noda-site 容器在端口 3000 提供静态文件服务，蓝绿部署全流程（构建 -> 健康检查 -> 切换 -> 验证）正常工作
+  3. Jenkins Pipeline noda-site 部署流程适配新 Dockerfile（构建参数、健康检查端点）并成功部署
+  4. docker images 显示 noda-site 镜像体积 < 30MB
+**Plans**: TBD
+
+### Phase 48: 全局 Docker 卫生实践
+**Goal**: 所有自建 Dockerfile 遵循 Docker 最佳实践，减少镜像层数、加速构建、统一基础镜像版本
+**Depends on**: 无（独立阶段）
+**Requirements**: HYGIENE-01, HYGIENE-02, HYGIENE-03
+**Success Criteria** (what must be TRUE):
+  1. 所有自建 Dockerfile 的同级目录存在 .dockerignore，排除 .git、.planning、node_modules、worktrees
+  2. 所有 COPY 指令使用 --chown 标志替代单独的 RUN chown，镜像层数不增加
+  3. test-verify 基础镜像从 postgres:15-alpine 更新为 postgres:17-alpine，与 backup 容器共享层缓存
+**Plans**: TBD
+
+### Phase 49: findclass-ssr 爬虫审计与决策
+**Goal**: 完整审计 findclass-ssr 中所有 Python 脚本的调用链路，制定 Python/Chromium 移除或分离的最终方案
+**Depends on**: 无（独立阶段，但必须在 Phase 50 之前完成）
+**Requirements**: SSR-01, SSR-02
+**Success Criteria** (what must be TRUE):
+  1. 所有 Python 脚本（crawl-skykiwi.py、llm_extract.py、db_import.py 等）的调用链路完整记录，确认哪些有 API 端点直接调用
+  2. 产出明确的决策文档：Python/Chromium 是直接移除还是分离为独立容器，附理由和影响范围
+  3. crawl-scheduler.ts 的 spawn('python3', ...) 调用处理方案确定（移除或改为 HTTP fetch）
+**Plans**: TBD
+
+### Phase 50: findclass-ssr 瘦身执行
+**Goal**: 执行 Phase 49 制定的方案，移除 findclass-ssr 中 ~3GB 的 Python/Chromium 死重
+**Depends on**: Phase 49
+**Requirements**: SSR-03, SSR-04
+**Success Criteria** (what must be TRUE):
+  1. findclass-ssr 镜像不再包含 Python 运行时、Chromium 浏览器、patchright 浏览器，镜像体积减少 > 50%
+  2. API 健康检查端点（/api/health）返回正常
+  3. SSR 页面渲染功能正常（首页、课程页面等）
+  4. 静态文件服务正常（CSS/JS/图片加载无 404）
+  5. 如爬虫功能保留，crawl 相关 API 端点正常工作
+**Plans**: TBD
+
+### Phase 51: findclass-ssr 深度优化
+**Goal**: 在 Python 分离完成后，进一步优化 findclass-ssr 镜像（Alpine 切换 + devDeps 清理 + 层缓存优化）
+**Depends on**: Phase 50
+**Requirements**: SSR-DEEP-01, SSR-DEEP-02, SSR-DEEP-03
+**Success Criteria** (what must be TRUE):
+  1. findclass-ssr 基础镜像从 node:22-slim 切换到 node:22-alpine，native 模块兼容性验证通过
+  2. 运行时镜像不包含 devDependencies（pnpm prune --prod 或等效方案执行）
+  3. Dockerfile COPY 层顺序优化：低频变更的依赖声明在前，高频变更的源码在后
+  4. findclass-ssr 端到端功能验证通过（API + SSR + 静态文件）
+**Plans**: TBD
+
+### Phase 52: 基础设施镜像清理
+**Goal**: noda-ops 和 backup Dockerfile 遵循精简最佳实践，构建工具不泄漏到运行时
+**Depends on**: 无（独立阶段）
+**Requirements**: INFRA-01, INFRA-02
+**Success Criteria** (what must be TRUE):
+  1. noda-ops 中 wget/gnupg/coreutils 等非必需运行时依赖移到构建阶段或确认必需性
+  2. backup Dockerfile 冗余层合并、RUN 指令统一、.dockerignore 添加
+  3. 两个镜像的现有功能（备份、B2 上传、健康检查）不受影响
+**Plans**: TBD
+
 ## Progress
+
+**Execution Order:**
+Phase 47/48/52 可并行执行，Phase 49 先于 Phase 50，Phase 51 依赖 Phase 50。
+建议执行顺序: 47 -> 48 -> 52 -> 49 -> 50 -> 51
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 43. 清理共享库 + Pipeline 集成 | v1.9 | 3/3 | Complete | 2026-04-20 |
-| 44. Jenkins 维护清理 + 定期任务 | v1.9 | 3/3 | Complete | 2026-04-20 |
-| 45. Infra Pipeline 镜像清理补全 | v1.9 | 2/2 | Complete | 2026-04-20 |
-| 46. nginx 蓝绿部署支持 | v1.9 | 1/1 | Complete | 2026-04-20 |
+| 47. noda-site 镜像优化 | v1.10 | 0/? | Not started | - |
+| 48. 全局 Docker 卫生实践 | v1.10 | 0/? | Not started | - |
+| 49. findclass-ssr 爬虫审计与决策 | v1.10 | 0/? | Not started | - |
+| 50. findclass-ssr 瘦身执行 | v1.10 | 0/? | Not started | - |
+| 51. findclass-ssr 深度优化 | v1.10 | 0/? | Not started | - |
+| 52. 基础设施镜像清理 | v1.10 | 0/? | Not started | - |

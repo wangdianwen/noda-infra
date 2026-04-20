@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.10
 milestone_name: Docker 镜像瘦身优化
-status: defining_requirements
-stopped_at: Defining requirements
-last_updated: "2026-04-20T22:30:00.000Z"
+status: roadmap_created
+stopped_at: Roadmap created, awaiting approval
+last_updated: "2026-04-20T23:00:00.000Z"
 last_activity: 2026-04-20
 progress:
-  total_phases: 0
+  total_phases: 6
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -22,14 +22,14 @@ See: .planning/PROJECT.md (updated 2026-04-20)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** v1.10 Docker 镜像瘦身优化 — defining requirements
+**Current focus:** v1.10 Docker 镜像瘦身优化 — Phase 47 ready to plan
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-04-20
+Phase: 47 of 52 (noda-site 镜像优化)
+Plan: 0 of ? in current phase
+Status: Roadmap created
+Last activity: 2026-04-20 — Roadmap created for v1.10 (6 phases, 15 requirements)
 
 Progress: [          ] 0%
 
@@ -37,14 +37,16 @@ Progress: [          ] 0%
 
 ### Decisions
 
+- [v1.10]: noda-site 保留容器 + nginx:1.25-alpine 运行时（保持端口 3000 蓝绿部署兼容）
+- [v1.10]: SSR 审计与决策合并为一个阶段（Phase 49），执行与验证合并为一个阶段（Phase 50）
+- [v1.10]: SSR-DEEP 必须在 SSR 完成后才能执行（Alpine 切换依赖 Python 分离）
 - [v1.9]: 分步 prune 替代 docker system prune（细粒度控制 + 可追溯日志）
-- [v1.9]: docker volume prune -f 不加 --all（保护 postgres_data 命名卷）
-- [v1.9]: pnpm store prune 每 7 天一次 + 标记文件避免与 install 冲突
-- [v1.9]: 清理 Pipeline 不包含 COMPOSE_BASE 和 DOPPLER_TOKEN
 
 ### Blockers/Concerns
 
-- 清理操作不得影响 postgres_data 命名卷（核心价值红线）
+- findclass-ssr 切 Alpine 必须在 Python 完全移除后（manylinux wheel 不兼容 musl）
+- noda-site 端口 3000 被 6 个文件引用，变更时必须保持一致
+- 蓝绿部署镜像命名约定（SERVICE_NAME:latest + :git_sha）不能被打破
 
 ## Deferred Items
 
@@ -55,11 +57,11 @@ Items acknowledged and deferred:
 | uat | Phase 32 (32-HUMAN-UAT.md) | partial, 2 pending |
 | uat | Phase 34 (34-HUMAN-UAT.md) | partial, 2 pending |
 | verification | Phase 32 (32-VERIFICATION.md) | human_needed |
-| verification | Phase 34 (34-VERIFICATION.md) | human_needed |
+| verification | Phase 34 (32-VERIFICATION.md) | human_needed |
 | quick_task | rename-pipelines | missing |
 
 ## Session Continuity
 
-Last session: 2026-04-20T22:30:00.000Z
-Stopped at: Defining requirements for v1.10
+Last session: 2026-04-20T23:00:00.000Z
+Stopped at: Roadmap created for v1.10, awaiting user approval
 Resume file: None
