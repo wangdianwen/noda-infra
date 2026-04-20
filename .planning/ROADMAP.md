@@ -131,7 +131,7 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [x] **Phase 49: findclass-ssr 爬虫审计与决策** - 审计 Python 调用链路，制定分离方案 (completed 2026-04-20)
 - [ ] **Phase 50: findclass-ssr 瘦身执行** - 移除 Python/Chromium 死重，端到端验证
 - [ ] **Phase 51: findclass-ssr 深度优化** - Alpine 切换、devDeps 清理、层缓存优化
-- [ ] **Phase 52: 基础设施镜像清理** - noda-ops 依赖审计、backup Dockerfile 清理
+- [x] **Phase 52: 基础设施镜像清理** - noda-ops 依赖审计、backup Dockerfile 清理 (completed 2026-04-21)
 
 ## Phase Details
 
@@ -211,8 +211,8 @@ Plans:
   3. 两个镜像的现有功能（备份、B2 上传、健康检查）不受影响
 **Plans**: 2 plans
 Plans:
-- [ ] 52-01-PLAN.md -- noda-ops 多阶段构建：构建工具隔离 + 运行时依赖精简（INFRA-01）
-- [ ] 52-02-PLAN.md -- backup Dockerfile 层合并 + curl 移除（INFRA-02）
+- [x] 52-01-PLAN.md -- noda-ops 多阶段构建：构建工具隔离 + 运行时依赖精简（INFRA-01）
+- [x] 52-02-PLAN.md -- backup Dockerfile 层合并 + curl 移除（INFRA-02）
 
 ## Progress
 
@@ -227,4 +227,4 @@ Phase 47/48/52 可并行执行，Phase 49 先于 Phase 50，Phase 51 依赖 Phas
 | 49. findclass-ssr 爬虫审计与决策 | v1.10 | 1/1 | Complete    | 2026-04-20 |
 | 50. findclass-ssr 瘦身执行 | v1.10 | 0/? | Not started | - |
 | 51. findclass-ssr 深度优化 | v1.10 | 0/? | Not started | - |
-| 52. 基础设施镜像清理 | v1.10 | 0/2 | Not started | - |
+| 52. 基础设施镜像清理 | v1.10 | 2/2 | Complete | 2026-04-21 |
