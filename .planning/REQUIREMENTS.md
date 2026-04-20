@@ -1,76 +1,87 @@
-# Requirements: v1.9 部署后磁盘清理自动化
+# Requirements: v1.10 Docker 镜像瘦身优化
 
-**Defined:** 2026-04-19
-**Core Value:** 数据库永不丢失。清理操作不得影响持久化数据卷和备份系统。
+**Defined:** 2026-04-20
+**Core Value:** 全面优化所有自建 Docker 镜像体积，减少构建时间、磁盘占用和部署带宽
 
-## v1 Requirements
+## v1.10 Requirements
 
-### A. Docker 清理增强 (DOCK)
+### SITE — noda-site 镜像优化
 
-- [ ] **DOCK-01**: Pipeline 部署成功后自动清理 Docker build cache（`docker buildx prune --filter until=24h`），保留 24h 内的热缓存
-- [ ] **DOCK-02**: Pipeline 部署成功后自动清理已停止的容器（`docker container prune -f`）
-- [ ] **DOCK-03**: Pipeline 部署成功后自动清理未使用的匿名卷（`docker volume prune -f`，不含 `--all`，保护命名卷如 postgres_data）
-- [ ] **DOCK-04**: Pipeline 部署前后记录磁盘用量对比（`df -h` + `docker system df`），输出到日志
+- [ ] **SITE-01**: noda-site 运行时从 node:20-alpine + serve 切换到 nginx:1.25-alpine（保持端口 3000，蓝绿部署兼容）
+- [ ] **SITE-02**: 多阶段构建保留 Puppeteer prerender 构建阶段，运行时仅包含静态文件 + nginx
+- [ ] **SITE-03**: Jenkins Pipeline noda-site 部署流程适配新 Dockerfile（构建参数、健康检查）
 
-### B. 构建缓存清理 (CACHE)
+### HYGIENE — 全局 Docker 最佳实践
 
-- [ ] **CACHE-01**: Jenkins workspace 中 findclass-ssr/noda-site 的 `node_modules` 在部署成功后清理
-- [x] **CACHE-02
-**: pnpm store 定期 prune（每 7 天一次，非每次部署），可通过参数强制触发
-- [x] **CACHE-03
-**: npm cache 定期清理（`npm cache clean --force`），与 pnpm store prune 同频率
+- [ ] **HYGIENE-01**: 所有自建 Dockerfile 添加/更新 .dockerignore（排除 .git、.planning、node_modules、worktrees）
+- [ ] **HYGIENE-02**: 所有 COPY 指令使用 --chown 替代单独 RUN chown（减少镜像层数）
+- [ ] **HYGIENE-03**: test-verify 基础镜像从 postgres:15-alpine 统一到 postgres:17-alpine（与 backup 共享层缓存）
 
-### C. 旧文件清理 (FILE)
+### SSR — findclass-ssr 核心瘦身
 
-- [ ] **FILE-01**: 清理 `infra-pipeline/` 目录下超过 N 天的旧备份文件（可配置保留天数，默认 30 天）
-- [ ] **FILE-02**: Pipeline 结束后清理 `deploy-failure-*.log` 临时日志文件
+- [ ] **SSR-01**: 审计 findclass-ssr 中所有 Python 脚本的调用链路（crawl-skykiwi.py、llm_extract.py、db_import.py 等），确认是否有 API 端点直接调用
+- [ ] **SSR-02**: 根据审计结果，制定 Python/Chromium/patchright 移除或分离方案（直接移除 vs 独立容器）
+- [ ] **SSR-03**: 执行 Python/Chromium/patchright 运行时移除（估计 5GB → ~2GB，节省 ~3GB）
+- [ ] **SSR-04**: 移除后端到端验证：API 健康检查、SSR 渲染、静态文件服务、爬虫功能（如保留）
 
-### D. Jenkins Pipeline 清理 (JENK)
+### SSR-DEEP — findclass-ssr 深度优化（依赖 SSR 完成）
 
-- [x] **JENK-01
-**: 清理 Jenkins 已完成的旧 Pipeline 构建（保留最近 N 次构建记录，删除更早的 artifacts 和构建目录）
-- [x] **JENK-02
-**: 清理 Jenkins workspace 中已完成构建的工作目录（释放磁盘空间）
+- [ ] **SSR-DEEP-01**: 评估 findclass-ssr 从 node:22-slim 切换到 node:22-alpine 的兼容性（native 模块验证）
+- [ ] **SSR-DEEP-02**: 清理构建阶段 devDependencies（pnpm prune --prod 或等效方案）
+- [ ] **SSR-DEEP-03**: 优化 COPY 层顺序（低频变更依赖在前，高频变更源码在后）
+
+### INFRA — 基础设施镜像清理
+
+- [ ] **INFRA-01**: noda-ops 依赖审计（确认 wget/gnupg/coreutils 运行时是否必需，非必需移到构建阶段）
+- [ ] **INFRA-02**: backup Dockerfile 清理（移除冗余层、统一 RUN 指令、添加 .dockerignore）
 
 ## Future Requirements
 
-### 高级清理
+### 待 SSR 审计后决定
 
-- **DOCK-F01**: `docker system prune -a --volumes` 全量清理（风险高，需人工确认）
-- **CACHE-F01**: 构建产物 `dist/` 清理策略
-- **MON-F01**: 磁盘用量超过阈值时发送告警（邮件/webhook）
+- **CRAWL-01**: 如需保留爬虫能力 — 创建独立 findclass-crawler 容器（FastAPI + patchright + Chromium）
+- **CRAWL-02**: crawl-scheduler.ts 从 spawn('python3', ...) 改为 HTTP fetch 调用爬虫容器
+
+### 长期优化
+
+- **ALPINE-01**: findclass-ssr 切 Alpine（依赖 Python 完全移除 + native 模块验证）
+- **CACHE-01**: Docker BuildKit 缓存挂载（--mount=type=cache）加速构建
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| `docker system prune -a` 全量清理 | 会删除所有未使用镜像（含回滚镜像），风险过高 |
-| `docker volume prune --all` | 会删除命名卷，威胁 postgres_data 等持久化数据 |
-| Jenkins 构建历史清理 | 改为 JENK-01 纳入 v1.9 范围 |
-| 备份系统文件清理 | 备份系统是核心价值保障，必须保持独立 |
-| 删除正在运行的容器 | 安全底线，只清理已停止的容器 |
+| 消除 noda-site 容器（nginx 直接挂载 volume） | 蓝绿部署端口 3000 被 6 个文件引用，变更风险高 |
+| findclass-ssr 强制切 Alpine | Python wheel 不兼容（lxml/orjson/greenlet 无 musllinux），需先移除 Python |
+| 修改蓝绿部署镜像命名约定 | image-cleanup.sh、blue-green-deploy.sh、manage-containers.sh 共同依赖 |
+| 引入 Docker registry | 当前使用本地镜像管理，满足单服务器需求 |
+| 多架构构建（arm64/amd64） | 当前仅在 amd64 服务器运行 |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DOCK-01 | Phase 43 | Pending |
-| DOCK-02 | Phase 43 | Pending |
-| DOCK-03 | Phase 43 | Pending |
-| DOCK-04 | Phase 43 | Pending |
-| CACHE-01 | Phase 43 | Pending |
-| CACHE-02 | Phase 44 | Pending |
-| CACHE-03 | Phase 44 | Pending |
-| FILE-01 | Phase 43 | Pending |
-| FILE-02 | Phase 43 | Pending |
-| JENK-01 | Phase 44 | Pending |
-| JENK-02 | Phase 44 | Pending |
+| SITE-01 | — | Pending |
+| SITE-02 | — | Pending |
+| SITE-03 | — | Pending |
+| HYGIENE-01 | — | Pending |
+| HYGIENE-02 | — | Pending |
+| HYGIENE-03 | — | Pending |
+| SSR-01 | — | Pending |
+| SSR-02 | — | Pending |
+| SSR-03 | — | Pending |
+| SSR-04 | — | Pending |
+| SSR-DEEP-01 | — | Pending |
+| SSR-DEEP-02 | — | Pending |
+| SSR-DEEP-03 | — | Pending |
+| INFRA-01 | — | Pending |
+| INFRA-02 | — | Pending |
 
 **Coverage:**
-- v1 requirements: 11 total
-- Mapped to phases: 11
-- Unmapped: 0
+- v1.10 requirements: 15 total
+- Mapped to phases: 0
+- Unmapped: 15 ⚠️
 
 ---
-*Requirements defined: 2026-04-19*
-*Last updated: 2026-04-19 -- v1.9 roadmap created, traceability updated*
+*Requirements defined: 2026-04-20*
+*Last updated: 2026-04-20 after initial definition*
