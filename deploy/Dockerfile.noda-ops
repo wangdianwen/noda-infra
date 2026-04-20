@@ -47,23 +47,22 @@ RUN addgroup -S nodaops && adduser -S -G nodaops nodaops
 RUN chmod 755 /usr/sbin/crond
 
 # 复制备份脚本
-COPY scripts/backup/ /app/backup/
+COPY --chown=nodaops:nodaops scripts/backup/ /app/backup/
 RUN find /app/backup -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 
 # 复制 crontab 配置
-COPY deploy/crontab /etc/crontabs/nodaops
+COPY --chown=nodaops:nodaops deploy/crontab /etc/crontabs/nodaops
 
 # 复制 supervisord 配置
-COPY deploy/supervisord.conf /etc/supervisord.conf
+COPY --chown=nodaops:nodaops deploy/supervisord.conf /etc/supervisord.conf
 
 # 复制启动脚本
-COPY deploy/entrypoint-ops.sh /app/entrypoint.sh
+COPY --chown=nodaops:nodaops deploy/entrypoint-ops.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# 创建日志和运行目录
-RUN mkdir -p /var/log/supervisor /var/log/noda-backup /app/history /run/supervisor
-RUN chown -R nodaops:nodaops /app /var/log/supervisor /var/log/noda-backup /app/history /run/supervisor
-RUN mkdir -p /home/nodaops/.config/rclone && chown -R nodaops:nodaops /home/nodaops
+# 创建日志、运行和配置目录
+RUN mkdir -p /var/log/supervisor /var/log/noda-backup /app/history /run/supervisor /home/nodaops/.config/rclone && \
+    chown -R nodaops:nodaops /var/log/supervisor /var/log/noda-backup /app/history /run/supervisor /home/nodaops
 
 # 暴露端口（健康检查用）
 EXPOSE 8080
