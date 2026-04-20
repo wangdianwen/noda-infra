@@ -73,7 +73,8 @@ pipeline {
             steps {
                 sh '''
                     source scripts/lib/log.sh
-                    # 将 nginx 配置文件复制到构建上下文（Dockerfile COPY 路径相对于 noda-apps）
+                    # 确保构建上下文中只有我们注入的 nginx 配置（防止 noda-apps 仓库中的 deploy/ 目录覆盖）
+                    rm -rf "$WORKSPACE/noda-apps/deploy"
                     mkdir -p "$WORKSPACE/noda-apps/deploy/nginx"
                     cp "$WORKSPACE/deploy/nginx/nginx.conf" "$WORKSPACE/noda-apps/deploy/nginx/nginx.conf"
                     cp "$WORKSPACE/deploy/nginx/default.conf" "$WORKSPACE/noda-apps/deploy/nginx/default.conf"
