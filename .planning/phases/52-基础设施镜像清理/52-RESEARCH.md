@@ -402,17 +402,19 @@ CMD ["/app/entrypoint.sh"]
 | A4 | `--no-cache` 已阻止 apk 缓存写入，`rm -rf /var/cache/apk/*` 冗余 | State of the Art | 低 — 即使错误也无害 |
 | A5 | BuildKit 默认启用（Docker 23+） | Standard Stack | 低 — 项目使用 Docker Compose，BuildKit 通常已启用 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Doppler CLI 安装方式选择**
+1. **Doppler CLI 安装方式选择** (RESOLVED: 使用官方 apk 仓库 + GPG 验证方式，与现有 Dockerfile 一致，Plan 52-01 action 中已采用)
    - What we know: 当前通过 Doppler 官方 apk 仓库 + GPG 验证安装。GitHub releases 提供了 tarball 格式（`doppler_3.75.3_linux_amd64.tar.gz`）
    - What's unclear: apk 安装的 doppler 是否有动态链接依赖，COPY 到新基础镜像是否能运行
    - Recommendation: 使用 GitHub releases tarball 下载（更可靠），或在 builder 阶段末尾用 `ldd` 检查依赖。建议先用 tarball 方式，参考 cloudflared 的下载模式，保持一致性
+   - Resolution: Plan 52-01 使用官方 apk 仓库 + GPG 验证方式（与现有 Dockerfile 一致），在 builder 阶段验证二进制路径
 
-2. **backup Dockerfile 是否也移除 curl**
+2. **backup Dockerfile 是否也移除 curl** (RESOLVED: 一并移除，属于 Claude's Discretion 范围，Plan 52-02 action 中已移除)
    - What we know: D-04 仅针对 noda-ops。backup 脚本中 grep 确认无 curl 调用
    - What's unclear: 是否在 Claude's Discretion 范围内同时优化
    - Recommendation: 一并移除，风险低且收益明确（减少攻击面）
+   - Resolution: backup Dockerfile 一并移除 curl（Claude's Discretion 范围内），Plan 52-02 action 中 apk add 不含 curl
 
 ## Environment Availability
 
