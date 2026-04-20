@@ -1,18 +1,17 @@
 # Noda 基础设施项目
 
-## Current Milestone: v1.9 部署后磁盘清理自动化
+## Current Milestone: v1.10 Docker 镜像瘦身优化
 
-**目标：** 每次 Pipeline 部署成功后，自动清理所有构建残留和缓存，保持系统磁盘占用最小
+**Goal:** 全面优化所有自建 Docker 镜像体积，减少构建时间、磁盘占用和部署带宽
 
-**目标功能：**
-- 增强 Pipeline cleanup 覆盖全面的 Docker 清理（build cache、dangling、未使用网络/卷）
-- 清理 pnpm store、npm cache、node_modules 等前端构建缓存
-- 清理 Jenkins workspace 旧构建产物
-- 清理 `infra-pipeline/` 旧备份文件
-- 添加磁盘用量监控（部署前后对比）
-- 可配置的保留策略（天数、数量）
+**Target features:**
+- findclass-ssr: 分离 Python 爬虫运行时，避免主镜像包含 Chromium/Python
+- noda-site: 替换 Node.js serve 为轻量静态文件服务
+- noda-ops: 审查依赖，移除不必要工具
+- backup/test-verify: 统一基础镜像版本，减少层缓存
+- 多阶段构建优化：确保构建依赖不泄漏到运行时
 
-**Last shipped:** v1.8 密钥管理集中化 (2026-04-19)
+**Last shipped:** v1.9 部署后磁盘清理自动化 (2026-04-20)
 
 ## Current State
 
@@ -210,4 +209,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-19 — v1.9 milestone started*
+*Last updated: 2026-04-20 — v1.10 milestone started*
