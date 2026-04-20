@@ -7,9 +7,9 @@
 
 ### SITE — noda-site 镜像优化
 
-- [ ] **SITE-01**: noda-site 运行时从 node:20-alpine + serve 切换到 nginx:1.25-alpine（保持端口 3000，蓝绿部署兼容）
-- [ ] **SITE-02**: 多阶段构建保留 Puppeteer prerender 构建阶段，运行时仅包含静态文件 + nginx
-- [ ] **SITE-03**: Jenkins Pipeline noda-site 部署流程适配新 Dockerfile（构建参数、健康检查）
+- [x] **SITE-01**: noda-site 运行时从 node:20-alpine + serve 切换到 nginx:1.25-alpine（保持端口 3000，蓝绿部署兼容）
+- [x] **SITE-02**: 多阶段构建保留 Puppeteer prerender 构建阶段，运行时仅包含静态文件 + nginx
+- [x] **SITE-03**: Jenkins Pipeline noda-site 部署流程适配新 Dockerfile（构建参数、健康检查）
 
 ### HYGIENE — 全局 Docker 最佳实践
 
@@ -61,9 +61,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SITE-01 | Phase 47 | Pending |
-| SITE-02 | Phase 47 | Pending |
-| SITE-03 | Phase 47 | Pending |
+| SITE-01 | Phase 47 | Complete |
+| SITE-02 | Phase 47 | Complete |
+| SITE-03 | Phase 47 | Complete |
 | HYGIENE-01 | Phase 48 | Pending |
 | HYGIENE-02 | Phase 48 | Pending |
 | HYGIENE-03 | Phase 48 | Pending |
