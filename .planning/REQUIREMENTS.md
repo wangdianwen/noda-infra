@@ -13,9 +13,9 @@
 
 ### HYGIENE — 全局 Docker 最佳实践
 
-- [ ] **HYGIENE-01**: 所有自建 Dockerfile 添加/更新 .dockerignore（排除 .git、.planning、node_modules、worktrees）
-- [ ] **HYGIENE-02**: 所有 COPY 指令使用 --chown 替代单独 RUN chown（减少镜像层数）
-- [ ] **HYGIENE-03**: test-verify 基础镜像从 postgres:15-alpine 统一到 postgres:17-alpine（与 backup 共享层缓存）
+- [x] **HYGIENE-01**: 所有自建 Dockerfile 添加/更新 .dockerignore（排除 .git、.planning、node_modules、worktrees）
+- [x] **HYGIENE-02**: 所有 COPY 指令使用 --chown 替代单独 RUN chown（减少镜像层数）
+- [x] **HYGIENE-03**: test-verify 基础镜像从 postgres:15-alpine 统一到 postgres:17-alpine（与 backup 共享层缓存）
 
 ### SSR — findclass-ssr 核心瘦身
 
@@ -64,9 +64,9 @@
 | SITE-01 | Phase 47 | Complete |
 | SITE-02 | Phase 47 | Complete |
 | SITE-03 | Phase 47 | Complete |
-| HYGIENE-01 | Phase 48 | Pending |
-| HYGIENE-02 | Phase 48 | Pending |
-| HYGIENE-03 | Phase 48 | Pending |
+| HYGIENE-01 | Phase 48 | Complete |
+| HYGIENE-02 | Phase 48 | Complete |
+| HYGIENE-03 | Phase 48 | Complete |
 | SSR-01 | Phase 49 | Pending |
 | SSR-02 | Phase 49 | Pending |
 | SSR-03 | Phase 50 | Pending |
