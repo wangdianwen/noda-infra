@@ -1,17 +1,43 @@
 # ============================================
-# Noda Ops - 运维工具集容器
+# Noda Ops - 运维工具集容器（多阶段构建）
 # ============================================
 # 功能：数据库备份 + Cloudflare Tunnel（二合一）
 # 替代：opdev + cloudflared 两个独立容器
+# 多阶段构建：构建工具不泄漏到运行时
 # ============================================
 
+# --- Stage 1: 构建阶段 - 下载外部二进制 ---
+FROM alpine:3.21 AS builder
+
+# 安装构建时下载工具
+RUN apk add --no-cache wget gnupg
+
+# 下载 cloudflared 二进制
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then CLOUDFLARED_ARCH="amd64"; \
+    elif [ "$ARCH" = "aarch64" ]; then CLOUDFLARED_ARCH="arm64"; \
+    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
+    wget -q "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CLOUDFLARED_ARCH}" \
+         -O /usr/local/bin/cloudflared && \
+    chmod +x /usr/local/bin/cloudflared && \
+    cloudflared --version
+
+# 下载 Doppler CLI（通过官方 apk 仓库 + GPG key 验证）
+RUN wget -q -t3 'https://packages.doppler.com/public/cli/rsa.8004D9FF50437357.key' \
+       -O /etc/apk/keys/cli@doppler-8004D9FF50437357.rsa.pub && \
+    echo 'https://packages.doppler.com/public/cli/alpine/any-version/main' | \
+      tee -a /etc/apk/repositories && \
+    apk add doppler
+
+# 验证二进制路径（确保 COPY 目标正确）
+RUN ls -la /usr/local/bin/cloudflared /usr/bin/doppler
+
+# --- Stage 2: 运行时阶段 - 最小依赖 ---
 FROM alpine:3.21
 
-# 安装必要工具
+# 仅安装运行时必需的包（无 wget/gnupg/curl，per D-03, D-04）
 RUN apk add --no-cache \
     bash \
-    curl \
-    wget \
     jq \
     coreutils \
     rclone \
@@ -19,23 +45,11 @@ RUN apk add --no-cache \
     supervisor \
     ca-certificates \
     postgresql17-client \
-    gnupg \
-    age \
-    && rm -rf /var/cache/apk/*
+    age
 
-# 安装 cloudflared
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then CLOUDFLARED_ARCH="amd64"; \
-    elif [ "$ARCH" = "aarch64" ]; then CLOUDFLARED_ARCH="arm64"; \
-    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
-    wget -q "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CLOUDFLARED_ARCH}" -O /usr/local/bin/cloudflared && \
-    chmod +x /usr/local/bin/cloudflared && \
-    cloudflared --version
-
-# 安装 Doppler CLI
-RUN wget -q -t3 'https://packages.doppler.com/public/cli/rsa.8004D9FF50437357.key' -O /etc/apk/keys/cli@doppler-8004D9FF50437357.rsa.pub && \
-    echo 'https://packages.doppler.com/public/cli/alpine/any-version/main' | tee -a /etc/apk/repositories && \
-    apk add doppler
+# 从构建阶段传递二进制文件（per D-02）
+COPY --from=builder /usr/local/bin/cloudflared /usr/local/bin/cloudflared
+COPY --from=builder /usr/bin/doppler /usr/bin/doppler
 
 # 设置工作目录
 WORKDIR /app
