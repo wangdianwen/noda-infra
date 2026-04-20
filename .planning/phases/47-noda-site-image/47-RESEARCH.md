@@ -289,11 +289,10 @@ WORKDIR /app
 # 复制整个项目（pnpm workspace 需要完整的包结构）
 COPY . .
 
-# 启用 pnpm（通过 corepack）
-RUN corepack enable && corepack prepare pnpm@latest --activate
-
-# 仅安装 site 及其依赖（跳过 postinstall 避免 prisma generate 失败）
-RUN pnpm install --frozen-lockfile --ignore-scripts --filter @noda-apps/site...
+# 启用 pnpm 并安装依赖（使用 BuildKit 缓存挂载加速重复构建，per D-07）
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+    corepack enable && corepack prepare pnpm@latest --activate && \
+    pnpm install --frozen-lockfile --ignore-scripts --filter @noda-apps/site...
 
 # 安装 Chromium 供 prerender Puppeteer 使用
 RUN apk add --no-cache chromium
@@ -359,6 +358,7 @@ environment {
 | Node.js 健康检查 | BusyBox wget --spider | Phase 47 | 无需 Node.js 运行时 |
 | start_period: 10s | start_period: 3s | Phase 47 | nginx 启动 < 1 秒，减少等待 |
 | 64MB 内存限制 | 32MB 内存限制 | Phase 47 | nginx 静态文件服务内存极低 |
+| pnpm install 无缓存 | BuildKit --mount=type=cache | Phase 47 | 重复构建加速（per D-07） |
 
 **Deprecated/outdated:**
 - `serve` npm 包作为静态文件服务器：在容器化场景中，nginx 更轻量、更快、更安全
@@ -373,17 +373,19 @@ environment {
 | A3 | 32MB 内存限制足够 nginx 运行（静态文件服务无复杂逻辑） | 资源限制 | 中 -- 如果并发量突增可能 OOM，需监控 |
 | A4 | prerender 构建产物 `dist/` 目录结构与 `serve -s` 兼容（即所有路由的 HTML 文件都在根目录或子目录中） | SPA fallback | 低 -- `try_files $uri $uri/ /index.html` 是标准 SPA 模式，与 prerender 产物兼容 |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **pnpm 缓存挂载的构建上下文路径问题**
+1. **pnpm 缓存挂载的构建上下文路径问题** -- RESOLVED
    - What we know: Dockerfile 的构建上下文是 `../../noda-apps`（docker-compose.app.yml），但 `deploy/nginx/` 配置文件在 noda-infra 仓库
    - What's unclear: `pipeline_build()` 使用 `docker build -f "$dockerfile" "$apps_dir"` 构建时，COPY 指令的源路径相对于 `$apps_dir`（noda-apps 目录），而不是 Dockerfile 所在目录
    - Recommendation: 方案一：nginx 配置文件 COPY 到 builder 阶段，再从 builder 阶段 COPY 到 runner 阶段。方案二：将 nginx 配置内联写入 Dockerfile（用 HEREDOC）。方案三：在 pipeline_build() 中将 nginx 配置文件复制到 noda-apps 目录。**推荐方案三**，最简单
+   - **RESOLVED:** 采纳方案三 -- Plan 02 Task 2 在 Jenkinsfile Build 阶段 pipeline_build() 调用前将 nginx 配置文件复制到 noda-apps/deploy/nginx/，构建后清理
 
-2. **manage-containers.sh 的 health-start-period 是 60s 硬编码**
+2. **manage-containers.sh 的 health-start-period 是 60s 硬编码** -- RESOLVED
    - What we know: run_container() line 236 硬编码 `--health-start-period 60s`，但 nginx 启动只需 < 1 秒
    - What's unclear: 是否有其他服务依赖 60s 的 start_period
    - Recommendation: 不修改 manage-containers.sh（影响所有服务），通过 EXTRA_DOCKER_ARGS 或在 Jenkinsfile 中单独处理
+   - **RESOLVED:** 采纳推荐方案 -- 不修改 manage-containers.sh 通用脚本，60s start_period 对 nginx 无害（只是多等几秒），通过 Jenkinsfile CONTAINER_HEALTH_CMD 覆盖健康检查命令
 
 ## Environment Availability
 
