@@ -209,9 +209,10 @@ Plans:
   1. noda-ops 中 wget/gnupg/coreutils 等非必需运行时依赖移到构建阶段或确认必需性
   2. backup Dockerfile 冗余层合并、RUN 指令统一、.dockerignore 添加
   3. 两个镜像的现有功能（备份、B2 上传、健康检查）不受影响
-**Plans**: 1 plan
+**Plans**: 2 plans
 Plans:
-- [ ] 49-01-PLAN.md -- 验证审计完整性 + 产出决策文档（SSR-01, SSR-02）
+- [ ] 52-01-PLAN.md -- noda-ops 多阶段构建：构建工具隔离 + 运行时依赖精简（INFRA-01）
+- [ ] 52-02-PLAN.md -- backup Dockerfile 层合并 + curl 移除（INFRA-02）
 
 ## Progress
 
@@ -226,4 +227,4 @@ Phase 47/48/52 可并行执行，Phase 49 先于 Phase 50，Phase 51 依赖 Phas
 | 49. findclass-ssr 爬虫审计与决策 | v1.10 | 1/1 | Complete    | 2026-04-20 |
 | 50. findclass-ssr 瘦身执行 | v1.10 | 0/? | Not started | - |
 | 51. findclass-ssr 深度优化 | v1.10 | 0/? | Not started | - |
-| 52. 基础设施镜像清理 | v1.10 | 0/? | Not started | - |
+| 52. 基础设施镜像清理 | v1.10 | 0/2 | Not started | - |
