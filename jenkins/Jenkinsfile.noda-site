@@ -17,6 +17,11 @@ pipeline {
         ACTIVE_ENV_FILE = "/opt/noda/active-env-noda-site"
         DOCKERFILE = "deploy/Dockerfile.noda-site"
         UPSTREAM_CONF = "${WORKSPACE}/config/nginx/snippets/upstream-noda-site.conf"
+        // 覆盖 manage-containers.sh 默认健康检查命令（nginx 容器无 Node.js，per RESEARCH Pitfall 2）
+        CONTAINER_HEALTH_CMD = "wget --quiet --tries=1 --spider http://127.0.0.1:3000/ || exit 1"
+        // nginx 运行时内存更低（per D-09）
+        CONTAINER_MEMORY = "32m"
+        CONTAINER_MEMORY_RESERVATION = "8m"
         // 蓝绿状态
         ACTIVE_ENV = sh(
             script: 'cat /opt/noda/active-env-noda-site 2>/dev/null || echo blue',
@@ -68,8 +73,14 @@ pipeline {
             steps {
                 sh '''
                     source scripts/lib/log.sh
+                    # 将 nginx 配置文件复制到构建上下文（Dockerfile COPY 路径相对于 noda-apps）
+                    mkdir -p "$WORKSPACE/noda-apps/deploy/nginx"
+                    cp "$WORKSPACE/deploy/nginx/nginx.conf" "$WORKSPACE/noda-apps/deploy/nginx/nginx.conf"
+                    cp "$WORKSPACE/deploy/nginx/default.conf" "$WORKSPACE/noda-apps/deploy/nginx/default.conf"
                     source scripts/pipeline-stages.sh
                     pipeline_build "$WORKSPACE/noda-apps" "$GIT_SHA"
+                    # 清理构建上下文中的临时文件
+                    rm -rf "$WORKSPACE/noda-apps/deploy"
                 '''
             }
         }
