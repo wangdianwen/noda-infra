@@ -129,8 +129,8 @@ v1.1 (shipped 2026-04-11): 29 commits, 134 files changed
 - [x] **Phase 47: noda-site 镜像优化** - 从 node:20-alpine 切换到 nginx:1.25-alpine，适配蓝绿部署 (completed 2026-04-20)
 - [x] **Phase 48: 全局 Docker 卫生实践** - .dockerignore、COPY --chown、基础镜像版本统一 (completed 2026-04-20)
 - [x] **Phase 49: findclass-ssr 爬虫审计与决策** - 审计 Python 调用链路，制定分离方案 (completed 2026-04-20)
-- [ ] **Phase 50: findclass-ssr 瘦身执行** - 移除 Python/Chromium 死重，端到端验证
-- [ ] **Phase 51: findclass-ssr 深度优化** - Alpine 切换、devDeps 清理、层缓存优化
+- [x] **Phase 50: findclass-ssr 瘦身执行** - 跳过：爬虫是核心功能，不能移除 Python (skipped 2026-04-21)
+- [x] **Phase 51: findclass-ssr 深度优化** - 跳过：依赖 Phase 50，Alpine 切换需 Python 移除 (skipped 2026-04-21)
 - [x] **Phase 52: 基础设施镜像清理** - noda-ops 依赖审计、backup Dockerfile 清理 (completed 2026-04-21)
 
 ## Phase Details
@@ -174,32 +174,21 @@ Plans:
 Plans:
 - [x] 49-01-PLAN.md -- 验证审计完整性 + 产出决策文档（SSR-01, SSR-02）
 
-### Phase 50: findclass-ssr 瘦身执行
-**Goal**: 执行 Phase 49 制定的方案，移除 findclass-ssr 中 ~3GB 的 Python/Chromium 死重
+### Phase 50: findclass-ssr 瘦身执行 (SKIPPED)
+**Goal**: ~~执行 Phase 49 制定的方案，移除 findclass-ssr 中 ~3GB 的 Python/Chromium 死重~~
+**Skip reason**: 爬虫（crawl_board()）是 findclass 核心数据来源，不能移除 Python 运行时
 **Depends on**: Phase 49
-**Requirements**: SSR-03, SSR-04
-**Success Criteria** (what must be TRUE):
-  1. findclass-ssr 镜像不再包含 Python 运行时、Chromium 浏览器、patchright 浏览器，镜像体积减少 > 50%
-  2. API 健康检查端点（/api/health）返回正常
-  3. SSR 页面渲染功能正常（首页、课程页面等）
-  4. 静态文件服务正常（CSS/JS/图片加载无 404）
-  5. 如爬虫功能保留，crawl 相关 API 端点正常工作
-**Plans**: 1 plan
+**Requirements**: SSR-03, SSR-04 (暂缓)
+**Plans**: 1 plan (skip)
 Plans:
-- [ ] 49-01-PLAN.md -- 验证审计完整性 + 产出决策文档（SSR-01, SSR-02）
+- [x] 50-01-PLAN.md -- Skip: 爬虫是核心功能，不能移除 Python
 
-### Phase 51: findclass-ssr 深度优化
-**Goal**: 在 Python 分离完成后，进一步优化 findclass-ssr 镜像（Alpine 切换 + devDeps 清理 + 层缓存优化）
+### Phase 51: findclass-ssr 深度优化 (SKIPPED)
+**Goal**: ~~在 Python 分离完成后，进一步优化 findclass-ssr 镜像~~
+**Skip reason**: 依赖 Phase 50 完成，Alpine 切换需 Python 完全移除
 **Depends on**: Phase 50
-**Requirements**: SSR-DEEP-01, SSR-DEEP-02, SSR-DEEP-03
-**Success Criteria** (what must be TRUE):
-  1. findclass-ssr 基础镜像从 node:22-slim 切换到 node:22-alpine，native 模块兼容性验证通过
-  2. 运行时镜像不包含 devDependencies（pnpm prune --prod 或等效方案执行）
-  3. Dockerfile COPY 层顺序优化：低频变更的依赖声明在前，高频变更的源码在后
-  4. findclass-ssr 端到端功能验证通过（API + SSR + 静态文件）
-**Plans**: 1 plan
-Plans:
-- [ ] 49-01-PLAN.md -- 验证审计完整性 + 产出决策文档（SSR-01, SSR-02）
+**Requirements**: SSR-DEEP-01, SSR-DEEP-02, SSR-DEEP-03 (暂缓)
+**Plans**: 0 plans (skipped)
 
 ### Phase 52: 基础设施镜像清理
 **Goal**: noda-ops 和 backup Dockerfile 遵循精简最佳实践，构建工具不泄漏到运行时
@@ -225,6 +214,6 @@ Phase 47/48/52 可并行执行，Phase 49 先于 Phase 50，Phase 51 依赖 Phas
 | 47. noda-site 镜像优化 | v1.10 | 2/2 | Complete    | 2026-04-20 |
 | 48. 全局 Docker 卫生实践 | v1.10 | 2/2 | Complete    | 2026-04-20 |
 | 49. findclass-ssr 爬虫审计与决策 | v1.10 | 1/1 | Complete    | 2026-04-20 |
-| 50. findclass-ssr 瘦身执行 | v1.10 | 0/? | Not started | - |
-| 51. findclass-ssr 深度优化 | v1.10 | 0/? | Not started | - |
+| 50. findclass-ssr 瘦身执行 | v1.10 | 1/1 | Skipped | 2026-04-21 |
+| 51. findclass-ssr 深度优化 | v1.10 | - | Skipped | 2026-04-21 |
 | 52. 基础设施镜像清理 | v1.10 | 2/2 | Complete | 2026-04-21 |
