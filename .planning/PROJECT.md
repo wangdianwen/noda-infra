@@ -1,17 +1,11 @@
 # Noda 基础设施项目
 
-## Current Milestone: v1.10 Docker 镜像瘦身优化
+## Current Milestone: 规划中
 
-**Goal:** 全面优化所有自建 Docker 镜像体积，减少构建时间、磁盘占用和部署带宽
-
-**Target features:**
-- findclass-ssr: 分离 Python 爬虫运行时，避免主镜像包含 Chromium/Python
-- noda-site: 替换 Node.js serve 为轻量静态文件服务
-- noda-ops: 审查依赖，移除不必要工具
-- backup/test-verify: 统一基础镜像版本，减少层缓存
-- 多阶段构建优化：确保构建依赖不泄漏到运行时
-
-**Last shipped:** v1.9 部署后磁盘清理自动化 (2026-04-20)
+**Last shipped:** v1.10 Docker 镜像瘦身优化 (2026-04-21)
+- 6 phases, 71 commits, 66 files changed
+- noda-site ~218MB → ~25MB，全局 Docker 卫生，基础设施镜像清理
+- findclass-ssr Python/Chromium 保留（爬虫是核心功能）
 
 ## Current State
 
