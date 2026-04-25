@@ -1,21 +1,16 @@
 # ============================================
-# Findclass SSR 容器 - 多阶段构建
+# Findclass SSR 容器 - Next.js Standalone 多阶段构建
 # ============================================
 # 镜像名: findclass-ssr:latest
-# 功能: 单容器提供 API + SSR 渲染 + 静态文件服务
-# 技术栈: Hono + Drizzle ORM + React 19 + Vite 8
+# 功能: 单容器提供 Next.js SSR + Hono API
+# 技术栈: Next.js 15 + Hono + Drizzle ORM + React 19
 # ============================================
 
 # ----------------------------------------
-# Stage 1: 依赖安装和构建
+# Stage 1: 依赖安装
 # ----------------------------------------
-FROM node:22-alpine AS builder
-
-# Vite 构建参数（构建时写入 JS 文件）
-ARG VITE_KEYCLOAK_URL=https://auth.noda.co.nz
-ARG VITE_KEYCLOAK_REALM=noda
-ARG VITE_KEYCLOAK_CLIENT_ID=noda-frontend
-
+FROM node:22-alpine AS deps
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # 复制 package 文件、锁文件和 workspace 配置
@@ -23,118 +18,143 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/database/package.json ./packages/database/
 COPY packages/database/tsconfig.json ./packages/database/
 COPY packages/database/src ./packages/database/src
+COPY packages/database/drizzle ./packages/database/drizzle
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/shared/tsconfig.json ./packages/shared/
 COPY packages/shared/src ./packages/shared/src
 COPY packages/design-tokens/package.json ./packages/design-tokens/
-COPY packages/design-tokens/sd.config.js ./packages/design-tokens/
-COPY packages/design-tokens/tokens ./packages/design-tokens/tokens
-COPY packages/design-tokens/src ./packages/design-tokens/src
+COPY packages/design-tokens/build ./packages/design-tokens/build
 COPY apps/findclass/web/package.json ./apps/findclass/web/
-COPY apps/findclass/web/tsconfig.json ./apps/findclass/web/
-COPY apps/findclass/web/index.html ./apps/findclass/web/
-COPY apps/findclass/web/vite.config.ts ./apps/findclass/web/
-COPY apps/findclass/web/src ./apps/findclass/web/src
 COPY apps/findclass/api/package.json ./apps/findclass/api/
 COPY apps/findclass/api/tsconfig.json ./apps/findclass/api/
 COPY apps/findclass/api/src ./apps/findclass/api/src
-
-# 添加 tsconfig.base.json
 COPY tsconfig.base.json ./
 
-# 安装 pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
-
-# 安装依赖（hoisted 模式兼容 Docker COPY）
 RUN pnpm install --ignore-scripts --config.node-linker=hoisted
 
-# 构建 shared 包（NodeNext，生成 dist/）
+# 构建 workspace 包
 RUN cd packages/shared && npx tsc
-
-# 构建 design-tokens 包（style-dictionary，生成 build/）
-RUN cd packages/design-tokens && npm run build
-
-# 构建 database 包（NodeNext，生成 dist/）
 RUN cd packages/database && npx tsc
 
-# 构建 web (client + server，Vite bundler 模式不需要 NodeNext)
-RUN cd apps/findclass/web && npm run build
-
-# 构建 api (tsc → dist/)
-RUN cd apps/findclass/api && npm run build
-
 # ----------------------------------------
-# Stage 2: 运行镜像（Debian slim，兼容 Python manylinux wheels）
+# Stage 2: 构建
 # ----------------------------------------
-FROM node:22-slim AS runner
-
-# Python 运行时 + Chromium（scrapling/patchright 需要）
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      python3 python3-pip python3-venv \
-      chromium && \
-    rm -rf /var/lib/apt/lists/*
-
+FROM node:22-alpine AS builder
 WORKDIR /app
 
-# 设置生产环境
-ENV NODE_ENV=production
-ENV PORT=3001
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages ./packages
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 
-# 让 patchright/playwright 使用系统 Chromium
-ENV PLAYWRIGHT_BROWSERS_PATH=0
-ENV CHROMIUM_PATH=/usr/bin/chromium
-
-# 创建非 root 用户
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nodejs
-
-# 复制根目录文件
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/node_modules ./node_modules
-
-# 复制 shared 包（编译后的 dist/）
-COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
-COPY --from=builder /app/packages/shared/package.json ./packages/shared/
-
-# 复制 database 包（编译后的 dist/）
-COPY --from=builder /app/packages/database/dist ./packages/database/dist
-COPY --from=builder /app/packages/database/package.json ./packages/database/
-
-# 复制 design-tokens 包（预编译的 build/）
-COPY --from=builder /app/packages/design-tokens/build ./packages/design-tokens/build
-COPY --from=builder /app/packages/design-tokens/package.json ./packages/design-tokens/
-
-# 创建 workspace 包的 node_modules 解析（pnpm workspace 符号链接不会跟随 COPY）
+# 创建 workspace 符号链接（Next.js webpack 需要 node_modules/@noda-apps/* 解析）
 RUN mkdir -p node_modules/@noda-apps && \
     ln -s /app/packages/shared node_modules/@noda-apps/shared && \
     ln -s /app/packages/database node_modules/@noda-apps/database && \
     ln -s /app/packages/design-tokens node_modules/@noda-apps/design-tokens
 
-# 复制 web 构建产物
-COPY --from=builder /app/apps/findclass/web/dist ./apps/findclass/web/dist
+# 构建时 ARG — NEXT_PUBLIC_* 变量（per D-08, D-11）
+# Jenkins Pipeline 通过 --build-arg 传入生产值
+# 默认值确保本地 docker build 无需额外参数即可成功
+ARG NEXT_PUBLIC_KEYCLOAK_URL=http://localhost:8080
+ARG NEXT_PUBLIC_KEYCLOAK_REALM=noda
+ARG NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=noda-frontend
 
-# 复制 api 构建产物
-COPY --from=builder /app/apps/findclass/api/dist ./apps/findclass/api/dist
+# ARG 必须通过 ENV 传递给 Next.js 构建过程
+ENV NEXT_PUBLIC_KEYCLOAK_URL=$NEXT_PUBLIC_KEYCLOAK_URL
+ENV NEXT_PUBLIC_KEYCLOAK_REALM=$NEXT_PUBLIC_KEYCLOAK_REALM
+ENV NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=$NEXT_PUBLIC_KEYCLOAK_CLIENT_ID
+
+# 复制 web 源码（Next.js 构建）
+COPY apps/findclass/web/ ./apps/findclass/web/
+
+# 复制 api 源码（tsc 构建）
+COPY apps/findclass/api/ ./apps/findclass/api/
+
+# 确保 .env.local 存在（.dockerignore 排除了宿主机的 .env.local 符号链接，
+# 但 Next.js 15 build 需要 stat 该文件）
+RUN test -f apps/findclass/web/.env.local || touch apps/findclass/web/.env.local
+
+# 构建 Next.js（生成 .next/standalone/ + .next/static/）
+RUN cd apps/findclass/web && npm run build
+
+# 构建 API（tsc → dist/，禁用 declaration/declarationMap 避免 hoisted 模式下 TS2883）
+RUN cd apps/findclass/api && npx tsc --declaration false --declarationMap false
+
+# ----------------------------------------
+# Stage 3: 运行镜像（Next.js + Hono API + Python 基础运行时）
+# ----------------------------------------
+FROM node:22-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV HOSTNAME="0.0.0.0"
+ENV PORT=3000
+
+# 安装 tini（PID 1 init 进程）和 Python 基础运行时（per D-01, D-03）
+RUN apk add --no-cache tini python3 py3-pip
+
+# Phase 137: Python 编译依赖（安全网，确保 pip 包可从源码编译）
+RUN apk add --no-cache gcc musl-dev libffi-dev python3-dev
+
+# Phase 137: Python 依赖安装（per D-01, D-02 — 系统级安装，非 venv）
+COPY scripts/requirements.txt /app/scripts/requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r /app/scripts/requirements.txt
+
+# Phase 137: Python 爬虫脚本（per D-03 全量复制，D-04 路径匹配 CrawlScheduler cwd）
+COPY scripts/*.py /app/scripts/
+
+# 创建非 root 用户
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nodejs
+
+# Phase 137: 创建缓存/日志目录并赋权给 nodejs 用户（必须在 adduser 之后）
+RUN mkdir -p /app/scripts/cache /app/scripts/logs && \
+    chown nodejs:nodejs /app/scripts/cache /app/scripts/logs
+
+# 复制 Next.js standalone 输出（monorepo 下 standalone 保留完整路径结构，需复制到根目录）
+COPY --from=builder --chown=nodejs:nodejs /app/apps/findclass/web/.next/standalone ./
+
+# 复制完整 node_modules（standalone 仅包含 web 追踪的依赖，API 需要完整的依赖如 hono/dotenv/drizzle-orm）
+COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
+
+# 复制 Next.js 静态资源（JS/CSS chunks）— standalone 不包含这些
+COPY --from=builder --chown=nodejs:nodejs /app/apps/findclass/web/.next/static ./apps/findclass/web/.next/static
+
+# 复制公共静态文件
+COPY --from=builder --chown=nodejs:nodejs /app/apps/findclass/web/public ./apps/findclass/web/public
+
+# 复制 API 构建产物
+COPY --from=builder --chown=nodejs:nodejs /app/apps/findclass/api/dist ./apps/findclass/api/dist
 COPY --from=builder /app/apps/findclass/api/package.json ./apps/findclass/api/
 
-# Python 爬虫运行时
-# 先复制依赖文件（利用 Docker 层缓存，依赖变更频率低）
-COPY scripts/requirements.txt ./scripts/requirements.txt
-RUN pip3 install --no-cache-dir --break-system-packages -r scripts/requirements.txt
+# 复制 workspace 包（standalone 可能未包含 workspace 依赖）
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/packages/shared/package.json ./packages/shared/
+COPY --from=builder /app/packages/database/dist ./packages/database/dist
+COPY --from=builder /app/packages/database/package.json ./packages/database/
+COPY --from=builder /app/packages/design-tokens/build ./packages/design-tokens/build
+COPY --from=builder /app/packages/design-tokens/package.json ./packages/design-tokens/
 
-# 安装 patchright 浏览器（PLAYWRIGHT_BROWSERS_PATH=0 对 patchright 无效）
-RUN python3 -m patchright install chromium
+# 创建 workspace 符号链接（standalone server.js 需要解析 @noda-apps/* 包）
+RUN mkdir -p node_modules/@noda-apps && \
+    ln -s /app/packages/shared node_modules/@noda-apps/shared && \
+    ln -s /app/packages/database node_modules/@noda-apps/database && \
+    ln -s /app/packages/design-tokens node_modules/@noda-apps/design-tokens
 
-# 再复制脚本源码（频繁变更，不影响依赖缓存层）
-COPY scripts/ ./scripts/
+# Phase 135: 数据库迁移脚本和迁移文件
+COPY --from=builder --chown=nodejs:nodejs /app/packages/database/dist/run-migrations.js ./packages/database/dist/run-migrations.js
+COPY --from=builder --chown=nodejs:nodejs /app/packages/database/drizzle ./packages/database/drizzle
+COPY --from=builder --chown=nodejs:nodejs /app/apps/findclass/api/src/migrations ./apps/findclass/api/src/migrations
 
-# 设置权限
-RUN chown -R nodejs:nodejs /app
+# 复制启动脚本
+COPY infra/docker/entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
 
 USER nodejs
 
-EXPOSE 3001
+EXPOSE 3000 3001
 
-# 启动 API 服务器（已集成 SSR 中间件）
-CMD ["node", "apps/findclass/api/dist/api.js"]
+# tini 作为 PID 1，负责信号转发和僵尸进程回收（per D-03, D-04）
+ENTRYPOINT ["tini", "--"]
+CMD ["./entrypoint.sh"]
