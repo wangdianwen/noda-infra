@@ -712,10 +712,18 @@ pipeline_deploy_noda_ops()
         log_info "保存当前镜像: ${INFRA_ROLLBACK_IMAGE:0:12}..."
     fi
 
+    # 从 Doppler Cloud 拉取密钥（B2、PostgreSQL、Cloudflare 等）
+    local secrets_file
+    secrets_file=$(mktemp /tmp/noda-ops-secrets.XXXXXX.env)
+    doppler secrets download --project noda --config prd --format env --no-file "$secrets_file"
+    log_info "已从 Doppler 拉取密钥: $(grep -c '=' "$secrets_file") 个变量"
+
     # noda-ops 使用 build 模式，需要 --build
-    docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+    docker compose --env-file "$secrets_file" \
+        -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
         up -d --build --force-recreate --no-deps noda-ops
 
+    rm -f "$secrets_file"
     log_success "noda-ops 重建完成"
 }
 
