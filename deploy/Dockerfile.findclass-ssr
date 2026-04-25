@@ -23,7 +23,9 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/shared/tsconfig.json ./packages/shared/
 COPY packages/shared/src ./packages/shared/src
 COPY packages/design-tokens/package.json ./packages/design-tokens/
-COPY packages/design-tokens/build ./packages/design-tokens/build
+COPY packages/design-tokens/sd.config.js ./packages/design-tokens/
+COPY packages/design-tokens/tokens ./packages/design-tokens/tokens
+COPY packages/design-tokens/src ./packages/design-tokens/src
 COPY apps/findclass/web/package.json ./apps/findclass/web/
 COPY apps/findclass/api/package.json ./apps/findclass/api/
 COPY apps/findclass/api/tsconfig.json ./apps/findclass/api/
@@ -34,6 +36,7 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN pnpm install --ignore-scripts --config.node-linker=hoisted
 
 # 构建 workspace 包
+RUN cd packages/design-tokens && npm run build
 RUN cd packages/shared && npx tsc
 RUN cd packages/database && npx tsc
 
