@@ -231,9 +231,9 @@ pipeline_build()
             -t "${service}:latest" \
             -t "${service}:${git_sha}" \
             -f "$dockerfile" \
-            --build-arg VITE_KEYCLOAK_URL=https://auth.noda.co.nz \
-            --build-arg VITE_KEYCLOAK_REALM=noda \
-            --build-arg VITE_KEYCLOAK_CLIENT_ID=noda-frontend \
+            --build-arg NEXT_PUBLIC_KEYCLOAK_URL=https://auth.noda.co.nz \
+            --build-arg NEXT_PUBLIC_KEYCLOAK_REALM=noda \
+            --build-arg NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=noda-frontend \
             "$apps_dir"
     else
         docker build \
@@ -335,7 +335,7 @@ pipeline_health_check()
     local target_env="$1"
     local target_container
     target_container=$(get_container_name "$target_env")
-    http_health_check "$target_container" "${SERVICE_PORT:-3001}" "${HEALTH_PATH:-/api/health}" "$HEALTH_CHECK_MAX_RETRIES" "$HEALTH_CHECK_INTERVAL"
+    http_health_check "$target_container" "${SERVICE_PORT:-3000}" "${HEALTH_PATH:-/api/health}" "$HEALTH_CHECK_MAX_RETRIES" "$HEALTH_CHECK_INTERVAL"
 }
 
 # pipeline_switch - 切换流量到目标环境
@@ -365,7 +365,7 @@ pipeline_switch()
 pipeline_verify()
 {
     local target_env="$1"
-    e2e_verify "$target_env" "${SERVICE_PORT:-3001}" "${HEALTH_PATH:-/api/health}" "$E2E_MAX_RETRIES" "$E2E_INTERVAL"
+    e2e_verify "$target_env" "${SERVICE_PORT:-3000}" "${HEALTH_PATH:-/api/health}" "$E2E_MAX_RETRIES" "$E2E_INTERVAL"
 }
 
 # pipeline_purge_cdn - 调用 Cloudflare API 清除 CDN 缓存
