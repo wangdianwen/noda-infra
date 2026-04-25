@@ -20,7 +20,7 @@ source "$PROJECT_ROOT/scripts/lib/health.sh"
 # ============================================
 # 服务参数
 SERVICE_NAME="${SERVICE_NAME:-findclass-ssr}"
-SERVICE_PORT="${SERVICE_PORT:-3001}"
+SERVICE_PORT="${SERVICE_PORT:-3000}"
 UPSTREAM_NAME="${UPSTREAM_NAME:-findclass_backend}"
 HEALTH_PATH="${HEALTH_PATH:-/api/health}"
 
@@ -177,7 +177,7 @@ get_host_snippets_dir()
 # 参数：$1 = env (blue 或 green), $2 = image (镜像名)
 # 环境变量控制：
 #   SERVICE_NAME  - 服务名（默认 findclass-ssr）
-#   SERVICE_PORT  - 服务端口（默认 3001）
+#   SERVICE_PORT  - 服务端口（默认 3000）
 #   HEALTH_PATH   - 健康检查路径（默认 /api/health）
 #   ENV_TEMPLATE  - env 模板文件路径（不存在则跳过 env-file）
 run_container()
@@ -264,7 +264,7 @@ run_container()
 # 参数：$1 = target env (blue 或 green)
 # 环境变量控制：
 #   UPSTREAM_NAME - nginx upstream 块名称（默认 findclass_backend）
-#   SERVICE_PORT  - 服务端口（默认 3001）
+#   SERVICE_PORT  - 服务端口（默认 3000）
 update_upstream()
 {
     local target_env="$1"
@@ -649,7 +649,7 @@ usage()
 
 环境变量:
   SERVICE_NAME   服务名（默认 findclass-ssr）
-  SERVICE_PORT   服务端口（默认 3001）
+  SERVICE_PORT   服务端口（默认 3000）
   UPSTREAM_NAME  nginx upstream 名称（默认 findclass_backend）
   HEALTH_PATH    健康检查路径（默认 /api/health）
   ACTIVE_ENV_FILE 活跃环境状态文件（默认 /opt/noda/active-env）
