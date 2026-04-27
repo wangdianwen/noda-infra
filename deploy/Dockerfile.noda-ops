@@ -81,9 +81,6 @@ RUN mkdir -p /var/log/supervisor /var/log/noda-backup /app/history /run/supervis
 # 暴露端口（健康检查用）
 EXPOSE 8080
 
-# 以非 root 用户运行
-USER nodaops
-
 # 健康检查
 HEALTHCHECK --interval=1h --timeout=10s --start-period=30s --retries=3 \
     CMD pg_isready -h "${POSTGRES_HOST:-noda-infra-postgres-prod}" -U "${POSTGRES_USER:-postgres}" || exit 1
