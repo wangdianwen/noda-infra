@@ -1,7 +1,7 @@
 # ============================================
 # Noda 应用服务配置
 # ============================================
-# 包含：findclass-ssr（API + SSR 渲染 + 静态文件）
+# 包含：findclass-ssr（API + SSR 渲染 + 静态文件 + 官网页面）
 # 旧服务（findclass-web, findclass-api）已被 findclass-ssr 替代
 #
 # 独立于基础设施服务（postgres, keycloak, nginx, noda-ops）
@@ -72,49 +72,6 @@ services:
     tmpfs:
       - /tmp
       - /app/scripts/logs
-
-  # ----------------------------------------
-  # NODA Site（静态 Landing Page）
-  # 预渲染 HTML + 静态文件服务
-  # ----------------------------------------
-  noda-site:
-    build:
-      context: ../../noda-apps
-      dockerfile: ../noda-infra/deploy/Dockerfile.noda-site
-    image: noda-site:latest
-    container_name: noda-site
-    labels:
-      - "noda.service-group=apps"
-      - "noda.environment=prod"
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    networks:
-      - noda-network
-    healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:3000/ || exit 1"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-      start_period: 3s
-    deploy:
-      resources:
-        limits:
-          cpus: '0.25'
-          memory: 32M
-        reservations:
-          cpus: '0.05'
-          memory: 8M
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp
 
 networks:
   noda-network:
