@@ -95,7 +95,7 @@ ENV HOSTNAME="0.0.0.0"
 ENV PORT=3000
 
 # 安装 tini（PID 1 init 进程）和 Python 基础运行时（per D-01, D-03）
-RUN apk add --no-cache tini python3 py3-pip
+RUN apk add --no-cache tini python3 py3-pip tzdata
 
 # Phase 137: Python 编译依赖（安全网，确保 pip 包可从源码编译）
 RUN apk add --no-cache gcc musl-dev libffi-dev python3-dev
