@@ -3,11 +3,11 @@
 # 手动回退部署脚本（应用服务）
 # ============================================
 # NOTE: 此脚本作为 Jenkins Pipeline 不可用时的紧急回退方案保留。
-# 正常部署请使用 Jenkins Pipeline（Build Now -> findclass-deploy）。
+# 正常部署请使用 Jenkins Pipeline（Build Now -> noda-apps-deploy）。
 #
-# 原有功能：部署 findclass-ssr 应用服务（重新构建镜像 + 部署）
+# 原有功能：部署 noda-apps 应用服务（重新构建镜像 + 部署）
 # 使用独立的 docker-compose.app.yml（name: noda-apps）
-# findclass-ssr 同时服务 class.noda.co.nz 和 noda.co.nz 域名
+# noda-apps 同时服务 class.noda.co.nz 和 noda.co.nz 域名
 # ============================================
 
 set -euo pipefail
@@ -39,10 +39,10 @@ save_app_image_tags()
     mkdir -p "$ROLLBACK_DIR"
     : >"$ROLLBACK_FILE"
     local image_id
-    image_id=$(docker inspect --format='{{.Image}}' findclass-ssr 2>/dev/null || echo "")
+    image_id=$(docker inspect --format='{{.Image}}' noda-apps 2>/dev/null || echo "")
     if [ -n "$image_id" ]; then
-        echo "findclass-ssr=${image_id}" >>"$ROLLBACK_FILE"
-        log_info "已保存 findclass-ssr 镜像: ${image_id:0:12}..."
+        echo "noda-apps=${image_id}" >>"$ROLLBACK_FILE"
+        log_info "已保存 noda-apps 镜像: ${image_id:0:12}..."
     fi
 
     log_success "应用镜像标签已保存"
@@ -57,28 +57,28 @@ rollback_app()
     fi
 
     local image_id
-    image_id=$(grep "findclass-ssr=" "$ROLLBACK_FILE" | cut -d'=' -f2)
+    image_id=$(grep "noda-apps=" "$ROLLBACK_FILE" | cut -d'=' -f2)
     if [ -z "$image_id" ]; then
-        log_error "回滚文件中无 findclass-ssr 镜像信息"
+        log_error "回滚文件中无 noda-apps 镜像信息"
         return 1
     fi
 
-    log_info "回滚 findclass-ssr 到镜像 ${image_id:0:12}..."
+    log_info "回滚 noda-apps 到镜像 ${image_id:0:12}..."
 
     # 生成 compose override 文件指定回滚镜像
     local rollback_compose="$ROLLBACK_DIR/docker-compose.app-rollback.yml"
     cat >"$rollback_compose" <<EOF
 services:
-  findclass-ssr:
+  noda-apps:
     image: ${image_id}
 EOF
 
-    if ! docker compose $COMPOSE_FILE -f "$rollback_compose" up -d --no-deps --force-recreate findclass-ssr; then
-        log_error "findclass-ssr 回滚失败"
+    if ! docker compose $COMPOSE_FILE -f "$rollback_compose" up -d --no-deps --force-recreate noda-apps; then
+        log_error "noda-apps 回滚失败"
         return 1
     fi
 
-    log_success "findclass-ssr 已回滚"
+    log_success "noda-apps 已回滚"
 
     return 0
 }
@@ -91,7 +91,6 @@ log_info "步骤 1/5: 验证基础设施服务"
 log_info "=========================================="
 
 # 基础设施验证由 Jenkins Pipeline 健康检查阶段覆盖
-# 旧 verify-infrastructure.sh 已删除（硬编码旧架构路径，不可用）
 
 # ============================================
 # 步骤 2/5: 保存当前镜像标签
@@ -109,7 +108,7 @@ log_info "=========================================="
 log_info "步骤 3/5: 构建镜像"
 log_info "=========================================="
 
-docker compose $COMPOSE_FILE build findclass-ssr
+docker compose $COMPOSE_FILE build noda-apps
 log_success "镜像构建完成"
 
 # ============================================
@@ -119,7 +118,7 @@ log_info "=========================================="
 log_info "步骤 4/5: 部署新版本"
 log_info "=========================================="
 
-docker compose $COMPOSE_FILE up -d --force-recreate findclass-ssr
+docker compose $COMPOSE_FILE up -d --force-recreate noda-apps
 
 # ============================================
 # 步骤 5/5: 等待健康检查
@@ -128,7 +127,7 @@ log_info "=========================================="
 log_info "步骤 5/5: 等待健康检查"
 log_info "=========================================="
 
-if ! wait_container_healthy findclass-ssr 90; then
+if ! wait_container_healthy noda-apps 90; then
     log_info "尝试回滚到上一版本..."
     rollback_app || true
     exit 1

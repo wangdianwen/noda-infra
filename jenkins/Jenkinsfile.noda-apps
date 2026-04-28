@@ -178,7 +178,7 @@ pipeline {
             }
         }
         success {
-            echo "部署成功: ${env.TARGET_ENV} 现在是活跃环境 (镜像: findclass-ssr:${env.GIT_SHA})"
+            echo "部署成功: ${env.TARGET_ENV} 现在是活跃环境 (镜像: noda-apps:${env.GIT_SHA})"
         }
     }
 }

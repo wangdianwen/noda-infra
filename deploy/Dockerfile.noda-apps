@@ -1,7 +1,7 @@
 # ============================================
-# Findclass SSR 容器 - Next.js Standalone 多阶段构建
+# Noda Apps 容器 - Next.js Standalone 多阶段构建
 # ============================================
-# 镜像名: findclass-ssr:latest
+# 镜像名: noda-apps:latest
 # 功能: 单容器提供 Next.js SSR + Hono API
 # 技术栈: Next.js 15 + Hono + Drizzle ORM + React 19
 # ============================================

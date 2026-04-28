@@ -4,7 +4,7 @@ set -euo pipefail
 # ============================================
 # 蓝绿容器管理脚本
 # ============================================
-# 功能：管理蓝绿双容器的完整生命周期（支持 findclass-ssr, noda-site, keycloak 等多服务）
+# 功能：管理蓝绿双容器的完整生命周期（支持 noda-apps, keycloak 等多服务）
 # 子命令：init, start, stop, restart, status, logs, switch
 # 用途：Phase 21 蓝绿部署基础设施，Phase 22 通过 source 复用函数
 # 参数化：通过环境变量 SERVICE_NAME/SERVICE_PORT/UPSTREAM_NAME 等适配不同服务
@@ -19,7 +19,7 @@ source "$PROJECT_ROOT/scripts/lib/health.sh"
 # 常量（通过环境变量覆盖，支持多服务蓝绿部署）
 # ============================================
 # 服务参数
-SERVICE_NAME="${SERVICE_NAME:-findclass-ssr}"
+SERVICE_NAME="${SERVICE_NAME:-noda-apps}"
 SERVICE_PORT="${SERVICE_PORT:-3000}"
 UPSTREAM_NAME="${UPSTREAM_NAME:-findclass_backend}"
 HEALTH_PATH="${HEALTH_PATH:-/api/health}"
@@ -29,7 +29,7 @@ ACTIVE_ENV_FILE="${ACTIVE_ENV_FILE:-/opt/noda/active-env}"
 
 # 固定常量
 NGINX_CONTAINER="noda-infra-nginx"
-# UPSTREAM_CONF: nginx upstream 配置文件路径（findclass-ssr 用 upstream-findclass.conf，不是 upstream-findclass-ssr.conf）
+# UPSTREAM_CONF: nginx upstream 配置文件路径
 UPSTREAM_CONF="${UPSTREAM_CONF:-$PROJECT_ROOT/config/nginx/snippets/upstream-findclass.conf}"
 NETWORK_NAME="noda-network"
 
@@ -116,7 +116,7 @@ prepare_env_file()
         exit 1
     fi
 
-    # 自动解析 Keycloak 蓝绿活跃容器名（findclass-ssr 等服务需要 KEYCLOAK_INTERNAL_URL）
+    # 自动解析 Keycloak 蓝绿活跃容器名（noda-apps 等服务需要 KEYCLOAK_INTERNAL_URL）
     if [ -f "/opt/noda/active-env-keycloak" ]; then
         export KEYCLOAK_ACTIVE_CONTAINER="keycloak-$(cat /opt/noda/active-env-keycloak)"
     else
@@ -124,7 +124,7 @@ prepare_env_file()
     fi
 
     # 支持通过 ENVSUBST_VARS 环境变量覆盖需要替换的变量列表
-    # 默认值保持 findclass-ssr 兼容
+    # 默认值保持 noda-apps 兼容
     # 注意：不能在 ${VAR:-...} 内嵌套 ${...}，内层 } 会被误认为外层闭合
     local _default_vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${KEYCLOAK_ACTIVE_CONTAINER} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY}'
     local vars="${ENVSUBST_VARS:-$_default_vars}"
@@ -176,7 +176,7 @@ get_host_snippets_dir()
 # 启动一个蓝绿容器（Phase 22 通过 source 调用此函数）
 # 参数：$1 = env (blue 或 green), $2 = image (镜像名)
 # 环境变量控制：
-#   SERVICE_NAME  - 服务名（默认 findclass-ssr）
+#   SERVICE_NAME  - 服务名（默认 noda-apps）
 #   SERVICE_PORT  - 服务端口（默认 3000）
 #   HEALTH_PATH   - 健康检查路径（默认 /api/health）
 #   ENV_TEMPLATE  - env 模板文件路径（不存在则跳过 env-file）
@@ -648,7 +648,7 @@ usage()
   switch <blue|green>       切换活跃环境（流量切换）
 
 环境变量:
-  SERVICE_NAME   服务名（默认 findclass-ssr）
+  SERVICE_NAME   服务名（默认 noda-apps）
   SERVICE_PORT   服务端口（默认 3000）
   UPSTREAM_NAME  nginx upstream 名称（默认 findclass_backend）
   HEALTH_PATH    健康检查路径（默认 /api/health）
@@ -658,7 +658,7 @@ usage()
   CONTAINER_READONLY  容器只读模式（默认 true）
   SERVICE_GROUP  服务组标签（默认 apps）
   EXTRA_DOCKER_ARGS  额外 docker run 参数（默认 无）
-  ENVSUBST_VARS  envsubst 替换变量列表（默认 findclass-ssr 三个变量）
+  ENVSUBST_VARS  envsubst 替换变量列表
 
 示例:
   manage-containers.sh init

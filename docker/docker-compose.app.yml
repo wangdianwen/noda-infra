@@ -1,8 +1,8 @@
 # ============================================
 # Noda 应用服务配置
 # ============================================
-# 包含：findclass-ssr（API + SSR 渲染 + 静态文件 + 官网页面）
-# 旧服务（findclass-web, findclass-api）已被 findclass-ssr 替代
+# 包含：noda-apps（API + SSR 渲染 + 静态文件 + 官网页面）
+# 旧服务（findclass-web, findclass-api, findclass-ssr）已合并为 noda-apps
 #
 # 独立于基础设施服务（postgres, keycloak, nginx, noda-ops）
 # 通过外部网络 noda-network 连接基础设施
@@ -13,19 +13,19 @@ name: noda-apps
 
 services:
   # ----------------------------------------
-  # Findclass SSR（API + SSR 渲染 + 静态文件）
-  # 三合一服务，替代旧的 web + api 架构
+  # Noda Apps（API + SSR 渲染 + 静态文件）
+  # 三合一服务，同时服务 class.noda.co.nz 和 noda.co.nz
   # ----------------------------------------
-  findclass-ssr:
+  noda-apps:
     build:
       context: ../../noda-apps
-      dockerfile: ../noda-infra/deploy/Dockerfile.findclass-ssr
+      dockerfile: ../noda-infra/deploy/Dockerfile.noda-apps
       args:
         NEXT_PUBLIC_KEYCLOAK_URL: https://auth.noda.co.nz
         NEXT_PUBLIC_KEYCLOAK_REALM: noda
         NEXT_PUBLIC_KEYCLOAK_CLIENT_ID: noda-frontend
-    image: findclass-ssr:latest
-    container_name: findclass-ssr
+    image: noda-apps:latest
+    container_name: noda-apps
     labels:
       - "noda.service-group=apps"
       - "noda.environment=prod"

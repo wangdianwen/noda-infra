@@ -137,9 +137,9 @@ pipeline_preflight()
     }
     log_info "Docker 网络 noda-network 存在"
 
-    local service="${SERVICE_NAME:-findclass-ssr}"
+    local service="${SERVICE_NAME:-noda-apps}"
 
-    # noda-apps 目录仅对从源码构建的服务需要（findclass-ssr, noda-site）
+    # noda-apps 目录仅对从源码构建的服务需要（noda-apps）
     # Keycloak 等使用官方镜像的服务不需要
     if [ "$service" != "keycloak" ]; then
         if [ ! -d "$apps_dir" ]; then
@@ -150,8 +150,8 @@ pipeline_preflight()
         log_info "noda-apps 目录存在: $apps_dir"
     fi
 
-    if [ "$service" = "findclass-ssr" ]; then
-        # findclass-ssr 专用检查：Node.js、pnpm、package.json、lint、test、备份
+    if [ "$service" = "noda-apps" ]; then
+        # noda-apps 专用检查：Node.js、pnpm、package.json、lint、test、备份
         if ! command -v node >/dev/null 2>&1; then
             log_error "Node.js 未安装"
             return 1
@@ -197,7 +197,7 @@ pipeline_preflight()
             log_info "Keycloak 镜像: $service_image"
             log_info "Keycloak 不需要构建，将使用 docker pull 拉取官方镜像"
         else
-            # 其他服务（noda-site 等）：检查 Dockerfile 存在
+            # 其他服务：检查 Dockerfile 存在
             local dockerfile="${DOCKERFILE:-$PROJECT_ROOT/deploy/Dockerfile.${service}}"
             if [ ! -f "$dockerfile" ]; then
                 log_error "Dockerfile 不存在: $dockerfile"
@@ -213,20 +213,20 @@ pipeline_preflight()
 # pipeline_build - 构建镜像
 # 参数: $1 = APPS_DIR (noda-apps 目录), $2 = GIT_SHA
 # 环境变量控制：
-#   SERVICE_NAME - 镜像名（默认 findclass-ssr）
-#   DOCKERFILE   - Dockerfile 路径（默认 deploy/Dockerfile.findclass-ssr）
+#   SERVICE_NAME - 镜像名（默认 noda-apps）
+#   DOCKERFILE   - Dockerfile 路径（默认 deploy/Dockerfile.noda-apps）
 pipeline_build()
 {
     local apps_dir="$1"
     local git_sha="$2"
 
-    local service="${SERVICE_NAME:-findclass-ssr}"
-    local dockerfile="${DOCKERFILE:-$PROJECT_ROOT/deploy/Dockerfile.findclass-ssr}"
+    local service="${SERVICE_NAME:-noda-apps}"
+    local dockerfile="${DOCKERFILE:-$PROJECT_ROOT/deploy/Dockerfile.noda-apps}"
 
     log_info "构建镜像..."
 
     # 使用 docker build 直接构建，避免 compose 文件中其他服务的环境变量要求
-    if [ "$service" = "findclass-ssr" ]; then
+    if [ "$service" = "noda-apps" ]; then
         docker build \
             -t "${service}:latest" \
             -t "${service}:${git_sha}" \
@@ -287,7 +287,7 @@ pipeline_pull_image()
 # pipeline_deploy - 部署新容器到目标环境
 # 参数: $1 = TARGET_ENV (blue/green), $2 = GIT_SHA (可选，官方镜像服务不需要)
 # 环境变量控制：
-#   SERVICE_NAME - 服务名（默认 findclass-ssr）
+#   SERVICE_NAME - 服务名（默认 noda-apps）
 #   SERVICE_IMAGE - 官方镜像名（设置后忽略 GIT_SHA，用于 Keycloak 等）
 pipeline_deploy()
 {
@@ -295,7 +295,7 @@ pipeline_deploy()
 
     local target_env="$1"
     local git_sha="${2:-}"
-    local service="${SERVICE_NAME:-findclass-ssr}"
+    local service="${SERVICE_NAME:-noda-apps}"
     local target_container
     target_container=$(get_container_name "$target_env")
 
@@ -436,7 +436,7 @@ pipeline_cleanup()
 
     # 官方镜像服务（Keycloak 等）不需要 SHA 镜像清理
     if [ -z "${SERVICE_IMAGE:-}" ]; then
-        cleanup_by_date_threshold "${SERVICE_NAME:-findclass-ssr}" "${IMAGE_RETENTION_DAYS:-7}"
+        cleanup_by_date_threshold "${SERVICE_NAME:-noda-apps}" "${IMAGE_RETENTION_DAYS:-7}"
     else
         # 仅清理 dangling images
         cleanup_dangling
