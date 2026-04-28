@@ -14,16 +14,19 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 # 复制 package 文件、锁文件和 workspace 配置
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY packages/database/package.json ./packages/database/
 COPY packages/database/tsconfig.json ./packages/database/
+COPY packages/database/turbo.json ./packages/database/
 COPY packages/database/src ./packages/database/src
 COPY packages/database/drizzle ./packages/database/drizzle
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/shared/tsconfig.json ./packages/shared/
+COPY packages/shared/turbo.json ./packages/shared/
 COPY packages/shared/src ./packages/shared/src
 COPY packages/design-tokens/package.json ./packages/design-tokens/
 COPY packages/design-tokens/sd.config.js ./packages/design-tokens/
+COPY packages/design-tokens/turbo.json ./packages/design-tokens/
 COPY packages/design-tokens/tokens ./packages/design-tokens/tokens
 COPY packages/design-tokens/src ./packages/design-tokens/src
 COPY apps/findclass/web/package.json ./apps/findclass/web/
@@ -36,10 +39,8 @@ COPY tsconfig.base.json ./
 RUN corepack enable && corepack prepare pnpm@latest --activate
 RUN pnpm install --ignore-scripts --config.node-linker=hoisted
 
-# 构建 workspace 包
-RUN cd packages/design-tokens && npm run build
-RUN cd packages/shared && npx tsc
-RUN cd packages/database && npx tsc
+# 构建 workspace 包（Turborepo 并行构建）
+RUN pnpm turbo run build --filter=@noda-apps/design-tokens --filter=@noda-apps/shared --filter=@noda-apps/database --no-cache
 
 # ----------------------------------------
 # Stage 2: 构建
