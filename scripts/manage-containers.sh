@@ -273,6 +273,10 @@ update_upstream()
 
     local upstream_content="upstream ${UPSTREAM_NAME} {
     server ${container_name}:${SERVICE_PORT} max_fails=3 fail_timeout=30s;
+}
+
+upstream www_backend {
+    server ${container_name}:3002 max_fails=3 fail_timeout=30s;
 }"
 
     # 写入宿主机文件（nginx volume mount 的源目录）

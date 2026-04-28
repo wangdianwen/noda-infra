@@ -28,6 +28,7 @@ COPY packages/design-tokens/tokens ./packages/design-tokens/tokens
 COPY packages/design-tokens/src ./packages/design-tokens/src
 COPY apps/findclass/web/package.json ./apps/findclass/web/
 COPY apps/findclass/api/package.json ./apps/findclass/api/
+COPY apps/www/package.json ./apps/www/
 COPY apps/findclass/api/tsconfig.json ./apps/findclass/api/
 COPY apps/findclass/api/src ./apps/findclass/api/src
 COPY tsconfig.base.json ./
@@ -71,6 +72,9 @@ ENV NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=$NEXT_PUBLIC_KEYCLOAK_CLIENT_ID
 # 复制 web 源码（Next.js 构建）
 COPY apps/findclass/web/ ./apps/findclass/web/
 
+# 复制 www 源码（Next.js static export）
+COPY apps/www/ ./apps/www/
+
 # 复制 api 源码（tsc 构建）
 COPY apps/findclass/api/ ./apps/findclass/api/
 
@@ -80,6 +84,9 @@ RUN test -f apps/findclass/web/.env.local || touch apps/findclass/web/.env.local
 
 # 构建 Next.js（生成 .next/standalone/ + .next/static/）
 RUN cd apps/findclass/web && npm run build
+
+# 构建 www 静态站点（生成 apps/www/out/）
+RUN cd apps/www && npm run build
 
 # 构建 API（tsc → dist/，禁用 declaration/declarationMap 避免 hoisted 模式下 TS2883）
 RUN cd apps/findclass/api && npx tsc --declaration false --declarationMap false
@@ -131,6 +138,12 @@ COPY --from=builder --chown=nodejs:nodejs /app/apps/findclass/web/public ./apps/
 COPY --from=builder --chown=nodejs:nodejs /app/apps/findclass/api/dist ./apps/findclass/api/dist
 COPY --from=builder /app/apps/findclass/api/package.json ./apps/findclass/api/
 
+# 复制 www 静态站点产物
+COPY --from=builder --chown=nodejs:nodejs /app/apps/www/out ./www-static
+
+# 复制静态文件伺服脚本
+COPY --chown=nodejs:nodejs scripts/serve-static.js ./scripts/serve-static.js
+
 # 复制 workspace 包（standalone 可能未包含 workspace 依赖）
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
 COPY --from=builder /app/packages/shared/package.json ./packages/shared/
@@ -156,7 +169,7 @@ RUN chmod +x ./entrypoint.sh
 
 USER nodejs
 
-EXPOSE 3000 3001
+EXPOSE 3000 3001 3002
 
 # tini 作为 PID 1，负责信号转发和僵尸进程回收（per D-03, D-04）
 ENTRYPOINT ["tini", "--"]
