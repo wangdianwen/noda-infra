@@ -16,7 +16,7 @@ pipeline {
         ACTIVE_ENV_FILE = "/opt/noda/active-env-auth"
         UPSTREAM_CONF = "${WORKSPACE}/config/nginx/snippets/upstream-auth-app.conf"
         SERVICE_GROUP = "apps"
-        DOCKERFILE = "${WORKSPACE}/deploy/Dockerfile.noda-auth"
+        DOCKERFILE = "${WORKSPACE}/noda-apps/infra/docker/Dockerfile.noda-auth"
         CONTAINER_MEMORY = "512m"
         CONTAINER_MEMORY_RESERVATION = "64m"
         // 蓝绿状态

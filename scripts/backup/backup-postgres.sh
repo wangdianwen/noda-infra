@@ -34,7 +34,6 @@ source "$SCRIPT_DIR/lib/metrics.sh"
 PID_FILE="/tmp/backup-postgres.pid"
 LOCK_TIMEOUT=3600 # 1小时
 DRY_RUN=false
-TEST_MODE=false
 
 # ============================================
 # 函数：show_help
@@ -129,41 +128,6 @@ cleanup_old_backups()
 }
 
 # ============================================
-# 函数：run_test_mode
-# 功能：测试模式（D-43 完整实现）
-# 说明：调用 test_restore.sh 脚本验证完整备份和恢复流程
-# ============================================
-run_test_mode()
-{
-    log_info "=========================================="
-    log_info "测试模式：完整备份和恢复流程验证"
-    log_info "=========================================="
-
-    local test_script="$SCRIPT_DIR/tests/test_restore.sh"
-
-    # 检查测试脚本是否存在
-    if [ ! -f "$test_script" ]; then
-        log_error "测试脚本不存在: $test_script"
-        log_error "请确保已运行 Wave 0 计划创建测试基础设施"
-        return 1
-    fi
-
-    # 执行测试脚本
-    log_info "执行测试脚本: $test_script"
-    if bash "$test_script"; then
-        log_success "=========================================="
-        log_success "测试模式完成！所有测试通过。"
-        log_success "=========================================="
-        return 0
-    else
-        log_error "=========================================="
-        log_error "测试模式失败！请检查测试日志。"
-        log_error "=========================================="
-        return 1
-    fi
-}
-
-# ============================================
 # 函数：parse_arguments
 # 功能：解析命令行参数
 # 参数：
@@ -179,10 +143,6 @@ parse_arguments()
                 ;;
             --dry-run)
                 DRY_RUN=true
-                shift
-                ;;
-            --test)
-                TEST_MODE=true
                 shift
                 ;;
             --help)
@@ -213,14 +173,6 @@ main()
     log_info "=========================================="
 
     acquire_lock
-
-    # 测试模式（D-43）
-    if [ "$TEST_MODE" = true ]; then
-        run_test_mode
-        local test_result=$?
-        release_lock
-        exit $test_result
-    fi
 
     # 记录开始时间
     local start_time

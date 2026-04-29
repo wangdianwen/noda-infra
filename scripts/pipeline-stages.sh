@@ -198,7 +198,7 @@ pipeline_preflight()
             log_info "Keycloak 不需要构建，将使用 docker pull 拉取官方镜像"
         else
             # 其他服务：检查 Dockerfile 存在
-            local dockerfile="${DOCKERFILE:-$PROJECT_ROOT/deploy/Dockerfile.${service}}"
+            local dockerfile="${DOCKERFILE:-$PROJECT_ROOT/noda-apps/infra/docker/Dockerfile.${service}}"
             if [ ! -f "$dockerfile" ]; then
                 log_error "Dockerfile 不存在: $dockerfile"
                 return 1
@@ -214,14 +214,14 @@ pipeline_preflight()
 # 参数: $1 = APPS_DIR (noda-apps 目录), $2 = GIT_SHA
 # 环境变量控制：
 #   SERVICE_NAME - 镜像名（默认 noda-apps）
-#   DOCKERFILE   - Dockerfile 路径（默认 deploy/Dockerfile.noda-apps）
+#   DOCKERFILE   - Dockerfile 路径（默认 noda-apps/infra/docker/Dockerfile.noda-apps）
 pipeline_build()
 {
     local apps_dir="$1"
     local git_sha="$2"
 
     local service="${SERVICE_NAME:-noda-apps}"
-    local dockerfile="${DOCKERFILE:-$PROJECT_ROOT/deploy/Dockerfile.noda-apps}"
+    local dockerfile="${DOCKERFILE:-$PROJECT_ROOT/noda-apps/infra/docker/Dockerfile.noda-apps}"
 
     log_info "构建镜像..."
 

@@ -23,7 +23,7 @@ fi
 
 # 检查 doppler CLI
 if ! command -v doppler &>/dev/null; then
-    error "doppler CLI 未安装，请先运行: bash scripts/install-doppler.sh"
+    error "doppler CLI 未安装，请先安装: https://docs.doppler.com/docs/cli"
     exit 1
 fi
 
