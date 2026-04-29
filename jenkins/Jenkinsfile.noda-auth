@@ -1,0 +1,146 @@
+#!/usr/bin/env groovy
+// Noda Auth App 蓝绿部署 Pipeline
+// 7 阶段: Pre-flight -> Build -> Deploy -> Health Check -> Switch -> Verify -> Cleanup
+// 手动触发（无自动触发配置）
+
+pipeline {
+    agent any
+
+    environment {
+        PROJECT_ROOT = "${WORKSPACE}"
+        // 服务参数
+        SERVICE_NAME = "noda-auth"
+        SERVICE_PORT = "3004"
+        UPSTREAM_NAME = "auth_app_backend"
+        HEALTH_PATH = "/"
+        ACTIVE_ENV_FILE = "/opt/noda/active-env-auth"
+        UPSTREAM_CONF = "${WORKSPACE}/config/nginx/snippets/upstream-auth-app.conf"
+        SERVICE_GROUP = "apps"
+        DOCKERFILE = "${WORKSPACE}/deploy/Dockerfile.noda-auth"
+        CONTAINER_MEMORY = "512m"
+        CONTAINER_MEMORY_RESERVATION = "64m"
+        // 蓝绿状态
+        ACTIVE_ENV = sh(
+            script: 'cat /opt/noda/active-env-auth 2>/dev/null || echo blue',
+            returnStdout: true
+        ).trim()
+        TARGET_ENV = "${env.ACTIVE_ENV == 'blue' ? 'green' : 'blue'}"
+        // Doppler Service Token
+        DOPPLER_TOKEN = credentials('doppler-service-token')
+    }
+
+    options {
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timestamps()
+    }
+
+    stages {
+        stage('Pre-flight') {
+            steps {
+                // checkout noda-apps 仓库到子目录
+                dir('noda-apps') {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: '*/main']],
+                        userRemoteConfigs: [[
+                            url: 'git@github.com:wangdianwen/noda-apps.git',
+                            credentialsId: 'noda-apps-git-credentials'
+                        ]]
+                    ])
+                }
+                script {
+                    env.GIT_SHA = sh(
+                        script: 'git -C noda-apps rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                }
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_preflight
+                '''
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_build "$WORKSPACE/noda-apps" "$GIT_SHA"
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_deploy "$TARGET_ENV" "$GIT_SHA"
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_health_check "$TARGET_ENV"
+                '''
+            }
+        }
+
+        stage('Switch') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_switch "$TARGET_ENV" "$ACTIVE_ENV"
+                '''
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_verify "$TARGET_ENV"
+                '''
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_cleanup
+                '''
+            }
+        }
+    }
+
+    post {
+        failure {
+            script {
+                if (env.TARGET_ENV && env.TARGET_ENV != 'null') {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        pipeline_failure_cleanup "$TARGET_ENV"
+                    '''
+                    archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
+                } else {
+                    echo 'Pipeline 在 TARGET_ENV 设置前失败，跳过日志归档'
+                }
+            }
+        }
+        success {
+            echo "Auth App 部署成功: ${env.TARGET_ENV} 现在是活跃环境 (镜像: noda-auth:${env.GIT_SHA})"
+        }
+    }
+}

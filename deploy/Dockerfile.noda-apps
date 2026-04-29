@@ -29,6 +29,9 @@ COPY packages/design-tokens/sd.config.js ./packages/design-tokens/
 COPY packages/design-tokens/turbo.json ./packages/design-tokens/
 COPY packages/design-tokens/tokens ./packages/design-tokens/tokens
 COPY packages/design-tokens/src ./packages/design-tokens/src
+COPY packages/auth/package.json ./packages/auth/
+COPY packages/auth/tsconfig.json ./packages/auth/
+COPY packages/auth/src ./packages/auth/src
 COPY apps/findclass/web/package.json ./apps/findclass/web/
 COPY apps/findclass/api/package.json ./apps/findclass/api/
 COPY apps/www/package.json ./apps/www/
@@ -56,7 +59,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 RUN mkdir -p node_modules/@noda-apps && \
     ln -s /app/packages/shared node_modules/@noda-apps/shared && \
     ln -s /app/packages/database node_modules/@noda-apps/database && \
-    ln -s /app/packages/design-tokens node_modules/@noda-apps/design-tokens
+    ln -s /app/packages/design-tokens node_modules/@noda-apps/design-tokens && \
+    ln -s /app/packages/auth node_modules/@noda-apps/auth
 
 # 构建时 ARG — NEXT_PUBLIC_* 变量（per D-08, D-11）
 # Jenkins Pipeline 通过 --build-arg 传入生产值
@@ -64,11 +68,15 @@ RUN mkdir -p node_modules/@noda-apps && \
 ARG NEXT_PUBLIC_KEYCLOAK_URL=http://localhost:8080
 ARG NEXT_PUBLIC_KEYCLOAK_REALM=noda
 ARG NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=noda-frontend
+ARG NEXT_PUBLIC_AUTH_APP_URL=https://auth.noda.co.nz
+ARG NEXT_PUBLIC_AUTH_BYPASS=false
 
 # ARG 必须通过 ENV 传递给 Next.js 构建过程
 ENV NEXT_PUBLIC_KEYCLOAK_URL=$NEXT_PUBLIC_KEYCLOAK_URL
 ENV NEXT_PUBLIC_KEYCLOAK_REALM=$NEXT_PUBLIC_KEYCLOAK_REALM
 ENV NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=$NEXT_PUBLIC_KEYCLOAK_CLIENT_ID
+ENV NEXT_PUBLIC_AUTH_APP_URL=$NEXT_PUBLIC_AUTH_APP_URL
+ENV NEXT_PUBLIC_AUTH_BYPASS=$NEXT_PUBLIC_AUTH_BYPASS
 
 # 复制 web 源码（Next.js 构建）
 COPY apps/findclass/web/ ./apps/findclass/web/
@@ -119,10 +127,6 @@ COPY scripts/*.py /app/scripts/
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nodejs
 
-# Phase 137: 创建缓存/日志目录并赋权给 nodejs 用户（必须在 adduser 之后）
-RUN mkdir -p /app/scripts/cache /app/scripts/logs && \
-    chown nodejs:nodejs /app/scripts/cache /app/scripts/logs
-
 # 复制 Next.js standalone 输出（monorepo 下 standalone 保留完整路径结构，需复制到根目录）
 COPY --from=builder --chown=nodejs:nodejs /app/apps/findclass/web/.next/standalone ./
 
@@ -152,12 +156,16 @@ COPY --from=builder /app/packages/database/dist ./packages/database/dist
 COPY --from=builder /app/packages/database/package.json ./packages/database/
 COPY --from=builder /app/packages/design-tokens/build ./packages/design-tokens/build
 COPY --from=builder /app/packages/design-tokens/package.json ./packages/design-tokens/
+COPY --from=builder /app/packages/auth/src ./packages/auth/src
+COPY --from=builder /app/packages/auth/package.json ./packages/auth/
+COPY --from=builder /app/packages/auth/tsconfig.json ./packages/auth/
 
 # 创建 workspace 符号链接（standalone server.js 需要解析 @noda-apps/* 包）
 RUN mkdir -p node_modules/@noda-apps && \
     ln -s /app/packages/shared node_modules/@noda-apps/shared && \
     ln -s /app/packages/database node_modules/@noda-apps/database && \
-    ln -s /app/packages/design-tokens node_modules/@noda-apps/design-tokens
+    ln -s /app/packages/design-tokens node_modules/@noda-apps/design-tokens && \
+    ln -s /app/packages/auth node_modules/@noda-apps/auth
 
 # Phase 135: 数据库迁移脚本和迁移文件
 COPY --from=builder --chown=nodejs:nodejs /app/packages/database/dist/run-migrations.js ./packages/database/dist/run-migrations.js
@@ -167,6 +175,10 @@ COPY --from=builder --chown=nodejs:nodejs /app/apps/findclass/api/src/migrations
 # 复制启动脚本
 COPY infra/docker/entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
+
+# 确保 cache/logs 目录存在且 nodejs 可写（放在所有 COPY 之后，防止被覆盖）
+RUN mkdir -p /app/scripts/cache /app/scripts/logs && \
+    chown -R nodejs:nodejs /app/scripts/cache /app/scripts/logs
 
 USER nodejs
 
