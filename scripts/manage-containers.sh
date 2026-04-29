@@ -273,11 +273,16 @@ update_upstream()
 
     local upstream_content="upstream ${UPSTREAM_NAME} {
     server ${container_name}:${SERVICE_PORT} max_fails=3 fail_timeout=30s;
-}
+}"
+
+    # noda-apps 容器同时代理 www 静态站点（端口 3002）
+    if [ "$SERVICE_NAME" = "noda-apps" ]; then
+        upstream_content="${upstream_content}
 
 upstream www_backend {
     server ${container_name}:3002 max_fails=3 fail_timeout=30s;
 }"
+    fi
 
     # 写入宿主机文件（nginx volume mount 的源目录）
     local snippets_dir
