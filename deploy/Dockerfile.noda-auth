@@ -69,6 +69,10 @@ RUN adduser --system --uid 1001 nodejs
 
 # 复制 standalone 输出
 COPY --from=builder --chown=nodejs:nodejs /app/apps/auth/.next/standalone ./
+
+# 复制完整 node_modules（standalone 在 monorepo 下追踪不完整，缺少 apps/auth/node_modules/next/）
+COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
+
 COPY --from=builder --chown=nodejs:nodejs /app/apps/auth/.next/static ./apps/auth/.next/static
 COPY --from=builder --chown=nodejs:nodejs /app/apps/auth/public ./apps/auth/public
 
