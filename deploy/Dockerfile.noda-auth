@@ -17,6 +17,9 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY packages/auth/package.json ./packages/auth/
 COPY packages/auth/tsconfig.json ./packages/auth/
 COPY packages/auth/src ./packages/auth/src
+COPY packages/ui/package.json ./packages/ui/
+COPY packages/ui/tsconfig.json ./packages/ui/
+COPY packages/ui/src ./packages/ui/src
 COPY apps/auth/package.json ./apps/auth/
 COPY tsconfig.base.json ./
 
@@ -37,7 +40,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 
 # workspace 符号链接
 RUN mkdir -p node_modules/@noda-apps && \
-    ln -s /app/packages/auth node_modules/@noda-apps/auth
+    ln -s /app/packages/auth node_modules/@noda-apps/auth && \
+    ln -s /app/packages/ui node_modules/@noda-apps/ui
 
 # 构建时 ARG
 ARG NEXT_PUBLIC_KEYCLOAK_URL=http://localhost:8080
