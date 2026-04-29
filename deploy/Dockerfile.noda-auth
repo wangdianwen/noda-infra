@@ -17,6 +17,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
 COPY packages/auth/package.json ./packages/auth/
 COPY packages/auth/tsconfig.json ./packages/auth/
 COPY packages/auth/src ./packages/auth/src
+COPY apps/auth/package.json ./apps/auth/
 COPY tsconfig.base.json ./
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
