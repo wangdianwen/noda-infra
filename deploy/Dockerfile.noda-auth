@@ -51,6 +51,7 @@ ENV NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=$NEXT_PUBLIC_KEYCLOAK_CLIENT_ID
 COPY apps/auth/ ./apps/auth/
 
 RUN test -f apps/auth/.env.local || touch apps/auth/.env.local
+RUN mkdir -p apps/auth/public
 RUN cd apps/auth && npm run build
 
 # ----------------------------------------
