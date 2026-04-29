@@ -234,6 +234,7 @@ pipeline_build()
             --build-arg NEXT_PUBLIC_KEYCLOAK_URL=https://auth.noda.co.nz \
             --build-arg NEXT_PUBLIC_KEYCLOAK_REALM=noda \
             --build-arg NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=noda-frontend \
+            --build-arg NEXT_PUBLIC_AUTH_KEYCLOAK_CLIENT_ID=noda-auth \
             "$apps_dir"
     else
         docker build \

@@ -275,12 +275,16 @@ update_upstream()
     server ${container_name}:${SERVICE_PORT} max_fails=3 fail_timeout=30s;
 }"
 
-    # noda-apps 容器同时代理 www 静态站点（端口 3002）
+    # noda-apps 容器同时代理 www 静态站点（端口 3002）和 auth 应用（端口 3004）
     if [ "$SERVICE_NAME" = "noda-apps" ]; then
         upstream_content="${upstream_content}
 
 upstream www_backend {
     server ${container_name}:3002 max_fails=3 fail_timeout=30s;
+}
+
+upstream auth_app_backend {
+    server ${container_name}:3004 max_fails=3 fail_timeout=30s;
 }"
     fi
 
