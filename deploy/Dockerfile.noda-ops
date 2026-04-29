@@ -64,8 +64,9 @@ RUN chmod 755 /usr/sbin/crond
 COPY --chown=nodaops:nodaops scripts/backup/ /app/backup/
 RUN find /app/backup -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
 
-# 复制 crontab 配置
-COPY --chown=nodaops:nodaops deploy/crontab /etc/crontabs/nodaops
+# 复制 crontab 配置（dcron 要求 600 权限，否则跳过非 root 用户 crontab）
+COPY deploy/crontab /etc/crontabs/nodaops
+RUN chmod 600 /etc/crontabs/nodaops && chown nodaops:nodaops /etc/crontabs/nodaops
 
 # 复制 supervisord 配置
 COPY --chown=nodaops:nodaops deploy/supervisord.conf /etc/supervisord.conf
