@@ -1,13 +1,11 @@
 #!/usr/bin/env groovy
 // Noda Admin Dashboard 部署 Pipeline
 // 简化版：构建 + 部署 + 健康检查
-// 手动触发（Build Now -> noda-admin-deploy）
 
 pipeline {
     agent any
 
     environment {
-        PROJECT_ROOT = "${WORKSPACE}"
         IMAGE_TAG = sh(
             script: 'date +%Y%m%d-%H%M%S',
             returnStdout: true
@@ -39,7 +37,6 @@ pipeline {
                         returnStdout: true
                     ).trim()
                 }
-                sh 'docker info'
             }
         }
 
@@ -59,16 +56,8 @@ pipeline {
         stage('Deploy') {
             steps {
                 sh '''
-                    source scripts/lib/log.sh
-                    source scripts/lib/secrets.sh
-                    load_secrets
-
-                    cd docker
-
-                    # 停止旧容器
+                    cd ${WORKSPACE}/docker
                     docker compose -f docker-compose.admin.yml down || true
-
-                    # 启动新容器
                     docker compose -f docker-compose.admin.yml up -d
                 '''
             }
