@@ -41,7 +41,7 @@ services:
     networks:
       - noda-network
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8001/api/admin/health || exit 1"]
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:8001/api/admin/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
