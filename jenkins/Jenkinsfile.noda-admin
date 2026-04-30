@@ -45,6 +45,8 @@ pipeline {
                 sh """
                     cd noda-apps
                     docker build \
+                        --no-cache \
+                        -f apps/admin/Dockerfile \
                         -f apps/admin/Dockerfile \
                         -t noda-admin:${env.GIT_SHA} \
                         -t noda-admin:latest \
