@@ -512,7 +512,7 @@ deploy_admin()
 
     # 启动新容器（传递 GIT-SHA 版本锁定）
     if [ -n "$git_sha" ]; then
-        ADMIN_IMAGE_TAG="${ADMIN_IMAGE_NAME}:${git_sha}" docker compose -f "$ADMIN_DOCKER_COMPOSE" up -d
+        ADMIN_IMAGE_TAG="${git_sha}" docker compose -f "$ADMIN_DOCKER_COMPOSE" up -d
     else
         docker compose -f "$ADMIN_DOCKER_COMPOSE" up -d
     fi
