@@ -60,4 +60,12 @@ if (existingJob != null) {
     println "Pipeline job '${newJobName}' created with SCM mode."
 }
 
+// ---------- 清理旧的 admin-deploy 作业（如果存在）----------
+def adminJobName = 'admin-deploy'
+def adminJob = instance.getItem(adminJobName)
+if (adminJob != null) {
+    println "Deleting old job '${adminJobName}'..."
+    adminJob.delete()
+}
+
 instance.save()
