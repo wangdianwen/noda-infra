@@ -8,6 +8,7 @@ pipeline {
 
     environment {
         DOPPLER_TOKEN = credentials('doppler-service-token')
+        SERVICE_NAME = 'admin'
     }
 
     options {
@@ -35,10 +36,14 @@ pipeline {
                         returnStdout: true
                     ).trim()
                 }
+                // Admin 只需基础 Docker 检查，跳过数据库备份和 noda-apps 专用检查
                 sh '''
                     source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-                    pipeline_preflight
+                    log_info "Admin 前置检查..."
+                    docker info >/dev/null 2>&1 || { log_error "Docker daemon 不可用"; exit 1; }
+                    log_success "Docker daemon 可用"
+                    docker network inspect noda-network >/dev/null 2>&1 || { log_error "Docker 网络 noda-network 不存在"; exit 1; }
+                    log_success "Docker 网络 noda-network 存在"
                 '''
             }
         }
