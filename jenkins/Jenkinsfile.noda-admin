@@ -6,6 +6,10 @@
 pipeline {
     agent any
 
+    environment {
+        DOPPLER_TOKEN = credentials('doppler-service-token')
+    }
+
     options {
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '10'))
