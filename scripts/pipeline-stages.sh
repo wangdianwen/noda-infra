@@ -33,6 +33,8 @@ COMPOSE_FILE="$PROJECT_ROOT/docker/docker-compose.app.yml"
 BACKUP_HOST_DIR="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}"
 BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-12}"
 IMAGE_RETENTION_DAYS="${IMAGE_RETENTION_DAYS:-7}"
+ADMIN_HEALTH_MAX_RETRIES="${ADMIN_HEALTH_MAX_RETRIES:-15}"
+ADMIN_HEALTH_INTERVAL="${ADMIN_HEALTH_INTERVAL:-2}"
 
 # ============================================
 # 函数: check_backup_freshness
@@ -465,6 +467,86 @@ pipeline_failure_cleanup()
     docker rm -f "$target_container" 2>/dev/null || true
 
     log_info "失败日志已保存: deploy-failure-container.log, deploy-failure-nginx.log"
+}
+
+# ============================================
+# Admin Dashboard Pipeline 函数
+# ============================================
+# Admin 使用独立的停止-启动部署模式（非蓝绿），per D-03
+# Admin Dockerfile: apps/admin/Dockerfile（nginx + Next.js + Hono 三合一）
+# Admin Compose: docker/docker-compose.admin.yml
+# Admin 健康检查: /api/admin/health（非阻塞，per D-05）
+# ============================================
+
+# build_admin_image - 构建 admin Docker 镜像
+# 参数: $1 = APPS_DIR (noda-apps 目录), $2 = GIT_SHA
+build_admin_image()
+{
+    local apps_dir="$1"
+    local git_sha="$2"
+
+    log_info "构建 admin Docker 镜像..."
+
+    docker build \
+        -t "noda-admin:latest" \
+        -t "noda-admin:${git_sha}" \
+        -f "$apps_dir/apps/admin/Dockerfile" \
+        "$apps_dir"
+
+    log_success "Admin 镜像构建完成: noda-admin:${git_sha}"
+}
+
+# deploy_admin - 停止-启动部署 admin 容器（非蓝绿，per D-03）
+# 使用独立的 docker-compose.admin.yml
+deploy_admin()
+{
+    local compose_file="$PROJECT_ROOT/docker/docker-compose.admin.yml"
+
+    log_info "部署 admin 容器（停止-启动模式）..."
+
+    # 停止旧容器（允许失败，首次部署时可能不存在）
+    docker compose -f "$compose_file" down || true
+
+    # 启动新容器
+    docker compose -f "$compose_file" up -d
+
+    log_success "Admin 容器部署完成"
+}
+
+# check_admin_health - 非阻塞健康检查（per D-05）
+# 检查 /api/admin/health 端点
+# 失败时仅警告，不阻塞主应用部署
+check_admin_health()
+{
+    local max_retries="${ADMIN_HEALTH_MAX_RETRIES:-15}"
+    local interval="${ADMIN_HEALTH_INTERVAL:-2}"
+    local attempt=0
+
+    log_info "Admin 健康检查 (最多 ${max_retries} 次)..."
+
+    while [ $attempt -lt $max_retries ]; do
+        attempt=$((attempt + 1))
+
+        if docker exec noda-admin wget --quiet --tries=1 --spider \
+            http://127.0.0.1:8001/api/admin/health 2>/dev/null; then
+            log_success "Admin 健康检查通过"
+            return 0
+        fi
+
+        [ $attempt -lt $max_retries ] && sleep "$interval"
+    done
+
+    # 非阻塞：仅警告，不返回失败
+    log_warn "Admin 健康检查超时（不影响主应用部署）"
+    log_info "Admin 最近日志:"
+    docker logs noda-admin --tail 20 2>&1 | sed 's/^/  /' || true
+    return 0
+}
+
+# cleanup_admin_image - 清理 admin 旧镜像
+cleanup_admin_image()
+{
+    cleanup_by_date_threshold "noda-admin" "${IMAGE_RETENTION_DAYS:-7}"
 }
 
 # ============================================
