@@ -1,0 +1,94 @@
+#!/usr/bin/env groovy
+// Admin Dashboard 部署 Pipeline
+// 独立的停止-启动部署模式（非蓝绿）
+// 5 阶段: Pre-flight -> Build -> Deploy -> Health Check -> Cleanup
+
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+    }
+
+    stages {
+        stage('Pre-flight') {
+            steps {
+                dir('noda-apps') {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: '*/main']],
+                        userRemoteConfigs: [[
+                            url: 'git@github.com:wangdianwen/noda-apps.git',
+                            credentialsId: 'noda-apps-git-credentials'
+                        ]]
+                    ])
+                }
+                script {
+                    env.GIT_SHA = sh(
+                        script: 'git -C noda-apps rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                }
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_preflight
+                '''
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    build_admin_image "$WORKSPACE/noda-apps" "$GIT_SHA"
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    deploy_admin "$GIT_SHA"
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    check_admin_health
+                '''
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    cleanup_admin_image
+                '''
+            }
+        }
+    }
+
+    post {
+        failure {
+            sh '''
+                docker logs noda-admin --tail 50 >deploy-failure-admin.log 2>&1 || true
+            '''
+            archiveArtifacts artifacts: 'deploy-failure-admin.log', allowEmptyArchive: true
+        }
+        success {
+            echo "Admin 部署成功 (镜像: noda-admin:${env.GIT_SHA})"
+        }
+    }
+}
