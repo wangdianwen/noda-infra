@@ -33,6 +33,7 @@ services:
       KEYCLOAK_URL: http://noda-infra-nginx
       KEYCLOAK_REALM: noda
       KEYCLOAK_CLIENT_ID: admin-dashboard
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-5ysPLO3bSRqyt4dsHnBRym6oFicYjf4c}
       KEYCLOAK_ADMIN_CLIENT_ID: admin-cli
       KEYCLOAK_ADMIN_USERNAME: admin
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
