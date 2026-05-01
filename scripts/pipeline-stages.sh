@@ -4,7 +4,7 @@ set -euo pipefail
 # ============================================
 # Jenkins Pipeline 阶段函数库
 # ============================================
-# 功能：封装 Jenkinsfile 8 阶段 Pipeline 所需的 bash 函数
+# 功能：封装 Jenkinsfile 9 阶段 Pipeline 所需的 bash 函数
 # 用途：Jenkinsfile 通过 source 加载此文件，调用 pipeline_* 函数
 # 依赖：scripts/lib/log.sh, scripts/manage-containers.sh
 # ============================================
@@ -35,6 +35,8 @@ BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-12}"
 IMAGE_RETENTION_DAYS="${IMAGE_RETENTION_DAYS:-7}"
 ADMIN_HEALTH_MAX_RETRIES="${ADMIN_HEALTH_MAX_RETRIES:-15}"
 ADMIN_HEALTH_INTERVAL="${ADMIN_HEALTH_INTERVAL:-2}"
+ADMIN_IMAGE_NAME="noda-admin"
+ADMIN_DOCKER_COMPOSE="$PROJECT_ROOT/docker/docker-compose.admin.yml"
 
 # ============================================
 # 函数: check_backup_freshness
@@ -488,27 +490,32 @@ build_admin_image()
     log_info "构建 admin Docker 镜像..."
 
     docker build \
-        -t "noda-admin:latest" \
-        -t "noda-admin:${git_sha}" \
+        -t "${ADMIN_IMAGE_NAME}:latest" \
+        -t "${ADMIN_IMAGE_NAME}:${git_sha}" \
         -f "$apps_dir/apps/admin/Dockerfile" \
         "$apps_dir"
 
-    log_success "Admin 镜像构建完成: noda-admin:${git_sha}"
+    log_success "Admin 镜像构建完成: ${ADMIN_IMAGE_NAME}:${git_sha}"
 }
 
 # deploy_admin - 停止-启动部署 admin 容器（非蓝绿，per D-03）
 # 使用独立的 docker-compose.admin.yml
+# 参数: $1 = GIT_SHA (可选，用于版本锁定)
 deploy_admin()
 {
-    local compose_file="$PROJECT_ROOT/docker/docker-compose.admin.yml"
+    local git_sha="${1:-}"
 
     log_info "部署 admin 容器（停止-启动模式）..."
 
     # 停止旧容器（允许失败，首次部署时可能不存在）
-    docker compose -f "$compose_file" down || true
+    docker compose -f "$ADMIN_DOCKER_COMPOSE" down || true
 
-    # 启动新容器
-    docker compose -f "$compose_file" up -d
+    # 启动新容器（传递 GIT-SHA 版本锁定）
+    if [ -n "$git_sha" ]; then
+        ADMIN_IMAGE_TAG="${ADMIN_IMAGE_NAME}:${git_sha}" docker compose -f "$ADMIN_DOCKER_COMPOSE" up -d
+    else
+        docker compose -f "$ADMIN_DOCKER_COMPOSE" up -d
+    fi
 
     log_success "Admin 容器部署完成"
 }
@@ -527,7 +534,7 @@ check_admin_health()
     while [ $attempt -lt $max_retries ]; do
         attempt=$((attempt + 1))
 
-        if docker exec noda-admin wget --quiet --tries=1 --spider \
+        if docker exec noda-admin wget --quiet --tries=1 -O /dev/null \
             http://127.0.0.1:8001/api/admin/health 2>/dev/null; then
             log_success "Admin 健康检查通过"
             return 0
@@ -546,7 +553,7 @@ check_admin_health()
 # cleanup_admin_image - 清理 admin 旧镜像
 cleanup_admin_image()
 {
-    cleanup_by_date_threshold "noda-admin" "${IMAGE_RETENTION_DAYS:-7}"
+    cleanup_by_date_threshold "$ADMIN_IMAGE_NAME" "${IMAGE_RETENTION_DAYS:-7}"
 }
 
 # ============================================
