@@ -66,6 +66,7 @@ pipeline {
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_build "$WORKSPACE/noda-apps" "$GIT_SHA"
+                    build_admin_image "$WORKSPACE/noda-apps" "$GIT_SHA"
                 '''
             }
         }
@@ -94,6 +95,7 @@ pipeline {
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_deploy "$TARGET_ENV" "$GIT_SHA"
+                    deploy_admin
                 '''
             }
         }
@@ -104,6 +106,7 @@ pipeline {
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_health_check "$TARGET_ENV"
+                    check_admin_health
                 '''
             }
         }
@@ -156,6 +159,7 @@ pipeline {
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     pipeline_cleanup
+                    cleanup_admin_image
                 '''
             }
         }
