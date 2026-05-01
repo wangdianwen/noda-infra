@@ -81,10 +81,17 @@ pipeline {
                         pipeline_test "$PWD"
                     '''
                     // lint 和 test 为独立 sh 步骤（RESEARCH.md Pitfall 4）
-                    // 这样 Jenkins Stage View 可区分是 lint 还是 test 失败
-                    // TODO: noda-apps 修复 lint 错误后移除 || true，恢复严格门禁
-                    sh 'pnpm lint || true'
-                    sh 'pnpm test || true'
+                    // 失败时输出 WARNING 但不阻塞部署，待修复后改为严格门禁
+                    sh 'pnpm lint >lint-result.txt 2>&1 || echo "LINT_FAILED" >> lint-result.txt'
+                    sh 'pnpm test >test-result.txt 2>&1 || echo "TEST_FAILED" >> test-result.txt'
+                    script {
+                        if (fileExists('lint-result.txt') && readFile('lint-result.txt').contains('LINT_FAILED')) {
+                            echo "WARNING: pnpm lint 失败，详见 lint-result.txt"
+                        }
+                        if (fileExists('test-result.txt') && readFile('test-result.txt').contains('TEST_FAILED')) {
+                            echo "WARNING: pnpm test 失败，详见 test-result.txt"
+                        }
+                    }
                 }
             }
         }
