@@ -2,9 +2,9 @@
 # Admin Dashboard 服务配置
 # ============================================
 # 仅内网可访问的管理后台（localhost:8001）
-# 独立于主应用服务，使用相同的 noda-network
+# 归属 noda-apps 项目组，随 noda-apps Pipeline 一起部署
 
-name: noda-admin
+name: noda-apps
 
 services:
   admin:

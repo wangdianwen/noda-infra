@@ -499,7 +499,7 @@ build_admin_image()
 }
 
 # deploy_admin - 停止-启动部署 admin 容器（非蓝绿，per D-03）
-# 使用独立的 docker-compose.admin.yml
+# 使用独立的 docker-compose.admin.yml，项目名与 noda-apps 一致
 # 参数: $1 = GIT_SHA (可选，用于版本锁定)
 deploy_admin()
 {
@@ -507,8 +507,9 @@ deploy_admin()
 
     log_info "部署 admin 容器（停止-启动模式）..."
 
-    # 停止旧容器（允许失败，首次部署时可能不存在）
-    docker compose -f "$ADMIN_DOCKER_COMPOSE" down || true
+    # 按容器名直接停止旧容器（兼容旧项目名 noda-admin 迁移）
+    docker stop noda-admin 2>/dev/null || true
+    docker rm noda-admin 2>/dev/null || true
 
     # 启动新容器（传递 GIT-SHA 版本锁定）
     if [ -n "$git_sha" ]; then
