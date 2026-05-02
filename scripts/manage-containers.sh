@@ -271,21 +271,20 @@ update_upstream()
     local container_name
     container_name=$(get_container_name "$target_env")
 
-    local upstream_content="upstream ${UPSTREAM_NAME} {
-    server ${container_name}:${SERVICE_PORT} max_fails=3 fail_timeout=30s;
-}"
+    # 使用 set 变量代替 upstream 块，配合 resolver 实现动态 DNS 刷新
+    local upstream_content="# noda-apps upstream 变量 — 在 server 块中 include
+# 使用 resolver 127.0.0.11 动态解析 DNS，容器重建后自动刷新 IP
+# 由 update_upstream() 在蓝绿切换时更新
+set \$findclass_upstream ${container_name}:${SERVICE_PORT};
+set \$www_upstream ${container_name}:3002;
+set \$auth_app_upstream ${container_name}:3004;"
 
-    # noda-apps 容器同时代理 www 静态站点（端口 3002）和 auth 应用（端口 3004）
-    if [ "$SERVICE_NAME" = "noda-apps" ]; then
-        upstream_content="${upstream_content}
-
-upstream www_backend {
-    server ${container_name}:3002 max_fails=3 fail_timeout=30s;
-}
-
-upstream auth_app_backend {
-    server ${container_name}:3004 max_fails=3 fail_timeout=30s;
-}"
+    # Keycloak 服务使用独立的 upstream 变量格式
+    if [ "$SERVICE_NAME" = "keycloak" ]; then
+        upstream_content="# Keycloak upstream 变量 — 在 server 块中 include
+# 使用 resolver 127.0.0.11 动态解析 DNS，容器重建后自动刷新 IP
+# 由 update_upstream() 在蓝绿切换时更新
+set \$keycloak_upstream ${container_name}:${SERVICE_PORT};"
     fi
 
     # 写入宿主机文件（nginx volume mount 的源目录）
@@ -441,6 +440,12 @@ cmd_start()
         exit 1
     fi
 
+    # 启动的是活跃环境时，reload nginx 刷新 DNS 缓存（容器重建后 IP 会变）
+    if [ "$env" = "$(get_active_env)" ]; then
+        log_info "活跃容器已启动，reload nginx 刷新 DNS 缓存..."
+        reload_nginx
+    fi
+
     log_success "$container_name 启动完成并已通过健康检查"
 }
 
@@ -518,6 +523,12 @@ cmd_restart()
     if ! wait_container_healthy "$container_name" 120; then
         log_error "$container_name 健康检查失败"
         exit 1
+    fi
+
+    # 重启的是活跃环境时，reload nginx 刷新 DNS 缓存（容器重建后 IP 会变）
+    if [ "$env" = "$(get_active_env)" ]; then
+        log_info "活跃容器已重建，reload nginx 刷新 DNS 缓存..."
+        reload_nginx
     fi
 
     log_success "$container_name 重启完成"
