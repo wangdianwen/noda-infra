@@ -20,7 +20,7 @@ pipeline {
                         branches: [[name: '*/main']],
                         userRemoteConfigs: [[
                             url: 'git@github.com:wangdianwen/noda-platform.git',
-                            credentialsId: 'noda-infra-git-credentials'
+                            credentialsId: 'noda-platform-git-credentials'
                         ]]
                     ])
                 }

@@ -5,6 +5,7 @@
 // 更新策略：作业已存在则更新 configXml（幂等）
 import jenkins.model.*
 import org.jenkinsci.plugins.workflow.job.*
+import javax.xml.transform.stream.StreamSource
 
 def instance = Jenkins.getInstance()
 def jobName = 'noda-prod-deploy'
@@ -53,7 +54,7 @@ def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
 def existingJob = instance.getItem(jobName)
 
 if (existingJob != null) {
-    existingJob.updateByXml(new ByteArrayInputStream(configXml.getBytes('UTF-8')))
+    existingJob.updateByXml(new StreamSource(new ByteArrayInputStream(configXml.getBytes('UTF-8'))))
     println "Pipeline job '${jobName}' updated."
 } else {
     instance.createProjectFromXML(jobName, new ByteArrayInputStream(configXml.getBytes('UTF-8')))
