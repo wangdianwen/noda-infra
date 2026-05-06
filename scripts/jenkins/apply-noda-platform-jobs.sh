@@ -5,10 +5,10 @@ set -euo pipefail
 # 应用 noda-platform Jenkins Pipeline Jobs
 # ============================================
 # 功能：在已运行的 Jenkins 上创建 noda-platform 的 Pipeline Jobs
-#        - doppler-token 凭据
 #        - noda-data-migration Pipeline
 #        - noda-prod-deploy Pipeline
-# 用法：DOPPLER_TOKEN='dp.st.prd.xxx' bash scripts/jenkins/apply-noda-platform-jobs.sh
+# 前提：Doppler CLI 已通过 doppler login 认证
+# 用法：bash scripts/jenkins/apply-noda-platform-jobs.sh
 # ============================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,32 +83,14 @@ log_success "Jenkins 运行中"
 load_admin_credentials
 log_success "管理员凭据已加载"
 
-# 检查 DOPPLER_TOKEN
-if [[ -z "${DOPPLER_TOKEN:-}" ]]; then
-    log_warn "DOPPLER_TOKEN 未设置，doppler-token 凭据将跳过"
-    log_warn "设置方法: export DOPPLER_TOKEN='dp.st.prd.xxx'"
-    log_warn "获取方法: Doppler Dashboard > noda project > prd config > Service Tokens"
-fi
-
 # 执行 groovy 脚本
 log_info "------------------------------------------"
-log_info "步骤 1/3: 创建 doppler-token 凭据"
-log_info "------------------------------------------"
-if [[ -n "${DOPPLER_TOKEN:-}" ]]; then
-    # 注入 DOPPLER_TOKEN 到 groovy 脚本环境
-    export DOPPLER_TOKEN
-    run_groovy "$GROOVY_DIR/10-credential-doppler-token.groovy"
-else
-    log_warn "跳过 doppler-token 凭据创建（DOPPLER_TOKEN 未设置）"
-fi
-
-log_info "------------------------------------------"
-log_info "步骤 2/3: 创建 noda-data-migration Pipeline"
+log_info "步骤 1/2: 创建 noda-data-migration Pipeline"
 log_info "------------------------------------------"
 run_groovy "$GROOVY_DIR/11-pipeline-job-data-migration.groovy"
 
 log_info "------------------------------------------"
-log_info "步骤 3/3: 创建 noda-prod-deploy Pipeline"
+log_info "步骤 2/2: 创建 noda-prod-deploy Pipeline"
 log_info "------------------------------------------"
 run_groovy "$GROOVY_DIR/12-pipeline-job-prod-deploy.groovy"
 
