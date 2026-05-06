@@ -1,0 +1,117 @@
+#!/usr/bin/env groovy
+// Noda Platform - 数据迁移 + Keycloak 迁移 Pipeline
+// Phase 24: 老系统数据迁移到新系统
+// 密钥从 Doppler (project=noda, config=prd) 加载
+
+pipeline {
+    agent any
+
+    parameters {
+        booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'dry-run 模式（不实际写入数据）')
+        booleanParam(name: 'RUN_KEYCLOAK', defaultValue: false, description: '是否同时执行 Keycloak 迁移')
+    }
+
+    stages {
+        stage('Checkout noda-platform') {
+            steps {
+                dir('noda-platform') {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: '*/main']],
+                        userRemoteConfigs: [[
+                            url: 'git@github.com:wangdianwen/noda-platform.git',
+                            credentialsId: 'noda-infra-git-credentials'
+                        ]]
+                    ])
+                }
+            }
+        }
+
+        stage('Load Secrets from Doppler') {
+            steps {
+                sh '''
+                    eval "$(doppler secrets download --no-file --format=env --project noda --config prd)"
+                    export OLD_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                    export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                '''
+            }
+        }
+
+        stage('Backup Old Database') {
+            steps {
+                sh '''
+                    eval "$(doppler secrets download --no-file --format=env --project noda --config prd)"
+                    export OLD_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                    echo "📦 备份老数据库..."
+                    cd noda-platform && bash scripts/backup-old-db.sh
+                '''
+            }
+        }
+
+        stage('Dry Run') {
+            when { expression { params.DRY_RUN == true } }
+            steps {
+                sh '''
+                    eval "$(doppler secrets download --no-file --format=env --project noda --config prd)"
+                    export OLD_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                    export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                    echo "🔍 Dry-run 预检..."
+                    cd noda-platform && npx tsx scripts/migrate-data.ts --dry-run
+                '''
+            }
+        }
+
+        stage('Migrate Data') {
+            when { expression { params.DRY_RUN == false } }
+            steps {
+                sh '''
+                    eval "$(doppler secrets download --no-file --format=env --project noda --config prd)"
+                    export OLD_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                    export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                    echo "🚀 执行数据迁移..."
+                    cd noda-platform && npx tsx scripts/migrate-data.ts
+                '''
+            }
+        }
+
+        stage('Verify Migration') {
+            when { expression { params.DRY_RUN == false } }
+            steps {
+                sh '''
+                    eval "$(doppler secrets download --no-file --format=env --project noda --config prd)"
+                    export OLD_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                    export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                    echo "🔍 验证迁移结果..."
+                    cd noda-platform && npx tsx scripts/verify-migration.ts
+                '''
+                archiveArtifacts artifacts: 'noda-platform/scripts/migration-report.json', fingerprint: true
+            }
+        }
+
+        stage('Keycloak: Export Old Realm') {
+            when { expression { params.RUN_KEYCLOAK == true && params.DRY_RUN == false } }
+            steps {
+                sh '''
+                    eval "$(doppler secrets download --no-file --format=env --project noda --config prd)"
+                    cd noda-platform
+                    OLD_KEYCLOAK_URL="https://auth.noda.co.nz" \
+                    KEYCLOAK_ADMIN_USER="${KEYCLOAK_ADMIN_USER}" \
+                    KEYCLOAK_ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD}" \
+                    bash scripts/migrate-keycloak.sh export-old-realm
+                '''
+            }
+        }
+
+        stage('Keycloak: Merge & Update') {
+            when { expression { params.RUN_KEYCLOAK == true && params.DRY_RUN == false } }
+            steps {
+                sh 'cd noda-platform && bash scripts/migrate-keycloak.sh update-realm-export'
+            }
+        }
+    }
+
+    post {
+        failure { echo '❌ 迁移失败！可使用 scripts/rollback-migration.sh 回滚' }
+        success { echo '✅ 迁移完成！请检查 migration-report.json' }
+    }
+}

@@ -1,7 +1,7 @@
 // Jenkins Pipeline 作业配置 - Noda Platform 生产部署
-// 功能：配置 noda-prod-deploy Pipeline 从 noda-platform 仓库读取 Jenkinsfile.prod-deploy
+// 功能：配置 noda-prod-deploy Pipeline 从 noda-infra 仓库读取 Jenkinsfile.prod-deploy
+//       Pipeline 内部 checkout noda-platform 到子目录
 //
-// 执行时机：11-pipeline-job-data-migration.groovy 之后执行（字母顺序）
 // 更新策略：作业已存在则更新 configXml（幂等）
 import jenkins.model.*
 import org.jenkinsci.plugins.workflow.job.*
@@ -33,7 +33,7 @@ def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
     <scm class="hudson.plugins.git.GitSCM" plugin="git">
       <userRemoteConfigs>
         <hudson.plugins.git.UserRemoteConfig>
-          <url>git@github.com:wangdianwen/noda-platform.git</url>
+          <url>git@github.com:wangdianwen/noda-infra.git</url>
           <credentialsId>noda-infra-git-credentials</credentialsId>
         </hudson.plugins.git.UserRemoteConfig>
       </userRemoteConfigs>
@@ -43,7 +43,7 @@ def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
         </hudson.plugins.git.BranchSpec>
       </branches>
     </scm>
-    <scriptPath>deploy/jenkins/Jenkinsfile.prod-deploy</scriptPath>
+    <scriptPath>jenkins/Jenkinsfile.prod-deploy</scriptPath>
     <lightweight>true</lightweight>
   </definition>
   <triggers/>
