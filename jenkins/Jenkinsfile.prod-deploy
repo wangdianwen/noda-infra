@@ -49,9 +49,9 @@ pipeline {
                     steps {
                         sh '''
                             cd noda-platform
-                            docker build -f apps/findclass/Dockerfile -t noda/findclass:${TAG} .
-                            docker build -f apps/auth/Dockerfile -t noda/auth-app:${TAG} .
-                            docker build -f apps/admin/Dockerfile -t noda/admin-app:${TAG} .
+                            docker build --build-arg NEXT_PUBLIC_BFF_URL=https://api.noda.co.nz/graphql --build-arg NEXT_PUBLIC_GRAPHQL_URL=https://api.noda.co.nz/graphql -f apps/findclass/Dockerfile -t noda/findclass:${TAG} .
+                            docker build --build-arg NEXT_PUBLIC_BFF_URL=https://api.noda.co.nz/graphql --build-arg NEXT_PUBLIC_GRAPHQL_URL=https://api.noda.co.nz/graphql -f apps/auth/Dockerfile -t noda/auth-app:${TAG} .
+                            docker build --build-arg NEXT_PUBLIC_BFF_URL=https://api.noda.co.nz/graphql --build-arg NEXT_PUBLIC_GRAPHQL_URL=https://api.noda.co.nz/graphql -f apps/admin/Dockerfile -t noda/admin-app:${TAG} .
                             docker build -f apps/www/Dockerfile -t noda/www:${TAG} .
                         '''
                     }
@@ -92,11 +92,11 @@ pipeline {
             when { expression { params.SKIP_TESTS == false } }
             steps {
                 sh '''
-                    curl -sf http://localhost:3000/ || (echo "findclass FAILED" && exit 1)
-                    curl -sf http://localhost:3001/ || (echo "auth FAILED" && exit 1)
-                    curl -sf http://localhost:3002/ || (echo "admin FAILED" && exit 1)
-                    curl -sf http://localhost:3003/ || (echo "www FAILED" && exit 1)
-                    curl -sf http://localhost:4000/graphql?query={__schema{types{name}}} || (echo "BFF FAILED" && exit 1)
+                    curl -sf http://localhost:82/ -H "Host: class.noda.co.nz" || (echo "findclass FAILED" && exit 1)
+                    curl -sf http://localhost:82/ -H "Host: auth.noda.co.nz" || (echo "auth FAILED" && exit 1)
+                    curl -sf http://localhost:82/ -H "Host: admin.noda.co.nz" || (echo "admin FAILED" && exit 1)
+                    curl -sf http://localhost:82/ -H "Host: www.noda.co.nz" || (echo "www FAILED" && exit 1)
+                    curl -sf http://localhost:82/ -H "Host: api.noda.co.nz" -X POST -H "Content-Type: application/json" -d '{"query":"{__schema{types{name}}}"}' || (echo "BFF FAILED" && exit 1)
                     echo "✅ 全服务健康检查通过"
                 '''
             }
