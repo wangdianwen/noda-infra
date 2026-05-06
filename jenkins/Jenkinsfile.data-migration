@@ -27,21 +27,14 @@ pipeline {
             }
         }
 
-        stage('Load Secrets from Doppler') {
-            steps {
-                sh '''
-                    eval "$(doppler secrets download --no-file --format=env --project noda --config prd)"
-                    export OLD_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
-                    export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
-                '''
-            }
-        }
-
         stage('Backup Old Database') {
             steps {
                 sh '''
-                    eval "$(doppler secrets download --no-file --format=env --project noda --config prd)"
+                    set +x
+                    doppler secrets download --no-file --format=env --project noda --config prd > .doppler.env
+                    source .doppler.env
                     export OLD_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                    set -x
                     echo "📦 备份老数据库..."
                     cd noda-platform && bash scripts/backup-old-db.sh
                 '''
@@ -52,9 +45,11 @@ pipeline {
             when { expression { params.DRY_RUN == true } }
             steps {
                 sh '''
-                    eval "$(doppler secrets download --no-file --format=env --project noda --config prd)"
+                    set +x
+                    source .doppler.env
                     export OLD_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
                     export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                    set -x
                     echo "🔍 Dry-run 预检..."
                     cd noda-platform && npx tsx scripts/migrate-data.ts --dry-run
                 '''
@@ -65,9 +60,11 @@ pipeline {
             when { expression { params.DRY_RUN == false } }
             steps {
                 sh '''
-                    eval "$(doppler secrets download --no-file --format=env --project noda --config prd)"
+                    set +x
+                    source .doppler.env
                     export OLD_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
                     export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                    set -x
                     echo "🚀 执行数据迁移..."
                     cd noda-platform && npx tsx scripts/migrate-data.ts
                 '''
@@ -78,9 +75,11 @@ pipeline {
             when { expression { params.DRY_RUN == false } }
             steps {
                 sh '''
-                    eval "$(doppler secrets download --no-file --format=env --project noda --config prd)"
+                    set +x
+                    source .doppler.env
                     export OLD_DB_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
                     export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/noda_prod"
+                    set -x
                     echo "🔍 验证迁移结果..."
                     cd noda-platform && npx tsx scripts/verify-migration.ts
                 '''
@@ -92,7 +91,9 @@ pipeline {
             when { expression { params.RUN_KEYCLOAK == true && params.DRY_RUN == false } }
             steps {
                 sh '''
-                    eval "$(doppler secrets download --no-file --format=env --project noda --config prd)"
+                    set +x
+                    source .doppler.env
+                    set -x
                     cd noda-platform
                     OLD_KEYCLOAK_URL="https://auth.noda.co.nz" \
                     KEYCLOAK_ADMIN_USER="${KEYCLOAK_ADMIN_USER}" \
@@ -111,6 +112,9 @@ pipeline {
     }
 
     post {
+        always {
+            sh 'rm -f .doppler.env'
+        }
         failure { echo '❌ 迁移失败！可使用 scripts/rollback-migration.sh 回滚' }
         success { echo '✅ 迁移完成！请检查 migration-report.json' }
     }
