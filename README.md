@@ -96,13 +96,11 @@ noda-infra/
 ├── scripts/            # 运维脚本
 │   ├── backup/         # 备份与恢复脚本（backup-postgres.sh, restore-postgres.sh）
 │   ├── deploy/         # 部署脚本（deploy-infrastructure-prod.sh, deploy-apps-prod.sh）
-│   ├── verify/         # 验证脚本（verify-infrastructure.sh, quick-verify.sh）
-│   ├── utils/          # 工具脚本（validate-docker.sh）
-│   └── lib/            # 共享库（log.sh）
+│   ├── jenkins/        # Jenkins 初始化配置
+│   └── lib/            # 共享库（log.sh, health.sh, secrets.sh）
 ├── services/           # 服务专用配置
 │   ├── postgres/       # PostgreSQL 初始化脚本和配置（init/, conf/）
 │   └── keycloak/       # Keycloak realm 配置和初始化脚本
-├── examples/           # 示例文件（macOS launchd plist 等）
 └── docs/               # 项目文档
 ```
 
@@ -131,14 +129,8 @@ scripts/backup/backup-postgres.sh
 
 ## 文档
 
-- [架构文档](docs/architecture.md) — 系统架构和安全设计原则
-- [快速开始](docs/GETTING-STARTED.md) — 前置要求和首次部署指引
-- [开发指南](docs/DEVELOPMENT.md) — 本地开发环境配置
-- [测试指南](docs/TESTING.md) — 测试框架和运行方式
-- [配置说明](docs/CONFIGURATION.md) — 环境变量和配置文件详解
-- [部署指南](docs/DEPLOYMENT_GUIDE.md) — 完整的生产/开发环境部署流程
+- [部署指南](docs/DEPLOYMENT_GUIDE.md) — 生产环境部署流程和故障排查
 - [密钥管理](docs/secrets-management.md) — Doppler 密钥管理方案
-- [Keycloak 脚本](docs/KEYCLOAK_SCRIPTS.md) — Keycloak 配置和 realm 初始化脚本
 
 ## 许可证
 

@@ -38,17 +38,20 @@ save_app_image_tags()
 {
     mkdir -p "$ROLLBACK_DIR"
     : >"$ROLLBACK_FILE"
+    local active_env
+    active_env=$(cat /opt/noda/active-env 2>/dev/null || echo "blue")
+    local active_container="noda-apps-${active_env}"
     local image_id
-    image_id=$(docker inspect --format='{{.Image}}' noda-apps 2>/dev/null || echo "")
+    image_id=$(docker inspect --format='{{.Image}}' "$active_container" 2>/dev/null || echo "")
     if [ -n "$image_id" ]; then
         echo "noda-apps=${image_id}" >>"$ROLLBACK_FILE"
-        log_info "已保存 noda-apps 镜像: ${image_id:0:12}..."
+        log_info "已保存 ${active_container} 镜像: ${image_id:0:12}..."
     fi
 
     log_success "应用镜像标签已保存"
 }
 
-# 使用 compose override 回滚到保存的镜像版本
+# 回滚到保存的镜像版本（通过 manage-containers.sh restart 实现）
 rollback_app()
 {
     if [ ! -f "$ROLLBACK_FILE" ]; then
@@ -63,74 +66,133 @@ rollback_app()
         return 1
     fi
 
-    log_info "回滚 noda-apps 到镜像 ${image_id:0:12}..."
+    local active_env
+    active_env=$(cat /opt/noda/active-env 2>/dev/null || echo "blue")
+    log_info "回滚 noda-apps-${active_env} 到镜像 ${image_id:0:12}..."
 
-    # 生成 compose override 文件指定回滚镜像
-    local rollback_compose="$ROLLBACK_DIR/docker-compose.app-rollback.yml"
-    cat >"$rollback_compose" <<EOF
-services:
-  noda-apps:
-    image: ${image_id}
-EOF
+    docker stop -t 30 "noda-apps-${active_env}" 2>/dev/null || true
+    docker rm "noda-apps-${active_env}" 2>/dev/null || true
 
-    if ! docker compose $COMPOSE_FILE -f "$rollback_compose" up -d --no-deps --force-recreate noda-apps; then
-        log_error "noda-apps 回滚失败"
+    source "$PROJECT_ROOT/scripts/manage-containers.sh"
+    run_container "$active_env" "$image_id"
+
+    if ! wait_container_healthy "noda-apps-${active_env}" 90; then
+        log_error "回滚后健康检查失败"
         return 1
     fi
 
+    reload_nginx
     log_success "noda-apps 已回滚"
 
     return 0
 }
 
 # ============================================
-# 步骤 1/5: 验证基础设施
+# 步骤 1/6: 验证基础设施
 # ============================================
 log_info "=========================================="
-log_info "步骤 1/5: 验证基础设施服务"
+log_info "步骤 1/6: 验证基础设施服务"
 log_info "=========================================="
 
 # 基础设施验证由 Jenkins Pipeline 健康检查阶段覆盖
 
 # ============================================
-# 步骤 2/5: 保存当前镜像标签
+# 步骤 2/6: 保存当前镜像标签
 # ============================================
 log_info "=========================================="
-log_info "步骤 2/5: 保存当前镜像标签"
+log_info "步骤 2/6: 保存当前镜像标签"
 log_info "=========================================="
 
 save_app_image_tags
 
 # ============================================
-# 步骤 3/5: 构建新镜像
+# 步骤 3/6: 构建新镜像
 # ============================================
 log_info "=========================================="
-log_info "步骤 3/5: 构建镜像"
+log_info "步骤 3/6: 构建镜像"
 log_info "=========================================="
 
-docker compose $COMPOSE_FILE build noda-apps
-log_success "镜像构建完成"
+# 获取 noda-apps Git SHA（用于镜像标签）
+APPS_GIT_SHA=$(cd "$PROJECT_ROOT/../noda-apps" 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || echo "manual")
+
+docker build \
+    -t "noda-apps:latest" \
+    -t "noda-apps:${APPS_GIT_SHA}" \
+    -f "$PROJECT_ROOT/../noda-apps/infra/docker/Dockerfile.noda-apps" \
+    --build-arg NEXT_PUBLIC_KEYCLOAK_URL=https://auth.noda.co.nz \
+    --build-arg NEXT_PUBLIC_KEYCLOAK_REALM=noda \
+    --build-arg NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=noda-frontend \
+    --build-arg NEXT_PUBLIC_AUTH_KEYCLOAK_CLIENT_ID=noda-auth \
+    "$PROJECT_ROOT/../noda-apps"
+log_success "镜像构建完成: noda-apps:${APPS_GIT_SHA}"
 
 # ============================================
-# 步骤 4/5: 部署新版本
+# 步骤 4/6: 蓝绿部署
 # ============================================
 log_info "=========================================="
-log_info "步骤 4/5: 部署新版本"
+log_info "步骤 4/6: 蓝绿部署"
 log_info "=========================================="
 
-docker compose $COMPOSE_FILE up -d --force-recreate noda-apps
+ACTIVE_ENV=$(cat /opt/noda/active-env 2>/dev/null || echo "blue")
+if [ "$ACTIVE_ENV" = "blue" ]; then
+    TARGET_ENV="green"
+else
+    TARGET_ENV="blue"
+fi
+TARGET_CONTAINER="noda-apps-${TARGET_ENV}"
+
+log_info "活跃环境: $ACTIVE_ENV, 目标环境: $TARGET_ENV"
+
+# 停止旧目标容器（同色蓝绿容器）
+if [ "$(docker inspect -f '{{.State.Running}}' "$TARGET_CONTAINER" 2>/dev/null)" = "true" ]; then
+    log_info "停止旧目标容器: $TARGET_CONTAINER"
+    docker stop -t 30 "$TARGET_CONTAINER"
+    docker rm "$TARGET_CONTAINER"
+fi
+
+# 加载蓝绿容器管理函数
+source "$PROJECT_ROOT/scripts/manage-containers.sh"
+
+# 启动新容器到目标环境
+run_container "$TARGET_ENV" "noda-apps:${APPS_GIT_SHA}"
 
 # ============================================
-# 步骤 5/5: 等待健康检查
+# 步骤 5/6: 健康检查 + 流量切换
 # ============================================
 log_info "=========================================="
-log_info "步骤 5/5: 等待健康检查"
+log_info "步骤 5/6: 健康检查 + 流量切换"
 log_info "=========================================="
 
-if ! wait_container_healthy noda-apps 90; then
-    log_info "尝试回滚到上一版本..."
-    rollback_app || true
+if ! wait_container_healthy "$TARGET_CONTAINER" 90; then
+    log_info "健康检查失败，清理目标容器..."
+    docker rm -f "$TARGET_CONTAINER" 2>/dev/null || true
     exit 1
+fi
+
+# 更新 nginx upstream + reload
+update_upstream "$TARGET_ENV"
+if ! docker exec "$NGINX_CONTAINER" nginx -t; then
+    log_error "nginx 配置验证失败，回滚 upstream"
+    update_upstream "$ACTIVE_ENV"
+    docker rm -f "$TARGET_CONTAINER" 2>/dev/null || true
+    exit 1
+fi
+reload_nginx
+set_active_env "$TARGET_ENV"
+log_success "流量切换完成: $ACTIVE_ENV -> $TARGET_ENV"
+
+# ============================================
+# 步骤 6/6: 清理旧环境容器
+# ============================================
+log_info "=========================================="
+log_info "步骤 6/6: 清理旧环境容器"
+log_info "=========================================="
+
+OLD_CONTAINER="noda-apps-${ACTIVE_ENV}"
+if [ "$(docker inspect -f '{{.State.Running}}' "$OLD_CONTAINER" 2>/dev/null)" = "true" ]; then
+    log_info "停止旧容器: $OLD_CONTAINER"
+    docker stop -t 10 "$OLD_CONTAINER"
+    docker rm "$OLD_CONTAINER"
 fi
 
 

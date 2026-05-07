@@ -1,307 +1,167 @@
 [
   {
-    "timestamp": "2026-04-06T00:36:28Z",
-    "database": "oneteam_prod",
-    "operation": "backup",
-    "duration": 0,
-    "file_size": 880
-  },
-  {
-    "timestamp": "2026-04-06T00:36:28Z",
-    "database": "oneteam_prod",
-    "operation": "upload",
-    "duration": 5,
-    "file_size": 880
-  },
-  {
-    "timestamp": "2026-04-06T00:36:28Z",
-    "database": "postgres",
-    "operation": "backup",
-    "duration": 0,
-    "file_size": 1080
-  },
-  {
-    "timestamp": "2026-04-06T00:36:28Z",
-    "database": "postgres",
-    "operation": "upload",
-    "duration": 5,
-    "file_size": 1080
-  },
-  {
-    "timestamp": "2026-04-06T00:38:56Z",
-    "database": "oneteam_prod",
-    "operation": "backup",
-    "duration": 0,
-    "file_size": 880
-  },
-  {
-    "timestamp": "2026-04-06T00:38:56Z",
-    "database": "oneteam_prod",
-    "operation": "upload",
-    "duration": 5,
-    "file_size": 880
-  },
-  {
-    "timestamp": "2026-04-06T00:38:56Z",
-    "database": "postgres",
-    "operation": "backup",
-    "duration": 0,
-    "file_size": 1080
-  },
-  {
-    "timestamp": "2026-04-06T00:38:56Z",
-    "database": "postgres",
-    "operation": "upload",
-    "duration": 5,
-    "file_size": 1080
-  },
-  {
-    "timestamp": "2026-04-06T00:39:29Z",
-    "database": "oneteam_prod",
+    "timestamp": "2026-04-29T08:33:01Z",
+    "database": "keycloak",
     "operation": "backup",
     "duration": 1,
-    "file_size": 880
+    "file_size": 218544
   },
   {
-    "timestamp": "2026-04-06T00:39:29Z",
-    "database": "oneteam_prod",
+    "timestamp": "2026-04-29T08:33:01Z",
+    "database": "keycloak",
     "operation": "upload",
-    "duration": 4,
-    "file_size": 880
+    "duration": 5,
+    "file_size": 218544
   },
   {
-    "timestamp": "2026-04-06T00:39:29Z",
+    "timestamp": "2026-04-29T08:33:01Z",
+    "database": "noda_agent",
+    "operation": "backup",
+    "duration": 1,
+    "file_size": 8933
+  },
+  {
+    "timestamp": "2026-04-29T08:33:01Z",
+    "database": "noda_agent",
+    "operation": "upload",
+    "duration": 5,
+    "file_size": 8933
+  },
+  {
+    "timestamp": "2026-04-29T08:33:01Z",
+    "database": "noda_prod",
+    "operation": "backup",
+    "duration": 1,
+    "file_size": 243979
+  },
+  {
+    "timestamp": "2026-04-29T08:33:01Z",
+    "database": "noda_prod",
+    "operation": "upload",
+    "duration": 5,
+    "file_size": 243979
+  },
+  {
+    "timestamp": "2026-04-29T08:33:01Z",
     "database": "postgres",
     "operation": "backup",
     "duration": 1,
     "file_size": 1080
   },
   {
-    "timestamp": "2026-04-06T00:39:29Z",
-    "database": "postgres",
-    "operation": "upload",
-    "duration": 4,
-    "file_size": 1080
-  },
-  {
-    "timestamp": "2026-04-06T00:40:22Z",
-    "database": "oneteam_prod",
-    "operation": "backup",
-    "duration": 0,
-    "file_size": 880
-  },
-  {
-    "timestamp": "2026-04-06T00:40:22Z",
-    "database": "oneteam_prod",
-    "operation": "upload",
-    "duration": 5,
-    "file_size": 880
-  },
-  {
-    "timestamp": "2026-04-06T00:40:22Z",
-    "database": "postgres",
-    "operation": "backup",
-    "duration": 0,
-    "file_size": 1080
-  },
-  {
-    "timestamp": "2026-04-06T00:40:22Z",
+    "timestamp": "2026-04-29T08:33:01Z",
     "database": "postgres",
     "operation": "upload",
     "duration": 5,
     "file_size": 1080
   },
   {
-    "timestamp": "2026-04-06T03:00:08Z",
-    "database": "oneteam_prod",
-    "operation": "backup",
-    "duration": 0,
-    "file_size": 880
-  },
-  {
-    "timestamp": "2026-04-06T03:00:08Z",
-    "database": "oneteam_prod",
-    "operation": "upload",
-    "duration": 6,
-    "file_size": 880
-  },
-  {
-    "timestamp": "2026-04-06T03:00:08Z",
-    "database": "postgres",
-    "operation": "backup",
-    "duration": 0,
-    "file_size": 1080
-  },
-  {
-    "timestamp": "2026-04-06T03:00:08Z",
-    "database": "postgres",
-    "operation": "upload",
-    "duration": 6,
-    "file_size": 1080
-  },
-  {
-    "timestamp": "2026-04-06T08:16:47Z",
+    "timestamp": "2026-05-05T05:45:10Z",
     "database": "keycloak",
     "operation": "backup",
     "duration": 1,
-    "file_size": 215029
+    "file_size": 241716
   },
   {
-    "timestamp": "2026-04-06T08:16:47Z",
+    "timestamp": "2026-05-05T05:45:10Z",
     "database": "keycloak",
     "operation": "upload",
-    "duration": 6,
-    "file_size": 215029
+    "duration": 5,
+    "file_size": 241716
   },
   {
-    "timestamp": "2026-04-06T08:16:47Z",
+    "timestamp": "2026-05-05T05:45:10Z",
+    "database": "noda_agent",
+    "operation": "backup",
+    "duration": 1,
+    "file_size": 8933
+  },
+  {
+    "timestamp": "2026-05-05T05:45:10Z",
+    "database": "noda_agent",
+    "operation": "upload",
+    "duration": 5,
+    "file_size": 8933
+  },
+  {
+    "timestamp": "2026-05-05T05:45:10Z",
     "database": "noda_prod",
     "operation": "backup",
     "duration": 1,
-    "file_size": 401094
+    "file_size": 268207
   },
   {
-    "timestamp": "2026-04-06T08:16:47Z",
+    "timestamp": "2026-05-05T05:45:10Z",
     "database": "noda_prod",
     "operation": "upload",
-    "duration": 6,
-    "file_size": 401094
+    "duration": 5,
+    "file_size": 268207
   },
   {
-    "timestamp": "2026-04-06T08:16:47Z",
-    "database": "oneteam_prod",
-    "operation": "backup",
-    "duration": 1,
-    "file_size": 216794
-  },
-  {
-    "timestamp": "2026-04-06T08:16:47Z",
-    "database": "oneteam_prod",
-    "operation": "upload",
-    "duration": 6,
-    "file_size": 216794
-  },
-  {
-    "timestamp": "2026-04-06T08:16:47Z",
+    "timestamp": "2026-05-05T05:45:10Z",
     "database": "postgres",
     "operation": "backup",
     "duration": 1,
     "file_size": 1080
   },
   {
-    "timestamp": "2026-04-06T08:16:47Z",
+    "timestamp": "2026-05-05T05:45:10Z",
     "database": "postgres",
     "operation": "upload",
-    "duration": 6,
+    "duration": 5,
     "file_size": 1080
   },
   {
-    "timestamp": "2026-04-07T03:00:09Z",
+    "timestamp": "2026-05-05T05:45:18Z",
     "database": "keycloak",
     "operation": "backup",
     "duration": 0,
-    "file_size": 215029
+    "file_size": 241716
   },
   {
-    "timestamp": "2026-04-07T03:00:09Z",
+    "timestamp": "2026-05-05T05:45:18Z",
     "database": "keycloak",
     "operation": "upload",
     "duration": 6,
-    "file_size": 215029
+    "file_size": 241716
   },
   {
-    "timestamp": "2026-04-07T03:00:09Z",
+    "timestamp": "2026-05-05T05:45:18Z",
+    "database": "noda_agent",
+    "operation": "backup",
+    "duration": 0,
+    "file_size": 8933
+  },
+  {
+    "timestamp": "2026-05-05T05:45:18Z",
+    "database": "noda_agent",
+    "operation": "upload",
+    "duration": 6,
+    "file_size": 8933
+  },
+  {
+    "timestamp": "2026-05-05T05:45:18Z",
     "database": "noda_prod",
     "operation": "backup",
     "duration": 0,
-    "file_size": 401094
+    "file_size": 268207
   },
   {
-    "timestamp": "2026-04-07T03:00:09Z",
+    "timestamp": "2026-05-05T05:45:18Z",
     "database": "noda_prod",
     "operation": "upload",
     "duration": 6,
-    "file_size": 401094
+    "file_size": 268207
   },
   {
-    "timestamp": "2026-04-07T03:00:09Z",
-    "database": "oneteam_prod",
-    "operation": "backup",
-    "duration": 0,
-    "file_size": 214655
-  },
-  {
-    "timestamp": "2026-04-07T03:00:09Z",
-    "database": "oneteam_prod",
-    "operation": "upload",
-    "duration": 6,
-    "file_size": 214655
-  },
-  {
-    "timestamp": "2026-04-07T03:00:09Z",
+    "timestamp": "2026-05-05T05:45:18Z",
     "database": "postgres",
     "operation": "backup",
     "duration": 0,
     "file_size": 1080
   },
   {
-    "timestamp": "2026-04-07T03:00:09Z",
-    "database": "postgres",
-    "operation": "upload",
-    "duration": 6,
-    "file_size": 1080
-  },
-  {
-    "timestamp": "2026-04-08T03:00:09Z",
-    "database": "keycloak",
-    "operation": "backup",
-    "duration": 1,
-    "file_size": 215029
-  },
-  {
-    "timestamp": "2026-04-08T03:00:09Z",
-    "database": "keycloak",
-    "operation": "upload",
-    "duration": 6,
-    "file_size": 215029
-  },
-  {
-    "timestamp": "2026-04-08T03:00:09Z",
-    "database": "noda_prod",
-    "operation": "backup",
-    "duration": 1,
-    "file_size": 401094
-  },
-  {
-    "timestamp": "2026-04-08T03:00:09Z",
-    "database": "noda_prod",
-    "operation": "upload",
-    "duration": 6,
-    "file_size": 401094
-  },
-  {
-    "timestamp": "2026-04-08T03:00:09Z",
-    "database": "oneteam_prod",
-    "operation": "backup",
-    "duration": 1,
-    "file_size": 214656
-  },
-  {
-    "timestamp": "2026-04-08T03:00:09Z",
-    "database": "oneteam_prod",
-    "operation": "upload",
-    "duration": 6,
-    "file_size": 214656
-  },
-  {
-    "timestamp": "2026-04-08T03:00:09Z",
-    "database": "postgres",
-    "operation": "backup",
-    "duration": 1,
-    "file_size": 1080
-  },
-  {
-    "timestamp": "2026-04-08T03:00:09Z",
+    "timestamp": "2026-05-05T05:45:18Z",
     "database": "postgres",
     "operation": "upload",
     "duration": 6,

@@ -36,7 +36,7 @@ bash scripts/deploy/deploy-infrastructure-prod.sh
 | 脚本 | 功能 | 说明 |
 |------|------|------|
 | `scripts/init-databases.sh` | 初始化数据库 | 创建 noda_prod, keycloak 数据库 |
-| `scripts/setup-keycloak-full.sh` | 配置 Keycloak | 创建 realm, client, Google Identity Provider |
+| `services/keycloak/init-realm.sh` | 配置 Keycloak | 创建 realm, client, Google Identity Provider |
 
 ## 🔄 部署流程
 
@@ -45,7 +45,7 @@ bash scripts/deploy/deploy-infrastructure-prod.sh
 ```bash
 # 检查必需工具
 docker --version
-docker-compose --version
+docker compose --version
 
 # 确保 Doppler 密钥可访问
 export DOPPLER_TOKEN='dp.st.prd.xxxx'
@@ -61,7 +61,7 @@ export DOPPLER_TOKEN='dp.st.prd.xxxx'
 ### 步骤 3: 启动基础设施
 
 ```bash
-docker-compose -f docker/docker-compose.yml up -d postgres keycloak nginx
+docker compose -f docker/docker compose.yml up -d postgres keycloak nginx
 ```
 
 启动的服务：
@@ -76,7 +76,7 @@ docker-compose -f docker/docker-compose.yml up -d postgres keycloak nginx
 
 ### 步骤 5: 配置 Keycloak
 
-自动执行 `scripts/setup-keycloak-full.sh`：
+自动执行 `services/keycloak/init-realm.sh`：
 
 1. **获取凭据**: 从 Doppler 获取 Google OAuth 凭据
 2. **创建 realm**: 创建 `noda` realm
@@ -108,7 +108,7 @@ docker ps --filter "name=noda-infra"
 **预期输出**：
 ```
 noda-infra-postgres-prod   Up X minutes   5432/tcp
-noda-infra-keycloak-1      Up X minutes   8080/tcp, 9000/tcp
+noda-infra-keycloak-1      Up X minutes   8080/tcp
 noda-infra-nginx            Up X minutes   80/tcp
 ```
 
@@ -182,7 +182,7 @@ docker restart noda-infra-keycloak-1
 **解决方案**：
 ```bash
 # 手动配置 Keycloak
-bash scripts/setup-keycloak-full.sh
+bash services/keycloak/init-realm.sh
 ```
 
 ### 问题 3: Google OAuth 登录失败
@@ -225,7 +225,7 @@ bash scripts/setup-keycloak-full.sh
 
 3. **重新配置 Keycloak**：
    ```bash
-   bash scripts/setup-keycloak-full.sh
+   bash services/keycloak/init-realm.sh
    ```
 
 #### 症状 B: CORS 错误
@@ -253,7 +253,7 @@ from origin 'https://class.noda.co.nz' has been blocked by CORS policy
 
 2. **重新配置 Keycloak**（会自动修复 CORS）：
    ```bash
-   bash scripts/setup-keycloak-full.sh
+   bash services/keycloak/init-realm.sh
    ```
 
 3. **重启 Keycloak**（使配置生效）：
@@ -290,7 +290,7 @@ from origin 'https://class.noda.co.nz' has been blocked by CORS policy
 
 4. **重新配置**：
    ```bash
-   bash scripts/setup-keycloak-full.sh
+   bash services/keycloak/init-realm.sh
    ```
 
 ### 问题 4: Doppler 密钥拉取失败
@@ -302,7 +302,7 @@ from origin 'https://class.noda.co.nz' has been blocked by CORS policy
 **解决方案**：
 ```bash
 # 安装 Doppler CLI（如未安装）
-bash scripts/install-doppler.sh
+# 参见 https://docs.doppler.com/docs/cli
 
 # 设置 Service Token（从 Doppler Dashboard 获取）
 export DOPPLER_TOKEN='dp.st.prd.xxxx'
@@ -325,7 +325,7 @@ docker logs noda-infra-postgres-prod
 docker logs noda-infra-keycloak-1
 
 # 手动重启
-docker-compose -f docker/docker-compose.yml restart postgres keycloak
+docker compose -f docker/docker compose.yml restart postgres keycloak
 ```
 
 ## 📝 维护命令
@@ -334,17 +334,17 @@ docker-compose -f docker/docker-compose.yml restart postgres keycloak
 
 ```bash
 # 所有容器状态
-docker-compose -f docker/docker-compose.yml ps
+docker compose -f docker/docker compose.yml ps
 
 # 实时日志
-docker-compose -f docker/docker-compose.yml logs -f
+docker compose -f docker/docker compose.yml logs -f
 ```
 
 ### 重启服务
 
 ```bash
 # 重启所有基础设施
-docker-compose -f docker/docker-compose.yml restart
+docker compose -f docker/docker compose.yml restart
 
 # 重启单个服务
 docker restart noda-infra-keycloak-1
@@ -354,7 +354,7 @@ docker restart noda-infra-keycloak-1
 
 ```bash
 # 1. 更新代码或配置文件
-vim docker/docker-compose.yml
+vim docker/docker compose.yml
 
 # 2. 重新部署
 bash scripts/deploy/deploy-infrastructure-prod.sh
@@ -386,10 +386,10 @@ bash scripts/deploy/deploy-infrastructure-prod.sh
 
 ```bash
 # 1. 停止所有容器
-docker-compose -f docker/docker-compose.yml down
+docker compose -f docker/docker compose.yml down
 
 # 2. 清理容器（保留数据卷）
-docker-compose -f docker/docker-compose.yml rm -f
+docker compose -f docker/docker compose.yml rm -f
 
 # 3. 重新部署
 bash scripts/deploy/deploy-infrastructure-prod.sh
@@ -397,6 +397,4 @@ bash scripts/deploy/deploy-infrastructure-prod.sh
 
 ## 🔗 相关文档
 
-- [Keycloak 脚本说明](/docs/KEYCLOAK_SCRIPTS.md)
 - [密钥管理](/docs/secrets-management.md)
-- [数据量校验](/scripts/backup/DATA_VOLUME_CHECK.md)

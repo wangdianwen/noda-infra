@@ -197,7 +197,6 @@ opdev 容器内部的定时任务（Crontab）：
 
 ## 📖 相关文档
 
-- [部署总结](../scripts/backup/DEPLOYMENT_SUMMARY.md) - 完整部署文档
 - [Docker Compose 配置](./docker-compose.yml) - 服务定义
 - [环境变量配置](../config/environments/.env.example) - 配置说明
 

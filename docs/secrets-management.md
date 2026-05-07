@@ -168,8 +168,7 @@ set -a && source /tmp/backup.env && set +a
 在新服务器上配置 Doppler 密钥访问：
 
 ```bash
-# 1. 安装 Doppler CLI
-bash scripts/install-doppler.sh
+# 1. 安装 Doppler CLI（参见 https://docs.doppler.com/docs/cli）
 
 # 2. 设置 Service Token（从 Doppler Dashboard 获取）
 export DOPPLER_TOKEN='dp.st.prd.xxxx'
@@ -222,7 +221,7 @@ DOPPLER_TOKEN='dp.st.prd.xxxx' bash scripts/verify-doppler-secrets.sh
 
 **解决方案**：
 ```bash
-bash scripts/install-doppler.sh
+# 参见 https://docs.doppler.com/docs/cli 安装 Doppler CLI
 ```
 
 ### 密钥缺失
