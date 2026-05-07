@@ -70,10 +70,12 @@ services:
           memory: 128M
     cap_drop:
       - ALL
-    # read_only: true  # 临时禁用：Next.js 需要写入 .next/cache 目录
+    read_only: true
     tmpfs:
       - /tmp
       - /app/scripts/logs:uid=1001,gid=1001,mode=0755
+      - /app/apps/auth/.next/cache:uid=1001,gid=1001,mode=0755
+      - /app/apps/findclass/web/.next/cache:uid=1001,gid=1001,mode=0755
 
 networks:
   noda-network:
