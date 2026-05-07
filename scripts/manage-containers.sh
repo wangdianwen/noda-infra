@@ -278,7 +278,8 @@ update_upstream()
 set \$findclass_upstream ${container_name}:${SERVICE_PORT};
 set \$www_upstream ${container_name}:3002;
 set \$auth_app_upstream ${container_name}:3004;
-set \$admin_upstream noda-admin:8001;"
+set \$admin_upstream noda-admin:8001;
+	set \$admin_api_upstream noda-admin:8001;"
 
     # Keycloak 服务使用独立的 upstream 变量格式
     if [ "$SERVICE_NAME" = "keycloak" ]; then
