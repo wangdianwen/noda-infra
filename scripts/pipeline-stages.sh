@@ -584,12 +584,35 @@ pipeline_infra_preflight()
     }
     log_info "Docker daemon 可用"
 
-    # 检查 nginx 容器
+    # 检查 nginx 容器（部署 nginx 本身时自动启动）
     if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
-        log_error "nginx 容器未运行"
-        return 1
+        if [ "$service" = "nginx" ]; then
+            log_info "nginx 容器未运行，正在通过 docker compose 启动..."
+            docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --no-deps nginx || {
+                log_error "docker compose 启动 nginx 失败"
+                return 1
+            }
+            # 等待 nginx 就绪
+            local _wait=0
+            while [ "$_wait" -lt 30 ]; do
+                if [ "$(is_container_running "$NGINX_CONTAINER")" = "true" ]; then
+                    log_info "nginx 容器已启动（等待 ${_wait} 秒）"
+                    break
+                fi
+                sleep 1
+                _wait=$((_wait + 1))
+            done
+            if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
+                log_error "nginx 启动超时（30秒）"
+                return 1
+            fi
+        else
+            log_error "nginx 容器未运行（请先通过 infra-deploy Pipeline 部署 nginx）"
+            return 1
+        fi
+    else
+        log_info "nginx 容器运行中"
     fi
-    log_info "nginx 容器运行中"
 
     # 检查 noda-network
     docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || {

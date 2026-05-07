@@ -1,0 +1,132 @@
+#!/usr/bin/env groovy
+// Noda Site 蓝绿部署 Pipeline
+// noda-site 已合并到 noda-apps 镜像，此 Pipeline 复用 noda-apps 的构建和部署流程
+// 与 Jenkinsfile.noda-apps 相同的逻辑，用于独立的 noda-site-deploy Jenkins 任务
+
+pipeline {
+    agent any
+
+    environment {
+        PROJECT_ROOT = "${WORKSPACE}"
+        ACTIVE_ENV = sh(
+            script: 'cat /opt/noda/active-env 2>/dev/null || echo blue',
+            returnStdout: true
+        ).trim()
+        TARGET_ENV = "${env.ACTIVE_ENV == 'blue' ? 'green' : 'blue'}"
+        DOPPLER_TOKEN = credentials('doppler-service-token')
+    }
+
+    options {
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timestamps()
+    }
+
+    stages {
+        stage('Pre-flight') {
+            steps {
+                dir('noda-apps') {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: '*/main']],
+                        userRemoteConfigs: [[
+                            url: 'git@github.com:wangdianwen/noda-apps.git',
+                            credentialsId: 'noda-apps-git-credentials'
+                        ]]
+                    ])
+                }
+                script {
+                    env.GIT_SHA = sh(
+                        script: 'git -C noda-apps rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                }
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_preflight
+                '''
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_build "$WORKSPACE/noda-apps" "$GIT_SHA"
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_deploy "$TARGET_ENV" "$GIT_SHA"
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_health_check "$TARGET_ENV"
+                '''
+            }
+        }
+
+        stage('Switch') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_switch "$TARGET_ENV" "$ACTIVE_ENV"
+                '''
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_verify "$TARGET_ENV"
+                '''
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_cleanup
+                '''
+            }
+        }
+    }
+
+    post {
+        failure {
+            script {
+                if (env.TARGET_ENV && env.TARGET_ENV != 'null') {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        pipeline_failure_cleanup "$TARGET_ENV"
+                    '''
+                    archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
+                } else {
+                    echo 'Pipeline 在 TARGET_ENV 设置前失败，跳过日志归档'
+                }
+            }
+        }
+        success {
+            echo "Noda Site 部署成功: ${env.TARGET_ENV} 现在是活跃环境 (镜像: noda-apps:${env.GIT_SHA})"
+        }
+    }
+}
