@@ -1,18 +1,28 @@
 #!/usr/bin/env groovy
 // Noda Site 蓝绿部署 Pipeline
-// noda-site 已合并到 noda-apps 镜像，此 Pipeline 复用 noda-apps 的构建和部署流程
-// 与 Jenkinsfile.noda-apps 相同的逻辑，用于独立的 noda-site-deploy Jenkins 任务
+// www.noda.co.nz 网站部署
+// 9 阶段: Pre-flight -> Build -> Test -> Deploy -> Health Check -> Switch -> Verify -> CDN Purge -> Cleanup
 
 pipeline {
     agent any
 
     environment {
         PROJECT_ROOT = "${WORKSPACE}"
+        // 服务参数
+        SERVICE_NAME = "noda-site"
+        SERVICE_PORT = "3002"
+        UPSTREAM_NAME = "www_backend"
+        HEALTH_PATH = "/"
+        ACTIVE_ENV_FILE = "/opt/noda/active-env-www"
+        UPSTREAM_CONF = "${PROJECT_ROOT}/config/nginx/snippets/upstream-www.conf"
+        SERVICE_GROUP = "apps"
+        // 蓝绿状态
         ACTIVE_ENV = sh(
-            script: 'cat /opt/noda/active-env 2>/dev/null || echo blue',
+            script: 'cat /opt/noda/active-env-www 2>/dev/null || echo blue',
             returnStdout: true
         ).trim()
         TARGET_ENV = "${env.ACTIVE_ENV == 'blue' ? 'green' : 'blue'}"
+        // Doppler Service Token
         DOPPLER_TOKEN = credentials('doppler-service-token')
     }
 
@@ -25,6 +35,7 @@ pipeline {
     stages {
         stage('Pre-flight') {
             steps {
+                // checkout noda-apps 仓库
                 dir('noda-apps') {
                     checkout([
                         $class: 'GitSCM',
@@ -99,6 +110,27 @@ pipeline {
             }
         }
 
+        stage('CDN Purge') {
+            steps {
+                script {
+                    try {
+                        withCredentials([
+                            string(credentialsId: 'cf-api-token', variable: 'CF_API_TOKEN'),
+                            string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
+                        ]) {
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                pipeline_purge_cdn
+                            '''
+                        }
+                    } catch (Exception e) {
+                        echo "CDN Purge 跳过: Cloudflare 凭据未配置 (${e.message})"
+                    }
+                }
+            }
+        }
+
         stage('Cleanup') {
             steps {
                 sh '''
@@ -126,7 +158,7 @@ pipeline {
             }
         }
         success {
-            echo "Noda Site 部署成功: ${env.TARGET_ENV} 现在是活跃环境 (镜像: noda-apps:${env.GIT_SHA})"
+            echo "Noda Site 部署成功: ${env.TARGET_ENV} 现在是活跃环境 (镜像: noda-site:${env.GIT_SHA})"
         }
     }
 }
