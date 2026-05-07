@@ -211,7 +211,7 @@ run_container()
     # CPU 限制参数化（noda-site 只需 0.25 核，findclass-ssr 默认 1 核）
     local container_cpus="${CONTAINER_CPUS:-1}"
     # tmpfs 路径参数化（noda-site 等 nginx 容器不需要 /app/scripts/logs）
-    local container_tmpfs="${CONTAINER_TMPFS:-/tmp /app/scripts/logs /app/apps/findclass/scripts/python/cache /app/apps/findclass/scripts/python/logs /app/apps/findclass/api/crawl-output}"
+    local container_tmpfs="${CONTAINER_TMPFS:-/tmp /app/scripts/logs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755}"
 
     log_info "启动容器: $container_name (镜像: $image${container_cmd:+, 命令: $container_cmd})"
 
