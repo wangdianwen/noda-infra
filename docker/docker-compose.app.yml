@@ -76,6 +76,9 @@ services:
       - /app/scripts/logs:uid=1001,gid=1001,mode=0755
       - /app/apps/auth/.next/cache:uid=1001,gid=1001,mode=0755
       - /app/apps/findclass/web/.next/cache:uid=1001,gid=1001,mode=0755
+      - /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755
+      - /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755
+      - /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755
 
 networks:
   noda-network:
