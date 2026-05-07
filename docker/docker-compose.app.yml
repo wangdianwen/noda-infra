@@ -70,7 +70,7 @@ services:
           memory: 128M
     cap_drop:
       - ALL
-    read_only: true
+    # read_only: true  # 临时禁用：Next.js 需要写入 .next/cache 目录
     tmpfs:
       - /tmp
       - /app/scripts/logs:uid=1001,gid=1001,mode=0755
