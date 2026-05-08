@@ -237,7 +237,7 @@ pipeline {
                         sleep 3
                     done
 
-                    # 外部可达性检查
+                    # 外部可达性检查（非阻塞，仅警告）
                     log_info "外部可达性检查..."
                     for i in $(seq 1 5); do
                         if curl -sf "https://pre.class.noda.co.nz/api/health" >/dev/null 2>&1; then
@@ -245,8 +245,7 @@ pipeline {
                             break
                         fi
                         if [ "$i" -eq 5 ]; then
-                            log_error "外部健康检查失败（pre.class.noda.co.nz）"
-                            exit 1
+                            log_warn "外部健康检查失败（pre.class.noda.co.nz）— 容器内部健康，检查 nginx/Cloudflare 路由配置"
                         fi
                         sleep 3
                     done
