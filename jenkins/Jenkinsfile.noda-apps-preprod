@@ -94,6 +94,9 @@ pipeline {
                 sh '''
                     source scripts/lib/log.sh
                     source scripts/lib/secrets.sh
+
+                    # pre-prod 使用 prd_pre Doppler config
+                    export DOPPLER_CONFIG=prd_pre
                     load_secrets
 
                     log_info "部署 pre-prod 容器..."
