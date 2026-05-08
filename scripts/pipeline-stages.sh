@@ -34,6 +34,22 @@ BACKUP_HOST_DIR="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}"
 BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-12}"
 IMAGE_RETENTION_DAYS="${IMAGE_RETENTION_DAYS:-7}"
 
+# ============================================
+# 环境配置（支持 prod/preprod，per Phase 56-01）
+# ============================================
+NODA_ENVIRONMENT="${NODA_ENVIRONMENT:-prod}"
+
+# 根据环境设置状态文件和 upstream 配置路径
+if [ "$NODA_ENVIRONMENT" = "preprod" ]; then
+    ACTIVE_ENV_FILE="/opt/noda/preprod/active-env"
+    UPSTREAM_CONF="/opt/noda/upstream/_preprod_upstream.conf"
+    SERVICE_NAME="${SERVICE_NAME:-noda-apps-preprod}"
+else
+    ACTIVE_ENV_FILE="/opt/noda/active-env"
+    UPSTREAM_CONF="${UPSTREAM_CONF:-$PROJECT_ROOT/config/nginx/snippets/upstream-findclass.conf}"
+    SERVICE_NAME="${SERVICE_NAME:-noda-apps}"
+fi
+
 
 # ============================================
 # 函数: check_backup_freshness
