@@ -28,7 +28,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 53: 数据库 + Keycloak + Doppler 密钥隔离** - 创建 noda_preprod 数据库、noda-preprod realm、Doppler pre config
 - [x] **Phase 54: Nginx 路由 + Cloudflare DNS** - 配置 pre-prod 域名路由和 upstream
-- [ ] **Phase 55: 蓝绿部署脚本参数化 + 容器规范** - manage-containers.sh 支持 preprod + Docker 网络隔离
+- [x] **Phase 55: 蓝绿部署脚本参数化 + 容器规范** - manage-containers.sh 支持 preprod + Docker 网络隔离
 - [ ] **Phase 56: Jenkins Pipeline + 安全防护** - 双 Pipeline + upstream 写入防护 + 并发锁
 
 <details>
@@ -93,11 +93,12 @@ Plans:
   3. pre-prod 容器的 Docker 网络别名为 noda-apps-preprod，不与 prod 的 noda-apps 别名冲突
   4. pre-prod 容器环境变量指向 noda_preprod 数据库和 noda-preprod realm（连接 prod 数据库即失败）
   5. image-cleanup.sh 可正确识别和清理 pre-prod 容器的旧镜像
-**Plans**: TBD
+**Plans**: 3 plans (shipped 2026-05-08)
 
 Plans:
-- [ ] 55-01: manage-containers.sh 参数化（UPSTREAM_VARS_PREFIX + NODA_ENVIRONMENT）
-- [ ] 55-02: pre-prod 环境变量模板 + 容器命名 + 状态文件 + wrapper 脚本
+- [x] 55-01: manage-containers.sh 参数化（UPSTREAM_VARS_PREFIX + NODA_ENVIRONMENT）
+- [x] 55-02: pre-prod 环境变量模板 + 容器命名 + 状态文件 + wrapper 脚本
+- [x] 55-03: image-cleanup.sh 适配 pre-prod + Docker 网络别名隔离
 - [ ] 55-03: image-cleanup.sh 适配 pre-prod + Docker 网络别名隔离
 
 ### Phase 56: Jenkins Pipeline + 安全防护
@@ -125,6 +126,6 @@ Phases execute in numeric order: 53 -> 54 -> 55 -> 56
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 53. 数据库 + Keycloak + Doppler | v1.11 | 3/3 | Complete   | 2026-05-08 |
-| 54. Nginx 路由 + Cloudflare DNS | v1.11 | 1/2 | In Progress|  |
-| 55. 蓝绿部署脚本参数化 | v1.11 | 0/3 | Not started | - |
-| 56. Jenkins Pipeline + 安全防护 | v1.11 | 0/3 | Not started | - |
+| 54. Nginx 路由 + Cloudflare DNS | v1.11 | 2/2 | Complete   | 2026-05-08 |
+| 55. 蓝绿部署脚本参数化 | v1.11 | 3/3 | Complete   | 2026-05-08 |
+| 56. Jenkins Pipeline + 安全防护 | v1.11 | 3/3 | Complete   | 2026-05-08 |
