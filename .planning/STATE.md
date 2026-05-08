@@ -4,11 +4,11 @@ milestone: v1.11
 milestone_name: Pre-Prod 验证环境 + 安全上线流程
 status: planning
 last_updated: "2026-05-08T12:00:00.000Z"
-last_activity: 2026-05-08 -- Milestone v1.11 started
+last_activity: 2026-05-08 -- ROADMAP.md 创建完成
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
-  total_plans: 0
+  total_plans: 11
   completed_plans: 0
   percent: 0
 ---
@@ -19,35 +19,32 @@ progress:
 
 See: .planning/PROJECT.md (updated 2026-05-08)
 
-**Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
+**Core value:** 数据库永不丢失。Pre-prod 环境确保上线前全链路验证，降低 prod 故障风险。
 
-**Current focus:** v1.11 Pre-Prod 验证环境
+**Current focus:** Phase 53 数据库 + Keycloak + Doppler 密钥隔离
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-05-08 — Milestone v1.11 started
+Phase: 53 of 56 (数据库 + Keycloak + Doppler 密钥隔离)
+Plan: 0 of 3 in current phase
+Status: Ready to plan
+Last activity: 2026-05-08 — ROADMAP.md 创建完成，等待 Phase 53 规划
 
-Progress: [          ] 0%
+Progress: [░░░░░░░░░░] 0%
 
 ## Accumulated Context
 
 ### Decisions
 
-- [v1.11]: noda-infra 共享基础设施（PostgreSQL/Keycloak/Nginx/Cloudflare 跑一份）
-- [v1.11]: noda-apps 双实例（prod 和 pre-prod 各自蓝绿部署）
-- [v1.11]: 同实例不同库（noda_prod + noda_preprod 在同一个 PostgreSQL 实例）
-- [v1.11]: Keycloak 同实例新 realm（noda + noda-preprod）
-- [v1.11]: 独立子域名访问（pre.class.noda.co.nz 等）
-- [v1.11]: Git Trunk + Tag 推进策略
-- [v1.11]: Keycloak 作为 noda-infra 共享基础设施（不单独部署）
+- [v1.11]: 共享基础设施、隔离应用层（PostgreSQL/Keycloak/Nginx 单实例，数据库/realm 级别隔离）
+- [v1.11]: Build Once / Promote Anywhere（Jenkins 构建一次镜像，pre-prod 验证后 promote 同一镜像到 prod）
+- [v1.11]: Doppler pre config 必须在 Pipeline 之前创建（PIPE-01 需要 DOPPLER_CONFIG=pre）
+- [v1.11]: Docker 网络别名隔离必须在 pre-prod 容器启动前完成（SEC-03）
 
 ### Blockers/Concerns
 
-- 单服务器资源限制（pre-prod 增量约 1GB 内存）
-- Cloudflare Tunnel 配置需要域名 DNS 变更
+- manage-containers.sh update_upstream() 参数化方案需要在 Phase 55 实现时统一决策（UPSTREAM_VARS_PREFIX vs if/else 分支）
+- Jenkins lock() 资源锁需要确认是否需要额外插件（Lockable Resources Plugin）
 
 ### Deferred Items
 
@@ -62,4 +59,6 @@ Items acknowledged and deferred:
 
 ## Session Continuity
 
-**Milestone:** v1.11 Pre-Prod 验证环境 + 安全上线流程 — STARTED
+Last session: 2026-05-08
+Stopped at: ROADMAP.md 创建完成，等待 Phase 53 规划
+Resume file: None

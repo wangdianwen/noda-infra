@@ -26,8 +26,8 @@
 
 ### Jenkins Pipeline (PIPE)
 
-- [ ] **PIPE-01**: 创建 `Jenkinsfile.noda-apps-preprod`（Build → Test → Deploy Pre-prod → Health → Switch → Verify）
-- [ ] **PIPE-02**: 创建 `Jenkinsfile.noda-apps-promote`（读取 pre-prod 镜像 digest → 部署 Prod 蓝绿 → Health → Switch → Verify → CDN Purge）
+- [ ] **PIPE-01**: 创建 `Jenkinsfile.noda-apps-preprod`（Build -> Test -> Deploy Pre-prod -> Health -> Switch -> Verify）
+- [ ] **PIPE-02**: 创建 `Jenkinsfile.noda-apps-promote`（读取 pre-prod 镜像 digest -> 部署 Prod 蓝绿 -> Health -> Switch -> Verify -> CDN Purge）
 - [ ] **PIPE-03**: Promote Pipeline 使用与 pre-prod 完全相同的 Docker 镜像（Build Once / Promote Anywhere）
 - [ ] **PIPE-04**: Hotfix 紧急通道：直接触发 `Jenkinsfile.noda-apps` 部署到 Prod，跳过 pre-prod
 - [ ] **PIPE-05**: Pipeline 并发锁：prod 和 pre-prod Pipeline 使用 `lock()` 资源防止同时操作 Nginx/Docker daemon
@@ -57,41 +57,39 @@
 | Docker 网络隔离（prod/pre-prod 分离网络） | 共享 noda-network 是既定决策，标签分组已满足管理需求 |
 | 前端运行时配置注入 | NEXT_PUBLIC_* 变量在 pre-prod 和 prod 可以使用相同的 Keycloak URL（通过 Nginx 代理） |
 | Pre-prod CDN 缓存清除 | pre-prod 流量低，缓存影响小，优先级低 |
-| 自动触发部署（Git push → auto deploy） | 项目更新频率低，手动触发更可控 |
+| 自动触发部署（Git push -> auto deploy） | 项目更新频率低，手动触发更可控 |
 
 ## Traceability
 
-Which phases cover which requirements. Updated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | — | Pending |
-| INFRA-02 | — | Pending |
-| INFRA-03 | — | Pending |
-| INFRA-04 | — | Pending |
-| INFRA-05 | — | Pending |
-| INFRA-06 | — | Pending |
-| BLUE-01 | — | Pending |
-| BLUE-02 | — | Pending |
-| BLUE-03 | — | Pending |
-| BLUE-04 | — | Pending |
-| BLUE-05 | — | Pending |
-| BLUE-06 | — | Pending |
-| BLUE-07 | — | Pending |
-| PIPE-01 | — | Pending |
-| PIPE-02 | — | Pending |
-| PIPE-03 | — | Pending |
-| PIPE-04 | — | Pending |
-| PIPE-05 | — | Pending |
-| SEC-01 | — | Pending |
-| SEC-02 | — | Pending |
-| SEC-03 | — | Pending |
+| INFRA-01 | Phase 53 | Pending |
+| INFRA-02 | Phase 53 | Pending |
+| INFRA-03 | Phase 53 | Pending |
+| INFRA-04 | Phase 54 | Pending |
+| INFRA-05 | Phase 54 | Pending |
+| INFRA-06 | Phase 54 | Pending |
+| BLUE-01 | Phase 55 | Pending |
+| BLUE-02 | Phase 55 | Pending |
+| BLUE-03 | Phase 55 | Pending |
+| BLUE-04 | Phase 55 | Pending |
+| BLUE-05 | Phase 55 | Pending |
+| BLUE-06 | Phase 55 | Pending |
+| BLUE-07 | Phase 55 | Pending |
+| PIPE-01 | Phase 56 | Pending |
+| PIPE-02 | Phase 56 | Pending |
+| PIPE-03 | Phase 56 | Pending |
+| PIPE-04 | Phase 56 | Pending |
+| PIPE-05 | Phase 56 | Pending |
+| SEC-01 | Phase 53 | Pending |
+| SEC-02 | Phase 56 | Pending |
+| SEC-03 | Phase 55 | Pending |
 
 **Coverage:**
 - v1.11 requirements: 21 total
-- Mapped to phases: 0
-- Unmapped: 21 ⚠️
+- Mapped to phases: 21
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-05-08*
-*Last updated: 2026-05-08 after initial definition*
+*Last updated: 2026-05-08 after roadmap creation*
