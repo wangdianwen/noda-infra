@@ -18,19 +18,36 @@ source "$PROJECT_ROOT/scripts/lib/health.sh"
 # ============================================
 # 常量（通过环境变量覆盖，支持多服务蓝绿部署）
 # ============================================
+# 环境参数
+NODA_ENVIRONMENT="${NODA_ENVIRONMENT:-prod}"
+
+# 根据环境生成变量前缀
+case "$NODA_ENVIRONMENT" in
+    prod)
+        UPSTREAM_VARS_PREFIX=""
+        ;;
+    preprod)
+        UPSTREAM_VARS_PREFIX="_preprod_"
+        ;;
+    *)
+        log_error "不支持的环境: $NODA_ENVIRONMENT"
+        exit 1
+        ;;
+esac
+
 # 服务参数
 SERVICE_NAME="${SERVICE_NAME:-noda-apps}"
 SERVICE_PORT="${SERVICE_PORT:-3000}"
 UPSTREAM_NAME="${UPSTREAM_NAME:-findclass_backend}"
 HEALTH_PATH="${HEALTH_PATH:-/api/health}"
 
-# 状态文件（每个服务独立）
-ACTIVE_ENV_FILE="${ACTIVE_ENV_FILE:-/opt/noda/active-env}"
+# 状态文件（每个服务和环境独立）
+ACTIVE_ENV_FILE="${ACTIVE_ENV_FILE:-/opt/noda/${NODA_ENVIRONMENT}/active-env}"
 
 # 固定常量
 NGINX_CONTAINER="noda-infra-nginx"
-# UPSTREAM_CONF: nginx upstream 配置文件路径
-UPSTREAM_CONF="${UPSTREAM_CONF:-$PROJECT_ROOT/config/nginx/snippets/upstream-findclass.conf}"
+# UPSTREAM_CONF: nginx upstream 配置文件路径（根据环境变量前缀）
+UPSTREAM_CONF="${UPSTREAM_CONF:-$PROJECT_ROOT/config/nginx/snippets/${UPSTREAM_VARS_PREFIX}upstream-findclass.conf}"
 NETWORK_NAME="noda-network"
 
 # get_env_template - 延迟获取 env 模板路径（SERVICE_NAME 可能被 wrapper 后设）
@@ -134,11 +151,11 @@ prepare_env_file()
 
 # get_container_name - 获取容器名
 # 参数：$1 = env
-# 返回：{SERVICE_NAME}-{blue|green}
+# 返回：{SERVICE_NAME}-{environment}-{blue|green}
 get_container_name()
 {
     local env="$1"
-    echo "${SERVICE_NAME}-${env}"
+    echo "${SERVICE_NAME}-${NODA_ENVIRONMENT}-${env}"
 }
 
 # is_container_running - 检查容器是否在运行
@@ -272,16 +289,18 @@ update_upstream()
     container_name=$(get_container_name "$target_env")
 
     # 使用 set 变量代替 upstream 块，配合 resolver 实现动态 DNS 刷新
+    # 根据环境使用不同的变量名（prod vs preprod）
     local upstream_content="# noda-apps upstream 变量 — 在 server 块中 include
 # 使用 resolver 127.0.0.11 动态解析 DNS，容器重建后自动刷新 IP
 # 由 update_upstream() 在蓝绿切换时更新
-set \$findclass_upstream ${container_name}:${SERVICE_PORT};
-set \$www_upstream ${container_name}:3002;
-set \$auth_app_upstream ${container_name}:3004;
-set \$admin_upstream ${container_name}:3006;
-set \$admin_api_upstream ${container_name}:3011;"
+# 环境: ${NODA_ENVIRONMENT}
+set \$${UPSTREAM_VARS_PREFIX}findclass_upstream ${container_name}:${SERVICE_PORT};
+set \$${UPSTREAM_VARS_PREFIX}www_upstream ${container_name}:3002;
+set \$${UPSTREAM_VARS_PREFIX}auth_app_upstream ${container_name}:3004;
+set \$${UPSTREAM_VARS_PREFIX}admin_upstream ${container_name}:3006;
+set \$${UPSTREAM_VARS_PREFIX}admin_api_upstream ${container_name}:3011;"
 
-    # Keycloak 服务使用独立的 upstream 变量格式
+    # Keycloak 服务使用独立的 upstream 变量格式（不区分环境）
     if [ "$SERVICE_NAME" = "keycloak" ]; then
         upstream_content="# Keycloak upstream 变量 — 在 server 块中 include
 # 使用 resolver 127.0.0.11 动态解析 DNS，容器重建后自动刷新 IP
@@ -674,11 +693,12 @@ usage()
   switch <blue|green>       切换活跃环境（流量切换）
 
 环境变量:
+  NODA_ENVIRONMENT 部署环境（默认 prod，可选 preprod）
   SERVICE_NAME   服务名（默认 noda-apps）
   SERVICE_PORT   服务端口（默认 3000）
   UPSTREAM_NAME  nginx upstream 名称（默认 findclass_backend）
   HEALTH_PATH    健康检查路径（默认 /api/health）
-  ACTIVE_ENV_FILE 活跃环境状态文件（默认 /opt/noda/active-env）
+  ACTIVE_ENV_FILE 活跃环境状态文件（默认 /opt/noda/${NODA_ENVIRONMENT}/active-env）
   CONTAINER_MEMORY  容器内存限制（默认 512m）
   CONTAINER_MEMORY_RESERVATION  容器内存预留（默认 128m）
   CONTAINER_READONLY  容器只读模式（默认 true）
@@ -687,12 +707,18 @@ usage()
   ENVSUBST_VARS  envsubst 替换变量列表
 
 示例:
+  # 生产环境（默认）
   manage-containers.sh init
   manage-containers.sh start blue
   manage-containers.sh start green ${SERVICE_NAME}:v2
   manage-containers.sh status
   manage-containers.sh logs blue --tail 100 -f
   manage-containers.sh switch green
+
+  # Pre-prod 环境
+  NODA_ENVIRONMENT=preprod manage-containers.sh init
+  NODA_ENVIRONMENT=preprod manage-containers.sh start blue
+  NODA_ENVIRONMENT=preprod manage-containers.sh status
 
   SERVICE_NAME=noda-site SERVICE_PORT=3000 manage-containers.sh status
 
