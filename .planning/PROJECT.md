@@ -1,16 +1,22 @@
 # Noda 基础设施项目
 
-## Current Milestone: 规划中
+## Current Milestone: v1.11 Pre-Prod 验证环境 + 安全上线流程
+
+**Goal:** 在 prod 之前增加 pre-prod 验证环境作为上线守门员，所有代码必须先在 pre-prod 验证通过后才能 promote 到 prod。
+
+**Target features:**
+- Pre-prod 基础设施（PostgreSQL noda_preprod 数据库 + Keycloak noda-preprod realm + Nginx 路由 + Cloudflare DNS）
+- Pre-prod 蓝绿部署（noda-apps 双实例，共享 noda-infra 基础设施）
+- Jenkins Pipeline 改造（pre-prod 部署 Pipeline + promote to prod 流程 + hotfix 路径）
+
+**Key context:**
+- noda-infra 共享（PostgreSQL/Keycloak/Nginx/Cloudflare 跑一份）
+- noda-apps 双实例（prod 和 pre-prod 各自蓝绿部署）
+- Git 策略：Trunk + Tag 推进（main → pre-prod → promote → prod）
+- 域名规划：pre.class.noda.co.nz / pre.auth.noda.co.nz / pre.noda.co.nz
+- 增量资源约 1GB 内存
 
 **Last shipped:** v1.10 Docker 镜像瘦身优化 (2026-04-21)
-- 6 phases, 71 commits, 66 files changed
-- noda-site ~218MB → ~25MB，全局 Docker 卫生，基础设施镜像清理
-- findclass-ssr Python/Chromium 保留（爬虫是核心功能）
-
-## Current State
-
-**Last shipped:** v1.8 密钥管理集中化 (2026-04-19)
-4 phases, 11 plans
 
 ## Shipped Milestones
 
@@ -203,4 +209,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-20 — v1.10 milestone started*
+*Last updated: 2026-05-08 — v1.11 milestone started*

@@ -1,53 +1,53 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.10
-milestone_name: milestone
-status: completed
-last_updated: "2026-05-07T07:57:01.663Z"
-last_activity: 2026-04-21 -- Phase 50/51 skipped, milestone complete
+milestone: v1.11
+milestone_name: Pre-Prod 验证环境 + 安全上线流程
+status: planning
+last_updated: "2026-05-08T12:00:00.000Z"
+last_activity: 2026-05-08 -- Milestone v1.11 started
 progress:
-  total_phases: 1
+  total_phases: 0
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
-  percent: 100
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-20)
+See: .planning/PROJECT.md (updated 2026-05-08)
 
 **Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** v1.10 里程碑完成
+**Current focus:** v1.11 Pre-Prod 验证环境
 
 ## Current Position
 
-Phase: 50/51 (findclass-ssr 瘦身/深度优化) — SKIPPED
-Status: v1.10 全部阶段完成（4 completed + 2 skipped = 6/6）
-Last activity: 2026-04-21 -- Phase 50/51 skipped, milestone complete
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-05-08 — Milestone v1.11 started
 
-Progress: [██████████] 100%
+Progress: [          ] 0%
 
 ## Accumulated Context
 
 ### Decisions
 
-- [v1.10]: noda-site 保留容器 + nginx:1.25-alpine 运行时（保持端口 3000 蓝绿部署兼容）
-- [v1.10]: SSR 审计与决策合并为一个阶段（Phase 49），执行与验证合并为一个阶段（Phase 50）
-- [v1.10]: SSR-DEEP 必须在 SSR 完成后才能执行（Alpine 切换依赖 Python 分离）
-- [v1.10]: noda-ops 多阶段构建，构建工具（wget/gnupg）隔离在 builder 阶段
-- [v1.10]: backup Dockerfile 4 RUN 合并为 2 RUN，curl 移除
-- [v1.10]: Phase 50/51 跳过 — 爬虫是核心功能，不能移除 Python 运行时
-- [v1.9]: 分步 prune 替代 docker system prune（细粒度控制 + 可追溯日志）
+- [v1.11]: noda-infra 共享基础设施（PostgreSQL/Keycloak/Nginx/Cloudflare 跑一份）
+- [v1.11]: noda-apps 双实例（prod 和 pre-prod 各自蓝绿部署）
+- [v1.11]: 同实例不同库（noda_prod + noda_preprod 在同一个 PostgreSQL 实例）
+- [v1.11]: Keycloak 同实例新 realm（noda + noda-preprod）
+- [v1.11]: 独立子域名访问（pre.class.noda.co.nz 等）
+- [v1.11]: Git Trunk + Tag 推进策略
+- [v1.11]: Keycloak 作为 noda-infra 共享基础设施（不单独部署）
 
 ### Blockers/Concerns
 
-- findclass-ssr 切 Alpine 必须在 Python 完全移除后（manylinux wheel 不兼容 musl）
-- noda-site 端口 3000 被 6 个文件引用，变更时必须保持一致
-- 蓝绿部署镜像命名约定（SERVICE_NAME:latest + :git_sha）不能被打破
+- 单服务器资源限制（pre-prod 增量约 1GB 内存）
+- Cloudflare Tunnel 配置需要域名 DNS 变更
 
 ### Deferred Items
 
@@ -59,9 +59,7 @@ Items acknowledged and deferred:
 | uat | Phase 34 (34-HUMAN-UAT.md) | partial, 2 pending |
 | verification | Phase 32 (32-VERIFICATION.md) | human_needed |
 | verification | Phase 34 (32-VERIFICATION.md) | human_needed |
-| quick_task | rename-pipelines | missing |
 
 ## Session Continuity
 
-**Completed Phase:** 50/51 (findclass-ssr 瘦身/深度优化) — SKIPPED — 2026-04-21
-**Milestone:** v1.10 Docker 镜像瘦身优化 — COMPLETE (6/6 phases, 4 completed + 2 skipped)
+**Milestone:** v1.11 Pre-Prod 验证环境 + 安全上线流程 — STARTED
