@@ -27,5 +27,16 @@ ingress:
   # 健康检查端点
   - hostname: health.noda.co.nz
     service: http://noda-nginx:80
+
+  # Pre-prod 域名 - 指向 Nginx (反向代理到 pre-prod upstream)
+  - hostname: pre.class.noda.co.nz
+    service: http://noda-nginx:80
+  - hostname: pre.auth.noda.co.nz
+    service: http://noda-nginx:80
+  - hostname: pre.noda.co.nz
+    service: http://noda-nginx:80
+  - hostname: pre.admin.noda.co.nz
+    service: http://noda-nginx:80
+
   # 默认规则 - 必须是最后一条
   - service: http_status:404
