@@ -59,8 +59,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 
 Plans:
+**Wave 1**
 - [ ] 53-01-PLAN.md — 创建 noda_preprod 数据库和独立用户（INFRA-01）
 - [ ] 53-02-PLAN.md — 创建 Keycloak noda-preprod realm + client + Google OAuth（INFRA-02, INFRA-03）
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 53-03-PLAN.md — Doppler pre config + secrets.sh 参数化 + pre-prod env 模板 + 隔离验证（SEC-01）
 
 ### Phase 54: Nginx 路由 + Cloudflare DNS
