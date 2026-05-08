@@ -1009,7 +1009,7 @@ pipeline_infra_failure_cleanup()
         keycloak)
             local active_env
             active_env=$(cat /opt/noda/active-env-keycloak 2>/dev/null || echo "blue")
-            container_name="keycloak-${active_env}"
+            container_name="noda-infra-keycloak-${active_env}"
             ;;
         nginx)
             container_name="noda-infra-nginx"

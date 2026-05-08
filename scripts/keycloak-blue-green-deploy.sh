@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Keycloak 服务参数（覆盖 manage-containers.sh 默认值）
-export SERVICE_NAME="${SERVICE_NAME:-keycloak}"
+export SERVICE_NAME="${SERVICE_NAME:-noda-infra-keycloak}"
 export SERVICE_PORT="${SERVICE_PORT:-8080}"
 export UPSTREAM_NAME="${UPSTREAM_NAME:-keycloak_backend}"
 export HEALTH_PATH="${HEALTH_PATH:-/realms/master}"

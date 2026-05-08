@@ -135,9 +135,9 @@ prepare_env_file()
 
     # 自动解析 Keycloak 蓝绿活跃容器名（noda-apps 等服务需要 KEYCLOAK_INTERNAL_URL）
     if [ -f "/opt/noda/active-env-keycloak" ]; then
-        export KEYCLOAK_ACTIVE_CONTAINER="keycloak-$(cat /opt/noda/active-env-keycloak)"
+        export KEYCLOAK_ACTIVE_CONTAINER="noda-infra-keycloak-$(cat /opt/noda/active-env-keycloak)"
     else
-        export KEYCLOAK_ACTIVE_CONTAINER="${KEYCLOAK_ACTIVE_CONTAINER:-keycloak-blue}"
+        export KEYCLOAK_ACTIVE_CONTAINER="${KEYCLOAK_ACTIVE_CONTAINER:-noda-infra-keycloak-blue}"
     fi
 
     # 支持通过 ENVSUBST_VARS 环境变量覆盖需要替换的变量列表
