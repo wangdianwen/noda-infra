@@ -29,7 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 53: 数据库 + Keycloak + Doppler 密钥隔离** - 创建 noda_preprod 数据库、noda-preprod realm、Doppler pre config
 - [x] **Phase 54: Nginx 路由 + Cloudflare DNS** - 配置 pre-prod 域名路由和 upstream
 - [x] **Phase 55: 蓝绿部署脚本参数化 + 容器规范** - manage-containers.sh 支持 preprod + Docker 网络隔离
-- [ ] **Phase 56: Jenkins Pipeline + 安全防护** - 双 Pipeline + upstream 写入防护 + 并发锁
+- [x] **Phase 56: Jenkins Pipeline + 安全防护** - 双 Pipeline + upstream 写入防护 + 并发锁
 
 <details>
 <summary>v1.10 Docker 镜像瘦身优化 (Phases 47-52) -- SHIPPED 2026-04-21</summary>
