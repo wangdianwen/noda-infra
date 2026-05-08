@@ -77,7 +77,7 @@ pipeline {
                     docker build \
                         -t noda-apps:latest \
                         -t "noda-apps:${GIT_SHA}" \
-                        -f deploy/Dockerfile.noda-apps \
+                        -f noda-apps/infra/docker/Dockerfile.noda-apps \
                         --build-arg NEXT_PUBLIC_KEYCLOAK_URL=https://pre.auth.noda.co.nz \
                         --build-arg NEXT_PUBLIC_KEYCLOAK_REALM=noda-preprod \
                         --build-arg NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=noda-frontend-preprod \
