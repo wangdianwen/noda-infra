@@ -4,6 +4,7 @@
 # ============================================
 # 提供 3 个独立的镜像清理函数（per D-01/D-02/D-03）
 # 依赖：log.sh
+# 支持：NODA_ENVIRONMENT 环境变量（prod/preprod）
 # ============================================
 
 # Source Guard
@@ -11,6 +12,26 @@ if [[ -n "${_NODA_IMAGE_CLEANUP_LOADED:-}" ]]; then
     return 0
 fi
 _NODA_IMAGE_CLEANUP_LOADED=1
+
+# 环境参数
+NODA_ENVIRONMENT="${NODA_ENVIRONMENT:-prod}"
+
+# 根据环境设置镜像前缀
+get_image_prefix()
+{
+    case "$NODA_ENVIRONMENT" in
+        prod)
+            echo "noda-apps"
+            ;;
+        preprod)
+            echo "noda-apps-preprod"
+            ;;
+        *)
+            log_error "不支持的环境: $NODA_ENVIRONMENT"
+            echo "noda-apps"  # 回退到默认值
+            ;;
+    esac
+}
 
 # cleanup_by_tag_count - 保留最近 N 个带标签的镜像，删除更早的
 # 参数:
@@ -141,4 +162,47 @@ cleanup_dangling()
     else
         log_info "镜像清理: 无需清理"
     fi
+}
+
+# cleanup_environment - 清理特定环境的镜像
+# 参数:
+#   $1: 环境（prod 或 preprod）
+#   $2: 保留数量（默认 5）
+# 返回：无（删除旧镜像）
+cleanup_environment()
+{
+    local env="$1"
+    local keep_count="${2:-5}"
+
+    log_info "清理 ${env} 环境镜像..."
+
+    # 临时设置环境变量
+    local old_env="${NODA_ENVIRONMENT}"
+    export NODA_ENVIRONMENT="$env"
+
+    # 获取镜像前缀
+    local image_prefix
+    image_prefix=$(get_image_prefix)
+
+    # 执行清理
+    cleanup_by_tag_count "$image_prefix" "$keep_count"
+
+    # 恢复环境变量
+    export NODA_ENVIRONMENT="$old_env"
+}
+
+# cleanup_all_environments - 清理所有环境的镜像
+# 参数:
+#   $1: 保留数量（默认 5）
+# 返回：无（删除所有环境的旧镜像）
+cleanup_all_environments()
+{
+    local keep_count="${1:-5}"
+
+    log_info "清理所有环境镜像..."
+
+    cleanup_environment "prod" "$keep_count"
+    cleanup_environment "preprod" "$keep_count"
+
+    log_success "所有环境镜像清理完成"
 }
