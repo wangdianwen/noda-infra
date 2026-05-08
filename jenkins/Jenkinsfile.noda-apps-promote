@@ -1,0 +1,285 @@
+#!/usr/bin/env groovy
+// Noda Apps Promote to Prod Pipeline
+// 6 阶段: Pre-flight -> Deploy -> Health Check -> Switch -> Verify -> Cleanup
+// 手动触发（无自动触发配置）
+// Phase 56-02: 创建 Promote Pipeline（Build Once / Promote Anywhere）
+
+pipeline {
+    agent any
+
+    environment {
+        PROJECT_ROOT = "${WORKSPACE}"
+        NODA_ENVIRONMENT = 'prod'  // 固定为 prod
+        // 从 prod 状态文件获取当前活跃环境
+        ACTIVE_ENV = sh(
+            script: 'cat /opt/noda/prod/active-env 2>/dev/null || echo blue',
+            returnStdout: true
+        ).trim()
+        TARGET_ENV = "${env.ACTIVE_ENV == 'blue' ? 'green' : 'blue'}"
+        // Doppler Service Token（prod 环境）
+        DOPPLER_TOKEN = credentials('doppler-service-token')
+        // 部署颜色标识
+        DEPLOY_COLOR = "${env.TARGET_ENV}"
+    }
+
+    options {
+        // 禁止并发构建，防止两个 Pipeline 同时操作蓝绿容器
+        disableConcurrentBuilds()
+        // 保留最近 10 次构建日志（promote 操作保留较少历史）
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+    }
+
+    // 注意：无 triggers 块 — 仅通过 "Build Now" 手动触发
+
+    stages {
+        stage('Pre-flight') {
+            steps {
+                script {
+                    echo "=========================================="
+                    echo "Promote to Prod Pipeline"
+                    echo "=========================================="
+                    echo "Active Environment: ${env.ACTIVE_ENV}"
+                    echo "Target Environment: ${env.TARGET_ENV}"
+                    echo "=========================================="
+                }
+
+                // 验证 pre-prod 状态
+                sh '''
+                    source scripts/lib/log.sh
+
+                    log_info "验证 pre-prod 环境..."
+
+                    # 检查 pre-prod 状态文件
+                    if [ ! -f "/opt/noda/preprod/active-env" ]; then
+                        echo "ERROR: Pre-prod 状态文件不存在"
+                        echo "请先运行 pre-prod pipeline 创建初始部署"
+                        exit 1
+                    fi
+
+                    # 获取 pre-prod 活跃环境
+                    local preprod_active_env
+                    preprod_active_env=$(cat /opt/noda/preprod/active-env)
+
+                    log_info "Pre-prod 活跃环境: $preprod_active_env"
+
+                    # 获取 pre-prod 镜像 SHA
+                    local preprod_blue_sha
+                    local preprod_green_sha
+                    preprod_blue_sha=$(cat /opt/noda/preprod/active-blue 2>/dev/null || echo "")
+                    preprod_green_sha=$(cat /opt/noda/preprod/active-green 2>/dev/null || echo "")
+
+                    if [ "$preprod_active_env" = "blue" ]; then
+                        if [ -z "$preprod_blue_sha" ]; then
+                            echo "ERROR: Pre-prod blue 环境没有镜像记录"
+                            exit 1
+                        fi
+                        echo "$preprod_blue_sha" > /tmp/promote-image-sha.txt
+                        log_info "将部署镜像: noda-apps:$preprod_blue_sha"
+                    else
+                        if [ -z "$preprod_green_sha" ]; then
+                            echo "ERROR: Pre-prod green 环境没有镜像记录"
+                            exit 1
+                        fi
+                        echo "$preprod_green_sha" > /tmp/promote-image-sha.txt
+                        log_info "将部署镜像: noda-apps:$preprod_green_sha"
+                    fi
+                '''
+
+                // 获取镜像 SHA 到环境变量
+                script {
+                    env.GIT_SHA = sh(
+                        script: 'cat /tmp/promote-image-sha.txt',
+                        returnStdout: true
+                    ).trim()
+                    echo "Promote 镜像: noda-apps:${env.GIT_SHA}"
+                }
+
+                // 验证镜像存在
+                sh '''
+                    source scripts/lib/log.sh
+
+                    log_info "验证镜像存在..."
+
+                    if ! docker image inspect "noda-apps:${GIT_SHA}" >/dev/null 2>&1; then
+                        echo "ERROR: 镜像 noda-apps:${GIT_SHA} 不存在"
+                        echo "请确保 pre-prod pipeline 已成功构建此镜像"
+                        exit 1
+                    fi
+
+                    log_success "镜像验证通过: noda-apps:${GIT_SHA}"
+                '''
+
+                // 验证 pre-prod 环境
+                sh '''
+                    source scripts/lib/log.sh
+
+                    log_info "验证 pre-prod 环境健康状态..."
+
+                    # 检查 pre-prod 外部可达性
+                    if ! curl -f "https://pre.class.noda.co.nz/api/health" >/dev/null 2>&1; then
+                        echo "ERROR: Pre-prod 环境不健康，不允许 promote 到 prod"
+                        exit 1
+                    fi
+
+                    log_success "Pre-prod 环境验证通过"
+                '''
+
+                // 前置检查 — prod 特定检查
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+
+                    # 设置 prod 环境
+                    export NODA_ENVIRONMENT=prod
+
+                    # 检查 prod 状态文件
+                    if [ ! -f "/opt/noda/prod/active-env" ]; then
+                        echo "WARNING: Prod 状态文件不存在，将初始化为 blue"
+                        echo "blue" | sudo tee /opt/noda/prod/active-env >/dev/null
+                    fi
+
+                    # 执行通用预检查
+                    pipeline_preflight
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+
+                    # 设置 prod 环境
+                    export NODA_ENVIRONMENT=prod
+
+                    # 执行部署（使用 pre-prod 已构建的镜像）
+                    pipeline_deploy "$TARGET_ENV" "$GIT_SHA"
+                '''
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+
+                    # 设置 prod 环境
+                    export NODA_ENVIRONMENT=prod
+
+                    # 执行健康检查
+                    pipeline_health_check "$TARGET_ENV"
+
+                    # 额外的 prod 特定检查
+                    curl -f "http://noda-apps-${TARGET_ENV}:3000/api/health" || {
+                        echo "ERROR: Prod 容器健康检查失败"
+                        exit 1
+                    }
+                '''
+            }
+        }
+
+        stage('Switch') {
+            steps {
+                // 防护检查：确保操作的是 prod upstream
+                script {
+                    def upstreamFile = '/opt/noda/upstream/upstream.conf'
+                    if (!fileExists(upstreamFile)) {
+                        error "ERROR: 上游文件不存在: ${upstreamFile}"
+                    }
+
+                    // 检查文件内容不包含 preprod 标识
+                    def content = readFile(upstreamFile).trim()
+                    if (content.contains('noda-apps-preprod')) {
+                        error "ERROR: 上游文件包含 preprod 标识，可能误操作了 pre-prod 配置"
+                    }
+                }
+
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+
+                    # 设置 prod 环境
+                    export NODA_ENVIRONMENT=prod
+
+                    # 执行切换
+                    pipeline_switch "$TARGET_ENV" "$ACTIVE_ENV"
+                '''
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+
+                    # 设置 prod 环境
+                    export NODA_ENVIRONMENT=prod
+
+                    # 执行验证
+                    pipeline_verify "$TARGET_ENV"
+
+                    # 额外验证：检查外部可达性和核心功能
+                    curl -f "https://class.noda.co.nz/api/health" || {
+                        echo "ERROR: 外部健康检查失败"
+                        exit 1
+                    }
+
+                    # 检查核心 API
+                    curl -f "https://class.noda.co.nz/api/status" | grep -q "ok" || {
+                        echo "ERROR: 核心 API 检查失败"
+                        exit 1
+                    }
+                '''
+            }
+        }
+
+        stage('Cleanup') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+
+                    # 设置 prod 环境
+                    export NODA_ENVIRONMENT=prod
+
+                    # 执行清理
+                    pipeline_cleanup
+                '''
+            }
+        }
+    }
+
+    post {
+        failure {
+            script {
+                // 检查 TARGET_ENV 是否已定义（Pitfall 5: 可能 Pre-flight 就失败了）
+                if (env.TARGET_ENV && env.TARGET_ENV != 'null') {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export NODA_ENVIRONMENT=prod
+                        pipeline_failure_cleanup "$TARGET_ENV"
+                    '''
+                    archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
+                } else {
+                    echo 'Pipeline 在 TARGET_ENV 设置前失败，跳过日志归档'
+                }
+            }
+        }
+        success {
+            script {
+                echo "=========================================="
+                echo "Promote to Prod 成功"
+                echo "=========================================="
+                echo "活跃环境: ${env.TARGET_ENV}"
+                echo "镜像: noda-apps:${env.GIT_SHA}"
+                echo "外部验证: https://class.noda.co.nz/api/health"
+                echo "=========================================="
+            }
+        }
+    }
+}
