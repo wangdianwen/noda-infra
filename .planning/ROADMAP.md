@@ -60,11 +60,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 **Wave 1**
-- [ ] 53-01-PLAN.md — 创建 noda_preprod 数据库和独立用户（INFRA-01）
-- [ ] 53-02-PLAN.md — 创建 Keycloak noda-preprod realm + client + Google OAuth（INFRA-02, INFRA-03）
+- [x] 53-01-PLAN.md — 创建 noda_preprod 数据库和独立用户（INFRA-01）
+- [x] 53-02-PLAN.md — 创建 Keycloak noda-preprod realm + client + Google OAuth（INFRA-02, INFRA-03）
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 53-03-PLAN.md — Doppler pre config + secrets.sh 参数化 + pre-prod env 模板 + 隔离验证（SEC-01）
+- [x] 53-03-PLAN.md — Doppler pre config + secrets.sh 参数化 + pre-prod env 模板 + 隔离验证（SEC-01）
 
 ### Phase 54: Nginx 路由 + Cloudflare DNS
 **Goal**: Pre-prod 域名可从外部访问，Nginx 正确路由到 pre-prod upstream（无后端时返回 502 即为正确）
@@ -122,7 +122,7 @@ Phases execute in numeric order: 53 -> 54 -> 55 -> 56
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 53. 数据库 + Keycloak + Doppler | v1.11 | 0/3 | Not started | - |
+| 53. 数据库 + Keycloak + Doppler | v1.11 | 3/3 | Complete   | 2026-05-08 |
 | 54. Nginx 路由 + Cloudflare DNS | v1.11 | 0/2 | Not started | - |
 | 55. 蓝绿部署脚本参数化 | v1.11 | 0/3 | Not started | - |
 | 56. Jenkins Pipeline + 安全防护 | v1.11 | 0/3 | Not started | - |

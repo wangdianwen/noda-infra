@@ -7,9 +7,9 @@
 
 ### 基础设施准备 (INFRA)
 
-- [ ] **INFRA-01**: 创建 `noda_preprod` 数据库（同 PostgreSQL 实例，独立数据库 + 用户）
-- [ ] **INFRA-02**: 创建 Keycloak `noda-preprod` realm（Google OAuth redirect URIs 包含 pre-prod 域名）
-- [ ] **INFRA-03**: 创建 `noda-frontend-preprod` Keycloak client（redirect URIs 指向 pre.class.noda.co.nz 和 pre.auth.noda.co.nz）
+- [x] **INFRA-01**: 创建 `noda_preprod` 数据库（同 PostgreSQL 实例，独立数据库 + 用户）
+- [x] **INFRA-02**: 创建 Keycloak `noda-preprod` realm（Google OAuth redirect URIs 包含 pre-prod 域名）
+- [x] **INFRA-03**: 创建 `noda-frontend-preprod` Keycloak client（redirect URIs 指向 pre.class.noda.co.nz 和 pre.auth.noda.co.nz）
 - [ ] **INFRA-04**: 创建 Nginx pre-prod upstream 配置（`upstream-findclass-preprod.conf`，变量名使用 `_preprod_` 前缀避免冲突）
 - [ ] **INFRA-05**: 创建 4 个 Nginx pre-prod server blocks（pre.class.noda.co.nz / pre.auth.noda.co.nz / pre.noda.co.nz / pre.admin.noda.co.nz）
 - [ ] **INFRA-06**: 在 Cloudflare 添加 4 个 pre-prod 子域名 DNS 记录 + Tunnel 路由
@@ -34,7 +34,7 @@
 
 ### 安全防护 (SEC)
 
-- [ ] **SEC-01**: Doppler 创建 `pre` config，pre-prod Pipeline 使用 `DOPPLER_CONFIG=pre` 加载独立密钥
+- [x] **SEC-01**: Doppler 创建 `pre` config，pre-prod Pipeline 使用 `DOPPLER_CONFIG=pre` 加载独立密钥
 - [ ] **SEC-02**: Nginx upstream 写入防护：Pipeline 执行前验证 UPSTREAM_CONF 路径包含预期的环境标识（pre-prod 不能写入 prod upstream 文件）
 - [ ] **SEC-03**: Docker 网络别名隔离：pre-prod 容器使用 `noda-apps-preprod` 别名，避免与 prod 的 `noda-apps` 别名冲突
 
@@ -63,9 +63,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | Phase 53 | Pending |
-| INFRA-02 | Phase 53 | Pending |
-| INFRA-03 | Phase 53 | Pending |
+| INFRA-01 | Phase 53 | Complete |
+| INFRA-02 | Phase 53 | Complete |
+| INFRA-03 | Phase 53 | Complete |
 | INFRA-04 | Phase 54 | Pending |
 | INFRA-05 | Phase 54 | Pending |
 | INFRA-06 | Phase 54 | Pending |
@@ -81,7 +81,7 @@
 | PIPE-03 | Phase 56 | Pending |
 | PIPE-04 | Phase 56 | Pending |
 | PIPE-05 | Phase 56 | Pending |
-| SEC-01 | Phase 53 | Pending |
+| SEC-01 | Phase 53 | Complete |
 | SEC-02 | Phase 56 | Pending |
 | SEC-03 | Phase 55 | Pending |
 
