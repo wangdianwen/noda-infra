@@ -1,6 +1,6 @@
 #!/usr/bin/env groovy
 // Noda Apps Pre-prod 单容器部署 Pipeline
-// 5 阶段: Pre-flight -> Build -> Deploy -> Verify -> Cleanup
+// 6 阶段: Pre-flight -> Build -> Migrate -> Deploy -> Verify -> Cleanup
 // 单容器: noda-apps-preprod（无蓝绿，直接停旧启新）
 // 手动触发（无自动触发配置）
 
@@ -89,6 +89,45 @@ pipeline {
             }
         }
 
+        stage('Migrate') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+
+                    log_info "检查 pre-prod 数据库..."
+
+                    POSTGRES_CONTAINER="noda-infra-postgres-prod"
+                    PREPROD_DB="noda_preprod"
+
+                    # 检查 postgres 容器是否运行
+                    if ! docker inspect "$POSTGRES_CONTAINER" >/dev/null 2>&1; then
+                        log_error "PostgreSQL 容器 $POSTGRES_CONTAINER 不存在"
+                        exit 1
+                    fi
+
+                    # 检查 pre-prod 数据库是否已存在
+                    db_exists=$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -lqt 2>/dev/null | grep -c "\\b${PREPROD_DB}\\b" || echo "0")
+
+                    if [ "$db_exists" -ge 1 ]; then
+                        log_success "数据库 ${PREPROD_DB} 已存在，跳过创建"
+                    else
+                        log_info "创建数据库 ${PREPROD_DB} 并从 prod 克隆 schema..."
+
+                        # 创建数据库
+                        docker exec "$POSTGRES_CONTAINER" psql -U postgres -c "CREATE DATABASE ${PREPROD_DB}"
+                        log_success "数据库 ${PREPROD_DB} 已创建"
+
+                        # 从 prod 克隆 schema（仅结构，不含数据）
+                        docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres --schema-only noda_prod | \
+                            docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d "$PREPROD_DB" >/dev/null
+                        log_success "Schema 已从 noda_prod 克隆到 ${PREPROD_DB}"
+                    fi
+
+                    log_success "数据库迁移检查完成"
+                '''
+            }
+        }
+
         stage('Deploy') {
             steps {
                 sh '''
@@ -162,8 +201,8 @@ pipeline {
 
                     log_info "等待容器健康检查..."
 
-                    # 等待容器变为 healthy（最多 120 秒）
-                    max_wait=120
+                    # 等待容器变为 healthy（最多 180 秒，覆盖 start-period 60s + 3x30s 重试）
+                    max_wait=180
                     elapsed=0
                     while [ $elapsed -lt $max_wait ]; do
                         health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
