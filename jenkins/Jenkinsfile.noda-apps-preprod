@@ -114,15 +114,16 @@ pipeline {
                         log_success "数据库 ${PREPROD_DB} 已创建"
                     fi
 
-                    # 检查是否有表（检查 keycloak 相关表作为指标）
+                    # 检查是否有表
                     table_count=$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d "$PREPROD_DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null || echo "0")
 
                     if [ "$table_count" -gt 0 ]; then
                         log_success "数据库 ${PREPROD_DB} 已有 ${table_count} 张表，跳过 schema 克隆"
                     else
                         log_info "数据库 ${PREPROD_DB} 无表，从 noda_prod 克隆 schema..."
-                        docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres --schema-only noda_prod | \
-                            docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d "$PREPROD_DB" >/dev/null
+                        # --clean 先删除已有对象再创建，处理重复执行的情况
+                        docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres --schema-only --clean --if-exists noda_prod 2>/dev/null | \
+                            docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d "$PREPROD_DB" >/dev/null 2>&1
                         log_success "Schema 已从 noda_prod 克隆到 ${PREPROD_DB}"
                     fi
 
@@ -182,7 +183,7 @@ pipeline {
                         --label noda.service-group=apps-preprod \
                         --label noda.environment=preprod \
                         --label com.docker.compose.project=noda-apps-pre-prod \
-                        --health-cmd "wget --quiet --tries=1 --spider http://localhost:3000/api/health || exit 1" \
+                        --health-cmd "wget --quiet --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1" \
                         --health-interval 30s \
                         --health-timeout 10s \
                         --health-retries 3 \
@@ -222,10 +223,10 @@ pipeline {
                         elapsed=$((elapsed + 4))
                     done
 
-                    # HTTP 内部检查
+                    # HTTP 内部检查（通过 nginx 容器访问 Docker 网络）
                     log_info "HTTP 内部健康检查..."
                     for i in $(seq 1 10); do
-                        if curl -sf "http://$CONTAINER_NAME:3000/api/health" >/dev/null 2>&1; then
+                        if docker exec noda-infra-nginx curl -sf "http://$CONTAINER_NAME:3000/api/health" >/dev/null 2>&1; then
                             log_success "HTTP 健康检查通过"
                             break
                         fi
