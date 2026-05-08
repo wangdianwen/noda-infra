@@ -10,8 +10,8 @@
 - [x] **INFRA-01**: 创建 `noda_preprod` 数据库（同 PostgreSQL 实例，独立数据库 + 用户）
 - [x] **INFRA-02**: 创建 Keycloak `noda-preprod` realm（Google OAuth redirect URIs 包含 pre-prod 域名）
 - [x] **INFRA-03**: 创建 `noda-frontend-preprod` Keycloak client（redirect URIs 指向 pre.class.noda.co.nz 和 pre.auth.noda.co.nz）
-- [ ] **INFRA-04**: 创建 Nginx pre-prod upstream 配置（`upstream-findclass-preprod.conf`，变量名使用 `_preprod_` 前缀避免冲突）
-- [ ] **INFRA-05**: 创建 4 个 Nginx pre-prod server blocks（pre.class.noda.co.nz / pre.auth.noda.co.nz / pre.noda.co.nz / pre.admin.noda.co.nz）
+- [x] **INFRA-04**: 创建 Nginx pre-prod upstream 配置（`upstream-findclass-preprod.conf`，变量名使用 `_preprod_` 前缀避免冲突）
+- [x] **INFRA-05**: 创建 4 个 Nginx pre-prod server blocks（pre.class.noda.co.nz / pre.auth.noda.co.nz / pre.noda.co.nz / pre.admin.noda.co.nz）
 - [ ] **INFRA-06**: 在 Cloudflare 添加 4 个 pre-prod 子域名 DNS 记录 + Tunnel 路由
 
 ### 蓝绿部署扩展 (BLUE)
@@ -66,8 +66,8 @@
 | INFRA-01 | Phase 53 | Complete |
 | INFRA-02 | Phase 53 | Complete |
 | INFRA-03 | Phase 53 | Complete |
-| INFRA-04 | Phase 54 | Pending |
-| INFRA-05 | Phase 54 | Pending |
+| INFRA-04 | Phase 54 | Complete |
+| INFRA-05 | Phase 54 | Complete |
 | INFRA-06 | Phase 54 | Pending |
 | BLUE-01 | Phase 55 | Pending |
 | BLUE-02 | Phase 55 | Pending |

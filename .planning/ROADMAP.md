@@ -135,6 +135,6 @@ Phases execute in numeric order: 53 -> 54 -> 55 -> 56
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 53. 数据库 + Keycloak + Doppler | v1.11 | 3/3 | Complete   | 2026-05-08 |
-| 54. Nginx 路由 + Cloudflare DNS | v1.11 | 0/2 | Not started | - |
+| 54. Nginx 路由 + Cloudflare DNS | v1.11 | 1/2 | In Progress|  |
 | 55. 蓝绿部署脚本参数化 | v1.11 | 0/3 | Not started | - |
 | 56. Jenkins Pipeline + 安全防护 | v1.11 | 0/3 | Not started | - |
