@@ -56,12 +56,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Keycloak noda-preprod realm 可登录，Google OAuth redirect URIs 包含 pre.class.noda.co.nz 和 pre.auth.noda.co.nz
   3. Doppler pre config 包含指向 noda_preprod 的 DATABASE_URL 和指向 noda-preprod 的 KEYCLOAK_REALM
   4. Doppler pre config 的 service token 可独立拉取密钥，不依赖 prd config
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 53-01: 创建 noda_preprod 数据库和独立用户
-- [ ] 53-02: 创建 Keycloak noda-preprod realm + client + Google OAuth
-- [ ] 53-03: 创建 Doppler pre config + 参数化 secrets.sh
+- [ ] 53-01-PLAN.md — 创建 noda_preprod 数据库和独立用户（INFRA-01）
+- [ ] 53-02-PLAN.md — 创建 Keycloak noda-preprod realm + client + Google OAuth（INFRA-02, INFRA-03）
+- [ ] 53-03-PLAN.md — Doppler pre config + secrets.sh 参数化 + pre-prod env 模板 + 隔离验证（SEC-01）
 
 ### Phase 54: Nginx 路由 + Cloudflare DNS
 **Goal**: Pre-prod 域名可从外部访问，Nginx 正确路由到 pre-prod upstream（无后端时返回 502 即为正确）
