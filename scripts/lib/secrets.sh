@@ -7,7 +7,7 @@ set -euo pipefail
 # 功能：提供 load_secrets() 函数，从 Doppler API 拉取密钥
 # 用途：被 pipeline-stages.sh、blue-green-deploy.sh 等脚本 source 加载
 # 模式：DOPPLER_TOKEN 存在 → doppler secrets download 拉取密钥（不落盘）
-# 设计决策：per D-03 (Doppler only), D-04 (--no-file 不落盘), D-05 (config=prd)
+# 设计决策：per D-03 (Doppler only), D-04 (--no-file 不落盘), D-05 (config=$DOPPLER_CONFIG, 默认 prd)
 # ============================================
 
 # ============================================
@@ -40,8 +40,10 @@ load_secrets()
         return 1
     fi
 
+    # DOPPLER_CONFIG 环境变量控制加载哪个 config，默认 prd（向后兼容）
+    local _config="${DOPPLER_CONFIG:-prd}"
     local _secrets
-    _secrets=$(doppler secrets download --no-file --format=env --project noda --config prd 2>/dev/null)
+    _secrets=$(doppler secrets download --no-file --format=env --project noda --config "$_config" 2>/dev/null)
 
     if [ $? -ne 0 ]; then
         log_error "Doppler 密钥拉取失败（检查 DOPPLER_TOKEN 是否有效）"
@@ -52,5 +54,5 @@ load_secrets()
     eval "$_secrets"
     set +a
 
-    log_success "密钥已从 Doppler 加载（project=noda, config=prd）"
+    log_success "密钥已从 Doppler 加载（project=noda, config=$_config）"
 }
