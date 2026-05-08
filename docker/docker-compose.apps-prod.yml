@@ -1,0 +1,77 @@
+# ============================================
+# Noda Apps Prod（蓝绿部署）
+# ============================================
+# 项目名: noda-apps-prod
+# 部署: Jenkins noda-apps-promote Pipeline
+# 蓝绿部署: noda-apps-prod-blue / noda-apps-prod-green
+
+name: noda-apps-prod
+
+services:
+  noda-apps-prod:
+    build:
+      context: ../../noda-apps
+      dockerfile: ../noda-infra/deploy/Dockerfile.noda-apps
+      args:
+        NEXT_PUBLIC_KEYCLOAK_URL: https://auth.noda.co.nz
+        NEXT_PUBLIC_KEYCLOAK_REALM: noda
+        NEXT_PUBLIC_KEYCLOAK_CLIENT_ID: noda-frontend
+    image: noda-apps:latest
+    labels:
+      - "noda.service-group=apps-prod"
+      - "noda.environment=prod"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 30s
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod
+      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod
+      KEYCLOAK_URL: https://auth.noda.co.nz
+      KEYCLOAK_INTERNAL_URL: http://noda-infra-nginx
+      KEYCLOAK_REALM: noda
+      KEYCLOAK_CLIENT_ID: noda-frontend
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    networks:
+      noda-network:
+        aliases:
+          - noda-apps-prod
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/scripts/logs:uid=1001,gid=1001,mode=0755
+      - /app/apps/auth/.next/cache:uid=1001,gid=1001,mode=0755
+      - /app/apps/findclass/web/.next/cache:uid=1001,gid=1001,mode=0755
+      - /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755
+      - /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755
+      - /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755
+
+networks:
+  noda-network:
+    external: true
+    name: noda-network

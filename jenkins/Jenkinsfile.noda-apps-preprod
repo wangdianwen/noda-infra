@@ -1,40 +1,29 @@
 #!/usr/bin/env groovy
-// Noda Apps Pre-prod 蓝绿部署 Pipeline
-// 9 阶段: Pre-flight -> Build -> Test -> Deploy -> Health Check -> Switch -> Verify -> CDN Purge -> Cleanup
+// Noda Apps Pre-prod 单容器部署 Pipeline
+// 5 阶段: Pre-flight -> Build -> Deploy -> Verify -> Cleanup
+// 单容器: noda-apps-preprod（无蓝绿，直接停旧启新）
 // 手动触发（无自动触发配置）
-// Phase 56-01: 创建 Pre-prod Pipeline
 
 pipeline {
     agent any
 
     environment {
         PROJECT_ROOT = "${WORKSPACE}"
-        NODA_ENVIRONMENT = 'preprod'  // 固定为 preprod
-        ACTIVE_ENV = sh(
-            script: 'cat /opt/noda/preprod/active-env 2>/dev/null || echo blue',
-            returnStdout: true
-        ).trim()
-        TARGET_ENV = "${env.ACTIVE_ENV == 'blue' ? 'green' : 'blue'}"
+        NODA_ENVIRONMENT = 'preprod'
+        CONTAINER_NAME = 'noda-apps-preprod'
         // Doppler Service Token（pre-prod 环境）
         DOPPLER_TOKEN = credentials('doppler-service-token-preprod')
-        // 部署颜色标识
-        DEPLOY_COLOR = "${env.TARGET_ENV}"
     }
 
     options {
-        // 禁止并发构建，防止两个 Pipeline 同时操作蓝绿容器
         disableConcurrentBuilds()
-        // 保留最近 20 次构建日志
         buildDiscarder(logRotator(numToKeepStr: '20'))
         timestamps()
     }
 
-    // 注意：无 triggers 块 — 仅通过 "Build Now" 手动触发
-
     stages {
         stage('Pre-flight') {
             steps {
-                // checkout noda-apps 仓库到子目录
                 dir('noda-apps') {
                     checkout([
                         $class: 'GitSCM',
@@ -45,36 +34,35 @@ pipeline {
                         ]]
                     ])
                 }
-                // 获取 noda-apps 的 Git SHA（workspace 根是 noda-infra）
                 script {
                     env.GIT_SHA = sh(
                         script: 'git -C noda-apps rev-parse --short HEAD',
                         returnStdout: true
                     ).trim()
                 }
-                // 前置检查 — pre-prod 特定检查
                 sh '''
                     source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
 
-                    # 设置 pre-prod 环境
-                    export NODA_ENVIRONMENT=preprod
+                    log_info "=========================================="
+                    log_info "Pre-prod 单容器部署 Pipeline"
+                    log_info "=========================================="
+                    log_info "镜像: noda-apps:${GIT_SHA}"
 
-                    # 检查 pre-prod 状态文件
-                    if [ ! -f "/opt/noda/preprod/active-env" ]; then
-                        echo "WARNING: Pre-prod 状态文件不存在，将初始化为 blue"
-                        echo "blue" | sudo tee /opt/noda/preprod/active-env >/dev/null
-                    fi
-
-                    # 验证 upstream 配置
-                    if [ ! -f "/opt/noda/upstream/_preprod_upstream.conf" ]; then
-                        echo "ERROR: Pre-prod upstream 配置文件不存在"
-                        echo "请先运行: sudo mkdir -p /opt/noda/upstream && sudo touch /opt/noda/upstream/_preprod_upstream.conf"
+                    # 检查 Docker daemon
+                    docker info >/dev/null 2>&1 || {
+                        log_error "Docker daemon 不可用"
                         exit 1
-                    fi
+                    }
+                    log_info "Docker daemon 可用"
 
-                    # 执行通用预检查
-                    pipeline_preflight
+                    # 检查 noda-network
+                    docker network inspect noda-network >/dev/null 2>&1 || {
+                        log_error "Docker 网络 noda-network 不存在"
+                        exit 1
+                    }
+                    log_info "Docker 网络 noda-network 存在"
+
+                    log_success "前置检查通过"
                 '''
             }
         }
@@ -83,39 +71,21 @@ pipeline {
             steps {
                 sh '''
                     source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
 
-                    # 设置 pre-prod 环境
-                    export NODA_ENVIRONMENT=preprod
+                    log_info "构建 pre-prod 镜像..."
 
-                    pipeline_build "$WORKSPACE/noda-apps" "$GIT_SHA"
+                    docker build \
+                        -t noda-apps:latest \
+                        -t "noda-apps:${GIT_SHA}" \
+                        -f deploy/Dockerfile.noda-apps \
+                        --build-arg NEXT_PUBLIC_KEYCLOAK_URL=https://pre.auth.noda.co.nz \
+                        --build-arg NEXT_PUBLIC_KEYCLOAK_REALM=noda-preprod \
+                        --build-arg NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=noda-frontend-preprod \
+                        --build-arg NEXT_PUBLIC_AUTH_KEYCLOAK_CLIENT_ID=noda-auth-preprod \
+                        noda-apps
+
+                    log_success "镜像构建完成: noda-apps:${GIT_SHA}"
                 '''
-            }
-        }
-
-        stage('Test') {
-            steps {
-                dir('noda-apps') {
-                    // 依赖安装由 pipeline_test 处理
-                    sh '''
-                        source "$WORKSPACE/scripts/lib/log.sh"
-                        source "$WORKSPACE/scripts/pipeline-stages.sh"
-                        export NODA_ENVIRONMENT=preprod
-                        pipeline_test "$PWD"
-                    '''
-                    // lint 和 test 为独立 sh 步骤（RESEARCH.md Pitfall 4）
-                    // 失败时输出 WARNING 但不阻塞部署，待修复后改为严格门禁
-                    sh 'pnpm lint >lint-result.txt 2>&1 || echo "LINT_FAILED" >> lint-result.txt'
-                    sh 'pnpm test >test-result.txt 2>&1 || echo "TEST_FAILED" >> test-result.txt'
-                    script {
-                        if (fileExists('lint-result.txt') && readFile('lint-result.txt').contains('LINT_FAILED')) {
-                            echo "WARNING: pnpm lint 失败，详见 lint-result.txt"
-                        }
-                        if (fileExists('test-result.txt') && readFile('test-result.txt').contains('TEST_FAILED')) {
-                            echo "WARNING: pnpm test 失败，详见 test-result.txt"
-                        }
-                    }
-                }
             }
         }
 
@@ -123,63 +93,61 @@ pipeline {
             steps {
                 sh '''
                     source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
+                    source scripts/lib/secrets.sh
+                    load_secrets
 
-                    # 设置 pre-prod 环境
-                    export NODA_ENVIRONMENT=preprod
+                    log_info "部署 pre-prod 容器..."
 
-                    # 执行部署
-                    pipeline_deploy "$TARGET_ENV" "$GIT_SHA"
-                '''
-            }
-        }
+                    # 停止旧容器
+                    if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+                        log_info "停止旧容器: $CONTAINER_NAME"
+                        docker stop -t 30 "$CONTAINER_NAME"
+                        docker rm "$CONTAINER_NAME"
+                        log_success "旧容器已移除"
+                    fi
 
-        stage('Health Check') {
-            steps {
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
+                    # 准备环境变量文件
+                    source scripts/manage-containers.sh || true  # source only, 不执行子命令
+                    export SERVICE_NAME=noda-apps-preprod
+                    tmp_env=$(prepare_env_file "single")
 
-                    # 设置 pre-prod 环境
-                    export NODA_ENVIRONMENT=preprod
+                    # 启动新容器
+                    docker run -d \
+                        --name "$CONTAINER_NAME" \
+                        --network noda-network \
+                        --restart unless-stopped \
+                        --stop-timeout 30 \
+                        --security-opt no-new-privileges \
+                        --cap-drop ALL \
+                        --read-only \
+                        --tmpfs /tmp \
+                        --tmpfs /app/scripts/logs \
+                        --tmpfs /app/apps/auth/.next/cache:uid=1001,gid=1001,mode=0755 \
+                        --tmpfs /app/apps/findclass/web/.next/cache:uid=1001,gid=1001,mode=0755 \
+                        --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
+                        --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
+                        --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+                        --memory 1g \
+                        --memory-reservation 128m \
+                        --cpus 1 \
+                        --log-driver json-file \
+                        --log-opt max-size=10m \
+                        --log-opt max-file=3 \
+                        ${tmp_env:+--env-file "$tmp_env"} \
+                        --label noda.service-group=apps-preprod \
+                        --label noda.environment=preprod \
+                        --label com.docker.compose.project=noda-apps-pre-prod \
+                        --health-cmd "wget --quiet --tries=1 --spider http://localhost:3000/api/health || exit 1" \
+                        --health-interval 30s \
+                        --health-timeout 10s \
+                        --health-retries 3 \
+                        --health-start-period 60s \
+                        "noda-apps:${GIT_SHA}"
 
-                    # 执行健康检查
-                    pipeline_health_check "$TARGET_ENV"
+                    # 清理临时 env 文件
+                    rm -f "$tmp_env"
 
-                    # 额外的 pre-prod 特定检查
-                    curl -f "http://noda-apps-preprod-${TARGET_ENV}:3000/api/health" || {
-                        echo "ERROR: Pre-prod 容器健康检查失败"
-                        exit 1
-                    }
-                '''
-            }
-        }
-
-        stage('Switch') {
-            steps {
-                // 防护检查：确保操作的是 pre-prod upstream
-                script {
-                    def upstreamFile = '/opt/noda/upstream/_preprod_upstream.conf'
-                    if (!fileExists(upstreamFile)) {
-                        error "ERROR: 上游文件不存在: ${upstreamFile}"
-                    }
-
-                    // 检查文件内容是否包含 preprod 标识
-                    def content = readFile(upstreamFile).trim()
-                    if (!content.contains('_preprod_')) {
-                        error "ERROR: 上游文件不包含 preprod 标识，可能误操作了 prod 配置"
-                    }
-                }
-
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-
-                    # 设置 pre-prod 环境
-                    export NODA_ENVIRONMENT=preprod
-
-                    # 执行切换
-                    pipeline_switch "$TARGET_ENV" "$ACTIVE_ENV"
+                    log_success "容器 $CONTAINER_NAME 已启动"
                 '''
             }
         }
@@ -188,47 +156,57 @@ pipeline {
             steps {
                 sh '''
                     source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
 
-                    # 设置 pre-prod 环境
-                    export NODA_ENVIRONMENT=preprod
+                    log_info "等待容器健康检查..."
 
-                    # 执行验证
-                    pipeline_verify "$TARGET_ENV"
+                    # 等待容器变为 healthy（最多 120 秒）
+                    max_wait=120
+                    elapsed=0
+                    while [ $elapsed -lt $max_wait ]; do
+                        health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER_NAME" 2>/dev/null || echo "unknown")
+                        if [ "$health" = "healthy" ]; then
+                            log_success "容器健康检查通过（等待 ${elapsed} 秒）"
+                            break
+                        fi
+                        if [ "$elapsed" -ge "$max_wait" ]; then
+                            log_error "容器健康检查超时（${max_wait} 秒），当前状态: $health"
+                            docker logs "$CONTAINER_NAME" --tail 30
+                            exit 1
+                        fi
+                        sleep 4
+                        elapsed=$((elapsed + 4))
+                    done
 
-                    # 额外验证：检查外部可达性
-                    curl -f "https://pre.class.noda.co.nz/api/health" || {
-                        echo "ERROR: 外部健康检查失败"
-                        exit 1
-                    }
+                    # HTTP 内部检查
+                    log_info "HTTP 内部健康检查..."
+                    for i in $(seq 1 10); do
+                        if curl -sf "http://$CONTAINER_NAME:3000/api/health" >/dev/null 2>&1; then
+                            log_success "HTTP 健康检查通过"
+                            break
+                        fi
+                        if [ "$i" -eq 10 ]; then
+                            log_error "HTTP 健康检查失败"
+                            exit 1
+                        fi
+                        sleep 3
+                    done
+
+                    # 外部可达性检查
+                    log_info "外部可达性检查..."
+                    for i in $(seq 1 5); do
+                        if curl -sf "https://pre.class.noda.co.nz/api/health" >/dev/null 2>&1; then
+                            log_success "外部健康检查通过"
+                            break
+                        fi
+                        if [ "$i" -eq 5 ]; then
+                            log_error "外部健康检查失败（pre.class.noda.co.nz）"
+                            exit 1
+                        fi
+                        sleep 3
+                    done
+
+                    log_success "Pre-prod 部署验证完成"
                 '''
-            }
-        }
-
-        stage('CDN Purge') {
-            steps {
-                script {
-                    // 凭据不存在时优雅跳过
-                    try {
-                        withCredentials([
-                            string(credentialsId: 'cf-api-token-preprod', variable: 'CF_API_TOKEN'),
-                            string(credentialsId: 'cf-zone-id-preprod', variable: 'CF_ZONE_ID')
-                        ]) {
-                            sh '''
-                                source scripts/lib/log.sh
-                                source scripts/pipeline-stages.sh
-
-                                # 设置 pre-prod 环境
-                                export NODA_ENVIRONMENT=preprod
-
-                                # 执行 CDN 清除
-                                pipeline_purge_cdn
-                            '''
-                        }
-                    } catch (Exception e) {
-                        echo "CDN Purge 跳过: Cloudflare 凭据未配置 (${e.message})"
-                    }
-                }
             }
         }
 
@@ -236,13 +214,17 @@ pipeline {
             steps {
                 sh '''
                     source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
+                    source scripts/lib/image-cleanup.sh
 
-                    # 设置 pre-prod 环境
-                    export NODA_ENVIRONMENT=preprod
+                    log_info "清理旧镜像..."
 
-                    # 执行清理
-                    pipeline_cleanup
+                    # 清理 7 天前的旧镜像
+                    cleanup_by_date_threshold "noda-apps" 7
+
+                    # 清理 dangling images
+                    cleanup_dangling
+
+                    log_success "清理完成"
                 '''
             }
         }
@@ -251,22 +233,16 @@ pipeline {
     post {
         failure {
             script {
-                // 检查 TARGET_ENV 是否已定义（Pitfall 5: 可能 Pre-flight 就失败了）
-                if (env.TARGET_ENV && env.TARGET_ENV != 'null') {
-                    sh '''
-                        source scripts/lib/log.sh
-                        source scripts/pipeline-stages.sh
-                        export NODA_ENVIRONMENT=preprod
-                        pipeline_failure_cleanup "$TARGET_ENV"
-                    '''
-                    archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
-                } else {
-                    echo 'Pipeline 在 TARGET_ENV 设置前失败，跳过日志归档'
-                }
+                sh '''
+                    docker logs "$CONTAINER_NAME" --tail 50 >deploy-failure-container.log 2>&1 || true
+                    docker logs noda-infra-nginx --tail 50 >deploy-failure-nginx.log 2>&1 || true
+                '''
+                archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
             }
         }
         success {
-            echo "Pre-prod 部署成功: ${env.TARGET_ENV} 现在是活跃环境 (镜像: noda-apps:${env.GIT_SHA})"
+            echo "Pre-prod 部署成功: ${env.CONTAINER_NAME} (镜像: noda-apps:${env.GIT_SHA})"
+            echo "外部验证: https://pre.class.noda.co.nz/api/health"
         }
     }
 }

@@ -37,7 +37,7 @@ E2E_MAX_RETRIES="${E2E_MAX_RETRIES:-5}"
 E2E_INTERVAL="${E2E_INTERVAL:-2}"
 IMAGE_SOURCE="${IMAGE_SOURCE:-build}"
 CLEANUP_METHOD="${CLEANUP_METHOD:-none}"
-COMPOSE_FILE="${COMPOSE_FILE:-$PROJECT_ROOT/docker/docker-compose.app.yml}"
+COMPOSE_FILE="${COMPOSE_FILE:-$PROJECT_ROOT/docker/docker-compose.apps-prod.yml}"
 
 # ============================================
 # 主函数

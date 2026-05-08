@@ -256,9 +256,9 @@ run_container()
         --log-opt max-file=3 \
         ${tmp_env_file:+--env-file "$tmp_env_file"} \
         --label "noda.service-group=${service_group}" \
-        --label noda.environment=prod \
+        --label noda.environment="${NODA_ENVIRONMENT}" \
         --label "noda.blue-green=${env}" \
-        --label com.docker.compose.project=noda-apps \
+        --label "com.docker.compose.project=noda-apps-${NODA_ENVIRONMENT}" \
         --label "com.docker.compose.service=${SERVICE_NAME}" \
         --health-cmd "$container_health_cmd" \
         --health-interval "$container_health_interval" \
@@ -294,6 +294,7 @@ update_upstream()
 # 使用 resolver 127.0.0.11 动态解析 DNS，容器重建后自动刷新 IP
 # 由 update_upstream() 在蓝绿切换时更新
 # 环境: ${NODA_ENVIRONMENT}
+# 分组: noda-apps-${NODA_ENVIRONMENT}
 set \$${UPSTREAM_VARS_PREFIX}findclass_upstream ${container_name}:${SERVICE_PORT};
 set \$${UPSTREAM_VARS_PREFIX}www_upstream ${container_name}:3002;
 set \$${UPSTREAM_VARS_PREFIX}auth_app_upstream ${container_name}:3004;

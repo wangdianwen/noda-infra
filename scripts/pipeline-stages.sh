@@ -29,24 +29,27 @@ HEALTH_CHECK_MAX_RETRIES="${HEALTH_CHECK_MAX_RETRIES:-30}"
 HEALTH_CHECK_INTERVAL="${HEALTH_CHECK_INTERVAL:-4}"
 E2E_MAX_RETRIES="${E2E_MAX_RETRIES:-5}"
 E2E_INTERVAL="${E2E_INTERVAL:-2}"
-COMPOSE_FILE="$PROJECT_ROOT/docker/docker-compose.app.yml"
 BACKUP_HOST_DIR="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}"
 BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-12}"
 IMAGE_RETENTION_DAYS="${IMAGE_RETENTION_DAYS:-7}"
 
 # ============================================
-# 环境配置（支持 prod/preprod，per Phase 56-01）
+# 环境配置（三分组: noda-infra / noda-apps-prod / noda-apps-pre-prod）
 # ============================================
 NODA_ENVIRONMENT="${NODA_ENVIRONMENT:-prod}"
 
-# 根据环境设置状态文件和 upstream 配置路径
+# 根据环境设置状态文件、upstream 配置路径、compose 文件和服务名
 if [ "$NODA_ENVIRONMENT" = "preprod" ]; then
+    # pre-prod: 单容器部署（无蓝绿）
     ACTIVE_ENV_FILE="/opt/noda/preprod/active-env"
     UPSTREAM_CONF="/opt/noda/upstream/_preprod_upstream.conf"
+    COMPOSE_FILE="$PROJECT_ROOT/docker/docker-compose.apps-preprod.yml"
     SERVICE_NAME="${SERVICE_NAME:-noda-apps-preprod}"
 else
+    # prod: 蓝绿部署
     ACTIVE_ENV_FILE="/opt/noda/active-env"
     UPSTREAM_CONF="${UPSTREAM_CONF:-$PROJECT_ROOT/config/nginx/snippets/upstream-findclass.conf}"
+    COMPOSE_FILE="$PROJECT_ROOT/docker/docker-compose.apps-prod.yml"
     SERVICE_NAME="${SERVICE_NAME:-noda-apps}"
 fi
 
