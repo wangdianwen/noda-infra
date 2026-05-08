@@ -75,11 +75,23 @@ Plans:
   2. curl https://pre.auth.noda.co.nz 返回 Keycloak 登录页（共享 Keycloak 实例，realm 正确路由）
   3. curl https://pre.noda.co.nz 和 https://pre.admin.noda.co.nz 可达（返回预期状态码）
   4. Nginx pre-prod upstream 变量名包含 preprod 前缀，不与 prod upstream 变量冲突
-**Plans**: TBD
+**Plans**: 2 plans
 
-Plans:
-- [ ] 54-01: 创建 Nginx pre-prod upstream 配置和 server blocks
-- [ ] 54-02: 配置 Cloudflare DNS + Tunnel 路由
+**Wave 1**
+- [x] 54-01-PLAN.md — 创建 Nginx pre-prod upstream 配置和 server blocks（INFRA-04, INFRA-05）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 54-02-PLAN.md — 配置 Cloudflare DNS + Tunnel 路由（INFRA-06）
+**Wave 1**
+- [x] 54-01-PLAN.md — 创建 Nginx pre-prod upstream 配置和 server blocks（INFRA-04, INFRA-05）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 54-02-PLAN.md — 配置 Cloudflare DNS + Tunnel 路由（INFRA-06）
+**Wave 1**
+- [x] 54-01-PLAN.md — 创建 Nginx pre-prod upstream 配置和 server blocks（INFRA-04, INFRA-05）
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 54-02-PLAN.md — 配置 Cloudflare DNS + Tunnel 路由（INFRA-06）
 
 ### Phase 55: 蓝绿部署脚本参数化 + 容器规范
 **Goal**: manage-containers.sh 支持 pre-prod 蓝绿部署，容器命名和状态文件与 prod 完全隔离
