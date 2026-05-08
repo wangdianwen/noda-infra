@@ -108,16 +108,19 @@ pipeline {
                     # 检查 pre-prod 数据库是否已存在
                     db_exists=$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -lqt 2>/dev/null | grep -c "\\b${PREPROD_DB}\\b" || echo "0")
 
-                    if [ "$db_exists" -ge 1 ]; then
-                        log_success "数据库 ${PREPROD_DB} 已存在，跳过创建"
-                    else
-                        log_info "创建数据库 ${PREPROD_DB} 并从 prod 克隆 schema..."
-
-                        # 创建数据库
+                    if [ "$db_exists" -lt 1 ]; then
+                        log_info "创建数据库 ${PREPROD_DB}..."
                         docker exec "$POSTGRES_CONTAINER" psql -U postgres -c "CREATE DATABASE ${PREPROD_DB}"
                         log_success "数据库 ${PREPROD_DB} 已创建"
+                    fi
 
-                        # 从 prod 克隆 schema（仅结构，不含数据）
+                    # 检查是否有表（检查 keycloak 相关表作为指标）
+                    table_count=$(docker exec "$POSTGRES_CONTAINER" psql -U postgres -d "$PREPROD_DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null || echo "0")
+
+                    if [ "$table_count" -gt 0 ]; then
+                        log_success "数据库 ${PREPROD_DB} 已有 ${table_count} 张表，跳过 schema 克隆"
+                    else
+                        log_info "数据库 ${PREPROD_DB} 无表，从 noda_prod 克隆 schema..."
                         docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres --schema-only noda_prod | \
                             docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d "$PREPROD_DB" >/dev/null
                         log_success "Schema 已从 noda_prod 克隆到 ${PREPROD_DB}"
