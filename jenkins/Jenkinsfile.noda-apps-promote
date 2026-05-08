@@ -12,7 +12,7 @@ pipeline {
         NODA_ENVIRONMENT = 'prod'  // 固定为 prod
         // 从 prod 状态文件获取当前活跃环境
         ACTIVE_ENV = sh(
-            script: 'cat /opt/noda/prod/active-env 2>/dev/null || echo blue',
+            script: 'cat /opt/noda/active-env 2>/dev/null || echo blue',
             returnStdout: true
         ).trim()
         TARGET_ENV = "${env.ACTIVE_ENV == 'blue' ? 'green' : 'blue'}"
@@ -134,9 +134,9 @@ pipeline {
                     export NODA_ENVIRONMENT=prod
 
                     # 检查 prod 状态文件
-                    if [ ! -f "/opt/noda/prod/active-env" ]; then
+                    if [ ! -f "/opt/noda/active-env" ]; then
                         echo "WARNING: Prod 状态文件不存在，将初始化为 blue"
-                        echo "blue" | sudo tee /opt/noda/prod/active-env >/dev/null
+                        echo "blue" | sudo tee /opt/noda/active-env >/dev/null
                     fi
 
                     # 执行通用预检查
