@@ -54,5 +54,5 @@ load_secrets()
     eval "$_secrets"
     set +a
 
-    log_success "密钥已从 Doppler 加载（project=noda, config=$_config）"
+    log_success "密钥已从 Doppler 加载（project=noda, config=${_config:-unknown}）"
 }
