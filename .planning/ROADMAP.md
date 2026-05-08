@@ -26,8 +26,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Milestone Goal:** 在 prod 之前增加 pre-prod 验证环境作为上线守门员，所有代码必须先在 pre-prod 验证通过后才能 promote 到 prod。
 
-- [ ] **Phase 53: 数据库 + Keycloak + Doppler 密钥隔离** - 创建 noda_preprod 数据库、noda-preprod realm、Doppler pre config
-- [ ] **Phase 54: Nginx 路由 + Cloudflare DNS** - 配置 pre-prod 域名路由和 upstream
+- [x] **Phase 53: 数据库 + Keycloak + Doppler 密钥隔离** - 创建 noda_preprod 数据库、noda-preprod realm、Doppler pre config
+- [x] **Phase 54: Nginx 路由 + Cloudflare DNS** - 配置 pre-prod 域名路由和 upstream
 - [ ] **Phase 55: 蓝绿部署脚本参数化 + 容器规范** - manage-containers.sh 支持 preprod + Docker 网络隔离
 - [ ] **Phase 56: Jenkins Pipeline + 安全防护** - 双 Pipeline + upstream 写入防护 + 并发锁
 
@@ -77,16 +77,6 @@ Plans:
   4. Nginx pre-prod upstream 变量名包含 preprod 前缀，不与 prod upstream 变量冲突
 **Plans**: 2 plans
 
-**Wave 1**
-- [x] 54-01-PLAN.md — 创建 Nginx pre-prod upstream 配置和 server blocks（INFRA-04, INFRA-05）
-
-**Wave 2** *(blocked on Wave 1 completion)*
-- [x] 54-02-PLAN.md — 配置 Cloudflare DNS + Tunnel 路由（INFRA-06）
-**Wave 1**
-- [x] 54-01-PLAN.md — 创建 Nginx pre-prod upstream 配置和 server blocks（INFRA-04, INFRA-05）
-
-**Wave 2** *(blocked on Wave 1 completion)*
-- [x] 54-02-PLAN.md — 配置 Cloudflare DNS + Tunnel 路由（INFRA-06）
 **Wave 1**
 - [x] 54-01-PLAN.md — 创建 Nginx pre-prod upstream 配置和 server blocks（INFRA-04, INFRA-05）
 
