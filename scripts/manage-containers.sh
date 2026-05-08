@@ -308,18 +308,25 @@ set \$${UPSTREAM_VARS_PREFIX}admin_api_upstream ${container_name}:3011;"
 set \$keycloak_upstream ${container_name}:${SERVICE_PORT};"
     fi
 
-    # 写入宿主机文件（nginx volume mount 的源目录）
-    local snippets_dir
-    snippets_dir=$(get_host_snippets_dir)
-    local upstream_basename
-    upstream_basename=$(basename "$UPSTREAM_CONF")
-    local host_conf="$snippets_dir/$upstream_basename"
+    # Phase 56-01: 支持 pre-prod 环境的独立 upstream 配置
+    local host_conf
+    if [ "${NODA_ENVIRONMENT:-prod}" = "preprod" ]; then
+        # Pre-prod 环境使用独立的 upstream 文件
+        host_conf="/opt/noda/upstream/_preprod_upstream.conf"
+    else
+        # Prod 环境使用原有的 upstream 文件路径
+        local snippets_dir
+        snippets_dir=$(get_host_snippets_dir)
+        local upstream_basename
+        upstream_basename=$(basename "$UPSTREAM_CONF")
+        host_conf="$snippets_dir/$upstream_basename"
+    fi
 
     local tmp_file="${host_conf}.tmp.$$"
     echo "$upstream_content" >"$tmp_file"
     mv "$tmp_file" "$host_conf"
 
-    log_info "upstream 已更新: $container_name:$SERVICE_PORT"
+    log_info "upstream 已更新: $container_name:$SERVICE_PORT -> $host_conf"
 }
 
 # ============================================
