@@ -884,8 +884,8 @@ pipeline_infra_verify()
 
     case "$service" in
         keycloak)
-            # 通过 nginx 验证 Keycloak 可达
-            docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://noda-infra-keycloak:8080/health/ready 2>/dev/null
+            # 通过 nginx 验证 Keycloak 可达（生产模式无 /health/ready，用根路径）
+            docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://noda-infra-keycloak:8080/ 2>/dev/null
             log_success "Keycloak E2E 验证通过"
             ;;
         nginx)
