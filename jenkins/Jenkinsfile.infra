@@ -46,7 +46,7 @@ pipeline {
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     if [ "$SERVICE" = "keycloak" ]; then
-                        export SERVICE_IMAGE="${KEYCLOAK_IMAGE}"
+                        export SERVICE_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
                     fi
                     pipeline_infra_preflight "$SERVICE"
                 '''
@@ -87,7 +87,7 @@ pipeline {
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
                     if [ "$SERVICE" = "keycloak" ]; then
-                        export SERVICE_IMAGE="${KEYCLOAK_IMAGE}"
+                        export SERVICE_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
                     fi
                     pipeline_infra_deploy "$SERVICE"
                 '''
