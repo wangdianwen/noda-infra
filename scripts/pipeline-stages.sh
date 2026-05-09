@@ -330,10 +330,8 @@ pipeline_pull_image()
 # ============================================
 # 函数: pipeline_deploy_prod
 # ============================================
-# 生产环境直接替换部署：停旧容器 -> tag rollback 镜像 -> 启新容器 -> 健康检查
+# 生产环境直接替换部署：停旧容器 -> 启新容器 -> 健康检查
 # 参数: $1 = GIT_SHA
-# 环境变量控制：
-#   SERVICE_NAME - 镜像名（默认 noda-apps）
 pipeline_deploy_prod()
 {
     local git_sha="$1"
@@ -342,16 +340,6 @@ pipeline_deploy_prod()
     disk_snapshot "部署前"
 
     log_info "生产环境部署: $PROD_CONTAINER ($image)"
-
-    # 保存 rollback 镜像（在停止旧容器之前）
-    if docker inspect "$PROD_CONTAINER" >/dev/null 2>&1; then
-        local current_image
-        current_image=$(docker inspect --format='{{.Config.Image}}' "$PROD_CONTAINER" 2>/dev/null || echo "")
-        if [ -n "$current_image" ]; then
-            docker tag "$current_image" "noda-apps:rollback" 2>/dev/null || true
-            log_info "保存 rollback 镜像: noda-apps:rollback (from $current_image)"
-        fi
-    fi
 
     # 停止并移除旧容器
     if [ "$(is_container_running "$PROD_CONTAINER")" = "true" ]; then
@@ -391,6 +379,8 @@ pipeline_deploy_prod()
         --log-opt max-size=10m \
         --log-opt max-file=3 \
         --env-file "$tmp_env" \
+        --label "com.docker.compose.project=noda-apps" \
+        --label "com.docker.compose.service=noda-apps" \
         --label "noda.service-group=apps" \
         --label noda.environment=prod \
         --health-cmd "node -e \"fetch('http://localhost:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"" \
@@ -509,7 +499,7 @@ pipeline_failure_cleanup()
 # ============================================
 # 用于 Jenkinsfile.infra 统一基础设施 Pipeline
 # 支持 4 种服务: keycloak, nginx, noda-ops, postgres
-# 每种服务使用独立的部署/健康检查/回滚策略
+# 每种服务使用独立的部署/健康检查策略
 # ============================================
 
 # ============================================
@@ -692,16 +682,6 @@ pipeline_deploy_keycloak_prod()
 
     log_info "Keycloak 直接替换部署: $container_name ($image)"
 
-    # 保存 rollback 镜像（在停止旧容器之前）
-    if docker inspect "$container_name" >/dev/null 2>&1; then
-        local current_image
-        current_image=$(docker inspect --format='{{.Config.Image}}' "$container_name" 2>/dev/null || echo "")
-        if [ -n "$current_image" ]; then
-            docker tag "$current_image" "keycloak:rollback" 2>/dev/null || true
-            log_info "保存 rollback 镜像: keycloak:rollback (from $current_image)"
-        fi
-    fi
-
     # 停止并移除旧容器
     if [ "$(is_container_running "$container_name")" = "true" ]; then
         log_info "停止旧容器: $container_name"
@@ -735,6 +715,8 @@ pipeline_deploy_keycloak_prod()
         --log-opt max-size=10m \
         --log-opt max-file=3 \
         --env-file "$tmp_env" \
+        --label "com.docker.compose.project=noda-infra" \
+        --label "com.docker.compose.service=keycloak" \
         --label "noda.service-group=infra" \
         --label noda.environment=prod \
         --health-cmd "echo > /dev/tcp/localhost/8080 2>/dev/null || exit 1" \
@@ -777,18 +759,10 @@ prepare_keycloak_env_file()
 # 函数: pipeline_deploy_nginx
 # ============================================
 # Nginx docker compose recreate（秒级中断，非零停机）
-# 保存当前镜像 digest 用于回滚
 # 返回: 0=成功，1=失败
 pipeline_deploy_nginx()
 {
     log_info "Nginx 重建部署（docker compose recreate）"
-
-    # 保存当前镜像 digest（用于回滚）
-    INFRA_ROLLBACK_IMAGE=$(docker inspect --format='{{.Image}}' noda-infra-nginx 2>/dev/null || echo "")
-    export INFRA_ROLLBACK_IMAGE
-    if [ -n "$INFRA_ROLLBACK_IMAGE" ]; then
-        log_info "保存当前镜像: ${INFRA_ROLLBACK_IMAGE:0:12}..."
-    fi
 
     # 先停止并移除旧容器，再创建新容器
     # 不使用 --force-recreate：该选项在新容器创建时网络连接尚未就绪，
@@ -827,17 +801,10 @@ pipeline_deploy_nginx()
 # 函数: pipeline_deploy_noda_ops
 # ============================================
 # noda-ops docker compose recreate（使用 build 模式）
-# 保存当前镜像 digest 用于回滚
 # 返回: 0=成功，1=失败
 pipeline_deploy_noda_ops()
 {
     log_info "noda-ops 重建部署（docker compose recreate）"
-
-    INFRA_ROLLBACK_IMAGE=$(docker inspect --format='{{.Image}}' noda-ops 2>/dev/null || echo "")
-    export INFRA_ROLLBACK_IMAGE
-    if [ -n "$INFRA_ROLLBACK_IMAGE" ]; then
-        log_info "保存当前镜像: ${INFRA_ROLLBACK_IMAGE:0:12}..."
-    fi
 
     # 从 Doppler Cloud 拉取密钥（B2、PostgreSQL、Cloudflare 等）
     local secrets_file
@@ -906,126 +873,6 @@ pipeline_infra_health_check()
 }
 
 # ============================================
-# 函数: pipeline_infra_rollback
-# ============================================
-# 服务专属回滚
-# 参数: $1 = SERVICE
-# 环境变量: INFRA_ROLLBACK_IMAGE（nginx/noda-ops 回滚镜像 digest）
-#           INFRA_BACKUP_FILE（postgres 回滚备份文件）
-# 返回: 0=回滚成功，1=回滚失败
-pipeline_infra_rollback()
-{
-    local service="$1"
-
-    log_info "回滚: $service"
-
-    case "$service" in
-        keycloak)
-            # 从 rollback 镜像重新启动
-            if ! docker inspect "keycloak:rollback" >/dev/null 2>&1; then
-                log_error "无 Keycloak rollback 镜像，无法回滚"
-                return 1
-            fi
-            log_info "回滚 Keycloak 到 rollback 镜像..."
-            # 停止当前容器
-            docker stop -t 30 keycloak 2>/dev/null || true
-            docker rm keycloak 2>/dev/null || true
-            # 从 rollback 镜像启动（使用相同的参数）
-            local tmp_env
-            tmp_env=$(prepare_keycloak_env_file)
-            docker run -d \
-                --name "noda-infra-keycloak" \
-                --network "$NETWORK_NAME" \
-                --network-alias "noda-infra-keycloak" \
-                --restart unless-stopped \
-                --stop-timeout 30 \
-                --security-opt no-new-privileges \
-                --cap-drop ALL \
-                -v "$PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro" \
-                --tmpfs /opt/keycloak/data \
-                --memory 1g \
-                --memory-reservation 512m \
-                --cpus 1 \
-                --log-driver json-file \
-                --log-opt max-size=10m \
-                --log-opt max-file=3 \
-                --env-file "$tmp_env" \
-                --label "noda.service-group=infra" \
-                --label noda.environment=prod \
-                --health-cmd "curl -sf http://localhost:8080/health/ready || exit 1" \
-                --health-interval 30s \
-                --health-timeout 10s \
-                --health-retries 5 \
-                --health-start-period 120s \
-                "keycloak:rollback" \
-                start --hostname-strict=false --proxy-headers=xforwarded
-            rm -f "$tmp_env"
-            reload_nginx
-            log_success "Keycloak 回滚完成"
-            ;;
-        nginx)
-            if [ -z "${INFRA_ROLLBACK_IMAGE:-}" ]; then
-                log_error "无回滚镜像信息（INFRA_ROLLBACK_IMAGE 未设置）"
-                return 1
-            fi
-            log_info "回滚 Nginx 到镜像: ${INFRA_ROLLBACK_IMAGE:0:12}..."
-            local rollback_compose
-            rollback_compose=$(mktemp)
-            cat >"$rollback_compose" <<YAML
-# 自动生成的回滚 overlay — 恢复 Nginx 到部署前的镜像
-name: noda-infra
-services:
-  nginx:
-    image: ${INFRA_ROLLBACK_IMAGE}
-YAML
-            docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
-                -f "$rollback_compose" up -d --force-recreate --no-deps nginx
-            rm -f "$rollback_compose"
-            log_success "Nginx 回滚完成"
-            ;;
-        noda-ops)
-            if [ -z "${INFRA_ROLLBACK_IMAGE:-}" ]; then
-                log_error "无回滚镜像信息（INFRA_ROLLBACK_IMAGE 未设置）"
-                return 1
-            fi
-            log_info "回滚 noda-ops 到镜像: ${INFRA_ROLLBACK_IMAGE:0:12}..."
-            local rollback_compose
-            rollback_compose=$(mktemp)
-            cat >"$rollback_compose" <<YAML
-# 自动生成的回滚 overlay — 恢复 noda-ops 到部署前的镜像
-name: noda-infra
-services:
-  noda-ops:
-    image: ${INFRA_ROLLBACK_IMAGE}
-YAML
-            docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
-                -f "$rollback_compose" up -d --force-recreate --no-deps noda-ops
-            rm -f "$rollback_compose"
-            log_success "noda-ops 回滚完成"
-            ;;
-        postgres)
-            if [ -z "${INFRA_BACKUP_FILE:-}" ]; then
-                log_error "无备份文件（INFRA_BACKUP_FILE 未设置），无法回滚"
-                return 1
-            fi
-            if [ ! -f "$INFRA_BACKUP_FILE" ]; then
-                log_error "备份文件不存在: $INFRA_BACKUP_FILE"
-                return 1
-            fi
-            log_info "从备份恢复 PostgreSQL: $INFRA_BACKUP_FILE"
-            gunzip -c "$INFRA_BACKUP_FILE" | docker exec -i noda-infra-postgres-prod psql -U postgres
-            # 恢复后验证
-            docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
-            log_success "PostgreSQL 恢复完成"
-            ;;
-        *)
-            log_error "未知服务: $service"
-            return 1
-            ;;
-    esac
-}
-
-# ============================================
 # 函数: pipeline_infra_verify
 # ============================================
 # 部署后验证
@@ -1038,7 +885,7 @@ pipeline_infra_verify()
     case "$service" in
         keycloak)
             # 通过 nginx 验证 Keycloak 可达
-            docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://keycloak:8080/health/ready 2>/dev/null
+            docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://noda-infra-keycloak:8080/health/ready 2>/dev/null
             log_success "Keycloak E2E 验证通过"
             ;;
         nginx)
@@ -1106,7 +953,7 @@ pipeline_infra_cleanup()
 # ============================================
 # 函数: pipeline_infra_failure_cleanup
 # ============================================
-# 部署失败清理（捕获日志 + 尝试自动回滚）
+# 部署失败清理（捕获日志）
 # 参数: $1 = SERVICE
 # 返回: 0=清理完成
 pipeline_infra_failure_cleanup()
@@ -1135,9 +982,6 @@ pipeline_infra_failure_cleanup()
 
     docker logs "$container_name" --tail 50 >deploy-failure-infra.log 2>&1 || true
     docker logs "$NGINX_CONTAINER" --tail 50 >deploy-failure-nginx.log 2>&1 || true
-
-    # 尝试自动回滚
-    pipeline_infra_rollback "$service" || true
 
     log_info "失败日志已保存"
 }
@@ -1199,6 +1043,8 @@ pipeline_deploy_preprod()
         --log-opt max-size=10m \
         --log-opt max-file=3 \
         --env-file "$tmp_env" \
+        --label "com.docker.compose.project=noda-apps" \
+        --label "com.docker.compose.service=noda-apps-preprod" \
         --label "noda.service-group=apps" \
         --label noda.environment=preprod \
         --health-cmd "node -e \"fetch('http://localhost:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"" \
