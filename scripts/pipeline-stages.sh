@@ -743,7 +743,7 @@ pipeline_deploy_keycloak_prod()
         --health-retries 5 \
         --health-start-period 120s \
         "$image" \
-        start-dev --hostname-strict=false --proxy-headers=xforwarded
+        start --hostname-strict=false --proxy-headers=xforwarded
 
     rm -f "$tmp_env"
 
@@ -882,7 +882,7 @@ pipeline_infra_health_check()
 
     case "$service" in
         keycloak)
-            wait_container_healthy "keycloak" 180
+            wait_container_healthy "keycloak" 300
             ;;
         nginx)
             # nginx -t 验证配置 + wait_container_healthy
@@ -958,7 +958,7 @@ pipeline_infra_rollback()
                 --health-retries 5 \
                 --health-start-period 120s \
                 "keycloak:rollback" \
-                start-dev --hostname-strict=false --proxy-headers=xforwarded
+                start --hostname-strict=false --proxy-headers=xforwarded
             rm -f "$tmp_env"
             reload_nginx
             log_success "Keycloak 回滚完成"
