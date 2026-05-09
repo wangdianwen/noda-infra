@@ -34,24 +34,14 @@ BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-12}"
 IMAGE_RETENTION_DAYS="${IMAGE_RETENTION_DAYS:-7}"
 
 # ============================================
-# 环境配置（三分组: noda-infra / noda-apps-prod / noda-apps-pre-prod）
+# 环境配置（两组: noda-infra / noda-apps-prod）
 # ============================================
 NODA_ENVIRONMENT="${NODA_ENVIRONMENT:-prod}"
 
-# 根据环境设置状态文件、upstream 配置路径、compose 文件和服务名
-if [ "$NODA_ENVIRONMENT" = "preprod" ]; then
-    # pre-prod: 单容器部署（无蓝绿）
-    ACTIVE_ENV_FILE="/opt/noda/preprod/active-env"
-    UPSTREAM_CONF="/opt/noda/upstream/_preprod_upstream.conf"
-    COMPOSE_FILE="$PROJECT_ROOT/docker/docker-compose.apps-preprod.yml"
-    SERVICE_NAME="${SERVICE_NAME:-noda-apps-preprod}"
-else
-    # prod: 蓝绿部署
-    ACTIVE_ENV_FILE="/opt/noda/active-env"
-    UPSTREAM_CONF="${UPSTREAM_CONF:-$PROJECT_ROOT/config/nginx/snippets/upstream-findclass.conf}"
-    COMPOSE_FILE="$PROJECT_ROOT/docker/docker-compose.apps-prod.yml"
-    SERVICE_NAME="${SERVICE_NAME:-noda-apps}"
-fi
+ACTIVE_ENV_FILE="/opt/noda/active-env"
+UPSTREAM_CONF="${UPSTREAM_CONF:-$PROJECT_ROOT/config/nginx/snippets/upstream-findclass.conf}"
+COMPOSE_FILE="$PROJECT_ROOT/docker/docker-compose.apps-prod.yml"
+SERVICE_NAME="${SERVICE_NAME:-noda-apps}"
 
 
 # ============================================
@@ -935,8 +925,8 @@ pipeline_infra_verify()
             log_info "Keycloak E2E 验证已由蓝绿脚本内部完成"
             ;;
         nginx)
-            # 通过 nginx 容器 wget 自身验证
-            docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://127.0.0.1/ 2>/dev/null
+            # 通过 nginx 容器 wget 自身验证（nginx 监听 81 端口）
+            docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://127.0.0.1:81/ 2>/dev/null
             log_success "Nginx E2E 验证通过"
             ;;
         noda-ops)
