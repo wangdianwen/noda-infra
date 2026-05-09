@@ -1,13 +1,13 @@
 {
-  "model_profile": "balanced",
-  "commit_docs": true,
+  "model_profile": "budget",
+  "commit_docs": false,
   "parallelization": true,
   "search_gitignored": false,
   "brave_search": false,
   "firecrawl": false,
   "exa_search": false,
   "git": {
-    "branching_strategy": "none",
+    "branching_strategy": "milestone",
     "phase_branch_template": "gsd/phase-{phase}-{slug}",
     "milestone_branch_template": "gsd/{milestone}-{slug}",
     "quick_branch_template": null
@@ -20,9 +20,14 @@
     "auto_advance": false,
     "node_repair": true,
     "node_repair_budget": 2,
+    "pattern_mapper": true,
     "ui_phase": true,
     "ui_safety_gate": true,
     "ai_integration_phase": true,
+    "tdd_mode": false,
+    "code_review": true,
+    "code_review_depth": "standard",
+    "ui_review": true,
     "text_mode": false,
     "research_before_questions": true,
     "discuss_mode": "discuss",
@@ -37,5 +42,11 @@
   "phase_naming": "sequential",
   "agent_skills": {},
   "mode": "yolo",
-  "granularity": "fine"
+  "granularity": "fine",
+  "intel": {
+    "enabled": true
+  },
+  "graphify": {
+    "enabled": true
+  }
 }
