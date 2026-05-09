@@ -737,11 +737,11 @@ pipeline_deploy_keycloak_prod()
         --env-file "$tmp_env" \
         --label "noda.service-group=infra" \
         --label noda.environment=prod \
-        --health-cmd "curl -sf http://localhost:8080/health/ready || exit 1" \
-        --health-interval 30s \
-        --health-timeout 10s \
-        --health-retries 5 \
-        --health-start-period 120s \
+        --health-cmd "echo > /dev/tcp/localhost/8080 2>/dev/null || exit 1" \
+        --health-interval 10s \
+        --health-timeout 5s \
+        --health-retries 10 \
+        --health-start-period 60s \
         "$image" \
         start --hostname-strict=false --proxy-headers=xforwarded
 
