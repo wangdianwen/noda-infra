@@ -13,19 +13,13 @@ source "$SCRIPT_DIR/lib/log.sh"
 for env in prod preprod; do
     state_dir="/opt/noda/${env}"
     log_info "创建状态目录: ${state_dir}"
-    
+
     # 使用 sudo 创建目录（生产环境需要）
     if [ -w /opt ]; then
         mkdir -p "${state_dir}"
     else
         sudo mkdir -p "${state_dir}"
         sudo chown $(whoami):$(whoami) "${state_dir}"
-    fi
-    
-    # 创建初始状态文件（如果不存在）
-    if [ ! -f "${state_dir}/active-env" ]; then
-        echo "blue" > "${state_dir}/active-env"
-        log_info "初始化 ${env} 活跃环境: blue"
     fi
 done
 

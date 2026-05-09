@@ -5,11 +5,11 @@
 # NOTE: 此脚本作为 Jenkins Pipeline 不可用时的紧急回退方案保留。
 # 正常部署请使用 Jenkins Pipeline:
 #   - keycloak/nginx/noda-ops: Jenkinsfile.infra (参数化服务选择)
-#   - findclass-ssr: Jenkinsfile (蓝绿部署)
-#   - noda-site: Jenkinsfile.noda-site (蓝绿部署)
+#   - findclass-ssr: Jenkinsfile.apps (直接替换部署)
+#   - noda-site: Jenkinsfile.apps (直接替换部署)
 #
 # 此脚本仅部署 postgres（其他服务已迁移到 Pipeline 管理）。
-# Keycloak 和 findclass-ssr 使用蓝绿 docker run 管理。
+# Keycloak 通过 Jenkinsfile.infra 直接替换 docker run 管理。
 # ============================================
 set -euo pipefail
 
@@ -39,7 +39,7 @@ COMPOSE_FILES="-f docker/docker-compose.yml -f docker/docker-compose.prod.yml"
 EXPECTED_CONTAINERS=(
     "noda-infra-postgres-prod"
     # nginx, noda-ops 已迁移到 Jenkinsfile.infra Pipeline 管理
-    # keycloak 和 findclass-ssr 已迁移到蓝绿 docker run 管理
+    # keycloak 和 findclass-ssr 已迁移到 Pipeline 直接替换管理
 )
 
 # 启动的服务列表
@@ -320,10 +320,10 @@ log_success "=========================================="
 log_success "基础设施部署完成！"
 log_success "=========================================="
 log_info "✓ PostgreSQL (Prod): 运行中"
-log_info "✓ Keycloak: 蓝绿管理（通过 Jenkinsfile.infra 或 manage-containers.sh）"
+log_info "✓ Keycloak: 直接替换（通过 Jenkinsfile.infra 或 docker run）"
 log_info "✓ Nginx: compose 管理（通过 Jenkinsfile.infra 或 deploy-infrastructure-prod.sh）"
 log_info "✓ Noda-Ops: compose 管理（通过 Jenkinsfile.infra 或 deploy-infrastructure-prod.sh）"
-log_info "✓ Findclass-SSR: 蓝绿管理（通过 Jenkinsfile 或 blue-green-deploy.sh）"
+log_info "✓ Findclass-SSR: 直接替换（通过 Jenkinsfile.apps 或 deploy-apps-prod.sh）"
 log_info ""
 log_info "访问地址："
 log_info "  管理控制台: https://auth.noda.co.nz/admin"

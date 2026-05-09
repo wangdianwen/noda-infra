@@ -108,7 +108,7 @@ services:
 
   # ----------------------------------------
   # Keycloak 认证服务（单容器，直接替换部署）
-  # 生产环境通过 Jenkins infra-deploy Pipeline 管理（docker run）
+  # 生产环境通过 Jenkins infra-deploy Pipeline 管理（docker stop/rm/run）
   # 容器名: keycloak，此定义仅作为配置参考保留（profiles: disabled）
   # ----------------------------------------
   keycloak:

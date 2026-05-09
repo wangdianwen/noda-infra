@@ -1,9 +1,9 @@
 # ============================================
-# Noda Apps Prod（蓝绿部署）
+# Noda Apps Prod（单容器直接替换）
 # ============================================
 # 项目名: noda-apps-prod
-# 部署: Jenkins noda-apps-promote Pipeline
-# 蓝绿部署: noda-apps-prod-blue / noda-apps-prod-green
+# 部署: Jenkins apps-deploy Pipeline
+# 容器名: noda-apps-prod（停旧启新 + rollback 镜像回滚）
 
 name: noda-apps-prod
 

@@ -1,12 +1,12 @@
 #!/bin/bash
 # ============================================
-# 手动回退部署脚本（应用服务 — Prod 蓝绿部署）
+# 手动回退部署脚本（应用服务 — Prod 直接替换）
 # ============================================
 # NOTE: 此脚本作为 Jenkins Pipeline 不可用时的紧急回退方案保留。
-# 正常部署请使用 Jenkins Promote Pipeline（Build Now -> noda-apps-promote）。
+# 正常部署请使用 Jenkins apps-deploy Pipeline。
 #
 # 三分组架构：noda-infra / noda-apps-prod / noda-apps-pre-prod
-# 容器命名：noda-apps-prod-{blue|green}
+# 容器命名：noda-apps-prod（单容器，直接替换）
 # ============================================
 
 set -euo pipefail
@@ -19,92 +19,72 @@ source "$PROJECT_ROOT/scripts/lib/log.sh"
 source "$PROJECT_ROOT/scripts/lib/health.sh"
 source "$PROJECT_ROOT/scripts/lib/secrets.sh"
 
-# 加载密钥（Doppler 双模式）
 load_secrets
 
-# 回滚目录和文件
-ROLLBACK_DIR="/tmp/noda-rollback"
-ROLLBACK_FILE="$ROLLBACK_DIR/images-apps-$(date +%s).txt"
+PROD_CONTAINER="noda-apps-prod"
+NETWORK_NAME="noda-network"
+NGINX_CONTAINER="noda-infra-nginx"
 
-# ============================================
-# 镜像回滚函数
-# ============================================
-
-save_app_image_tags()
+is_container_running()
 {
-    mkdir -p "$ROLLBACK_DIR"
-    : >"$ROLLBACK_FILE"
-    local active_env
-    active_env=$(cat /opt/noda/active-env 2>/dev/null || echo "blue")
-    local active_container="noda-apps-prod-${active_env}"
-    local image_id
-    image_id=$(docker inspect --format='{{.Image}}' "$active_container" 2>/dev/null || echo "")
-    if [ -n "$image_id" ]; then
-        echo "noda-apps=${image_id}" >>"$ROLLBACK_FILE"
-        log_info "已保存 ${active_container} 镜像: ${image_id:0:12}..."
-    fi
-
-    log_success "应用镜像标签已保存"
+    local name="$1"
+    local running
+    running=$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null || echo "false")
+    echo "$running"
 }
 
-rollback_app()
+reload_nginx()
 {
-    if [ ! -f "$ROLLBACK_FILE" ]; then
-        log_error "回滚文件不存在: ${ROLLBACK_FILE}"
+    if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
+        log_error "nginx 容器未运行"
+        return 1
+    fi
+    docker exec "$NGINX_CONTAINER" nginx -s reload
+    log_success "nginx 配置已重载"
+}
+
+prepare_prod_env_file()
+{
+    local tmp_file="/tmp/noda-apps-prod.env.$$"
+    local env_template="$PROJECT_ROOT/docker/env-noda-apps.env"
+
+    if [ ! -f "$env_template" ]; then
+        log_error "prod env 模板文件不存在: $env_template"
         return 1
     fi
 
-    local image_id
-    image_id=$(grep "noda-apps=" "$ROLLBACK_FILE" | cut -d'=' -f2)
-    if [ -z "$image_id" ]; then
-        log_error "回滚文件中无 noda-apps 镜像信息"
-        return 1
-    fi
-
-    local active_env
-    active_env=$(cat /opt/noda/active-env 2>/dev/null || echo "blue")
-    local active_container="noda-apps-prod-${active_env}"
-    log_info "回滚 ${active_container} 到镜像 ${image_id:0:12}..."
-
-    docker stop -t 30 "$active_container" 2>/dev/null || true
-    docker rm "$active_container" 2>/dev/null || true
-
-    export NODA_ENVIRONMENT=prod
-    source "$PROJECT_ROOT/scripts/manage-containers.sh"
-    run_container "$active_env" "$image_id"
-
-    if ! wait_container_healthy "$active_container" 90; then
-        log_error "回滚后健康检查失败"
-        return 1
-    fi
-
-    reload_nginx
-    log_success "noda-apps 已回滚"
-
-    return 0
+    local vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY}'
+    envsubst "$vars" <"$env_template" >"$tmp_file"
+    echo "$tmp_file"
 }
 
 # ============================================
-# 步骤 1/6: 验证基础设施
+# 步骤 1/5: 验证基础设施
 # ============================================
 log_info "=========================================="
-log_info "步骤 1/6: 验证基础设施服务"
-log_info "=========================================="
-
-# ============================================
-# 步骤 2/6: 保存当前镜像标签
-# ============================================
-log_info "=========================================="
-log_info "步骤 2/6: 保存当前镜像标签"
+log_info "步骤 1/5: 验证基础设施服务"
 log_info "=========================================="
 
-save_app_image_tags
-
 # ============================================
-# 步骤 3/6: 构建新镜像
+# 步骤 2/5: 保存当前镜像标签（rollback）
 # ============================================
 log_info "=========================================="
-log_info "步骤 3/6: 构建镜像"
+log_info "步骤 2/5: 保存当前镜像标签（rollback）"
+log_info "=========================================="
+
+if docker inspect "$PROD_CONTAINER" >/dev/null 2>&1; then
+    current_image=$(docker inspect --format='{{.Config.Image}}' "$PROD_CONTAINER" 2>/dev/null || echo "")
+    if [ -n "$current_image" ]; then
+        docker tag "$current_image" "noda-apps:rollback" 2>/dev/null || true
+        log_info "保存 rollback 镜像: noda-apps:rollback (from $current_image)"
+    fi
+fi
+
+# ============================================
+# 步骤 3/5: 构建新镜像
+# ============================================
+log_info "=========================================="
+log_info "步骤 3/5: 构建镜像"
 log_info "=========================================="
 
 APPS_GIT_SHA=$(cd "$PROJECT_ROOT/../noda-apps" 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || echo "manual")
@@ -121,68 +101,83 @@ docker build \
 log_success "镜像构建完成: noda-apps:${APPS_GIT_SHA}"
 
 # ============================================
-# 步骤 4/6: 蓝绿部署
+# 步骤 4/5: 直接替换部署
 # ============================================
 log_info "=========================================="
-log_info "步骤 4/6: 蓝绿部署"
+log_info "步骤 4/5: 直接替换部署"
 log_info "=========================================="
 
-export NODA_ENVIRONMENT=prod
-source "$PROJECT_ROOT/scripts/manage-containers.sh"
-
-ACTIVE_ENV=$(get_active_env)
-TARGET_ENV=$(get_inactive_env)
-TARGET_CONTAINER=$(get_container_name "$TARGET_ENV")
-
-log_info "活跃环境: $ACTIVE_ENV, 目标环境: $TARGET_ENV"
-log_info "目标容器: $TARGET_CONTAINER"
-
-# 停止旧目标容器
-if [ "$(is_container_running "$TARGET_CONTAINER")" = "true" ]; then
-    log_info "停止旧目标容器: $TARGET_CONTAINER"
-    docker stop -t 30 "$TARGET_CONTAINER"
-    docker rm "$TARGET_CONTAINER"
+# 停止并移除旧容器
+if [ "$(is_container_running "$PROD_CONTAINER")" = "true" ]; then
+    log_info "停止旧容器: $PROD_CONTAINER"
+    docker stop -t 30 "$PROD_CONTAINER"
+    docker rm "$PROD_CONTAINER"
+elif docker inspect "$PROD_CONTAINER" >/dev/null 2>&1; then
+    docker rm "$PROD_CONTAINER"
 fi
 
-# 启动新容器到目标环境
-run_container "$TARGET_ENV" "noda-apps:${APPS_GIT_SHA}"
+# 准备环境变量
+tmp_env=$(prepare_prod_env_file)
 
-# ============================================
-# 步骤 5/6: 健康检查 + 流量切换
-# ============================================
-log_info "=========================================="
-log_info "步骤 5/6: 健康检查 + 流量切换"
-log_info "=========================================="
+# 启动新容器
+log_info "启动容器: $PROD_CONTAINER (noda-apps:${APPS_GIT_SHA})"
 
-if ! wait_container_healthy "$TARGET_CONTAINER" 90; then
-    log_info "健康检查失败，清理目标容器..."
-    docker rm -f "$TARGET_CONTAINER" 2>/dev/null || true
-    exit 1
-fi
+docker run -d \
+    --name "$PROD_CONTAINER" \
+    --network "$NETWORK_NAME" \
+    --network-alias "$PROD_CONTAINER" \
+    --restart unless-stopped \
+    --stop-timeout 30 \
+    --security-opt no-new-privileges \
+    --cap-drop ALL \
+    --read-only \
+    --tmpfs /tmp \
+    --tmpfs /app/scripts/logs \
+    --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
+    --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
+    --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+    --memory 1g \
+    --memory-reservation 128m \
+    --cpus 1 \
+    --log-driver json-file \
+    --log-opt max-size=10m \
+    --log-opt max-file=3 \
+    --env-file "$tmp_env" \
+    --label "noda.service-group=apps" \
+    --label noda.environment=prod \
+    --health-cmd "node -e \"fetch('http://localhost:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"" \
+    --health-interval 30s \
+    --health-timeout 10s \
+    --health-retries 3 \
+    --health-start-period 60s \
+    "noda-apps:${APPS_GIT_SHA}"
 
-update_upstream "$TARGET_ENV"
-if ! docker exec "$NGINX_CONTAINER" nginx -t; then
-    log_error "nginx 配置验证失败，回滚 upstream"
-    update_upstream "$ACTIVE_ENV"
-    docker rm -f "$TARGET_CONTAINER" 2>/dev/null || true
-    exit 1
-fi
+rm -f "$tmp_env"
+
+# reload nginx 刷新 DNS 缓存
 reload_nginx
-set_active_env "$TARGET_ENV"
-log_success "流量切换完成: $ACTIVE_ENV -> $TARGET_ENV"
 
 # ============================================
-# 步骤 6/6: 清理旧环境容器
+# 步骤 5/5: 健康检查
 # ============================================
 log_info "=========================================="
-log_info "步骤 6/6: 清理旧环境容器"
+log_info "步骤 5/5: 健康检查"
 log_info "=========================================="
 
-OLD_CONTAINER=$(get_container_name "$ACTIVE_ENV")
-if [ "$(is_container_running "$OLD_CONTAINER")" = "true" ]; then
-    log_info "停止旧容器: $OLD_CONTAINER"
-    docker stop -t 10 "$OLD_CONTAINER"
-    docker rm "$OLD_CONTAINER"
+if ! wait_container_healthy "$PROD_CONTAINER" 120; then
+    log_error "健康检查失败，回滚到 rollback 镜像..."
+    docker rm -f "$PROD_CONTAINER" 2>/dev/null || true
+    if docker inspect "noda-apps:rollback" >/dev/null 2>&1; then
+        docker run -d \
+            --name "$PROD_CONTAINER" \
+            --network "$NETWORK_NAME" \
+            --network-alias "$PROD_CONTAINER" \
+            --restart unless-stopped \
+            --env-file "$tmp_env" \
+            "noda-apps:rollback"
+        log_info "已回滚到 rollback 镜像"
+    fi
+    exit 1
 fi
 
 # ============================================
@@ -191,4 +186,3 @@ fi
 log_success "=========================================="
 log_success "应用部署完成！"
 log_success "=========================================="
-log_info "回滚文件: ${ROLLBACK_FILE}（部署成功，可安全忽略）"

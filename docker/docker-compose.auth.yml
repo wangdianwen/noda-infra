@@ -1,7 +1,7 @@
 # ============================================
 # Noda Auth App - Docker Compose 配置
 # ============================================
-# 独立 compose 项目，通过 Jenkins auth-deploy Pipeline 蓝绿部署
+# 独立 compose 项目，通过 Jenkins Pipeline 直接替换部署
 # 部署：通过 Jenkins Pipeline 自动管理
 
 name: noda-auth

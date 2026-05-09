@@ -3,7 +3,7 @@
 # 部署检查共享库
 # ============================================
 # 提供 HTTP 健康检查和 E2E 验证函数
-# 依赖：log.sh, manage-containers.sh (get_container_name)
+# 依赖：log.sh
 # ============================================
 
 # Source Guard
@@ -52,7 +52,7 @@ http_health_check()
 
 # e2e_verify - 通过 nginx 容器 curl/wget 验证完整请求链路
 # 参数:
-#   $1: 目标环境 (blue 或 green)
+#   $1: 容器名
 #   $2: 服务端口
 #   $3: 健康检查路径
 #   $4: 最大重试次数
@@ -60,15 +60,13 @@ http_health_check()
 # 返回：0=验证通过，1=验证失败
 e2e_verify()
 {
-    local target_env="$1"
+    local container="$1"
     local service_port="$2"
     local health_path="$3"
     local max_retries="$4"
     local interval="$5"
-    local container_name
-    container_name=$(get_container_name "$target_env")
 
-    log_info "E2E 验证: nginx -> $container_name (最多 ${max_retries} 次)"
+    log_info "E2E 验证: nginx -> $container (最多 ${max_retries} 次)"
 
     # 检测 nginx 容器是否有 curl
     local use_curl=true
@@ -87,7 +85,7 @@ e2e_verify()
             local http_code
             http_code=$(docker exec "$NGINX_CONTAINER" \
                 curl -s -o /dev/null -w "%{http_code}" \
-                "http://${container_name}:${service_port}${health_path}" 2>/dev/null || echo "000")
+                "http://${container}:${service_port}${health_path}" 2>/dev/null || echo "000")
 
             if [ "$http_code" = "200" ]; then
                 result=0
@@ -95,7 +93,7 @@ e2e_verify()
         else
             if docker exec "$NGINX_CONTAINER" \
                 wget --quiet --tries=1 --spider \
-                "http://${container_name}:${service_port}${health_path}" 2>/dev/null; then
+                "http://${container}:${service_port}${health_path}" 2>/dev/null; then
                 result=0
             fi
         fi
