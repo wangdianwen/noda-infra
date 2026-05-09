@@ -107,10 +107,10 @@ pipeline {
             steps {
                 timeout(time: 30, unit: 'MINUTES') {
                     input message: """Pre-prod 部署完成，请验证：
-  - 主应用: http://class.noda.dev/
-  - 认证: http://auth.noda.dev/
-  - 官网: http://www.noda.dev/
-  - 管理后台: http://admin.noda.dev/
+  - 主应用: http://class.noda.test/
+  - 认证: http://auth.noda.test/
+  - 官网: http://www.noda.test/
+  - 管理后台: http://admin.noda.test/
   镜像: noda-apps:${env.GIT_SHA}
   确认部署到生产环境？"""
                 }
