@@ -1,28 +1,20 @@
 #!/usr/bin/env groovy
-// Noda Site 蓝绿部署 Pipeline
-// www.noda.co.nz 网站部署
-// 9 阶段: Pre-flight -> Build -> Test -> Deploy -> Health Check -> Switch -> Verify -> CDN Purge -> Cleanup
+// 统一 Apps 部署 Pipeline（合并 5 个 Pipeline）
+// 12 阶段: Pre-flight -> Build -> Test -> Deploy Pre-prod -> Health Check Pre-prod
+//        -> Human Approval -> Deploy Prod -> Health Check Prod -> Switch -> Verify -> CDN Purge -> Cleanup
+// Build Once: 镜像构建一次，先后部署到 pre-prod 和 prod
+// 前置: noda-apps 仓库 main 分支
 
 pipeline {
     agent any
 
     environment {
         PROJECT_ROOT = "${WORKSPACE}"
-        // 服务参数
-        SERVICE_NAME = "noda-site"
-        SERVICE_PORT = "3002"
-        UPSTREAM_NAME = "www_backend"
-        HEALTH_PATH = "/"
-        ACTIVE_ENV_FILE = "/opt/noda/active-env-www"
-        UPSTREAM_CONF = "${PROJECT_ROOT}/config/nginx/snippets/upstream-www.conf"
-        SERVICE_GROUP = "apps"
-        // 蓝绿状态
         ACTIVE_ENV = sh(
-            script: 'cat /opt/noda/active-env-www 2>/dev/null || echo blue',
+            script: 'cat /opt/noda/active-env 2>/dev/null || echo blue',
             returnStdout: true
         ).trim()
         TARGET_ENV = "${env.ACTIVE_ENV == 'blue' ? 'green' : 'blue'}"
-        // Doppler Service Token
         DOPPLER_TOKEN = credentials('doppler-service-token')
     }
 
@@ -35,7 +27,6 @@ pipeline {
     stages {
         stage('Pre-flight') {
             steps {
-                // checkout noda-apps 仓库
                 dir('noda-apps') {
                     checkout([
                         $class: 'GitSCM',
@@ -55,7 +46,7 @@ pipeline {
                 sh '''
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
-                    pipeline_preflight
+                    pipeline_preflight "$WORKSPACE/noda-apps"
                 '''
             }
         }
@@ -70,7 +61,63 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
+        stage('Test') {
+            steps {
+                dir('noda-apps') {
+                    sh '''
+                        source "$WORKSPACE/scripts/lib/log.sh"
+                        source "$WORKSPACE/scripts/pipeline-stages.sh"
+                        pipeline_test "$PWD"
+                    '''
+                    sh 'pnpm lint >lint-result.txt 2>&1 || echo "LINT_FAILED" >> lint-result.txt'
+                    sh 'pnpm test >test-result.txt 2>&1 || echo "TEST_FAILED" >> test-result.txt'
+                    script {
+                        if (fileExists('lint-result.txt') && readFile('lint-result.txt').contains('LINT_FAILED')) {
+                            echo "WARNING: pnpm lint 失败，详见 lint-result.txt"
+                        }
+                        if (fileExists('test-result.txt') && readFile('test-result.txt').contains('TEST_FAILED')) {
+                            echo "WARNING: pnpm test 失败，详见 test-result.txt"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Pre-prod') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_deploy_preprod "$GIT_SHA"
+                '''
+            }
+        }
+
+        stage('Health Check Pre-prod') {
+            steps {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_health_check_preprod
+                '''
+            }
+        }
+
+        stage('Human Approval') {
+            steps {
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: """Pre-prod 部署完成，请验证：
+  - 主应用: http://class.noda.dev:81/
+  - 认证: http://auth.noda.dev:81/
+  - 官网: http://www.noda.dev:81/
+  - 管理后台: http://admin.noda.dev:81/
+  镜像: noda-apps:${env.GIT_SHA}
+  确认部署到生产环境？"""
+                }
+            }
+        }
+
+        stage('Deploy Prod') {
             steps {
                 sh '''
                     source scripts/lib/log.sh
@@ -80,7 +127,7 @@ pipeline {
             }
         }
 
-        stage('Health Check') {
+        stage('Health Check Prod') {
             steps {
                 sh '''
                     source scripts/lib/log.sh
@@ -136,6 +183,7 @@ pipeline {
                 sh '''
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
+                    pipeline_cleanup_preprod
                     pipeline_cleanup
                 '''
             }
@@ -145,6 +193,7 @@ pipeline {
     post {
         failure {
             script {
+                // 区分 pre-prod 阶段失败和 prod 阶段失败
                 if (env.TARGET_ENV && env.TARGET_ENV != 'null') {
                     sh '''
                         source scripts/lib/log.sh
@@ -152,13 +201,11 @@ pipeline {
                         pipeline_failure_cleanup "$TARGET_ENV"
                     '''
                     archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
-                } else {
-                    echo 'Pipeline 在 TARGET_ENV 设置前失败，跳过日志归档'
                 }
             }
         }
         success {
-            echo "Noda Site 部署成功: ${env.TARGET_ENV} 现在是活跃环境 (镜像: noda-site:${env.GIT_SHA})"
+            echo "部署成功: 生产流量已切换到 ${env.TARGET_ENV} (镜像: noda-apps:${env.GIT_SHA})"
         }
     }
 }

@@ -132,13 +132,30 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 
 ### 主要部署方式：Jenkins Pipeline
 
-通过 Jenkins UI 手动触发蓝绿部署 Pipeline：
+通过 Jenkins UI 手动触发部署 Pipeline（http://localhost:8888）：
 
-1. 浏览器访问 Jenkins（默认 http://\<server-ip\>:8888）
-2. 点击 `findclass-ssr-deploy` 任务
-3. 点击 "Build Now" 按钮
-4. Pipeline 自动执行 9 阶段：Pre-flight -> Build -> Test -> Deploy -> Health Check -> Switch -> Verify -> CDN Purge -> Cleanup
-5. 查看 Stage View 确认各阶段状态
+| Job | Jenkinsfile | 用途 | 阶段 |
+|-----|-------------|------|------|
+| **apps-deploy** | `Jenkinsfile.apps` | 统一应用部署（pre-prod 验证 + prod 蓝绿） | 12 阶段: Pre-flight → Build → Test → Deploy Pre-prod → Health Check Pre-prod → Human Approval → Deploy Prod → Health Check Prod → Switch → Verify → CDN Purge → Cleanup |
+| **infra-deploy** | `Jenkinsfile.infra` | 基础设施部署（nginx/noda-ops/keycloak/postgres） | 7 阶段，参数化服务选择 |
+| **cleanup** | `Jenkinsfile.cleanup` | 定期清理 workspace + 缓存 | 每周一 03:00 自动触发 |
+
+**部署流程（Build Once，人工验证后上线）：**
+1. 触发 `apps-deploy` — 自动构建并部署到 pre-prod
+2. 人工在 pre-prod 环境验证（`http://class.noda.dev:81/`）
+3. 在 Jenkins UI 点击 "Proceed" 确认上线
+4. Pipeline 自动完成 prod 蓝绿部署
+
+**Pre-prod 访问（通过 /etc/hosts）：**
+```
+# 在本地 /etc/hosts 添加（SERVER_IP 替换为服务器 IP）
+<SERVER_IP> class.noda.dev auth.noda.dev www.noda.dev admin.noda.dev
+```
+- 主应用: `http://class.noda.dev:81/`
+- 认证: `http://auth.noda.dev:81/`
+- 官网: `http://www.noda.dev:81/`
+- 管理后台: `http://admin.noda.dev:81/`
+- 数据库: `noda_preprod`（独立，不污染生产数据）
 
 ### Jenkins API 远程触发（curl Runbook）
 
@@ -151,43 +168,33 @@ Jenkins 运行在本机 `http://localhost:8888`，可通过 curl 直接触发 Pi
 source scripts/jenkins/config/jenkins-admin.env
 JENKINS_URL="http://localhost:8888"
 
-# 获取 CSRF Crumb（每次请求前必须获取）
-CRUMB=$(curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
-  "$JENKINS_URL/crumbIssuer/api/json" | \
-  python3 -c "import sys,json; d=json.load(sys.stdin); print(d['crumbRequestField']+':'+d['crumb'])")
+# 获取 CSRF Crumb（每次请求前必须获取，需要 cookie jar）
+curl -sf -c /tmp/jenkins-cookies -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  "$JENKINS_URL/crumbIssuer/api/json" > /tmp/crumb.json
+CRUMB=$(python3 -c "import json; print(json.load(open('/tmp/crumb.json'))['crumb'])")
 
-# 触发 findclass-ssr 部署
-curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
-  -X POST -H "$CRUMB" \
-  "$JENKINS_URL/job/findclass-ssr-deploy/build"
+# 触发应用部署（pre-prod 验证 + prod 蓝绿）
+curl -s -b /tmp/jenkins-cookies -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  -X POST -H "Jenkins-Crumb: $CRUMB" \
+  "$JENKINS_URL/job/apps-deploy/build"
 
-# 触发 keycloak 部署
-curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
-  -X POST -H "$CRUMB" \
-  "$JENKINS_URL/job/keycloak-deploy/build"
+# 触发基础设施部署（参数：nginx / noda-ops / keycloak / postgres）
+curl -s -b /tmp/jenkins-cookies -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  -X POST -H "Jenkins-Crumb: $CRUMB" \
+  "$JENKINS_URL/job/infra-deploy/build-withParameters?SERVICE=keycloak"
 
-# 触发基础设施部署（noda-ops）
+# 查询构建状态（将 JOB 和 N 替换为实际值）
 curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
-  -X POST -H "$CRUMB" \
-  "$JENKINS_URL/job/infra-deploy/build-withParameters?SERVICE=noda-ops"
-
-# 查询构建状态（将 N 替换为构建号）
-curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
-  "$JENKINS_URL/job/findclass-ssr-deploy/N/api/json" | \
+  "$JENKINS_URL/job/apps-deploy/N/api/json" | \
   python3 -c "import sys,json; d=json.load(sys.stdin); print('building:', d['building'], 'result:', d.get('result','running'))"
 
 # 查看构建日志（最后 100 行）
 curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
-  "$JENKINS_URL/job/findclass-ssr-deploy/N/consoleText" | tail -100
-
-# 获取最新构建号
-curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
-  "$JENKINS_URL/job/findclass-ssr-deploy/api/json" | \
-  python3 -c "import sys,json; d=json.load(sys.stdin); print('nextBuild:', d['nextBuildNumber'], 'lastBuild:', d['lastBuild']['number'])"
+  "$JENKINS_URL/job/apps-deploy/N/consoleText" | tail -100
 
 # 列出所有 Pipeline 任务
 curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
-  "$JENKINS_URL/api/json?tree=jobs[name,color]" | \
+  "$JENKINS_URL/api/json" | \
   python3 -c "import sys,json; [print(j['name']) for j in json.load(sys.stdin)['jobs']]"
 ```
 

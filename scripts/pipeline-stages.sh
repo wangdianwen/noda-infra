@@ -1028,6 +1028,161 @@ pipeline_infra_failure_cleanup()
 }
 
 # ============================================
+# Pre-prod Pipeline 函数
+# ============================================
+# 用于 Jenkinsfile.apps 统一 Pipeline 的 pre-prod 阶段
+# Pre-prod 使用单容器（非蓝绿），固定容器名 noda-apps-preprod
+# 数据库: noda_preprod（独立）
+# Keycloak: 与 prod 共用（同 realm）
+# ============================================
+
+PREPROD_CONTAINER="noda-apps-preprod"
+
+# pipeline_deploy_preprod - 部署镜像到 pre-prod 环境
+# 参数: $1 = GIT_SHA
+pipeline_deploy_preprod()
+{
+    local git_sha="$1"
+    local image="noda-apps:${git_sha}"
+
+    disk_snapshot "Pre-prod 部署前"
+
+    log_info "部署 Pre-prod 环境..."
+
+    # 停止旧 preprod 容器
+    if [ "$(is_container_running "$PREPROD_CONTAINER")" = "true" ]; then
+        log_info "停止旧 preprod 容器: $PREPROD_CONTAINER"
+        docker stop -t 30 "$PREPROD_CONTAINER"
+        docker rm "$PREPROD_CONTAINER"
+    fi
+
+    # 准备 preprod 专用 env 文件
+    local tmp_env
+    tmp_env=$(prepare_preprod_env_file)
+
+    # 启动新 preprod 容器
+    log_info "启动 preprod 容器: $PREPROD_CONTAINER ($image)"
+
+    docker run -d \
+        --name "$PREPROD_CONTAINER" \
+        --network "$NETWORK_NAME" \
+        --network-alias "$PREPROD_CONTAINER" \
+        --restart unless-stopped \
+        --stop-timeout 30 \
+        --security-opt no-new-privileges \
+        --cap-drop ALL \
+        --read-only \
+        --tmpfs /tmp \
+        --tmpfs /app/scripts/logs \
+        --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
+        --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
+        --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+        --memory 512m \
+        --memory-reservation 128m \
+        --cpus 0.5 \
+        --log-driver json-file \
+        --log-opt max-size=10m \
+        --log-opt max-file=3 \
+        --env-file "$tmp_env" \
+        --label "noda.service-group=apps" \
+        --label noda.environment=preprod \
+        --health-cmd "node -e \"fetch('http://localhost:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"" \
+        --health-interval 30s \
+        --health-timeout 10s \
+        --health-retries 3 \
+        --health-start-period 60s \
+        "$image"
+
+    rm -f "$tmp_env"
+
+    # 更新 preprod upstream 配置
+    update_preprod_upstream
+
+    # reload nginx 使 preprod server blocks 生效
+    reload_nginx
+
+    log_success "Pre-prod 部署完成: $PREPROD_CONTAINER ($image)"
+}
+
+# prepare_preprod_env_file - 生成 preprod 环境变量文件
+# 返回: 临时 env 文件路径（通过 echo 输出）
+prepare_preprod_env_file()
+{
+    local tmp_file="/tmp/noda-apps-preprod.env.$$"
+    local env_template="$PROJECT_ROOT/docker/env-noda-apps-preprod.env"
+
+    if [ ! -f "$env_template" ]; then
+        log_error "preprod env 模板文件不存在: $env_template"
+        return 1
+    fi
+
+    # 解析 Keycloak 活跃容器名
+    if [ -f "/opt/noda/active-env-keycloak" ]; then
+        export KEYCLOAK_ACTIVE_CONTAINER="keycloak-$(cat /opt/noda/active-env-keycloak)"
+    else
+        export KEYCLOAK_ACTIVE_CONTAINER="${KEYCLOAK_ACTIVE_CONTAINER:-keycloak-blue}"
+    fi
+
+    local vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${KEYCLOAK_ACTIVE_CONTAINER} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY}'
+    envsubst "$vars" <"$env_template" >"$tmp_file"
+    echo "$tmp_file"
+}
+
+# update_preprod_upstream - 更新 preprod nginx upstream 配置
+update_preprod_upstream()
+{
+    local upstream_content="# noda-apps preprod upstream 变量 — 在 pre-prod server block 中 include
+# 使用 resolver 127.0.0.11 动态解析 DNS，容器重建后自动刷新 IP
+# 由 pipeline_deploy_preprod() 更新
+# 容器名: noda-apps-preprod（单容器，非蓝绿）
+set \$preprod_findclass_upstream ${PREPROD_CONTAINER}:3000;
+set \$preprod_www_upstream ${PREPROD_CONTAINER}:3002;
+set \$preprod_auth_app_upstream ${PREPROD_CONTAINER}:3004;
+set \$preprod_admin_upstream ${PREPROD_CONTAINER}:3006;
+set \$preprod_admin_api_upstream ${PREPROD_CONTAINER}:3011;"
+
+    local snippets_dir
+    snippets_dir=$(get_host_snippets_dir)
+    local host_conf="$snippets_dir/upstream-preprod.conf"
+
+    local tmp_file="${host_conf}.tmp.$$"
+    echo "$upstream_content" >"$tmp_file"
+    mv "$tmp_file" "$host_conf"
+
+    log_info "preprod upstream 已更新: $host_conf"
+}
+
+# pipeline_health_check_preprod - preprod 容器健康检查
+pipeline_health_check_preprod()
+{
+    log_info "Pre-prod 健康检查..."
+
+    # 主应用 (3000)
+    http_health_check "$PREPROD_CONTAINER" "3000" "/api/health" "$HEALTH_CHECK_MAX_RETRIES" "$HEALTH_CHECK_INTERVAL"
+
+    log_success "Pre-prod 健康检查通过"
+}
+
+# pipeline_cleanup_preprod - 部署完成后停止 preprod 容器释放资源
+# 可通过 SKIP_PREPROD_CLEANUP=true 环境变量跳过（用于调试）
+pipeline_cleanup_preprod()
+{
+    if [ "${SKIP_PREPROD_CLEANUP:-}" = "true" ]; then
+        log_info "跳过 preprod 清理（SKIP_PREPROD_CLEANUP=true）"
+        return 0
+    fi
+
+    if [ "$(is_container_running "$PREPROD_CONTAINER")" = "true" ]; then
+        log_info "停止 preprod 容器: $PREPROD_CONTAINER"
+        docker stop -t 10 "$PREPROD_CONTAINER"
+        docker rm "$PREPROD_CONTAINER"
+        log_success "preprod 容器已清理"
+    else
+        log_info "无 preprod 容器需要清理"
+    fi
+}
+
+# ============================================
 # Source guard — 仅允许 source 加载，禁止直接执行
 # ============================================
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
