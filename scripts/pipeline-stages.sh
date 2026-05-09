@@ -4,16 +4,16 @@ set -euo pipefail
 # ============================================
 # Jenkins Pipeline 阶段函数库
 # ============================================
-# 功能：封装 Jenkinsfile 9 阶段 Pipeline 所需的 bash 函数
+# 功能：封装 Jenkinsfile Pipeline 所需的 bash 函数
 # 用途：Jenkinsfile 通过 source 加载此文件，调用 pipeline_* 函数
-# 依赖：scripts/lib/log.sh, scripts/manage-containers.sh
+# 依赖：scripts/lib/log.sh, scripts/lib/health.sh, scripts/lib/secrets.sh
 # ============================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
-source "$PROJECT_ROOT/scripts/manage-containers.sh"
+source "$PROJECT_ROOT/scripts/lib/health.sh"
 source "$PROJECT_ROOT/scripts/lib/secrets.sh"
 source "$PROJECT_ROOT/scripts/lib/deploy-check.sh"
 source "$PROJECT_ROOT/scripts/lib/image-cleanup.sh"
@@ -33,16 +33,48 @@ BACKUP_HOST_DIR="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}"
 BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-12}"
 IMAGE_RETENTION_DAYS="${IMAGE_RETENTION_DAYS:-7}"
 
-# ============================================
-# 环境配置（两组: noda-infra / noda-apps-prod）
-# ============================================
-NODA_ENVIRONMENT="${NODA_ENVIRONMENT:-prod}"
+# 固定容器名 / 网络 / Nginx 容器
+NETWORK_NAME="noda-network"
+NGINX_CONTAINER="noda-infra-nginx"
+PROD_CONTAINER="noda-apps-prod"
 
-ACTIVE_ENV_FILE="/opt/noda/active-env"
-UPSTREAM_CONF="${UPSTREAM_CONF:-$PROJECT_ROOT/config/nginx/snippets/upstream-findclass.conf}"
-COMPOSE_FILE="$PROJECT_ROOT/docker/docker-compose.apps-prod.yml"
-SERVICE_NAME="${SERVICE_NAME:-noda-apps}"
+# ============================================
+# 辅助函数（从 manage-containers.sh 内联）
+# ============================================
 
+# is_container_running - 检查容器是否在运行
+# 参数：$1 = 容器名
+# 返回：true 或 false（通过 echo 输出）
+is_container_running()
+{
+    local name="$1"
+    local running
+    running=$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null || echo "false")
+    echo "$running"
+}
+
+# get_host_snippets_dir - 获取 nginx snippets 目录在宿主机上的实际路径
+get_host_snippets_dir()
+{
+    local host_path
+    host_path=$(docker inspect "$NGINX_CONTAINER" --format '{{range .Mounts}}{{if eq .Destination "/etc/nginx/snippets"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)
+    if [ -n "$host_path" ] && [ -d "$host_path" ]; then
+        echo "$host_path"
+        return
+    fi
+    echo "$PROJECT_ROOT/config/nginx/snippets"
+}
+
+# reload_nginx - 重载 nginx 配置
+reload_nginx()
+{
+    if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
+        log_error "nginx 容器 ($NGINX_CONTAINER) 未运行"
+        return 1
+    fi
+    docker exec "$NGINX_CONTAINER" nginx -s reload
+    log_success "nginx 配置已重载"
+}
 
 # ============================================
 # 函数: check_backup_freshness
@@ -295,88 +327,109 @@ pipeline_pull_image()
     log_success "镜像拉取完成: $image"
 }
 
-# pipeline_deploy - 部署新容器到目标环境
-# 参数: $1 = TARGET_ENV (blue/green), $2 = GIT_SHA (可选，官方镜像服务不需要)
+# ============================================
+# 函数: pipeline_deploy_prod
+# ============================================
+# 生产环境直接替换部署：停旧容器 -> tag rollback 镜像 -> 启新容器 -> 健康检查
+# 参数: $1 = GIT_SHA
 # 环境变量控制：
-#   SERVICE_NAME - 服务名（默认 noda-apps）
-#   SERVICE_IMAGE - 官方镜像名（设置后忽略 GIT_SHA，用于 Keycloak 等）
-pipeline_deploy()
+#   SERVICE_NAME - 镜像名（默认 noda-apps）
+pipeline_deploy_prod()
 {
+    local git_sha="$1"
+    local image="noda-apps:${git_sha}"
+
     disk_snapshot "部署前"
 
-    local target_env="$1"
-    local git_sha="${2:-}"
-    local service="${SERVICE_NAME:-noda-apps}"
-    local target_container
-    target_container=$(get_container_name "$target_env")
+    log_info "生产环境部署: $PROD_CONTAINER ($image)"
 
-    # 确定镜像名：如果设置了 SERVICE_IMAGE 则使用官方镜像，否则使用 Git SHA 标签
-    local image_name
-    if [ -n "${SERVICE_IMAGE:-}" ]; then
-        image_name="$SERVICE_IMAGE"
-    else
-        image_name="${service}:${git_sha}"
+    # 保存 rollback 镜像（在停止旧容器之前）
+    if docker inspect "$PROD_CONTAINER" >/dev/null 2>&1; then
+        local current_image
+        current_image=$(docker inspect --format='{{.Config.Image}}' "$PROD_CONTAINER" 2>/dev/null || echo "")
+        if [ -n "$current_image" ]; then
+            docker tag "$current_image" "noda-apps:rollback" 2>/dev/null || true
+            log_info "保存 rollback 镜像: noda-apps:rollback (from $current_image)"
+        fi
     fi
 
-    # 停止旧的无后缀容器（从单容器模式迁移到蓝绿模式）
-    local legacy_container="$service"
-    if [ "$(is_container_running "$legacy_container")" = "true" ] &&
-        [ "$legacy_container" != "$target_container" ]; then
-        log_info "停止旧容器: $legacy_container"
-        docker stop -t 30 "$legacy_container"
-        docker rm "$legacy_container"
+    # 停止并移除旧容器
+    if [ "$(is_container_running "$PROD_CONTAINER")" = "true" ]; then
+        log_info "停止旧容器: $PROD_CONTAINER"
+        docker stop -t 30 "$PROD_CONTAINER"
+        docker rm "$PROD_CONTAINER"
+    elif docker inspect "$PROD_CONTAINER" >/dev/null 2>&1; then
+        # 容器存在但未运行
+        docker rm "$PROD_CONTAINER"
     fi
 
-    # 停止旧目标容器（同色蓝绿容器）
-    if [ "$(is_container_running "$target_container")" = "true" ]; then
-        log_info "停止旧目标容器: $target_container"
-        docker stop -t 30 "$target_container"
-        docker rm "$target_container"
-    fi
+    # 准备 env 文件
+    local tmp_env
+    tmp_env=$(prepare_prod_env_file)
 
     # 启动新容器
-    run_container "$target_env" "$image_name"
-    log_success "部署完成: $target_container ($image_name)"
+    log_info "启动容器: $PROD_CONTAINER ($image)"
+
+    docker run -d \
+        --name "$PROD_CONTAINER" \
+        --network "$NETWORK_NAME" \
+        --network-alias "$PROD_CONTAINER" \
+        --restart unless-stopped \
+        --stop-timeout 30 \
+        --security-opt no-new-privileges \
+        --cap-drop ALL \
+        --read-only \
+        --tmpfs /tmp \
+        --tmpfs /app/scripts/logs \
+        --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
+        --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
+        --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+        --memory 1g \
+        --memory-reservation 128m \
+        --cpus 1 \
+        --log-driver json-file \
+        --log-opt max-size=10m \
+        --log-opt max-file=3 \
+        --env-file "$tmp_env" \
+        --label "noda.service-group=apps" \
+        --label noda.environment=prod \
+        --health-cmd "node -e \"fetch('http://localhost:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"" \
+        --health-interval 30s \
+        --health-timeout 10s \
+        --health-retries 3 \
+        --health-start-period 60s \
+        "$image"
+
+    rm -f "$tmp_env"
+
+    # reload nginx 刷新 DNS 缓存（容器重建后 IP 会变）
+    reload_nginx
+
+    # 健康检查
+    log_info "等待容器健康检查..."
+    wait_container_healthy "$PROD_CONTAINER" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))"
+
+    log_success "生产环境部署完成: $PROD_CONTAINER ($image)"
 }
 
-# pipeline_health_check - HTTP 健康检查
-# 参数: $1 = TARGET_ENV
-pipeline_health_check()
+# ============================================
+# 函数: prepare_prod_env_file
+# ============================================
+# 生成生产环境变量文件
+# 返回: 临时 env 文件路径（通过 echo 输出）
+prepare_prod_env_file()
 {
-    local target_env="$1"
-    local target_container
-    target_container=$(get_container_name "$target_env")
-    http_health_check "$target_container" "${SERVICE_PORT:-3000}" "${HEALTH_PATH:-/api/health}" "$HEALTH_CHECK_MAX_RETRIES" "$HEALTH_CHECK_INTERVAL"
-}
+    local tmp_file="/tmp/noda-apps-prod.env.$$"
+    local env_template="$PROJECT_ROOT/docker/env-noda-apps.env"
 
-# pipeline_switch - 切换流量到目标环境
-# 参数: $1 = TARGET_ENV, $2 = ACTIVE_ENV
-pipeline_switch()
-{
-    local target_env="$1"
-    local active_env="$2"
-
-    update_upstream "$target_env"
-
-    if ! docker exec "$NGINX_CONTAINER" nginx -t; then
-        log_error "nginx 配置验证失败，回滚 upstream"
-        update_upstream "$active_env"
-        # 尝试 reload 使回滚生效（不检查返回值，nginx 可能本身就有问题）
-        docker exec "$NGINX_CONTAINER" nginx -s reload 2>/dev/null || true
+    if [ ! -f "$env_template" ]; then
+        log_error "prod env 模板文件不存在: $env_template"
         return 1
     fi
 
-    reload_nginx
-    set_active_env "$target_env"
-    log_success "流量切换完成: $active_env -> $target_env"
-}
-
-# pipeline_verify - E2E 验证
-# 参数: $1 = TARGET_ENV
-pipeline_verify()
-{
-    local target_env="$1"
-    e2e_verify "$target_env" "${SERVICE_PORT:-3000}" "${HEALTH_PATH:-/api/health}" "$E2E_MAX_RETRIES" "$E2E_INTERVAL"
+    local vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY}'
+    envsubst "$vars" <"$env_template" >"$tmp_file"
+    echo "$tmp_file"
 }
 
 # pipeline_purge_cdn - 调用 Cloudflare API 清除 CDN 缓存
@@ -420,31 +473,10 @@ pipeline_purge_cdn()
     return 0
 }
 
-# pipeline_cleanup - 停掉非活跃容器 + 清理旧镜像
+# pipeline_cleanup - 清理旧镜像
 # 官方镜像服务（Keycloak 等）跳过 SHA 镜像清理，仅清理 dangling images
 pipeline_cleanup()
 {
-    # 停掉非活跃容器，降低资源消耗
-    local active_env
-    active_env=$(get_active_env)
-    local inactive_env
-    if [ "$active_env" = "blue" ]; then
-        inactive_env="green"
-    else
-        inactive_env="blue"
-    fi
-    local inactive_container
-    inactive_container=$(get_container_name "$inactive_env")
-
-    if [ "$(is_container_running "$inactive_container")" = "true" ]; then
-        log_info "停止非活跃容器: $inactive_container"
-        docker stop -t 10 "$inactive_container"
-        docker rm "$inactive_container"
-        log_success "非活跃容器已清理: $inactive_container"
-    else
-        log_info "无非活跃容器需要清理"
-    fi
-
     # 官方镜像服务（Keycloak 等）不需要 SHA 镜像清理
     if [ -z "${SERVICE_IMAGE:-}" ]; then
         cleanup_by_date_threshold "${SERVICE_NAME:-noda-apps}" "${IMAGE_RETENTION_DAYS:-7}"
@@ -458,21 +490,16 @@ pipeline_cleanup()
 }
 
 # pipeline_failure_cleanup - 部署失败时捕获日志并清理
-# 参数: $1 = TARGET_ENV
 pipeline_failure_cleanup()
 {
-    local target_env="$1"
-    local target_container
-    target_container=$(get_container_name "$target_env")
-
     # 捕获目标容器日志（如果容器存在）
-    docker logs "$target_container" >deploy-failure-container.log 2>&1 || true
+    docker logs "$PROD_CONTAINER" >deploy-failure-container.log 2>&1 || true
 
     # 捕获 nginx 日志
     docker logs "$NGINX_CONTAINER" --tail 50 >deploy-failure-nginx.log 2>&1 || true
 
     # 清理失败的目标容器
-    docker rm -f "$target_container" 2>/dev/null || true
+    docker rm -f "$PROD_CONTAINER" 2>/dev/null || true
 
     log_info "失败日志已保存: deploy-failure-container.log, deploy-failure-nginx.log"
 }
@@ -634,7 +661,7 @@ pipeline_infra_deploy()
 
     case "$service" in
         keycloak)
-            pipeline_deploy_keycloak
+            pipeline_deploy_keycloak_prod
             ;;
         nginx)
             pipeline_deploy_nginx
@@ -653,31 +680,97 @@ pipeline_infra_deploy()
 }
 
 # ============================================
-# 函数: pipeline_deploy_keycloak
+# 函数: pipeline_deploy_keycloak_prod
 # ============================================
-# Keycloak 蓝绿部署（复用 keycloak-blue-green-deploy.sh）
-# 设置环境变量后调用现有脚本
-# 返回: 由 keycloak-blue-green-deploy.sh 决定
-pipeline_deploy_keycloak()
+# Keycloak 直接替换部署（docker stop/rm/run）
+# 不再使用蓝绿部署
+# 返回: 0=成功，1=失败
+pipeline_deploy_keycloak_prod()
 {
-    log_info "Keycloak 蓝绿部署（复用 keycloak-blue-green-deploy.sh）"
+    local container_name="keycloak"
+    local image="${SERVICE_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
 
-    # 设置 Keycloak 专用环境变量
-    export SERVICE_NAME="keycloak"
-    export SERVICE_PORT="8080"
-    export UPSTREAM_NAME="keycloak_backend"
-    export HEALTH_PATH="/health/ready"
-    export ACTIVE_ENV_FILE="/opt/noda/active-env-keycloak"
-    export UPSTREAM_CONF="$PROJECT_ROOT/config/nginx/snippets/upstream-keycloak.conf"
-    export SERVICE_GROUP="infra"
-    export CONTAINER_MEMORY="1g"
-    export CONTAINER_MEMORY_RESERVATION="512m"
-    export CONTAINER_READONLY="false"
-    export SERVICE_IMAGE="${SERVICE_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
-    export EXTRA_DOCKER_ARGS="-v $PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro --tmpfs /opt/keycloak/data"
-    export ENVSUBST_VARS='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${SMTP_HOST} ${SMTP_PORT} ${SMTP_FROM} ${SMTP_USER} ${SMTP_PASSWORD}'
+    log_info "Keycloak 直接替换部署: $container_name ($image)"
 
-    bash "$PROJECT_ROOT/scripts/keycloak-blue-green-deploy.sh"
+    # 保存 rollback 镜像（在停止旧容器之前）
+    if docker inspect "$container_name" >/dev/null 2>&1; then
+        local current_image
+        current_image=$(docker inspect --format='{{.Config.Image}}' "$container_name" 2>/dev/null || echo "")
+        if [ -n "$current_image" ]; then
+            docker tag "$current_image" "keycloak:rollback" 2>/dev/null || true
+            log_info "保存 rollback 镜像: keycloak:rollback (from $current_image)"
+        fi
+    fi
+
+    # 停止并移除旧容器
+    if [ "$(is_container_running "$container_name")" = "true" ]; then
+        log_info "停止旧容器: $container_name"
+        docker stop -t 30 "$container_name"
+        docker rm "$container_name"
+    elif docker inspect "$container_name" >/dev/null 2>&1; then
+        docker rm "$container_name"
+    fi
+
+    # 准备 env 文件
+    local tmp_env
+    tmp_env=$(prepare_keycloak_env_file)
+
+    # 启动新容器
+    log_info "启动容器: $container_name ($image)"
+
+    docker run -d \
+        --name "$container_name" \
+        --network "$NETWORK_NAME" \
+        --network-alias "$container_name" \
+        --restart unless-stopped \
+        --stop-timeout 30 \
+        --security-opt no-new-privileges \
+        --cap-drop ALL \
+        -v "$PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro" \
+        --tmpfs /opt/keycloak/data \
+        --memory 1g \
+        --memory-reservation 512m \
+        --cpus 1 \
+        --log-driver json-file \
+        --log-opt max-size=10m \
+        --log-opt max-file=3 \
+        --env-file "$tmp_env" \
+        --label "noda.service-group=infra" \
+        --label noda.environment=prod \
+        --health-cmd "curl -sf http://localhost:8080/health/ready || exit 1" \
+        --health-interval 30s \
+        --health-timeout 10s \
+        --health-retries 5 \
+        --health-start-period 120s \
+        "$image" \
+        start-dev --hostname-strict=false --proxy-headers=xforwarded
+
+    rm -f "$tmp_env"
+
+    # reload nginx 刷新 DNS 缓存（容器重建后 IP 会变）
+    reload_nginx
+
+    log_success "Keycloak 部署完成: $container_name ($image)"
+}
+
+# ============================================
+# 函数: prepare_keycloak_env_file
+# ============================================
+# 生成 Keycloak 环境变量文件
+# 返回: 临时 env 文件路径（通过 echo 输出）
+prepare_keycloak_env_file()
+{
+    local tmp_file="/tmp/keycloak-prod.env.$$"
+    local env_template="$PROJECT_ROOT/docker/env-keycloak.env"
+
+    if [ ! -f "$env_template" ]; then
+        log_error "Keycloak env 模板文件不存在: $env_template"
+        return 1
+    fi
+
+    local vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${SMTP_HOST} ${SMTP_PORT} ${SMTP_FROM} ${SMTP_USER} ${SMTP_PASSWORD}'
+    envsubst "$vars" <"$env_template" >"$tmp_file"
+    echo "$tmp_file"
 }
 
 # ============================================
@@ -789,11 +882,7 @@ pipeline_infra_health_check()
 
     case "$service" in
         keycloak)
-            # 由 keycloak-blue-green-deploy.sh 内部处理健康检查
-            # 此处做二次验证：检查新容器确实在运行
-            local active_env
-            active_env=$(cat /opt/noda/active-env-keycloak 2>/dev/null || echo "blue")
-            wait_container_healthy "keycloak-${active_env}" 180
+            wait_container_healthy "keycloak" 180
             ;;
         nginx)
             # nginx -t 验证配置 + wait_container_healthy
@@ -832,20 +921,47 @@ pipeline_infra_rollback()
 
     case "$service" in
         keycloak)
-            # 读取当前活跃环境，切回旧环境
-            local active_env
-            active_env=$(cat /opt/noda/active-env-keycloak 2>/dev/null || echo "blue")
-            local inactive_env
-            if [ "$active_env" = "blue" ]; then
-                inactive_env="green"
-            else
-                inactive_env="blue"
+            # 从 rollback 镜像重新启动
+            if ! docker inspect "keycloak:rollback" >/dev/null 2>&1; then
+                log_error "无 Keycloak rollback 镜像，无法回滚"
+                return 1
             fi
-            update_upstream "$inactive_env"
-            docker exec "$NGINX_CONTAINER" nginx -t
+            log_info "回滚 Keycloak 到 rollback 镜像..."
+            # 停止当前容器
+            docker stop -t 30 keycloak 2>/dev/null || true
+            docker rm keycloak 2>/dev/null || true
+            # 从 rollback 镜像启动（使用相同的参数）
+            local tmp_env
+            tmp_env=$(prepare_keycloak_env_file)
+            docker run -d \
+                --name "keycloak" \
+                --network "$NETWORK_NAME" \
+                --network-alias "keycloak" \
+                --restart unless-stopped \
+                --stop-timeout 30 \
+                --security-opt no-new-privileges \
+                --cap-drop ALL \
+                -v "$PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro" \
+                --tmpfs /opt/keycloak/data \
+                --memory 1g \
+                --memory-reservation 512m \
+                --cpus 1 \
+                --log-driver json-file \
+                --log-opt max-size=10m \
+                --log-opt max-file=3 \
+                --env-file "$tmp_env" \
+                --label "noda.service-group=infra" \
+                --label noda.environment=prod \
+                --health-cmd "curl -sf http://localhost:8080/health/ready || exit 1" \
+                --health-interval 30s \
+                --health-timeout 10s \
+                --health-retries 5 \
+                --health-start-period 120s \
+                "keycloak:rollback" \
+                start-dev --hostname-strict=false --proxy-headers=xforwarded
+            rm -f "$tmp_env"
             reload_nginx
-            set_active_env "$inactive_env"
-            log_success "Keycloak 回滚完成: 切回 $inactive_env"
+            log_success "Keycloak 回滚完成"
             ;;
         nginx)
             if [ -z "${INFRA_ROLLBACK_IMAGE:-}" ]; then
@@ -921,8 +1037,9 @@ pipeline_infra_verify()
 
     case "$service" in
         keycloak)
-            # 由 keycloak-blue-green-deploy.sh 内部已做 E2E，此处 skip
-            log_info "Keycloak E2E 验证已由蓝绿脚本内部完成"
+            # 通过 nginx 验证 Keycloak 可达
+            docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://keycloak:8080/health/ready 2>/dev/null
+            log_success "Keycloak E2E 验证通过"
             ;;
         nginx)
             # 通过 nginx 容器 wget 自身验证（nginx 监听 81 端口）
@@ -1000,9 +1117,7 @@ pipeline_infra_failure_cleanup()
     local container_name
     case "$service" in
         keycloak)
-            local active_env
-            active_env=$(cat /opt/noda/active-env-keycloak 2>/dev/null || echo "blue")
-            container_name="noda-infra-keycloak-${active_env}"
+            container_name="keycloak"
             ;;
         nginx)
             container_name="noda-infra-nginx"
@@ -1116,12 +1231,8 @@ prepare_preprod_env_file()
         return 1
     fi
 
-    # 解析 Keycloak 活跃容器名
-    if [ -f "/opt/noda/active-env-keycloak" ]; then
-        export KEYCLOAK_ACTIVE_CONTAINER="keycloak-$(cat /opt/noda/active-env-keycloak)"
-    else
-        export KEYCLOAK_ACTIVE_CONTAINER="${KEYCLOAK_ACTIVE_CONTAINER:-keycloak-blue}"
-    fi
+    # Keycloak 容器名固定为 keycloak（不再读取 active-env-keycloak）
+    export KEYCLOAK_ACTIVE_CONTAINER="keycloak"
 
     local vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${KEYCLOAK_ACTIVE_CONTAINER} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY}'
     envsubst "$vars" <"$env_template" >"$tmp_file"
@@ -1187,6 +1298,6 @@ pipeline_cleanup_preprod()
 # ============================================
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "pipeline-stages.sh 是函数库，不支持直接执行"
-    echo "请通过 Jenkinsfile 或 blue-green-deploy.sh 调用"
+    echo "请通过 Jenkinsfile 调用"
     exit 1
 fi

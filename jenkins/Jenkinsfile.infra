@@ -32,6 +32,11 @@ pipeline {
             choices: ['nginx', 'noda-ops', 'keycloak', 'postgres'],
             description: '选择要部署的基础设施服务'
         )
+        string(
+            name: 'KEYCLOAK_IMAGE',
+            defaultValue: 'quay.io/keycloak/keycloak:26.2.3',
+            description: 'Keycloak 官方镜像（仅 keycloak 服务需要）'
+        )
     }
 
     stages {
@@ -40,6 +45,9 @@ pipeline {
                 sh '''
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
+                    if [ "$SERVICE" = "keycloak" ]; then
+                        export SERVICE_IMAGE="${KEYCLOAK_IMAGE}"
+                    fi
                     pipeline_infra_preflight "$SERVICE"
                 '''
             }
@@ -78,6 +86,9 @@ pipeline {
                 sh '''
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
+                    if [ "$SERVICE" = "keycloak" ]; then
+                        export SERVICE_IMAGE="${KEYCLOAK_IMAGE}"
+                    fi
                     pipeline_infra_deploy "$SERVICE"
                 '''
             }

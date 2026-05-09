@@ -1,7 +1,7 @@
 #!/usr/bin/env groovy
-// 统一 Apps 部署 Pipeline（合并 5 个 Pipeline）
-// 12 阶段: Pre-flight -> Build -> Test -> Deploy Pre-prod -> Health Check Pre-prod
-//        -> Human Approval -> Deploy Prod -> Health Check Prod -> Switch -> Verify -> CDN Purge -> Cleanup
+// 统一 Apps 部署 Pipeline
+// 10 阶段: Pre-flight -> Build -> Test -> Deploy Pre-prod -> Health Check Pre-prod
+//        -> Human Approval -> Deploy Prod（停旧启新 + 健康检查） -> Verify -> CDN Purge -> Cleanup
 // Build Once: 镜像构建一次，先后部署到 pre-prod 和 prod
 // 前置: noda-apps 仓库 main 分支
 
@@ -10,12 +10,10 @@ pipeline {
 
     environment {
         PROJECT_ROOT = "${WORKSPACE}"
-        ACTIVE_ENV = sh(
-            script: 'cat /opt/noda/active-env 2>/dev/null || echo blue',
-            returnStdout: true
-        ).trim()
-        TARGET_ENV = "${env.ACTIVE_ENV == 'blue' ? 'green' : 'blue'}"
         DOPPLER_TOKEN = credentials('doppler-service-token')
+        // 备份文件实际路径（Jenkins workspace 中无备份文件，需指向项目部署目录）
+        // 按实际部署路径配置，本地开发: ~/Project/noda-infra/docker/volumes/backup
+        BACKUP_HOST_DIR = "${HOME}/Project/noda-infra/docker/volumes/backup"
     }
 
     options {
@@ -122,27 +120,7 @@ pipeline {
                 sh '''
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
-                    pipeline_deploy "$TARGET_ENV" "$GIT_SHA"
-                '''
-            }
-        }
-
-        stage('Health Check Prod') {
-            steps {
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-                    pipeline_health_check "$TARGET_ENV"
-                '''
-            }
-        }
-
-        stage('Switch') {
-            steps {
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-                    pipeline_switch "$TARGET_ENV" "$ACTIVE_ENV"
+                    pipeline_deploy_prod "$GIT_SHA"
                 '''
             }
         }
@@ -152,7 +130,16 @@ pipeline {
                 sh '''
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
-                    pipeline_verify "$TARGET_ENV"
+                    # E2E 验证：通过 nginx 访问生产环境健康检查端点
+                    for i in $(seq 1 5); do
+                        if curl -sf --connect-timeout 5 --max-time 10 https://class.noda.co.nz/api/health; then
+                            echo "E2E 验证通过 (attempt $i)"
+                            exit 0
+                        fi
+                        sleep 2
+                    done
+                    echo "E2E 验证失败: class.noda.co.nz/api/health 不可达"
+                    exit 1
                 '''
             }
         }
@@ -193,19 +180,16 @@ pipeline {
     post {
         failure {
             script {
-                // 区分 pre-prod 阶段失败和 prod 阶段失败
-                if (env.TARGET_ENV && env.TARGET_ENV != 'null') {
-                    sh '''
-                        source scripts/lib/log.sh
-                        source scripts/pipeline-stages.sh
-                        pipeline_failure_cleanup "$TARGET_ENV"
-                    '''
-                    archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
-                }
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    pipeline_failure_cleanup
+                '''
+                archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
             }
         }
         success {
-            echo "部署成功: 生产流量已切换到 ${env.TARGET_ENV} (镜像: noda-apps:${env.GIT_SHA})"
+            echo "部署成功: noda-apps-prod (镜像: noda-apps:${env.GIT_SHA})"
         }
     }
 }
