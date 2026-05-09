@@ -87,7 +87,7 @@ check_backup_freshness()
     fi
 
     if [ -z "$newest_file" ]; then
-        log_error "未找到任何备份文件（查找路径: $backup_dir）"
+        log_error "未找到任何备份文件 (查找路径: ${backup_dir})"
         return 1
     fi
 
