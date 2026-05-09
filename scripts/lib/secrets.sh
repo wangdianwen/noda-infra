@@ -5,7 +5,7 @@ set -euo pipefail
 # 密钥加载库（Doppler Only）
 # ============================================
 # 功能：提供 load_secrets() 函数，从 Doppler API 拉取密钥
-# 用途：被 pipeline-stages.sh、blue-green-deploy.sh 等脚本 source 加载
+# 用途：被 pipeline-stages.sh、deploy-apps-prod.sh 等脚本 source 加载
 # 模式：DOPPLER_TOKEN 存在 → doppler secrets download 拉取密钥（不落盘）
 # 设计决策：per D-03 (Doppler only), D-04 (--no-file 不落盘), D-05 (config=$DOPPLER_CONFIG, 默认 prd)
 # ============================================
