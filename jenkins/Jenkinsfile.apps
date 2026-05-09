@@ -170,7 +170,6 @@ pipeline {
                 sh '''
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
-                    pipeline_cleanup_preprod
                     pipeline_cleanup
                 '''
             }

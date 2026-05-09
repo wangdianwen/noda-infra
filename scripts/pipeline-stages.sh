@@ -1120,25 +1120,6 @@ pipeline_health_check_preprod()
     log_success "Pre-prod 健康检查通过"
 }
 
-# pipeline_cleanup_preprod - 部署完成后停止 preprod 容器释放资源
-# 可通过 SKIP_PREPROD_CLEANUP=true 环境变量跳过（用于调试）
-pipeline_cleanup_preprod()
-{
-    if [ "${SKIP_PREPROD_CLEANUP:-}" = "true" ]; then
-        log_info "跳过 preprod 清理（SKIP_PREPROD_CLEANUP=true）"
-        return 0
-    fi
-
-    if [ "$(is_container_running "$PREPROD_CONTAINER")" = "true" ]; then
-        log_info "停止 preprod 容器: $PREPROD_CONTAINER"
-        docker stop -t 10 "$PREPROD_CONTAINER"
-        docker rm "$PREPROD_CONTAINER"
-        log_success "preprod 容器已清理"
-    else
-        log_info "无 preprod 容器需要清理"
-    fi
-}
-
 # ============================================
 # Source guard — 仅允许 source 加载，禁止直接执行
 # ============================================
