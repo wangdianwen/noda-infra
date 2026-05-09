@@ -26,9 +26,6 @@ case "$NODA_ENVIRONMENT" in
     prod)
         UPSTREAM_VARS_PREFIX=""
         ;;
-    preprod)
-        UPSTREAM_VARS_PREFIX="_preprod_"
-        ;;
     *)
         log_error "不支持的环境: $NODA_ENVIRONMENT"
         exit 1
@@ -40,6 +37,7 @@ SERVICE_NAME="${SERVICE_NAME:-noda-apps}"
 SERVICE_PORT="${SERVICE_PORT:-3000}"
 UPSTREAM_NAME="${UPSTREAM_NAME:-findclass_backend}"
 HEALTH_PATH="${HEALTH_PATH:-/api/health}"
+COMPOSE_PROJECT="${COMPOSE_PROJECT:-noda-apps}"
 
 # 状态文件（每个服务和环境独立）
 ACTIVE_ENV_FILE="${ACTIVE_ENV_FILE:-/opt/noda/${NODA_ENVIRONMENT}/active-env}"
@@ -258,7 +256,7 @@ run_container()
         --label "noda.service-group=${service_group}" \
         --label noda.environment="${NODA_ENVIRONMENT}" \
         --label "noda.blue-green=${env}" \
-        --label "com.docker.compose.project=noda-apps-${NODA_ENVIRONMENT}" \
+        --label "com.docker.compose.project=${COMPOSE_PROJECT}" \
         --label "com.docker.compose.service=${SERVICE_NAME}" \
         --health-cmd "$container_health_cmd" \
         --health-interval "$container_health_interval" \

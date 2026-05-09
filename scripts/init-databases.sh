@@ -16,7 +16,6 @@ source "$SCRIPT_DIR/lib/log.sh"
 # ============================================
 REQUIRED_DBS=(
     "noda_prod:Findclass Application Database"
-    "noda_preprod:Findclass Application Database (pre-prod)"
     "keycloak:Keycloak Authentication Database"
 )
 
@@ -65,42 +64,6 @@ for db_info in "${REQUIRED_DBS[@]}"; do
         fi
     fi
 done
-
-# ============================================
-# 步骤 2.5: 创建 pre-prod 独立用户（如果需要）
-# ============================================
-PREPROD_USER="preprod_app"
-PREPROD_PASSWORD="${PREPROD_APP_PASSWORD:-$(openssl rand -hex 16)}"
-
-# 检查 preprod_app 用户是否已存在
-USER_EXISTS=$(docker exec noda-infra-postgres-prod psql -U postgres -d postgres -tAc \
-    "SELECT 1 FROM pg_roles WHERE rolname='$PREPROD_USER';" 2>/dev/null || echo "0")
-
-if [ "$USER_EXISTS" = "1" ]; then
-    log_info "✓ $PREPROD_USER 用户已存在"
-else
-    log_info "✗ 创建 $PREPROD_USER 用户..."
-    if docker exec noda-infra-postgres-prod psql -U postgres -d postgres -c \
-        "CREATE USER $PREPROD_USER WITH ENCRYPTED PASSWORD '$PREPROD_PASSWORD';" \
-        >/dev/null 2>&1; then
-        log_success "✓ $PREPROD_USER 用户已创建"
-    else
-        log_error "✗ $PREPROD_USER 用户创建失败"
-        exit 1
-    fi
-fi
-
-# 授予 noda_preprod 数据库权限给 preprod_app 用户
-log_info "配置 $PREPROD_USER 对 noda_preprod 的权限..."
-docker exec noda-infra-postgres-prod psql -U postgres -d noda_preprod -c \
-    "GRANT ALL PRIVILEGES ON DATABASE noda_preprod TO $PREPROD_USER;" >/dev/null 2>&1 || true
-docker exec noda-infra-postgres-prod psql -U postgres -d noda_preprod -c \
-    "GRANT ALL ON SCHEMA public TO $PREPROD_USER;" >/dev/null 2>&1 || true
-docker exec noda-infra-postgres-prod psql -U postgres -d noda_preprod -c \
-    "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $PREPROD_USER;" >/dev/null 2>&1 || true
-docker exec noda-infra-postgres-prod psql -U postgres -d noda_preprod -c \
-    "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $PREPROD_USER;" >/dev/null 2>&1 || true
-log_success "✓ $PREPROD_USER 权限配置完成"
 
 # ============================================
 # 步骤 3: 总结

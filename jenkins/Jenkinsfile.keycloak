@@ -17,6 +17,7 @@ pipeline {
         ACTIVE_ENV_FILE = "/opt/noda/active-env-keycloak"
         UPSTREAM_CONF = "${WORKSPACE}/config/nginx/snippets/upstream-keycloak.conf"
         SERVICE_GROUP = "infra"
+        COMPOSE_PROJECT = "noda-infra"
         // Keycloak 官方镜像（不从源码构建）
         SERVICE_IMAGE = "quay.io/keycloak/keycloak:26.2.3"
         // Keycloak 容器参数（覆盖 run_container 默认值）

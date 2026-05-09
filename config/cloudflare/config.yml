@@ -6,37 +6,29 @@ tunnel: 9cab5df3-a546-48fb-9dc5-eacb48c56ff8
 # 配置文件版本
 version: 2
 
-# 指定连接的 Cloudflare 区域（可选）
-# region: us
-
 # 日志配置
 loglevel: info
-# logfile: /dev/stdout
 
 # 入站规则配置
 ingress:
   # 主域名 - 指向 Nginx (反向代理)
   - hostname: noda.co.nz
-    service: http://noda-nginx:80
+    service: http://noda-nginx:81
   # 认证服务 - Keycloak（通过 nginx 反向代理）
   - hostname: auth.noda.co.nz
-    service: http://noda-nginx:80
+    service: http://noda-nginx:81
   # 本地开发
   - hostname: localhost.noda.co.nz
-    service: http://noda-nginx:80
+    service: http://noda-nginx:81
   # 健康检查端点
   - hostname: health.noda.co.nz
-    service: http://noda-nginx:80
-
-  # Pre-prod 域名 - 指向 Nginx (反向代理到 pre-prod upstream)
-  - hostname: pre.class.noda.co.nz
-    service: http://noda-nginx:80
-  - hostname: pre.auth.noda.co.nz
-    service: http://noda-nginx:80
-  - hostname: pre.noda.co.nz
-    service: http://noda-nginx:80
-  - hostname: pre.admin.noda.co.nz
-    service: http://noda-nginx:80
+    service: http://noda-nginx:81
+  # FindClass 应用
+  - hostname: class.noda.co.nz
+    service: http://noda-nginx:81
+  # Admin Dashboard（内网访问）
+  - hostname: admin.noda.co.nz
+    service: http://noda-nginx:81
 
   # 默认规则 - 必须是最后一条
   - service: http_status:404
