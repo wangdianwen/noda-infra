@@ -115,7 +115,7 @@ services:
     profiles:
       - disabled
     image: quay.io/keycloak/keycloak:26.2.3
-    container_name: keycloak
+    container_name: noda-infra-keycloak
     labels:
       - "noda.service-group=infra"
       - "noda.environment=prod"
@@ -144,7 +144,7 @@ services:
     networks:
       noda-network:
         aliases:
-          - keycloak
+          - noda-infra-keycloak
     restart: unless-stopped
     depends_on:
       postgres:

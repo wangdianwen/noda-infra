@@ -687,7 +687,7 @@ pipeline_infra_deploy()
 # 返回: 0=成功，1=失败
 pipeline_deploy_keycloak_prod()
 {
-    local container_name="keycloak"
+    local container_name="noda-infra-keycloak"
     local image="${SERVICE_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
 
     log_info "Keycloak 直接替换部署: $container_name ($image)"
@@ -882,7 +882,7 @@ pipeline_infra_health_check()
 
     case "$service" in
         keycloak)
-            wait_container_healthy "keycloak" 300
+            wait_container_healthy "noda-infra-keycloak" 300
             ;;
         nginx)
             # nginx -t 验证配置 + wait_container_healthy
@@ -934,9 +934,9 @@ pipeline_infra_rollback()
             local tmp_env
             tmp_env=$(prepare_keycloak_env_file)
             docker run -d \
-                --name "keycloak" \
+                --name "noda-infra-keycloak" \
                 --network "$NETWORK_NAME" \
-                --network-alias "keycloak" \
+                --network-alias "noda-infra-keycloak" \
                 --restart unless-stopped \
                 --stop-timeout 30 \
                 --security-opt no-new-privileges \
@@ -1117,7 +1117,7 @@ pipeline_infra_failure_cleanup()
     local container_name
     case "$service" in
         keycloak)
-            container_name="keycloak"
+            container_name="noda-infra-keycloak"
             ;;
         nginx)
             container_name="noda-infra-nginx"
@@ -1232,7 +1232,7 @@ prepare_preprod_env_file()
     fi
 
     # Keycloak 容器名固定为 keycloak（不再读取 active-env-keycloak）
-    export KEYCLOAK_ACTIVE_CONTAINER="keycloak"
+    export KEYCLOAK_ACTIVE_CONTAINER="noda-infra-keycloak"
 
     local vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${KEYCLOAK_ACTIVE_CONTAINER} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY}'
     envsubst "$vars" <"$env_template" >"$tmp_file"
