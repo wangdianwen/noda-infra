@@ -142,7 +142,7 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 
 **部署流程（Build Once，人工验证后上线）：**
 1. 触发 `apps-deploy` — 自动构建并部署到 pre-prod
-2. 人工在 pre-prod 环境验证（`http://class.noda.dev:81/`）
+2. 人工在 pre-prod 环境验证（`http://class.noda.dev/`）
 3. 在 Jenkins UI 点击 "Proceed" 确认上线
 4. Pipeline 自动完成 prod 蓝绿部署
 
@@ -151,10 +151,10 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 # 在本地 /etc/hosts 添加（SERVER_IP 替换为服务器 IP）
 <SERVER_IP> class.noda.dev auth.noda.dev www.noda.dev admin.noda.dev
 ```
-- 主应用: `http://class.noda.dev:81/`
-- 认证: `http://auth.noda.dev:81/`
-- 官网: `http://www.noda.dev:81/`
-- 管理后台: `http://admin.noda.dev:81/`
+- 主应用: `http://class.noda.dev/`
+- 认证: `http://auth.noda.dev/`
+- 官网: `http://www.noda.dev/`
+- 管理后台: `http://admin.noda.dev/`
 - 数据库: `noda_preprod`（独立，不污染生产数据）
 
 ### Jenkins API 远程触发（curl Runbook）

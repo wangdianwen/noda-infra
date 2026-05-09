@@ -44,6 +44,7 @@ services:
       - "noda.environment=prod"
     restart: unless-stopped
     ports:
+      - "80:80"
       - "81:81"
     volumes:
       - ../config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
