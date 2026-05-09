@@ -18,20 +18,20 @@ NC="$_NC"
 
 log_info()
 {
-    echo -e "${_YELLOW}ℹ️  $*${_NC}"
+    printf "${_YELLOW}ℹ️  %s${_NC}\n" "$*"
 }
 
 log_success()
 {
-    echo -e "${_GREEN}✅ $*${_NC}"
+    printf "${_GREEN}✅ %s${_NC}\n" "$*"
 }
 
 log_error()
 {
-    echo -e "${_RED}❌ $*${_NC}" >&2
+    printf "${_RED}❌ %s${_NC}\n" "$*" >&2
 }
 
 log_warn()
 {
-    echo -e "${_YELLOW}⚠️  $*${_NC}"
+    printf "${_YELLOW}⚠️  %s${_NC}\n" "$*"
 }
