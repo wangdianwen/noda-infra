@@ -49,6 +49,7 @@ services:
       - ../config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ../config/nginx/conf.d:/etc/nginx/conf.d:ro
       - ../config/nginx/snippets:/etc/nginx/snippets:ro
+      - ../config/nginx/.htpasswd-preprod:/etc/nginx/.htpasswd-preprod:ro
     networks:
       - noda-network
     depends_on:
