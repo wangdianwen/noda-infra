@@ -51,7 +51,10 @@ Plans:
 4. noda-auth 认证应用在 r4s 上启动，OAuth 登录流程正常
 5. 所有应用容器通过 Nginx 反向代理可从外部访问（暂未切换 Cloudflare）
 
-**Plans**: TBD
+Plans:
+- [ ] 59-01-PLAN.md — 配置 r4s 应用服务部署环境（扩展 r4s overlay、删除未使用文件、传输 monorepo 镜像）
+- [ ] 59-02-PLAN.md — 启动 prod 应用容器并验证所有服务（数据库连接、健康检查、nginx 路由）
+- [ ] 59-03-PLAN.md — 启动 pre-prod 应用容器并验证数据库隔离和访问
 
 ### Phase 60: CI/CD 改造
 
@@ -109,7 +112,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 58. 基础设施迁移 | 3/3 | Complete    | 2026-05-17 |
-| 59. 应用服务迁移 | 0/5 | Not started | - |
+| 59. 应用服务迁移 | 0/3 | Planning    | - |
 | 60. CI/CD 改造 | 0/4 | Not started | - |
 | 61. 备份与网络迁移 | 0/8 | Not started | - |
 | 62. 切换与验证 | 0/3 | Not started | - |
@@ -151,4 +154,4 @@ Phase 62 (切换与验证)
 
 ---
 *Roadmap created: 2026-05-17*
-*Last updated: 2026-05-17*
+*Last updated: 2026-05-18*
