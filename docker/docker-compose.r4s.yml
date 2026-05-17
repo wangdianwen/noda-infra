@@ -103,17 +103,6 @@ services:
           cpus: '0.25'
           memory: 128M
 
-  # ----------------------------------------
   # Apps Pre-prod — 512M (D-06)
-  # Pre-prod 使用 docker run 启动（不在 compose 中）
-  # 此配置仅作为文档参考和 compose 合并用途
-  # ----------------------------------------
-  noda-apps-preprod:
-    <<: *r4s-logging
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
-        reservations:
-          memory: 128M
+  # Pre-prod 使用 docker run 启动，不通过 compose 管理
+  # 内存限制在 docker run --memory 512m 中指定
