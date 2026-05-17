@@ -1,0 +1,88 @@
+# ============================================
+# Noda Monorepo - Docker Compose r4s Overlay
+# ============================================
+# r4s (iStoreOS) 特有配置：内存限制、端口映射、日志策略
+# 使用方法：
+#   docker compose -f docker/docker-compose.yml \
+#     -f docker/docker-compose.prod.yml \
+#     -f docker/docker-compose.r4s.yml up -d
+#
+# 覆盖内容：
+#   - 所有服务内存限制（r4s 仅 3.77 GiB RAM）
+#   - Nginx 高端口映射（8080/8081/8443，避免与 iStoreOS 冲突）
+#   - 紧凑日志配置（5m×2，r4s 存储空间有限）
+
+name: noda-infra
+
+# r4s 紧凑日志配置（D-30: max-size=5m, max-file=2，8 容器共 ~80MB）
+x-r4s-logging: &r4s-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "5m"
+      max-file: "2"
+
+services:
+  # ----------------------------------------
+  # PostgreSQL — 768M (D-01)
+  # noda 数据库体积小，从 Mac 2G 压缩
+  # ----------------------------------------
+  postgres:
+    <<: *r4s-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 768M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ----------------------------------------
+  # Keycloak — 640M (D-02)
+  # Java 应用启动峰值约 500M，保守缓冲
+  # profiles: disabled 保持不变（overlay 合并保留）
+  # ----------------------------------------
+  keycloak:
+    <<: *r4s-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 640M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ----------------------------------------
+  # Nginx — 64M (D-03)
+  # 反向代理开销低
+  # 端口映射到高端口（D-28: 避免与 iStoreOS 管理界面冲突）
+  # ----------------------------------------
+  nginx:
+    <<: *r4s-logging
+    # !override 完全替换 base 文件的端口列表为 r4s 高端口（D-28）
+    # Docker Compose overlay 默认追加端口，!override 确保完全替换
+    ports: !override
+      - "8080:80"
+      - "8081:81"
+      - "8443:443"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 16M
+
+  # ----------------------------------------
+  # Noda Ops — 256M (D-04)
+  # 备份脚本 + Cloudflare Tunnel
+  # ----------------------------------------
+  noda-ops:
+    <<: *r4s-logging
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
