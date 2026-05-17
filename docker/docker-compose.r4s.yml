@@ -86,3 +86,34 @@ services:
           memory: 256M
         reservations:
           memory: 64M
+
+  # ----------------------------------------
+  # Apps Prod — 768M (D-06)
+  # Monorepo 容器（SSR + API + WWW + Auth + Admin）
+  # 从 Mac 1G 压缩，保持功能完整
+  # ----------------------------------------
+  noda-apps-prod:
+    <<: *r4s-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 768M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  # ----------------------------------------
+  # Apps Pre-prod — 512M (D-06)
+  # Pre-prod 使用 docker run 启动（不在 compose 中）
+  # 此配置仅作为文档参考和 compose 合并用途
+  # ----------------------------------------
+  noda-apps-preprod:
+    <<: *r4s-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          memory: 128M
