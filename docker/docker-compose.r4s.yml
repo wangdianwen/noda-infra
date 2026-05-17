@@ -91,9 +91,12 @@ services:
   # Apps Prod — 768M (D-06)
   # Monorepo 容器（SSR + API + WWW + Auth + Admin）
   # 从 Mac 1G 压缩，保持功能完整
+  # 健康检查使用 127.0.0.1 避免 IPv6 解析问题（r4s Alpine）
   # ----------------------------------------
   noda-apps-prod:
     <<: *r4s-logging
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1"]
     deploy:
       resources:
         limits:
