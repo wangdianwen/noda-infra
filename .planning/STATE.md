@@ -1,42 +1,45 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.11
-milestone_name: Pre-Prod 验证环境 + 安全上线流程
-status: Milestone v1.11 完成 - 等待审计和归档
-stopped_at: context exhaustion at 76% (2026-05-09)
-last_updated: "2026-05-09T09:34:30.701Z"
-last_activity: 2026-05-08
+milestone: v1.12
+milestone_name: 迁移到 iStoreOS (r4s)
+status: Not started
+stopped_at: Phase 57 context gathered
+last_updated: "2026-05-17T05:02:37.030Z"
+last_activity: 2026-05-17 — Milestone v1.12 规划完成
 progress:
-  total_phases: 4
-  completed_phases: 2
-  total_plans: 11
-  completed_plans: 6
-  percent: 55
+  total_phases: 6
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-05-08)
+See: .planning/PROJECT.md (updated 2026-05-17)
 
-**Core value:** 数据库永不丢失。Pre-prod 环境确保上线前全链路验证，降低 prod 故障风险。
+**Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 
-**Current focus:** Phase 56 — Jenkins Pipeline + 安全防护
+**Current focus:** Phase 57 — 环境准备（r4s Docker 网络与资源限制配置）
 
 ## Current Position
 
-Phase: 56
-Plan: 03 (completed)
-Status: Milestone v1.11 完成 - 等待审计和归档
-Last activity: 2026-05-08
-
-Progress: [████████░░] 82%
+Phase: Phase 57 - 环境准备
+Plan: TBD
+Status: Not started
+Last activity: 2026-05-17 — Milestone v1.12 规划完成
 
 ## Accumulated Context
 
 ### Decisions
 
+- [v1.12]: r4s 作为生产服务器（Mac M4 和 r4s 都是 ARM64，Docker 镜像直接复用）
+- [v1.12]: Jenkins 保留在 Mac（r4s 内存不足，通过 SSH 远程部署）
+- [v1.12]: 共享基础设施（prod + pre-prod 共享 PostgreSQL/Keycloak，节省内存）
+- [v1.12]: 蓝绿部署移除（v1.11 已完成，简化部署流程）
+- [v1.12]: 回滚方案保留（Mac 上的所有脚本和配置保留，可快速切回）
 - [v1.11]: 共享基础设施、隔离应用层（PostgreSQL/Keycloak/Nginx 单实例，数据库/realm 级别隔离）
 - [v1.11]: Build Once / Promote Anywhere（Jenkins 构建一次镜像，pre-prod 验证后 promote 同一镜像到 prod）
 - [v1.11]: Doppler pre config 必须在 Pipeline 之前创建（PIPE-01 需要 DOPPLER_CONFIG=pre）
@@ -57,9 +60,11 @@ Progress: [████████░░] 82%
 
 ### Blockers/Concerns
 
+- r4s 内存限制（3.77 GiB），需要合理分配所有容器内存限制
+- Swap 文件需要手动创建，iStoreOS 默认无 Swap
 - ~~manage-containers.sh update_upstream() 参数化方案需要在 Phase 55 实现时统一决策（UPSTREAM_VARS_PREFIX vs if/else 分支）~~ ✅ 已解决：采用 UPSTREAM_VARS_PREFIX 方案
 - Jenkins lock() 资源锁需要确认是否需要额外插件（Lockable Resources Plugin）
-- Pre-prod 应用容器未部署（Phase 55 脚本已完成，等待 Phase 56 Jenkins Pipeline 自动部署）
+- ~~Pre-prod 应用容器未部署（Phase 55 脚本已完成，等待 Phase 56 Jenkins Pipeline 自动部署）~~ ✅ v1.11 已完成
 
 ### Deferred Items
 
@@ -67,6 +72,10 @@ Items acknowledged and deferred:
 
 | Category | Item | Status |
 |----------|------|--------|
+| v2 | MON-01: r4s 容器资源监控告警 | Deferred |
+| v2 | LOG-01: 集中式日志收集 | Deferred |
+| v2 | HA-01: r4s 高可用方案 | Deferred |
+| v2 | DISK-01: 1TB 机械硬盘挂载 | Deferred |
 | uat | Phase 32 (32-HUMAN-UAT.md) | partial, 2 pending |
 | uat | Phase 34 (34-HUMAN-UAT.md) | partial, 2 pending |
 | verification | Phase 32 (32-VERIFICATION.md) | human_needed |
@@ -74,6 +83,21 @@ Items acknowledged and deferred:
 
 ## Session Continuity
 
-Last session: 2026-05-09T09:34:30.698Z
-Stopped at: context exhaustion at 76% (2026-05-09)
-Resume file: None
+Last session: 2026-05-17T05:02:37.025Z
+Stopped at: Phase 57 context gathered
+Resume file: .planning/phases/57-env-prep/57-CONTEXT.md
+
+### Next Steps
+
+1. 开始 Phase 57: 环境准备
+2. 在 r4s 上创建 Docker 独立网桥（noda-network）
+3. 创建 2GB Swap 文件
+4. 配置容器内存限制
+5. 配置 SSH 免密登录
+
+### Context Handoff
+
+- **Current focus:** v1.12 迁移到 iStoreOS (r4s)
+- **Key constraint:** r4s 内存限制（3.77 GiB）
+- **Critical path:** 环境准备 → 基础设施迁移 → 应用迁移 → CI/CD 改造 → 备份网络迁移 → 切换验证
+- **Success criteria:** 所有服务在 r4s 上运行，Mac 清理干净，回滚方案就绪
