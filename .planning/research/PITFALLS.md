@@ -1,390 +1,411 @@
-# Pre-Prod 环境陷阱研究
+# iStoreOS Docker 迁移陷阱
 
-**Domain:** Docker Compose + Jenkins 单服务器部署，添加 pre-prod 环境
-**Researched:** 2026-05-08
-**Confidence:** HIGH（基于对现有代码库的完整分析）
+**域**: Docker Compose 服务迁移到低资源 ARM64 设备
+**研究**: 2026-05-17
+**整体置信度**: HIGH
 
-## Critical Pitfalls
+## 执行摘要
 
-### Pitfall 1: Docker 网络别名冲突 — pre-prod 容器与 prod 容器互相覆盖
+从 Mac 迁移到 iStoreOS (NanoPi R4S) 面临多重挑战：有限的内存资源（3.77GB）、SD 卡存储限制、网络连接问题以及 iStoreOS 特有的系统限制。这些陷阱可能导致服务不稳定、数据丢失或部署失败。关键策略包括使用外部存储、精细内存管理、远程连接优化和完善的回滚机制。
 
-**What goes wrong:**
-docker-compose.app.yml 中 noda-apps 服务使用网络别名 `noda-apps`。如果 pre-prod 容器在同一 `noda-network` 中启动，且也使用别名 `noda-apps`，Docker DNS 会随机解析到 prod 或 pre-prod 容器。Nginx upstream 配置中的 `noda-apps-blue:3000` 能正常工作（因为用的是容器名），但任何通过别名 `noda-apps` 的通信（如 Keycloak 内部回调、容器间服务发现）会不可预测地路由到错误环境。
+## 关键陷阱分类
 
-**Why it happens:**
-Docker 网络别名是 per-network 的，同一别名被多个容器注册时，Docker 内置 DNS 返回所有 IP 的轮询结果。开发者习惯从 docker-compose.app.yml 复制配置，容易忘记修改别名。
+### 1. SD 卡存储陷阱
 
-**How to avoid:**
-1. pre-prod 容器使用完全不同的网络别名：`noda-apps-preprod`
-2. pre-prod 容器的 env 文件中 `KEYCLOAK_INTERNAL_URL` 必须指向 `http://noda-infra-nginx`（与 prod 相同，因为 Nginx 共享），不要用别名
-3. manage-containers.sh 中 `run_container()` 的 `--network-alias` 参数需要根据 SERVICE_NAME 区分 prod 和 preprod
-4. 在代码审查中检查：任何 `docker run --network-alias` 必须包含环境标识
+#### 1.1 覆盖层2 (overlay2) 性能瓶颈
+**问题描述**: Docker 的 overlay2 存储驱动在 SD 卡上性能极差，特别是在频繁写操作的场景下
+- **根因**: SD 卡的随机写入性能差，overlay2 需要频繁创建/更新层
+- **后果**: 容器启动慢、日志写入延迟、IO 等待时间长
+- **预防**: 
+  - 将 Docker root 目录迁移到外部 USB SSD: `/mnt/mmc1-4/docker`
+  - 使用 `docker run --storage-driver overlay2` 指定存储驱动
+  - 定期清理未使用的镜像和容器
 
-**Warning signs:**
-- Nginx 日志显示同一域名请求被代理到不同容器
-- Pre-prod 测试操作意外影响了 prod 数据库
-- `docker exec` 进某个容器 `nslookup noda-apps` 返回多个 IP
+#### 1.2 SD 卡寿命问题
+**问题描述**: Docker 的频繁写操作会快速消耗 SD 卡的写入周期
+- **根因**: overlay2 日志、容器状态、镜像层都会写入 SD 卡
+- **后果**: SD 卡提前损坏，数据丢失风险
+- **预防**:
+  - 使用高质量工业级 SD 卡（endurance grade）
+  - 将 `/var/log` 挂载到 tmpfs 或外部存储
+  - 限制容器日志大小和轮转频率
+  ```bash
+  # 在 docker-compose.yml 中为所有容器设置日志限制
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "5m"
+      max-file: "2"
+  ```
 
-**Phase to address:** Phase 1（基础设施准备）— 在创建 pre-prod 容器定义时立即处理
+#### 1.3 磁盘空间耗尽
+**问题描述**: overlay2 快速膨胀，占满有限的空间
+- **根因**: 旧的镜像层、未使用的容器、大量的日志文件
+- **后果**: Docker 服务崩溃，容器无法启动
+- **预防**:
+  - 设置 `--storage-opt overlay2.size=50G` 限制容器大小
+  - 定期运行 `docker system prune -a`（谨慎执行）
+  - 监控磁盘使用率并设置告警
+
+#### 1.4 数据库写入放大
+**问题描述**: PostgreSQL 的 WAL 日志和事务日志在 SD 卡上产生大量写入
+- **根因**: 数据库频繁的小块写入
+- **后果**: SD 卡寿命急剧缩短，IO 性能瓶颈
+- **预防**:
+  - 为 PostgreSQL 使用外部 SSD 存储
+  - 调整 PostgreSQL 配置减少写入频率
+  - 增加 `fsync` 间隔（降低可靠性但延长寿命）
+
+### 2. 内存不足陷阱
+
+#### 2.1 OOM Killer 活跃
+**问题描述**: 3.77GB 内存极易触发 OOM Killer，杀掉关键容器
+- **根因**: 多个服务共享内存，没有预留系统资源
+- **后果**: PostgreSQL 或 Keycloak 被杀，服务中断
+- **预防**:
+  ```yaml
+  # docker-compose.yml 精确内存限制
+  services:
+    postgres:
+      deploy:
+        resources:
+          limits:
+            memory: 768M
+          reservations:
+            memory: 256M
+    keycloak:
+      deploy:
+        resources:
+          limits:
+            memory: 640M
+          reservations:
+            memory: 256M
+    findclass-ssr:
+      deploy:
+        resources:
+          limits:
+            memory: 1024M
+          reservations:
+            memory: 256M
+  ```
+  - 预留至少 512MB 给系统和其他进程
+  - 设置 `memory-reservation` 防止被 OOM 杀死
+
+#### 2.2 Swap 配置不当
+**问题描述**: iStoreOS 默认无 swap 或配置不当
+- **根因**: Docker 无法限制 swap 使用，系统可能严重 swap
+- **后果**: 系统响应极慢，无法处理负载
+- **预防**:
+  ```bash
+  # 创建 1GB swap 文件（r4s 3.77GB 内存）
+  dd if=/dev/zero of=/mnt/mmc1-4/swapfile bs=1M count=1024
+  chmod 600 /mnt/mmc1-4/swapfile
+  mkswap /mnt/mmc1-4/swapfile
+  swapon /mnt/mmc1-4/swapfile
+  
+  # 添加到 fstab
+  echo '/mnt/mmc1-4/swapfile none swap sw 0 0' >> /etc/fstab
+  
+  # 调整 swappiness（建议 60）
+  sysctl vm.swappiness=60
+  echo 'vm.swappiness=60' >> /etc/sysctl.conf
+  ```
+
+#### 2.3 Docker 内存回收问题
+**问题描述**: ARM64 平台上 Docker 内存回收机制可能失效
+- **根因**: cgroup v2 配置不完整
+- **后果**: 内存泄漏，系统逐渐变慢
+- **预防**:
+  ```bash
+  # 修复 cgroup 配置
+  sudo nano /etc/default/grub
+  # 在 GRUB_CMDLINE_LINUX_DEFAULT 中添加：
+  cgroup_enable=memory swapaccount=1
+  
+  sudo update-grub
+  sudo reboot
+  ```
+
+### 3. 数据库迁移陷阱
+
+#### 3.1 pg_dump/restore 字符集问题
+**问题描述**: Mac 和 iStoreOS 默认字符集不同，导致数据损坏
+- **根因**: Mac 可能使用 UTF-8-MAC，Linux 使用标准 UTF-8
+- **后果**: 中文乱码、特殊字符丢失
+- **预防**:
+  ```bash
+  # 明确指定字符集导出
+  pg_dump -h localhost -U postgres noda_prod \
+    --encoding=UTF-8 \
+    --no-owner \
+    --no-privileges \
+    -f backup.sql
+  
+  # 导入时明确字符集
+  psql -h r4s-ip -U postgres noda_prod \
+    --encoding=UTF-8 \
+    -f backup.sql
+  ```
+
+#### 3.2 跨平台事务一致性
+**问题描述**: pg_dump 和 restore 之间数据可能变化
+- **根因**: 导出过程中仍有写入操作
+- **后果**: 数据不一致，部分丢失
+- **预防**:
+  ```bash
+  # 1. 设置维护模式
+  docker exec postgres psql -U postgres -c "ALTER DATABASE noda_prod SET default_transaction_read_only = true;"
+  
+  # 2. 导出数据
+  pg_dump ... > backup.sql
+  
+  # 3. 恢复数据库
+  psql ... -f backup.sql
+  
+  # 4. 取消维护模式
+  docker exec postgres psql -U postgres -c "ALTER DATABASE noda_prod SET default_transaction_read_only = false;"
+  ```
+
+#### 3.3 WAL 日志迁移问题
+**问题描述**: PostgreSQL WAL 文件在 ARM64 设备上的存储位置和权限
+- **根因**: Linux 和 macOS 的文件系统实现差异
+- **后果**: 数据库无法启动或数据损坏
+- **预防**:
+  - 使用 `pg_dump --format=directory` 备份整个数据目录
+  - 确保 `/var/lib/postgresql/data` 目录权限正确
+  - 在目标系统上初始化新数据库，然后复制数据文件
+
+### 4. 网络陷阱
+
+#### 4.1 Docker 网桥配置冲突
+**问题描述**: iStoreOS 可能使用特殊网络配置，与 Docker 网桥冲突
+- **根因**: OpenWrt 派生系统有自定义网络脚本
+- **后果**: 容器无法访问外部网络或内部通信失败
+- **预防**:
+  ```bash
+  # 检查当前 Docker 网络配置
+  docker network ls
+  docker network inspect bridge
+  
+  # 创建自定义网络避免冲突
+  docker network create --driver bridge --subnet=172.20.0.0/16 noda-net
+  
+  # 在 docker-compose.yml 中使用
+  networks:
+    default:
+      external:
+        name: noda-net
+  ```
+
+#### 4.2 端口映射问题
+**问题描述**: 端口被占用或映射不正确
+- **根因**: iStoreOS 上的服务可能占用 80/443 端口
+- **后果**: Nginx 无法启动，服务无法访问
+- **预防**:
+  - 检查端口占用: `netstat -tlnp | grep :80`
+  - 如果被占用，修改 iStoreOS Web UI 中的端口映射
+  - 使用 Docker Compose 端口映射覆盖
+
+#### 4.3 DNS 解析问题
+**问题描述**: 容器内 DNS 解析失败
+- **根因**: iStoreOS 的 DNS 配置与 Docker 冲突
+- **后果**: 服务无法启动，认证失败
+- **预防**:
+  ```yaml
+  # 在 docker-compose.yml 中设置 DNS
+  services:
+    keycloak:
+      dns:
+        - 8.8.8.8
+        - 1.1.1.1
+      environment:
+        - DNS_POLICY=none
+  ```
+
+### 5. SSH 远程部署陷阱
+
+#### 5.1 连接超时和断开
+**问题描述**: SSH 连接频繁超时或断开
+- **根因**: ARM64 设备性能不足，长命令执行超时
+- **后果**: 部署失败，服务状态不一致
+- **预防**:
+  ```bash
+  # 在 ~/.ssh/config 中配置
+  Host r4s
+    HostName r4s-ip
+    User root
+    Port 22
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+    ControlMaster auto
+    ControlPath ~/.ssh/master-%r@%h:%p
+    ControlPersist 600
+  ```
+
+#### 5.2 命令执行超时
+**问题描述**: Docker Compose 操作超时
+- **根因**: SD 卡 IO 慢，容器启动时间长
+- **后果**: 部署脚本失败，环境不完整
+- **预防**:
+  ```bash
+  # 使用 timeout 命令保护长时间运行的操作
+  timeout 600 docker-compose -H ssh://root@r4s up -d
+  
+  # 或设置 SSH 超时
+  ssh -o ConnectTimeout=30 -o ServerAliveInterval=60 r4s
+  ```
+
+#### 5.3 权限问题
+**问题描述**: jenkins 用户无法操作 Docker
+- **根因**: iStoreOS 的用户组配置不同
+- **后果**: 部署失败，权限被拒绝
+- **预防**:
+  ```bash
+  # 在 r4s 上执行
+  usermod -a -G docker jenkins
+  chmod 666 /var/run/docker.sock
+  ```
+
+### 6. iStoreOS 特有限制
+
+#### 6.1 Swap 限制支持缺失
+**问题描述**: Docker 显示 "WARNING: No swap limit support"
+- **根因**: 内核未启用 cgroup swap accounting
+- **后果**: 无法限制容器 swap 使用，系统可能不稳定
+- **预防**:
+  ```bash
+  # 修改 GRUB 配置
+  sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=""/GRUB_CMDLINE_LINUX_DEFAULT="cgroup_enable=memory swapaccount=1"/' /etc/default/grub
+  update-grub
+  reboot
+  ```
+
+#### 6.2 OpenWrt 特定服务冲突
+**问题描述**: iStoreOS 基于 OpenWrt，内置服务与 Docker 冲突
+- **根因**: 内置的 Nginx、防火墙等
+- **后果**: 端口冲突，网络策略冲突
+- **预防**:
+  - 在 Web UI 中禁用内置的 Nginx
+  - 配置防火墙允许 Docker 容器访问
+  - 使用 Docker 网络而非 OpenWrt LAN
+
+#### 6.3 包管理器差异
+**问题描述**: opkg 与 apt 的包管理差异
+- **根因**: iStoreOS 使用 opkg，与 Linux 标准不同
+- **后果**: 依赖安装失败，系统不稳定
+- **预防**:
+  - 使用 Docker 容器运行所有服务
+  - 避免 opkg 安装 Docker 相关包
+  - 所有依赖在容器内解决
+
+### 7. 迁移期间陷阱
+
+#### 7.1 停机窗口过长
+**问题描述**: 迁移过程导致长时间服务中断
+- **根因**: 需要完全停止服务来迁移数据库
+- **后果**: 业务中断，用户投诉
+- **预防**:
+  - 选择低峰期迁移
+  - 准备详细的迁移时间表
+  - 提前通知用户维护窗口
+
+#### 7.2 回滚策略缺失
+**问题描述**: 迁移失败后无法快速回滚
+- **根因**: 没有保留原环境或备份
+- **后果**: 修复时间长，风险高
+- **预防**:
+  - 迁移前创建完整快照
+  - 保留原 Mac 服务运行直到验证完成
+  - 准备一键回滚脚本
+  ```bash
+  # 回滚脚本示例
+  #!/bin/bash
+  # 1. 停止 r4s 服务
+  ssh r4s "docker-compose down"
+  
+  # 2. 恢复 Mac 服务
+  docker-compose -f docker-compose.prod.yml up -d
+  
+  # 3. 切换 DNS 指向 Mac
+  # ...
+  ```
+
+#### 7.3 数据完整性验证不足
+**问题描述**: 迁移后数据不一致
+- **根因**: 没有验证迁移的数据完整性
+- **后果**: 应用错误，业务数据问题
+- **预防**:
+  - 迁移后执行数据校验
+  - 比较关键表的记录数
+  - 测试所有功能
+
+## 阶段处理建议
+
+### Phase 58: 远程部署集成
+- **处理陷阱**: SSH 连接优化、权限设置、网络配置
+- **关键任务**: 
+  - 配置 SSH 密钥认证
+  - 设置 SSH 连接优化参数
+  - 验证远程 Docker 操作
+  - 测试基础服务部署
+
+### Phase 59: 内存和存储优化
+- **处理陷阱**: 内存限制、Swap 配置、SD 卡优化
+- **关键任务**:
+  - 实施容器内存限制
+  - 创建并激活 Swap 文件
+  - 配置 Docker Root 迁移
+  - 设置日志轮转策略
+
+### Phase 60: 数据迁移
+- **处理陷阱**: 数据库迁移、字符集问题、数据一致性
+- **关键任务**:
+  - 执行数据导出/导入
+  - 验证数据完整性
+  - 配置数据库优化
+  - 测试备份恢复
+
+### Phase 61: 生产切换
+- **处理陷阱**: 服务中断、回滚策略、监控告警
+- **关键任务**:
+  - 执行最终验证
+  - 准备回滚机制
+  - 切换流量到 r4s
+  - 完善监控告警
+
+## 验证清单
+
+- [ ] SD 卡使用率 < 50%
+- [ ] 内存使用率 < 80%
+- [ ] Swap 文件已激活
+- [ ] Docker 网络配置正确
+- [ ] PostgreSQL 数据完整
+- [ ] Keycloak 认证正常
+- [ ] SSH 连接稳定
+- [ ] 蓝绿部署可用
+- [ ] 回滚脚本测试通过
+
+## 置信度评估
+
+| 领域 | 置信度 | 原因 |
+|------|--------|------|
+| SD 卡陷阱 | HIGH | 多个实际案例验证，Stack Overflow 和论坛广泛讨论 |
+| 内存陷阱 | HIGH | ARM64 低内存设备常见问题，Docker 文档明确说明 |
+| 数据库迁移 | MEDIUM | 跨平台迁移较少讨论，但字符集问题有明确解决方案 |
+| 网络陷阱 | HIGH | iStoreOS 基于 OpenWrt，网络配置冲突常见 |
+| SSH 部署 | HIGH | SSH 超时问题在 ARM64 设备上普遍存在 |
+| iStoreOS 特限 | HIGH | 官方 GitHub issue 和社区讨论证实 |
+| 迁移策略 | HIGH | 经典迁移模式，有成熟方法论 |
+
+## 来源
+
+- [Docker overlay2 性能优化指南](https://blog.csdn.net/SimTrans/article/details/160441751) - HIGH confidence
+- [iStoreOS GitHub Issue #1461](https://github.com/istoreos/istoreos/issues/1461) - HIGH confidence
+- [Raspberry Pi Docker SD 卡问题](https://www.reddit.com/r/docker/comments/mxb2zm/looking_for_help_varlibdockeroverlay2_files/) - HIGH confidence
+- [ARM64 Docker 内存限制最佳实践](https://stackoverflow.com/questions/78105286/docker-build-with-low-ram-causing-oom-raspberry-pi-4b) - MEDIUM confidence
+- [PostgreSQL 跨平台迁移指南](https://dba.stackexchange.com/questions/35112/issues-with-encoding-and-pg-dump-restore-between-windows-and-linux) - MEDIUM confidence
+- [SSH 远程部署超时问题](https://github.com/docker/compose/issues/8544) - MEDIUM confidence
 
 ---
-
-### Pitfall 2: Doppler 密钥配置只有 prd — pre-prod 加载了 prod 密钥
-
-**What goes wrong:**
-当前 `secrets.sh` 中硬编码 `doppler secrets download --project noda --config prd`。pre-prod Pipeline 如果复用同一脚本，会拉取 prod 密钥。后果：
-- pre-prod 的 `DATABASE_URL` 指向 `noda_prod` 而非 `noda_preprod`
-- pre-prod 的 `KEYCLOAK_ADMIN_PASSWORD` 与 prod 相同，pre-prod 测试操作可修改 prod Keycloak 配置
-- `RESEND_API_KEY` 在 pre-prod 测试中发出真实邮件
-
-**Why it happens:**
-Doppler 的 config（环境）概念与项目的环境概念容易混淆。当前只有 `prd` config，没有 `pre` config。开发者可能认为"同一个 Doppler project 下共享密钥没问题"，但 `DATABASE_URL` 等变量必须按环境区分。
-
-**How to avoid:**
-两种方案，推荐方案 A：
-
-**方案 A（推荐）：Doppler 新建 `pre` config**
-1. 在 Doppler project `noda` 下新建 config `pre`
-2. 从 `prd` 继承共享密钥（B2、Cloudflare 等），覆盖环境特定变量（DATABASE_URL、KEYCLOAK_*）
-3. 修改 `secrets.sh` 的 `load_secrets()` 接受 `DOPPLER_CONFIG` 参数，默认 `prd`
-4. pre-prod Pipeline 设置 `DOPPLER_CONFIG=pre`，Jenkins 用 `doppler-service-token-preprod` 凭据
-
-**方案 B（简单但不推荐）：env 文件覆盖**
-1. 保留 Doppler `prd` config 不变
-2. pre-prod 的 env 模板文件硬编码 `DATABASE_URL` 指向 `noda_preprod`
-3. Doppler 密钥加载后再用 env 文件覆盖关键变量
-4. 缺点：密钥分散管理，容易遗漏
-
-**Warning signs:**
-- pre-prod 日志中出现 `noda_prod` 而非 `noda_preprod` 的数据库连接
-- pre-prod 部署后 prod 数据出现测试数据
-- Doppler 中只有 `prd` config，无 `pre` config
-
-**Phase to address:** Phase 1（基础设施准备）— 必须在首次 pre-prod 部署前完成 Doppler 配置
-
----
-
-### Pitfall 3: Jenkins Pipeline 并发部署导致蓝绿状态文件损坏
-
-**What goes wrong:**
-当前 Jenkinsfile.noda-apps 使用 `disableConcurrentBuilds()` 防止同一 Pipeline 并发。但 pre-prod Pipeline 和 prod Pipeline 是不同的 Jenkins Job，它们共享：
-- 同一个 Nginx 容器（reload 操作）
-- 同一个 Docker daemon（构建资源竞争）
-- 同一个 manage-containers.sh 脚本（全局变量和临时文件）
-
-如果两个 Pipeline 同时执行：
-1. prod Pipeline 执行 `update_upstream` 写入 upstream-findclass.conf
-2. pre-prod Pipeline 紧接着也执行 `update_upstream` 写入 upstream-findclass-preprod.conf
-3. 两者都调用 `nginx -s reload`，第二次 reload 可能在第一次的流量切换尚未完全生效时触发
-4. 更危险的是：如果 pre-prod 和 prod 的 manage-containers.sh 使用相同的 `NGINX_CONTAINER` 变量，`docker exec nginx -t` 可能检测到不完整配置
-
-**Why it happens:**
-`disableConcurrentBuilds()` 只保护同一 Job 内的并发，不保护跨 Job 并发。开发者在紧急 hotfix 场景下可能同时触发 prod 和 pre-prod 部署。
-
-**How to avoid:**
-1. **Jenkins 资源锁：** 使用 `lock('nginx-reload')` 包裹 Switch 阶段，确保同一时间只有一个 Pipeline 在执行 nginx reload
-   ```groovy
-   stage('Switch') {
-       steps {
-           lock(resource: 'nginx-reload', inversePrecedence: true) {
-               sh '...'
-           }
-       }
-   }
-   ```
-2. **或者：** 使用 `lock('docker-deploy')` 锁住整个 Deploy → Switch → Verify 链路，更保守但更安全
-3. **在 pipeline_switch() 中添加文件锁：** 用 `flock` 确保同一时间只有一个进程操作 nginx
-4. **pre-prod Pipeline 不需要 CDN Purge 阶段**（pre-prod 域名通常不需要 CDN 缓存清除），减少与 prod Pipeline 的冲突窗口
-
-**Warning signs:**
-- Jenkins 构建日志中出现 `nginx: [emerg]` 错误
-- 部署后 `active-env` 文件内容与预期不符
-- 两个 Pipeline 的 Verify 阶段都报告失败
-
-**Phase to address:** Phase 3（Jenkins Pipeline）— 在创建 pre-prod Pipeline 时立即加入锁机制
-
----
-
-### Pitfall 4: Keycloak noda-preprod Realm 的 Google OAuth redirect URI 遗漏
-
-**What goes wrong:**
-Keycloak 的 Google Identity Provider 配置中，`Valid Redirect URIs` 必须包含所有可能的回调地址。遗漏任何一个都会导致：
-1. 用户在 pre-prod 点击 Google 登录 -> Google 回调到 `pre.auth.noda.co.nz`
-2. Keycloak 报错 `Invalid parameter: redirect_uri`
-3. 用户看到白屏或错误页面
-
-根据 CLAUDE.md 的历史记录，这个项目已经多次因为 redirect URI 问题导致登录失败（Phase 16 的 3 层 OAuth 问题）。Pre-prod 增加了 4 个新域名，每个都需要正确的 redirect URI。
-
-**Why it happens:**
-Google Cloud Console 的 OAuth 配置需要手动添加 authorized redirect URIs，容易遗漏。Keycloak realm 的 client 配置中也需要添加 Valid Redirect URIs。两层配置都需要同步更新。
-
-**How to avoid:**
-创建检查清单，在 pre-prod 首次部署前逐项验证：
-
-1. **Google Cloud Console:**
-   - `https://pre.auth.noda.co.nz/*`
-   - `https://pre.class.noda.co.nz/*`
-
-2. **Keycloak noda-preprod realm 的 noda-frontend-preprod client:**
-   - `Valid Redirect URIs`: `https://pre.class.noda.co.nz/*`, `https://pre.auth.noda.co.nz/*`
-   - `Web Origins`: `https://pre.class.noda.co.nz`, `https://pre.auth.noda.co.nz`
-
-3. **Docker 构建参数（Dockerfile）：**
-   - `NEXT_PUBLIC_KEYCLOAK_URL=https://pre.auth.noda.co.nz`（不能是 auth.noda.co.nz）
-   - `NEXT_PUBLIC_KEYCLOAK_REALM=noda-preprod`
-   - `NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=noda-frontend-preprod`
-   - 这些是构建时参数，改了必须重新 build，运行时环境变量无法覆盖（CLAUDE.md 已记录此教训）
-
-4. **创建自动化验证脚本：** 部署后 curl 检查 `https://pre.auth.noda.co.nz/realms/noda-preprod/.well-known/openid-configuration` 确认 realm 可达
-
-**Warning signs:**
-- 登录时浏览器 URL 出现 `localhost:8080` 或 `auth.noda.co.nz`（而非 `pre.auth.noda.co.nz`）
-- Keycloak 日志: `error=invalid_redirect_uri`
-- Google OAuth 回调后白屏
-
-**Phase to address:** Phase 1（Keycloak realm 配置）— 在部署任何 pre-prod 应用前必须完成
-
----
-
-### Pitfall 5: 单服务器内存不足 — 4 个 noda-apps 容器同时运行 OOM
-
-**What goes wrong:**
-pre-prod-environment-plan.md 评估增量约 1GB（pre-prod 的两个蓝绿容器）。但实际情况更复杂：
-- 当前 prod 已有 `noda-apps-blue` + `noda-apps-green`（限制各 1G）
-- 加上 pre-prod 的 `noda-apps-preprod-blue` + `noda-apps-preprod-green`（各 1G）
-- 再加上 PostgreSQL（限制 2G）、Keycloak（限制 1G）、Nginx、noda-ops、Jenkins（JVM 默认堆内存）
-- 蓝绿部署切换期间，新旧容器短暂同时运行（约 30-60 秒 health check）
-- 如果 prod 和 pre-prod 同时处于蓝绿切换的 overlap 窗口，同时运行 6 个 noda-apps 容器
-
-在 plan 中标注"~1GB 增量"只考虑了 pre-prod 平时运行状态（1 个活跃容器），没考虑：
-- 蓝绿切换的 overlap 窗口
-- Jenkins 构建时的内存消耗（pnpm install + next build）
-- PostgreSQL 在备份/恢复时的内存峰值
-
-**Why it happens:**
-资源评估通常只看稳态，忽略了部署过程中的瞬时资源峰值。加上 Docker 的 memory limit 是硬限制，超了直接 OOM kill。
-
-**How to avoid:**
-1. **降低 pre-prod 容器 memory limit**：prod 是 1G，pre-prod 可以降到 512M（不需要处理真实流量，只做功能验证）
-2. **pre-prod 蓝绿容器不要同时运行**：pre-prod 可以用"停旧启新"策略而非蓝绿，接受短暂不可用（pre-prod 不需要零停机）
-3. **添加部署前内存检查到 Pipeline Pre-flight 阶段**：
-   ```bash
-   available_mem=$(free -m | awk '/Mem:/{print $4}')
-   if [ "$available_mem" -lt 1536 ]; then
-       log_error "可用内存不足 1.5GB，中止部署"
-       exit 1
-   fi
-   ```
-4. **Jenkins 构建 Node.js 限制内存**：`NODE_OPTIONS=--max-old-space-size=1024`
-5. **Pre-prod 不使用蓝绿部署，只用单容器**：启动新容器 -> 验证 -> 停旧容器 -> nginx reload。省掉一个容器的内存开销。
-
-**Warning signs:**
-- `dmesg` 中出现 `Out of memory: Killed process`
-- Docker `docker inspect` 显示容器 `OOMKilled=true`
-- 服务器响应变慢，SSH 登录延迟
-
-**Phase to address:** Phase 1（基础设施准备）— 必须在首次 pre-prod 容器启动前确认资源上限
-
----
-
-### Pitfall 6: 镜像清理脚本误删 pre-prod 镜像
-
-**What goes wrong:**
-image-cleanup.sh 的 `cleanup_by_date_threshold()` 通过容器名前缀匹配来识别"在用镜像"：
-```bash
-container_names=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep "^${image_name}" || true)
-```
-如果 pre-prod 和 prod 都使用镜像 `noda-apps:latest`（同一个镜像名，不同标签），清理逻辑可能：
-1. prod Pipeline 的 cleanup 阶段只检查 `noda-apps-*` 前缀的容器
-2. 发现 `noda-apps-preprod-blue` 正在使用某镜像，正确跳过
-3. 但 `noda-apps-preprod-blue` 停止后（pre-prod 不活跃容器），其镜像被 prod Pipeline 的 cleanup 误删
-4. 下次 pre-prod 部署找不到镜像，需要重新构建
-
-**Why it happens:**
-镜像名 `noda-apps` 同时用于 prod 和 pre-prod。清理脚本的 "in-use" 检测基于容器名前缀匹配，逻辑复杂且脆弱。
-
-**How to avoid:**
-1. **pre-prod 使用不同的镜像名**：`noda-apps-preprod:latest` 而非 `noda-apps:latest`。清理脚本按镜像名隔离，互不影响
-2. **pipeline_build() 中根据 SERVICE_NAME 区分**：`-t noda-apps-preprod:${git_sha}`
-3. **Promote to Prod 时重新 tag 镜像**：`docker tag noda-apps-preprod:xxx noda-apps:xxx`
-
-**Warning signs:**
-- Pre-prod 部署日志: `Unable to find image 'noda-apps-preprod:xxx' locally`
-- `docker images` 中 pre-prod 的镜像标签消失
-- Promote to Prod 失败：找不到源镜像
-
-**Phase to address:** Phase 3（Jenkins Pipeline）— 在定义 pre-prod 构建和 Promote 流程时同步处理
-
----
-
-### Pitfall 7: Nginx upstream include 文件写入竞争 — prod 和 pre-prod 切换互相覆盖
-
-**What goes wrong:**
-prod 和 pre-prod 使用不同的 upstream 配置文件：
-- `upstream-findclass.conf`（prod）
-- `upstream-findclass-preprod.conf`（pre-prod）
-
-`update_upstream()` 函数在写入时使用了临时文件 + mv 的原子操作，这本身没问题。但 `reload_nginx()` 会重载所有 Nginx 配置。如果 pre-prod 的 upstream 文件在 prod 切换的瞬间处于中间状态（比如新容器还没启动完成），`nginx -t` 可能检测到无效的 upstream 目标。
-
-更具体地，manage-containers.sh 中 `update_upstream()` 只写 prod 的 upstream 文件。如果 pre-prod 复用这个函数，需要确保它写的是 `upstream-findclass-preprod.conf`。如果 `UPSTREAM_CONF` 变量传错，pre-prod 切换可能写入 prod 的 upstream 文件。
-
-**Why it happens:**
-`update_upstream()` 使用 `$UPSTREAM_CONF` 环境变量决定写入哪个文件。这个变量默认指向 prod 配置。如果 pre-prod Pipeline 忘记设置 `UPSTREAM_CONF`，会直接修改 prod 的 upstream。
-
-**How to avoid:**
-1. **update_upstream() 添加防护检查**：在写入前验证文件路径包含预期环境标识
-   ```bash
-   if [ "$SERVICE_NAME" = "noda-apps-preprod" ]; then
-       echo "$upstream_content" | grep -q "preprod" || { log_error "pre-prod upstream 不应包含 prod 容器名"; exit 1; }
-   fi
-   ```
-2. **pre-prod Jenkinsfile 必须设置 UPSTREAM_CONF**：`UPSTREAM_CONF = "${PROJECT_ROOT}/config/nginx/snippets/upstream-findclass-preprod.conf"`
-3. **添加 nginx 配置完整性测试**：Switch 阶段在 reload 前用 `nginx -t` 验证（已实现），但还应验证 upstream 目标容器确实在运行
-4. **文件权限分离**：prod 和 pre-prod 的 upstream 配置文件可以设置不同的文件权限（虽然在同一台机器上意义有限）
-
-**Warning signs:**
-- prod 域名突然指向 pre-prod 容器
-- `nginx -t` 报错后 Pipeline 回滚，但 upstream 文件已被修改
-- `cat upstream-findclass.conf` 显示 `noda-apps-preprod-*` 容器名
-
-**Phase to address:** Phase 2（Nginx 路由）— 在创建 pre-prod upstream 配置时建立防护
-
----
-
-### Pitfall 8: Hotfix 跳过 Pre-prod 后镜像不同步
-
-**What goes wrong:**
-hotfix 流程设计：直接部署到 prod（跳过 pre-prod），事后补走 pre-prod 验证。可能出现的问题：
-1. Hotfix 部署到 prod 后，pre-prod 仍然运行旧版本
-2. "事后补走 pre-prod" 从未执行（人的遗忘）
-3. 下一次常规部署时，Pipeline 从 main 分支构建新镜像部署到 pre-prod，但 pre-prod 数据库的 schema 已经被 prod 的 hotfix 迁移脚本改变（如果 hotfix 包含 DB migration）
-4. 新镜像在 pre-prod 的数据库上运行迁移失败，因为迁移版本号已经被 hotfix 更新过
-
-**Why it happens:**
-hotfix 流程打破了对称性——prod 和 pre-prod 的版本不一致。如果 hotfix 包含数据库迁移，pre-prod 数据库（`noda_preprod`）的迁移历史可能与 prod 不同步。
-
-**How to avoid:**
-1. **Hotfix 后强制触发 pre-prod 部署**：在 hotfix Jenkinsfile 的 `post.success` 中自动触发 pre-prod Pipeline
-   ```groovy
-   post {
-       success {
-           build job: 'noda-apps-preprod', wait: false
-       }
-   }
-   ```
-2. **Pre-prod 数据库定期从 prod 同步**（可选，按需）：在 pre-prod 部署前从最新的 prod 备份恢复 `noda_preprod` 数据库
-3. **数据库迁移标记**：pre-prod 部署前检查迁移状态，如果 `noda_preprod` 的迁移版本号与代码不匹配，先同步数据库再部署
-4. **紧急 hotfix 标准操作流程文档化**：包括"必须补走 pre-prod"这一步骤
-
-**Warning signs:**
-- pre-prod 日志中出现数据库 migration 错误
-- pre-prod 和 prod 的 `/api/health` 返回不同版本号
-- `noda_preprod` 数据库中 `_prisma_migrations` 表与 `noda_prod` 不一致
-
-**Phase to address:** Phase 3（Jenkins Pipeline）— 在创建 hotfix 流程时强制包含 pre-prod 同步步骤
-
-## Technical Debt Patterns
-
-| Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
-|----------|-------------------|----------------|-----------------|
-| pre-prod 复用 prod 的 Doppler config | 减少配置工作，快速启动 | 密钥泄露到错误环境，prod 数据被 pre-prod 操作破坏 | 绝不可接受 |
-| pre-prod 不做蓝绿，直接停旧启新 | 省内存和复杂度 | pre-prod 部署时有短暂不可用窗口 | 可接受（pre-prod 不面向真实用户） |
-| pre-prod 和 prod 共享同一镜像名 | Promote 流程简单（不需要 retag） | 镜像清理逻辑复杂，容易误删 | 不可接受（应使用不同镜像名） |
-| pre-prod 不做健康检查 | 加快部署速度 | 不验证就 Promote 到 prod，风险传导 | 不可接受 |
-| pre-prod 容器不加 memory limit | 避免配置工作 | pre-prod 容器异常时吃掉 prod 的内存 | 绝不可接受 |
-
-## Integration Gotchas
-
-| Integration | Common Mistake | Correct Approach |
-|-------------|----------------|------------------|
-| Keycloak Realm | 在 prod realm 中添加 pre-prod client | 创建独立 `noda-preprod` realm，完全隔离用户和配置 |
-| Keycloak Google OAuth | 只在 Google Cloud Console 添加 URI，忘记在 Keycloak client 中添加 | 两处都必须添加，缺一不可 |
-| Cloudflare Tunnel | 添加 DNS CNAME 后忘记在 Tunnel 配置中添加路由 | DNS CNAME + Tunnel ingress 规则都需要更新 |
-| Cloudflare CDN | pre-prod 域名开启 CDN 缓存，测试时看到旧版本 | pre-prod 域名在 Cloudflare 中关闭缓存（或设置极短 TTL） |
-| Docker Network | pre-prod 容器使用与 prod 相同的网络别名 | 使用 `noda-apps-preprod` 等带环境标识的别名 |
-| Nginx Upstream | pre-prod server block 忘记 `resolver 127.0.0.11 valid=30s;` | 所有使用变量 upstream 的 server block 都必须添加 resolver |
-| Jenkins Credentials | pre-prod Pipeline 使用 prod 的 `doppler-service-token` | 创建独立的 `doppler-service-token-preprod` 凭据 |
-| Backup System | noda-ops 备份只备份 `noda_prod`，不包含 `noda_preprod` | 更新备份脚本同时备份 `noda_preprod`（或确认不需要备份 pre-prod） |
-
-## Performance Traps
-
-| Trap | Symptoms | Prevention | When It Breaks |
-|------|----------|------------|----------------|
-| 6 个 noda-apps 容器同时运行 | OOM kill、服务器卡死 | pre-prod 用单容器、降低 memory limit、添加部署前内存检查 | prod + pre-prod 同时蓝绿切换 |
-| Jenkins 构建 + pre-prod 部署并行 | 构建超时、pnpm install 失败 | `NODE_OPTIONS=--max-old-space-size=1024`、限制并发构建 | 内存 < 2GB 可用时 |
-| pre-prod 数据库迁移阻塞 prod PostgreSQL | prod API 变慢、连接超时 | pre-prod 迁移在低峰期执行、添加 statement_timeout | 大型 ALTER TABLE 操作 |
-| Docker 磁盘空间耗尽 | 构建失败、容器无法启动 | 镜像清理策略覆盖 pre-prod、添加部署前磁盘检查 | 镜像 > 20GB（prod + pre-prod 各保留多个版本） |
-
-## Security Mistakes
-
-| Mistake | Risk | Prevention |
-|---------|------|------------|
-| pre-prod 容器可以连接 `noda_prod` 数据库 | 测试操作破坏生产数据 | Docker 网络层面：pre-prod 容器不挂载 `noda-network` 的 `postgres` 别名；或者 PostgreSQL 使用 pg_hba.conf 限制只允许特定用户/IP 连接 `noda_prod` |
-| pre-prod 域名公网可访问且无认证 | 任何人可以访问未发布的功能 | Cloudflare Access 保护 pre-prod 域名（或使用 HTTP Basic Auth），只允许团队成员访问 |
-| pre-prod Keycloak realm 使用相同 admin 密码 | 误操作修改 prod 用户 | noda-preprod realm 使用不同的管理员凭据 |
-| Doppler service token 权限过大 | pre-prod token 可以访问 prod 密钥 | pre-prod token 只授权 `config=pre` 的读取权限 |
-| pre-prod 日志包含敏感数据 | 测试时使用的真实数据泄露 | pre-prod 使用脱敏数据，不导入真实用户数据 |
-
-## "Looks Done But Isn't" Checklist
-
-- [ ] **DNS 可达:** 添加了 Cloudflare CNAME 和 Tunnel 路由，但没有验证从外部能否访问 `pre.class.noda.co.nz`（Tunnel token 未更新、ingress 规则语法错误等）
-- [ ] **Keycloak realm 创建:** 创建了 `noda-preprod` realm，但没有配置 Google Identity Provider（只能用用户名密码登录，无法测试 OAuth 流程）
-- [ ] **Nginx server block:** 添加了 `pre.class.noda.co.nz` 的 server block，但忘了 `resolver 127.0.0.11 valid=30s;`（变量 upstream 无法解析）
-- [ ] **数据库创建:** 创建了 `noda_preprod` 数据库，但没有运行初始 migration（表结构不存在，应用启动即报错）
-- [ ] **Promote 流程:** 创建了 Promote Pipeline，但使用的是"重新构建"而非"使用同一镜像"（构建结果可能不同，验证失去意义）
-- [ ] **Hotfix 文档:** 写了 hotfix SOP，但没有自动化步骤确保 pre-prod 同步（依赖人记得手动操作）
-- [ ] **备份覆盖:** 备份脚本只备份 `noda_prod`，`noda_preprod` 数据库无人备份（虽然影响小，但不一致）
-- [ ] **CDN 缓存:** pre-prod 域名在 Cloudflare 开启了 CDN 缓存，更新后看不到变化（误以为部署失败）
-- [ ] **Jenkins disableConcurrentBuilds:** 每个 Pipeline 都设置了 `disableConcurrentBuilds()`，但不同 Pipeline 之间没有互斥锁
-
-## Recovery Strategies
-
-| Pitfall | Recovery Cost | Recovery Steps |
-|---------|---------------|----------------|
-| 网络别名冲突（流量串环境） | LOW | 停止 pre-prod 容器，修改别名，重启容器 |
-| Doppler 密钥指向 prod 数据库 | HIGH | 检查 pre-prod 操作是否修改了 prod 数据，必要时从备份恢复 `noda_prod`；修正 Doppler config |
-| Pipeline 并发导致 Nginx 配置错乱 | MEDIUM | 手动检查 upstream-*.conf 文件内容，手动 reload nginx |
-| Google OAuth redirect URI 遗漏 | LOW | 在 Google Cloud Console 和 Keycloak 中添加遗漏的 URI |
-| OOM Kill | MEDIUM | 调整 memory limit，停止不必要的容器，重启被 kill 的容器 |
-| 镜像被误删 | LOW | 重新构建镜像（约 5-10 分钟） |
-| upstream 文件写入错误环境 | HIGH | 手动修正 upstream 文件，reload nginx，检查 prod 流量是否受影响 |
-| Hotfix 后 pre-prod 版本落后 | MEDIUM | 手动触发 pre-prod 部署，检查数据库迁移状态 |
-
-## Pitfall-to-Phase Mapping
-
-| Pitfall | Prevention Phase | Verification |
-|---------|------------------|--------------|
-| 网络别名冲突 | Phase 1: 基础设施准备 | `docker network inspect noda-network` 确认 prod 和 pre-prod 别名不同 |
-| Doppler 密钥环境隔离 | Phase 1: 基础设施准备 | `doppler secrets --config pre` 确认 DATABASE_URL 指向 `noda_preprod` |
-| Pipeline 并发锁 | Phase 3: Jenkins Pipeline | 同时触发两个 Pipeline，验证第二个等待第一个完成 |
-| Keycloak OAuth redirect URI | Phase 1: Keycloak 配置 | 浏览器测试完整 Google 登录流程 |
-| 内存不足 | Phase 1: 基础设施准备 | 启动所有容器后检查 `free -m` 和 `docker stats` |
-| 镜像清理冲突 | Phase 3: Jenkins Pipeline | 部署后检查 `docker images` 确认 pre-prod 镜像未被删除 |
-| Upstream 写入防护 | Phase 2: Nginx 路由 | 手动修改 UPSTREAM_CONF 变量测试防护逻辑 |
-| Hotfix 同步 | Phase 3: Jenkins Pipeline | 模拟 hotfix 流程，验证 pre-prod 是否自动触发部署 |
-
-## Phase-Specific Warnings
-
-| Phase Topic | Likely Pitfall | Mitigation |
-|-------------|---------------|------------|
-| PostgreSQL noda_preprod 创建 | 忘记运行 Prisma migration，数据库空表 | 创建后立即运行 `pnpm prisma migrate deploy` |
-| Keycloak realm 导出/导入 | 导出 prod realm 后忘记修改 hostname 和 client ID | 导入后逐项检查 KC_HOSTNAME、redirect URIs、client ID |
-| Nginx 新 server block | 忘记 `resolver 127.0.0.11 valid=30s;` 导致变量 upstream 无法解析 | 每个使用 `$variable_upstream` 的 server block 都必须包含 resolver |
-| Cloudflare Tunnel 配置修改 | 修改 tunnel config 后忘记重启 noda-ops 容器 | 配置变更后必须 `docker restart noda-ops` |
-| Jenkinsfile 创建 | 从 prod Jenkinsfile 复制后忘记修改 ACTIVE_ENV_FILE 和 UPSTREAM_CONF | 使用 diff 对比两个 Jenkinsfile，确认所有环境特定参数 |
-| manage-containers.sh 参数化 | SERVICE_NAME 设为 `noda-apps-preprod` 但 get_env_template() 找不到 env 文件 | 创建 `env-noda-apps-preprod.env` 模板文件 |
-| Promote to Prod | Promote 使用 `noda-apps-preprod` 镜像但 prod upstream 期望 `noda-apps` 容器名 | Promote 时 `docker tag` 重命名镜像，或 Promote 流程重新 tag |
-| 首次端到端验证 | 只验证了 HTTP 200，没有验证 Google 登录完整流程 | 创建端到端验证清单：页面加载 -> Google 登录 -> API 调用 -> 数据写入 |
-
-## Sources
-
-- 项目代码分析: `scripts/manage-containers.sh`, `scripts/pipeline-stages.sh`, `scripts/lib/secrets.sh`, `scripts/lib/image-cleanup.sh`, `scripts/lib/cleanup.sh`
-- Jenkins Pipeline 分析: `jenkins/Jenkinsfile.noda-apps`, `jenkins/Jenkinsfile.noda-site`, `jenkins/Jenkinsfile.prod-deploy`
-- Docker Compose 分析: `docker/docker-compose.app.yml`, `docker/docker-compose.yml`, `docker/docker-compose.prod.yml`
-- Nginx 配置分析: `config/nginx/conf.d/default.conf`, `config/nginx/snippets/upstream-findclass.conf`
-- 历史问题记录: CLAUDE.md（Phase 16 OAuth 修复、端口收敛记录）
-- Pre-prod 方案分析: `.planning/notes/pre-prod-environment-plan.md`
-
----
-*Pitfalls research for: Pre-Prod 环境添加到现有 Docker Compose + Jenkins 基础设施*
-*Researched: 2026-05-08*
+*Pitfalls research for: iStoreOS (r4s) Docker 迁移*
+*Researched: 2026-05-17*
