@@ -2,15 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.12
 milestone_name: 迁移到 iStoreOS (r4s)
-status: ready_to_plan
-last_updated: 2026-05-17T20:38:52.188Z
+status: executing
+last_updated: "2026-05-18T22:10:00.000Z"
 progress:
   total_phases: 5
-  completed_phases: 0
-  total_plans: 3
-  completed_plans: 3
-  percent: 0
-stopped_at: Phase 58 complete (3/3) — ready to discuss Phase 59
+  completed_phases: 2
+  total_plans: 6
+  completed_plans: 6
+  percent: 40
 ---
 
 # Project State
@@ -21,14 +20,14 @@ See: .planning/PROJECT.md (updated 2026-05-17)
 
 **Core value:** 数据库永不丢失。迁移不改变核心功能，只改变运行位置。
 
-**Current focus:** Phase 59 — 应用服务迁移
+**Current focus:** Phase 60 — CI/CD 改造
 
 ## Current Position
 
-Phase: 59
-Plan: Not started
-Status: Ready to plan
-Progress: 0/5 phases (0%)
+Phase: 59 complete
+Plan: All 3 plans done
+Status: Ready for Phase 60
+Progress: 2/5 phases (40%)
 
 ### Phase 58 目标
 
