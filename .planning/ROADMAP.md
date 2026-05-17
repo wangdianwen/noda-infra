@@ -8,7 +8,7 @@
 
 ## Phases
 
-- [ ] **Phase 58: 基础设施迁移** - PostgreSQL、Keycloak、Nginx、noda-ops 容器迁移到 r4s
+- [x] **Phase 58: 基础设施迁移** - PostgreSQL、Keycloak、Nginx、noda-ops 容器迁移到 r4s (completed 2026-05-17)
 - [ ] **Phase 59: 应用服务迁移** - findclass-ssr、noda-admin、noda-auth 容器迁移到 r4s
 - [ ] **Phase 60: CI/CD 改造** - Jenkins Pipeline 改造为 SSH 远程部署
 - [ ] **Phase 61: 备份与网络迁移** - cronjob 和 Cloudflare Tunnel 迁移到 r4s
@@ -32,9 +32,9 @@
 5. 所有基础设施容器加入 noda-network 外部网络，容器间可通过 DNS 互相访问
 
 Plans:
-- [ ] 58-01-PLAN.md — PostgreSQL 环境验证、停服备份、SSH 管道数据迁移、完整性验证
-- [ ] 58-02-PLAN.md — Keycloak docker run 启动 + Nginx compose up 启动及代理验证
-- [ ] 58-03-PLAN.md — noda-ops 镜像构建传输 + 启动验证 + 全部基础设施服务就绪确认
+- [x] 58-01-PLAN.md — PostgreSQL 环境验证、停服备份、SSH 管道数据迁移、完整性验证
+- [x] 58-02-PLAN.md — Keycloak docker run 启动 + Nginx compose up 启动及代理验证
+- [x] 58-03-PLAN.md — noda-ops 镜像构建传输 + 启动验证 + 全部基础设施服务就绪确认
 
 ### Phase 59: 应用服务迁移
 
@@ -108,7 +108,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 58. 基础设施迁移 | 0/3 | Planned | - |
+| 58. 基础设施迁移 | 3/3 | Complete    | 2026-05-17 |
 | 59. 应用服务迁移 | 0/5 | Not started | - |
 | 60. CI/CD 改造 | 0/4 | Not started | - |
 | 61. 备份与网络迁移 | 0/8 | Not started | - |
