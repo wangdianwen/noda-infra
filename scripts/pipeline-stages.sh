@@ -1055,40 +1055,77 @@ prepare_keycloak_env_file()
 # 返回: 0=成功，1=失败
 pipeline_deploy_nginx()
 {
-    log_info "Nginx 重建部署（docker compose recreate）"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程部署模式
+        log_info "Nginx 重建部署（r4s 远程 docker compose recreate）"
 
-    # 先停止并移除旧容器，再创建新容器
-    # 不使用 --force-recreate：该选项在新容器创建时网络连接尚未就绪，
-    # 导致 nginx 解析 upstream DNS 失败并进入 restart 循环
-    log_info "停止旧 nginx 容器..."
-    docker stop noda-infra-nginx 2>/dev/null || true
-    docker rm noda-infra-nginx 2>/dev/null || true
+        # 先停止并移除旧容器，再创建新容器
+        log_info "停止旧 nginx 容器（r4s）..."
+        remote_exec "docker stop noda-infra-nginx 2>/dev/null || true"
+        remote_exec "docker rm noda-infra-nginx 2>/dev/null || true"
 
-    docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
-        up -d --no-deps nginx
+        remote_compose "up -d --no-deps nginx" \
+            "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml"
 
-    # 等待 nginx 容器启动
-    log_info "等待 nginx 容器就绪..."
-    local _max_wait=30
-    local _elapsed=0
-    while [ $_elapsed -lt $_max_wait ]; do
-        local _running
-        _running=$(docker inspect --format='{{.State.Running}}' noda-infra-nginx 2>/dev/null || echo "false")
-        if [ "$_running" = "true" ]; then
-            log_info "nginx 容器已就绪（等待 ${_elapsed} 秒）"
-            break
+        # 等待 nginx 容器启动
+        log_info "等待 nginx 容器就绪（r4s）..."
+        local _max_wait=30
+        local _elapsed=0
+        while [ $_elapsed -lt $_max_wait ]; do
+            local _running
+            _running=$(remote_exec "docker inspect --format='{{.State.Running}}' noda-infra-nginx 2>/dev/null || echo false")
+            if [ "$_running" = "true" ]; then
+                log_info "nginx 容器已就绪（等待 ${_elapsed} 秒）"
+                break
+            fi
+            sleep 1
+            _elapsed=$((_elapsed + 1))
+        done
+        if [ $_elapsed -ge $_max_wait ]; then
+            log_error "nginx 容器未在 ${_max_wait} 秒内就绪（r4s）"
+            remote_exec "docker logs noda-infra-nginx --tail 20 2>/dev/null || true"
+            return 1
         fi
-        sleep 1
-        _elapsed=$((_elapsed + 1))
-    done
-    if [ $_elapsed -ge $_max_wait ]; then
-        log_error "nginx 容器未在 ${_max_wait} 秒内就绪"
-        docker logs noda-infra-nginx --tail 20 2>/dev/null || true
-        return 1
-    fi
 
-    log_success "Nginx 重建完成"
+        log_success "Nginx 重建完成（r4s）"
+    else
+        # 本地模式：保持现有逻辑
+        log_info "Nginx 重建部署（docker compose recreate）"
+
+        # 先停止并移除旧容器，再创建新容器
+        # 不使用 --force-recreate：该选项在新容器创建时网络连接尚未就绪，
+        # 导致 nginx 解析 upstream DNS 失败并进入 restart 循环
+        log_info "停止旧 nginx 容器..."
+        docker stop noda-infra-nginx 2>/dev/null || true
+        docker rm noda-infra-nginx 2>/dev/null || true
+
+        docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+            up -d --no-deps nginx
+
+        # 等待 nginx 容器启动
+        log_info "等待 nginx 容器就绪..."
+        local _max_wait=30
+        local _elapsed=0
+        while [ $_elapsed -lt $_max_wait ]; do
+            local _running
+            _running=$(docker inspect --format='{{.State.Running}}' noda-infra-nginx 2>/dev/null || echo "false")
+            if [ "$_running" = "true" ]; then
+                log_info "nginx 容器已就绪（等待 ${_elapsed} 秒）"
+                break
+            fi
+            sleep 1
+            _elapsed=$((_elapsed + 1))
+        done
+        if [ $_elapsed -ge $_max_wait ]; then
+            log_error "nginx 容器未在 ${_max_wait} 秒内就绪"
+            docker logs noda-infra-nginx --tail 20 2>/dev/null || true
+            return 1
+        fi
+
+        log_success "Nginx 重建完成"
+    fi
 }
+
 
 # ============================================
 # 函数: pipeline_deploy_noda_ops
