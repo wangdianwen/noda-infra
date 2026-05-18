@@ -642,7 +642,18 @@ pipeline_infra_preflight()
     log_info "基础设施前置检查: $service"
 
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
-        # r4s 远程模式：检查远程 Docker daemon
+        # r4s 远程模式：同步仓库 + 检查远程 Docker daemon
+        log_info "r4s 远程模式前置检查..."
+
+        # 同步 r4s 仓库
+        log_info "同步 r4s 仓库..."
+        if ! remote_exec "cd /opt/noda/noda-infra && git pull origin ${R4S_GIT_BRANCH}"; then
+            log_error "r4s 仓库同步失败"
+            return 1
+        fi
+        log_info "r4s 仓库同步完成"
+
+        # 检查远程 Docker daemon
         log_info "r4s 远程模式前置检查..."
         remote_exec "docker info >/dev/null 2>&1" || {
             log_error "r4s Docker daemon 不可用"
