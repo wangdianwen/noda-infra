@@ -1222,30 +1222,59 @@ pipeline_infra_health_check()
 {
     local service="$1"
 
-    case "$service" in
-        keycloak)
-            wait_container_healthy "noda-infra-keycloak" 300
-            ;;
-        nginx)
-            # nginx -t 验证配置 + wait_container_healthy
-            docker exec noda-infra-nginx nginx -t
-            wait_container_healthy "noda-infra-nginx" 30
-            ;;
-        noda-ops)
-            # 容器 running 即可（无 HTTP 端点）
-            wait_container_healthy "noda-ops" 60
-            ;;
-        postgres)
-            # pg_isready 验证数据库可连接 + wait_container_healthy
-            docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
-            wait_container_healthy "noda-infra-postgres-prod" 90
-            ;;
-        *)
-            log_error "未知服务: $service"
-            return 1
-            ;;
-    esac
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程健康检查模式
+        case "$service" in
+            keycloak)
+                wait_container_healthy "noda-infra-keycloak" 300 true true
+                ;;
+            nginx)
+                # nginx -t 验证配置 + wait_container_healthy（远程）
+                remote_docker_exec "noda-infra-nginx" "nginx -t"
+                wait_container_healthy "noda-infra-nginx" 30 true true
+                ;;
+            noda-ops)
+                # 容器 running 即可（无 HTTP 端点）
+                wait_container_healthy "noda-ops" 60 true true
+                ;;
+            postgres)
+                # pg_isready 验证数据库可连接 + wait_container_healthy（远程）
+                remote_docker_exec "noda-infra-postgres-prod" "pg_isready -h localhost -p 5432"
+                wait_container_healthy "noda-infra-postgres-prod" 90 true true
+                ;;
+            *)
+                log_error "未知服务: $service"
+                return 1
+                ;;
+        esac
+    else
+        # 本地模式：保持现有逻辑
+        case "$service" in
+            keycloak)
+                wait_container_healthy "noda-infra-keycloak" 300
+                ;;
+            nginx)
+                # nginx -t 验证配置 + wait_container_healthy
+                docker exec noda-infra-nginx nginx -t
+                wait_container_healthy "noda-infra-nginx" 30
+                ;;
+            noda-ops)
+                # 容器 running 即可（无 HTTP 端点）
+                wait_container_healthy "noda-ops" 60
+                ;;
+            postgres)
+                # pg_isready 验证数据库可连接 + wait_container_healthy
+                docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
+                wait_container_healthy "noda-infra-postgres-prod" 90
+                ;;
+            *)
+                log_error "未知服务: $service"
+                return 1
+                ;;
+        esac
+    fi
 }
+
 
 # ============================================
 # 函数: pipeline_infra_verify
