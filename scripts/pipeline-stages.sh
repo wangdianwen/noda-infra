@@ -187,6 +187,13 @@ pipeline_preflight()
             return 1
         fi
         log_info "部署锁获取成功"
+        # 在 r4s 上同步最新代码（per D-08/D-10）
+        log_info "同步 r4s 仓库..."
+        if ! remote_exec "cd /opt/noda/noda-infra && git pull origin main"; then
+            log_error "r4s 仓库同步失败"
+            return 1
+        fi
+        log_info "r4s 仓库同步完成"
     fi
 
     # 检查 Docker daemon
