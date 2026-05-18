@@ -73,12 +73,23 @@ get_host_snippets_dir()
 # reload_nginx - 重载 nginx 配置
 reload_nginx()
 {
-    if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
-        log_error "nginx 容器 ($NGINX_CONTAINER) 未运行"
-        return 1
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程模式
+        if [ "$(remote_exec "docker inspect -f '{{.State.Running}}' $NGINX_CONTAINER")" != "true" ]; then
+            log_error "nginx 容器（r4s）($NGINX_CONTAINER) 未运行"
+            return 1
+        fi
+        remote_docker_exec "$NGINX_CONTAINER" "nginx -s reload"
+        log_success "nginx 配置已重载（r4s）"
+    else
+        # 本地模式（原有逻辑）
+        if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
+            log_error "nginx 容器 ($NGINX_CONTAINER) 未运行"
+            return 1
+        fi
+        docker exec "$NGINX_CONTAINER" nginx -s reload
+        log_success "nginx 配置已重载"
     fi
-    docker exec "$NGINX_CONTAINER" nginx -s reload
-    log_success "nginx 配置已重载"
 }
 
 # ============================================
