@@ -617,81 +617,165 @@ pipeline_infra_preflight()
 
     log_info "基础设施前置检查: $service"
 
-    # 检查 Docker daemon
-    docker info >/dev/null 2>&1 || {
-        log_error "Docker daemon 不可用"
-        return 1
-    }
-    log_info "Docker daemon 可用"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程模式：检查远程 Docker daemon
+        log_info "r4s 远程模式前置检查..."
+        remote_exec "docker info >/dev/null 2>&1" || {
+            log_error "r4s Docker daemon 不可用"
+            return 1
+        }
+        log_info "r4s Docker daemon 可用"
 
-    # 检查 nginx 容器（部署 nginx 本身时自动启动）
-    if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
-        if [ "$service" = "nginx" ]; then
-            log_info "nginx 容器未运行，正在通过 docker compose 启动..."
-            docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --no-deps nginx || {
-                log_error "docker compose 启动 nginx 失败"
-                return 1
-            }
-            # 等待 nginx 就绪
-            local _wait=0
-            while [ "$_wait" -lt 30 ]; do
-                if [ "$(is_container_running "$NGINX_CONTAINER")" = "true" ]; then
-                    log_info "nginx 容器已启动（等待 ${_wait} 秒）"
-                    break
+        # 检查远程 nginx 容器（部署 nginx 本身时自动启动）
+        local running
+        running=$(remote_exec "docker inspect -f '{{.State.Running}}' $NGINX_CONTAINER 2>/dev/null || echo false")
+        if [ "$running" != "true" ]; then
+            if [ "$service" = "nginx" ]; then
+                log_info "nginx 容器未运行，正在通过 docker compose 启动（r4s 远程）..."
+                remote_compose "up -d --no-deps nginx" \
+                    "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml" || {
+                    log_error "docker compose 启动 nginx 失败（r4s）"
+                    return 1
+                }
+                # 等待 nginx 就绪
+                local _wait=0
+                while [ "$_wait" -lt 30 ]; do
+                    running=$(remote_exec "docker inspect -f '{{.State.Running}}' $NGINX_CONTAINER 2>/dev/null || echo false")
+                    if [ "$running" = "true" ]; then
+                        log_info "nginx 容器已启动（等待 ${_wait} 秒）"
+                        break
+                    fi
+                    sleep 1
+                    _wait=$((_wait + 1))
+                done
+                running=$(remote_exec "docker inspect -f '{{.State.Running}}' $NGINX_CONTAINER 2>/dev/null || echo false")
+                if [ "$running" != "true" ]; then
+                    log_error "nginx 启动超时（30秒）"
+                    return 1
                 fi
-                sleep 1
-                _wait=$((_wait + 1))
-            done
-            if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
-                log_error "nginx 启动超时（30秒）"
+            else
+                log_error "nginx 容器未运行（请先通过 infra-deploy Pipeline 部署 nginx）"
                 return 1
             fi
         else
-            log_error "nginx 容器未运行（请先通过 infra-deploy Pipeline 部署 nginx）"
-            return 1
+            log_info "nginx 容器运行中（r4s）"
         fi
-    else
-        log_info "nginx 容器运行中"
-    fi
 
-    # 检查 noda-network
-    docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || {
-        log_error "Docker 网络 noda-network 不存在"
-        return 1
-    }
-    log_info "Docker 网络 noda-network 存在"
-
-    # 服务专属检查
-    case "$service" in
-        keycloak)
-            if [ -z "${SERVICE_IMAGE:-}" ]; then
-                log_error "SERVICE_IMAGE 未设置（Keycloak 需要指定官方镜像）"
-                return 1
-            fi
-            log_info "Keycloak 镜像: $SERVICE_IMAGE"
-            ;;
-        nginx)
-            # 无额外检查
-            ;;
-        noda-ops)
-            # 无额外检查
-            ;;
-        postgres)
-            # 检查 postgres 容器是否 running
-            if [ "$(is_container_running "noda-infra-postgres-prod")" != "true" ]; then
-                log_error "noda-infra-postgres-prod 容器未运行"
-                return 1
-            fi
-            log_info "noda-infra-postgres-prod 容器运行中"
-            ;;
-        *)
-            log_error "未知服务: $service"
+        # 检查远程 noda-network
+        remote_exec "docker network inspect $NETWORK_NAME >/dev/null 2>&1" || {
+            log_error "r4s Docker 网络 $NETWORK_NAME 不存在"
             return 1
-            ;;
-    esac
+        }
+        log_info "r4s Docker 网络 $NETWORK_NAME 存在"
+
+        # 服务专属检查（r4s 模式）
+        case "$service" in
+            keycloak)
+                if [ -z "${SERVICE_IMAGE:-}" ]; then
+                    log_error "SERVICE_IMAGE 未设置（Keycloak 需要指定官方镜像）"
+                    return 1
+                fi
+                log_info "Keycloak 镜像: $SERVICE_IMAGE"
+                ;;
+            nginx)
+                # 无额外检查
+                ;;
+            noda-ops)
+                # 无额外检查
+                ;;
+            postgres)
+                # 检查 postgres 容器是否 running（远程）
+                running=$(remote_exec "docker inspect -f '{{.State.Running}}' noda-infra-postgres-prod 2>/dev/null || echo false")
+                if [ "$running" != "true" ]; then
+                    log_error "noda-infra-postgres-prod 容器未运行（r4s）"
+                    return 1
+                fi
+                log_info "noda-infra-postgres-prod 容器运行中（r4s）"
+                ;;
+            *)
+                log_error "未知服务: $service"
+                return 1
+                ;;
+        esac
+    else
+        # 本地模式：保持现有逻辑
+        # 检查 Docker daemon
+        docker info >/dev/null 2>&1 || {
+            log_error "Docker daemon 不可用"
+            return 1
+        }
+        log_info "Docker daemon 可用"
+
+        # 检查 nginx 容器（部署 nginx 本身时自动启动）
+        if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
+            if [ "$service" = "nginx" ]; then
+                log_info "nginx 容器未运行，正在通过 docker compose 启动..."
+                docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --no-deps nginx || {
+                    log_error "docker compose 启动 nginx 失败"
+                    return 1
+                }
+                # 等待 nginx 就绪
+                local _wait=0
+                while [ "$_wait" -lt 30 ]; do
+                    if [ "$(is_container_running "$NGINX_CONTAINER")" = "true" ]; then
+                        log_info "nginx 容器已启动（等待 ${_wait} 秒）"
+                        break
+                    fi
+                    sleep 1
+                    _wait=$((_wait + 1))
+                done
+                if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
+                    log_error "nginx 启动超时（30秒）"
+                    return 1
+                fi
+            else
+                log_error "nginx 容器未运行（请先通过 infra-deploy Pipeline 部署 nginx）"
+                return 1
+            fi
+        else
+            log_info "nginx 容器运行中"
+        fi
+
+        # 检查 noda-network
+        docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || {
+            log_error "Docker 网络 noda-network 不存在"
+            return 1
+        }
+        log_info "Docker 网络 noda-network 存在"
+
+        # 服务专属检查
+        case "$service" in
+            keycloak)
+                if [ -z "${SERVICE_IMAGE:-}" ]; then
+                    log_error "SERVICE_IMAGE 未设置（Keycloak 需要指定官方镜像）"
+                    return 1
+                fi
+                log_info "Keycloak 镜像: $SERVICE_IMAGE"
+                ;;
+            nginx)
+                # 无额外检查
+                ;;
+            noda-ops)
+                # 无额外检查
+                ;;
+            postgres)
+                # 检查 postgres 容器是否 running
+                if [ "$(is_container_running "noda-infra-postgres-prod")" != "true" ]; then
+                    log_error "noda-infra-postgres-prod 容器未运行"
+                    return 1
+                fi
+                log_info "noda-infra-postgres-prod 容器运行中"
+                ;;
+            *)
+                log_error "未知服务: $service"
+                return 1
+                ;;
+        esac
+    fi
 
     log_success "前置检查全部通过"
 }
+
 
 # ============================================
 # 函数: pipeline_backup_database
@@ -704,41 +788,83 @@ pipeline_infra_preflight()
 pipeline_backup_database()
 {
     local service="$1"
-    local backup_dir="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}/infra-pipeline/${service}"
-    local timestamp
-    timestamp=$(date +"%Y%m%d-%H%M%S")
-    local backup_file="${backup_dir}/${timestamp}.sql.gz"
+    
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程模式：备份文件存储在 r4s 上
+        local backup_dir="/opt/noda/noda-infra/docker/volumes/backup/infra-pipeline/${service}"
+        local timestamp
+        timestamp=$(date +"%Y%m%d-%H%M%S")
+        local backup_file="${backup_dir}/${timestamp}.sql.gz"
 
-    # nginx/noda-ops 不需要备份
-    if [ "$service" != "keycloak" ] && [ "$service" != "postgres" ]; then
-        log_info "$service 不需要备份（无持久化数据）"
-        return 0
+        # nginx/noda-ops 不需要备份
+        if [ "$service" != "keycloak" ] && [ "$service" != "postgres" ]; then
+            log_info "$service 不需要备份（无持久化数据）"
+            return 0
+        fi
+
+        # 在 r4s 上创建备份目录
+        remote_exec "mkdir -p $backup_dir"
+
+        log_info "部署前备份（r4s）: $service -> $backup_file"
+
+        if [ "$service" = "keycloak" ]; then
+            remote_docker_exec "noda-infra-postgres-prod" \
+                "pg_dump -U postgres --clean --if-exists keycloak | gzip > ${backup_file}/${timestamp}.sql.gz"
+        elif [ "$service" = "postgres" ]; then
+            remote_docker_exec "noda-infra-postgres-prod" \
+                "pg_dumpall -U postgres --clean --if-exists | gzip > ${backup_file}/${timestamp}.sql.gz"
+        fi
+
+        # 验证备份文件大小 > 1KB（在 r4s 上检查）
+        local file_size
+        file_size=$(remote_exec "stat -c%s ${backup_file}/${timestamp}.sql.gz 2>/dev/null || echo 0")
+        if [ "$file_size" -lt 1024 ]; then
+            log_error "备份文件异常（${file_size} 字节），中止部署"
+            return 1
+        fi
+
+        log_success "备份完成（r4s）: $backup_file (${file_size} bytes)"
+        INFRA_BACKUP_FILE="$backup_file"
+        export INFRA_BACKUP_FILE
+    else
+        # 本地模式：保持现有逻辑
+        local backup_dir="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}/infra-pipeline/${service}"
+        local timestamp
+        timestamp=$(date +"%Y%m%d-%H%M%S")
+        local backup_file="${backup_dir}/${timestamp}.sql.gz"
+
+        # nginx/noda-ops 不需要备份
+        if [ "$service" != "keycloak" ] && [ "$service" != "postgres" ]; then
+            log_info "$service 不需要备份（无持久化数据）"
+            return 0
+        fi
+
+        mkdir -p "$backup_dir"
+
+        log_info "部署前备份: $service -> $backup_file"
+
+        if [ "$service" = "keycloak" ]; then
+            docker exec noda-infra-postgres-prod pg_dump -U postgres --clean --if-exists keycloak |
+                gzip >"$backup_file"
+        elif [ "$service" = "postgres" ]; then
+            docker exec noda-infra-postgres-prod pg_dumpall -U postgres --clean --if-exists |
+                gzip >"$backup_file"
+        fi
+
+        # 验证备份文件大小 > 1KB
+        local file_size
+        file_size=$(stat -f%z "$backup_file" 2>/dev/null || stat -c%s "$backup_file" 2>/dev/null || echo "0")
+        if [ "$file_size" -lt 1024 ]; then
+            log_error "备份文件异常（${file_size} 字节），中止部署"
+            return 1
+        fi
+
+        log_success "备份完成: $backup_file (${file_size} bytes)"
+        INFRA_BACKUP_FILE="$backup_file"
+        export INFRA_BACKUP_FILE
     fi
-
-    mkdir -p "$backup_dir"
-
-    log_info "部署前备份: $service -> $backup_file"
-
-    if [ "$service" = "keycloak" ]; then
-        docker exec noda-infra-postgres-prod pg_dump -U postgres --clean --if-exists keycloak |
-            gzip >"$backup_file"
-    elif [ "$service" = "postgres" ]; then
-        docker exec noda-infra-postgres-prod pg_dumpall -U postgres --clean --if-exists |
-            gzip >"$backup_file"
-    fi
-
-    # 验证备份文件大小 > 1KB
-    local file_size
-    file_size=$(stat -f%z "$backup_file" 2>/dev/null || stat -c%s "$backup_file" 2>/dev/null || echo "0")
-    if [ "$file_size" -lt 1024 ]; then
-        log_error "备份文件异常（${file_size} 字节），中止部署"
-        return 1
-    fi
-
-    log_success "备份完成: $backup_file (${file_size} bytes)"
-    INFRA_BACKUP_FILE="$backup_file"
-    export INFRA_BACKUP_FILE
 }
+
 
 # ============================================
 # 函数: pipeline_infra_deploy
@@ -785,58 +911,122 @@ pipeline_deploy_keycloak_prod()
 
     log_info "Keycloak 直接替换部署: $container_name ($image)"
 
-    # 停止并移除旧容器
-    if [ "$(is_container_running "$container_name")" = "true" ]; then
-        log_info "停止旧容器: $container_name"
-        docker stop -t 30 "$container_name"
-        docker rm "$container_name"
-    elif docker inspect "$container_name" >/dev/null 2>&1; then
-        docker rm "$container_name"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程部署模式
+        # 停止并移除旧容器（远程）
+        local running
+        running=$(remote_exec "docker inspect -f '{{.State.Running}}' $container_name 2>/dev/null || echo false")
+        if [ "$running" = "true" ]; then
+            log_info "停止旧容器（r4s）: $container_name"
+            remote_exec "docker stop -t 30 $container_name || true"
+            remote_exec "docker rm $container_name || true"
+        elif remote_exec "docker inspect $container_name >/dev/null 2>&1"; then
+            remote_exec "docker rm $container_name || true"
+        fi
+
+        # 准备 env 文件（本地生成，传输到 r4s）
+        local tmp_env
+        tmp_env=$(prepare_keycloak_env_file)
+        log_info "传输 env 文件到 r4s..."
+        cat "$tmp_env" | remote_exec "cat > /tmp/keycloak.env"
+
+        # 拉取官方镜像（在 r4s 上，per D-07）
+        log_info "拉取 Keycloak 镜像（r4s）: $image"
+        remote_exec "docker pull $image"
+
+        # 启动新容器（远程）
+        log_info "启动容器（r4s）: $container_name ($image)"
+        remote_exec "docker run -d \
+            --name $container_name \
+            --network $NETWORK_NAME \
+            --network-alias $container_name \
+            --restart unless-stopped \
+            --stop-timeout 30 \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            -v /opt/noda/noda-infra/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro \
+            --tmpfs /opt/keycloak/data \
+            --memory 1g \
+            --memory-reservation 512m \
+            --cpus 1 \
+            --log-driver json-file \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
+            --env-file /tmp/keycloak.env \
+            --label com.docker.compose.project=noda-infra \
+            --label com.docker.compose.service=keycloak \
+            --label noda.service-group=infra \
+            --label noda.environment=prod \
+            --health-cmd \"echo > /dev/tcp/localhost/8080 2>/dev/null || exit 1\" \
+            --health-interval 10s \
+            --health-timeout 5s \
+            --health-retries 10 \
+            --health-start-period 60s \
+            $image \
+            start --hostname-strict=false --proxy-headers=xforwarded"
+
+        rm -f "$tmp_env"
+
+        # reload nginx（远程）
+        reload_nginx
+
+        log_success "Keycloak 部署完成（r4s）: $container_name ($image)"
+    else
+        # 本地模式：保持现有逻辑
+        # 停止并移除旧容器
+        if [ "$(is_container_running "$container_name")" = "true" ]; then
+            log_info "停止旧容器: $container_name"
+            docker stop -t 30 "$container_name"
+            docker rm "$container_name"
+        elif docker inspect "$container_name" >/dev/null 2>&1; then
+            docker rm "$container_name"
+        fi
+
+        # 准备 env 文件
+        local tmp_env
+        tmp_env=$(prepare_keycloak_env_file)
+
+        # 启动新容器
+        log_info "启动容器: $container_name ($image)"
+
+        docker run -d \
+            --name "$container_name" \
+            --network "$NETWORK_NAME" \
+            --network-alias "$container_name" \
+            --restart unless-stopped \
+            --stop-timeout 30 \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            -v "$PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro" \
+            --tmpfs /opt/keycloak/data \
+            --memory 1g \
+            --memory-reservation 512m \
+            --cpus 1 \
+            --log-driver json-file \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
+            --env-file "$tmp_env" \
+            --label "com.docker.compose.project=noda-infra" \
+            --label "com.docker.compose.service=keycloak" \
+            --label "noda.service-group=infra" \
+            --label noda.environment=prod \
+            --health-cmd "echo > /dev/tcp/localhost/8080 2>/dev/null || exit 1" \
+            --health-interval 10s \
+            --health-timeout 5s \
+            --health-retries 10 \
+            --health-start-period 60s \
+            "$image" \
+            start --hostname-strict=false --proxy-headers=xforwarded
+
+        rm -f "$tmp_env"
+
+        # reload nginx 刷新 DNS 缓存（容器重建后 IP 会变）
+        reload_nginx
+
+        log_success "Keycloak 部署完成: $container_name ($image)"
     fi
-
-    # 准备 env 文件
-    local tmp_env
-    tmp_env=$(prepare_keycloak_env_file)
-
-    # 启动新容器
-    log_info "启动容器: $container_name ($image)"
-
-    docker run -d \
-        --name "$container_name" \
-        --network "$NETWORK_NAME" \
-        --network-alias "$container_name" \
-        --restart unless-stopped \
-        --stop-timeout 30 \
-        --security-opt no-new-privileges \
-        --cap-drop ALL \
-        -v "$PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro" \
-        --tmpfs /opt/keycloak/data \
-        --memory 1g \
-        --memory-reservation 512m \
-        --cpus 1 \
-        --log-driver json-file \
-        --log-opt max-size=10m \
-        --log-opt max-file=3 \
-        --env-file "$tmp_env" \
-        --label "com.docker.compose.project=noda-infra" \
-        --label "com.docker.compose.service=keycloak" \
-        --label "noda.service-group=infra" \
-        --label noda.environment=prod \
-        --health-cmd "echo > /dev/tcp/localhost/8080 2>/dev/null || exit 1" \
-        --health-interval 10s \
-        --health-timeout 5s \
-        --health-retries 10 \
-        --health-start-period 60s \
-        "$image" \
-        start --hostname-strict=false --proxy-headers=xforwarded
-
-    rm -f "$tmp_env"
-
-    # reload nginx 刷新 DNS 缓存（容器重建后 IP 会变）
-    reload_nginx
-
-    log_success "Keycloak 部署完成: $container_name ($image)"
 }
+
 
 # ============================================
 # 函数: prepare_keycloak_env_file
@@ -865,40 +1055,77 @@ prepare_keycloak_env_file()
 # 返回: 0=成功，1=失败
 pipeline_deploy_nginx()
 {
-    log_info "Nginx 重建部署（docker compose recreate）"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程部署模式
+        log_info "Nginx 重建部署（r4s 远程 docker compose recreate）"
 
-    # 先停止并移除旧容器，再创建新容器
-    # 不使用 --force-recreate：该选项在新容器创建时网络连接尚未就绪，
-    # 导致 nginx 解析 upstream DNS 失败并进入 restart 循环
-    log_info "停止旧 nginx 容器..."
-    docker stop noda-infra-nginx 2>/dev/null || true
-    docker rm noda-infra-nginx 2>/dev/null || true
+        # 先停止并移除旧容器，再创建新容器
+        log_info "停止旧 nginx 容器（r4s）..."
+        remote_exec "docker stop noda-infra-nginx 2>/dev/null || true"
+        remote_exec "docker rm noda-infra-nginx 2>/dev/null || true"
 
-    docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
-        up -d --no-deps nginx
+        remote_compose "up -d --no-deps nginx" \
+            "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml"
 
-    # 等待 nginx 容器启动
-    log_info "等待 nginx 容器就绪..."
-    local _max_wait=30
-    local _elapsed=0
-    while [ $_elapsed -lt $_max_wait ]; do
-        local _running
-        _running=$(docker inspect --format='{{.State.Running}}' noda-infra-nginx 2>/dev/null || echo "false")
-        if [ "$_running" = "true" ]; then
-            log_info "nginx 容器已就绪（等待 ${_elapsed} 秒）"
-            break
+        # 等待 nginx 容器启动
+        log_info "等待 nginx 容器就绪（r4s）..."
+        local _max_wait=30
+        local _elapsed=0
+        while [ $_elapsed -lt $_max_wait ]; do
+            local _running
+            _running=$(remote_exec "docker inspect --format='{{.State.Running}}' noda-infra-nginx 2>/dev/null || echo false")
+            if [ "$_running" = "true" ]; then
+                log_info "nginx 容器已就绪（等待 ${_elapsed} 秒）"
+                break
+            fi
+            sleep 1
+            _elapsed=$((_elapsed + 1))
+        done
+        if [ $_elapsed -ge $_max_wait ]; then
+            log_error "nginx 容器未在 ${_max_wait} 秒内就绪（r4s）"
+            remote_exec "docker logs noda-infra-nginx --tail 20 2>/dev/null || true"
+            return 1
         fi
-        sleep 1
-        _elapsed=$((_elapsed + 1))
-    done
-    if [ $_elapsed -ge $_max_wait ]; then
-        log_error "nginx 容器未在 ${_max_wait} 秒内就绪"
-        docker logs noda-infra-nginx --tail 20 2>/dev/null || true
-        return 1
-    fi
 
-    log_success "Nginx 重建完成"
+        log_success "Nginx 重建完成（r4s）"
+    else
+        # 本地模式：保持现有逻辑
+        log_info "Nginx 重建部署（docker compose recreate）"
+
+        # 先停止并移除旧容器，再创建新容器
+        # 不使用 --force-recreate：该选项在新容器创建时网络连接尚未就绪，
+        # 导致 nginx 解析 upstream DNS 失败并进入 restart 循环
+        log_info "停止旧 nginx 容器..."
+        docker stop noda-infra-nginx 2>/dev/null || true
+        docker rm noda-infra-nginx 2>/dev/null || true
+
+        docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+            up -d --no-deps nginx
+
+        # 等待 nginx 容器启动
+        log_info "等待 nginx 容器就绪..."
+        local _max_wait=30
+        local _elapsed=0
+        while [ $_elapsed -lt $_max_wait ]; do
+            local _running
+            _running=$(docker inspect --format='{{.State.Running}}' noda-infra-nginx 2>/dev/null || echo "false")
+            if [ "$_running" = "true" ]; then
+                log_info "nginx 容器已就绪（等待 ${_elapsed} 秒）"
+                break
+            fi
+            sleep 1
+            _elapsed=$((_elapsed + 1))
+        done
+        if [ $_elapsed -ge $_max_wait ]; then
+            log_error "nginx 容器未在 ${_max_wait} 秒内就绪"
+            docker logs noda-infra-nginx --tail 20 2>/dev/null || true
+            return 1
+        fi
+
+        log_success "Nginx 重建完成"
+    fi
 }
+
 
 # ============================================
 # 函数: pipeline_deploy_noda_ops
@@ -907,22 +1134,55 @@ pipeline_deploy_nginx()
 # 返回: 0=成功，1=失败
 pipeline_deploy_noda_ops()
 {
-    log_info "noda-ops 重建部署（docker compose recreate）"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程部署模式
+        log_info "noda-ops 重建部署（r4s 远程）"
 
-    # 从 Doppler Cloud 拉取密钥（B2、PostgreSQL、Cloudflare 等）
-    local secrets_file
-    secrets_file=$(mktemp /tmp/noda-ops-secrets.XXXXXX.env)
-    doppler secrets download --project noda --config prd --format env --no-file "$secrets_file"
-    log_info "已从 Doppler 拉取密钥: $(grep -c '=' "$secrets_file") 个变量"
+        # 在 Mac 上构建 noda-ops 镜像（保持现有逻辑）
+        log_info "构建 noda-ops 镜像（Mac 本地）..."
+        docker build -t noda-ops:latest -f docker/Dockerfile.noda-ops .
 
-    # noda-ops 使用 build 模式，需要 --build
-    docker compose --env-file "$secrets_file" \
-        -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
-        up -d --build --force-recreate --no-deps noda-ops
+        # 传输镜像到 r4s
+        log_info "传输 noda-ops 镜像到 r4s..."
+        transfer_image "noda-ops:latest" "noda-ops:latest"
 
-    rm -f "$secrets_file"
-    log_success "noda-ops 重建完成"
+        # 从 Doppler Cloud 拉取密钥（在 Mac 上，per D-22）
+        local secrets_file
+        secrets_file=$(mktemp /tmp/noda-ops-secrets.XXXXXX.env)
+        doppler secrets download --project noda --config prd --format env --no-file "$secrets_file"
+        log_info "已从 Doppler 拉取密钥: $(grep -c '=' "$secrets_file") 个变量"
+
+        # 传输密钥文件到 r4s
+        log_info "传输密钥文件到 r4s..."
+        cat "$secrets_file" | remote_exec "cat > /tmp/noda-ops-secrets.env"
+        rm -f "$secrets_file"
+
+        # 在 r4s 上启动容器（使用 --build 标志）
+        remote_exec "docker compose --env-file /tmp/noda-ops-secrets.env \
+            -f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml \
+            up -d --build --force-recreate --no-deps noda-ops"
+
+        log_success "noda-ops 重建完成（r4s）"
+    else
+        # 本地模式：保持现有逻辑
+        log_info "noda-ops 重建部署（docker compose recreate）"
+
+        # 从 Doppler Cloud 拉取密钥（B2、PostgreSQL、Cloudflare 等）
+        local secrets_file
+        secrets_file=$(mktemp /tmp/noda-ops-secrets.XXXXXX.env)
+        doppler secrets download --project noda --config prd --format env --no-file "$secrets_file"
+        log_info "已从 Doppler 拉取密钥: $(grep -c '=' "$secrets_file") 个变量"
+
+        # noda-ops 使用 build 模式，需要 --build
+        docker compose --env-file "$secrets_file" \
+            -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+            up -d --build --force-recreate --no-deps noda-ops
+
+        rm -f "$secrets_file"
+        log_success "noda-ops 重建完成"
+    fi
 }
+
 
 # ============================================
 # 函数: pipeline_deploy_postgres
@@ -932,13 +1192,25 @@ pipeline_deploy_noda_ops()
 # 返回: 0=成功，1=失败
 pipeline_deploy_postgres()
 {
-    log_info "PostgreSQL 重启部署（docker compose restart）"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程部署模式
+        log_info "PostgreSQL 重启部署（r4s 远程 docker compose restart）"
+        
+        remote_compose "restart postgres" \
+            "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml"
+        
+        log_success "PostgreSQL 重启完成（r4s）"
+    else
+        # 本地模式：保持现有逻辑
+        log_info "PostgreSQL 重启部署（docker compose restart）"
 
-    docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
-        restart postgres
+        docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+            restart postgres
 
-    log_success "PostgreSQL 重启完成"
+        log_success "PostgreSQL 重启完成"
+    fi
 }
+
 
 # ============================================
 # 函数: pipeline_infra_health_check
@@ -950,30 +1222,59 @@ pipeline_infra_health_check()
 {
     local service="$1"
 
-    case "$service" in
-        keycloak)
-            wait_container_healthy "noda-infra-keycloak" 300
-            ;;
-        nginx)
-            # nginx -t 验证配置 + wait_container_healthy
-            docker exec noda-infra-nginx nginx -t
-            wait_container_healthy "noda-infra-nginx" 30
-            ;;
-        noda-ops)
-            # 容器 running 即可（无 HTTP 端点）
-            wait_container_healthy "noda-ops" 60
-            ;;
-        postgres)
-            # pg_isready 验证数据库可连接 + wait_container_healthy
-            docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
-            wait_container_healthy "noda-infra-postgres-prod" 90
-            ;;
-        *)
-            log_error "未知服务: $service"
-            return 1
-            ;;
-    esac
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程健康检查模式
+        case "$service" in
+            keycloak)
+                wait_container_healthy "noda-infra-keycloak" 300 true true
+                ;;
+            nginx)
+                # nginx -t 验证配置 + wait_container_healthy（远程）
+                remote_docker_exec "noda-infra-nginx" "nginx -t"
+                wait_container_healthy "noda-infra-nginx" 30 true true
+                ;;
+            noda-ops)
+                # 容器 running 即可（无 HTTP 端点）
+                wait_container_healthy "noda-ops" 60 true true
+                ;;
+            postgres)
+                # pg_isready 验证数据库可连接 + wait_container_healthy（远程）
+                remote_docker_exec "noda-infra-postgres-prod" "pg_isready -h localhost -p 5432"
+                wait_container_healthy "noda-infra-postgres-prod" 90 true true
+                ;;
+            *)
+                log_error "未知服务: $service"
+                return 1
+                ;;
+        esac
+    else
+        # 本地模式：保持现有逻辑
+        case "$service" in
+            keycloak)
+                wait_container_healthy "noda-infra-keycloak" 300
+                ;;
+            nginx)
+                # nginx -t 验证配置 + wait_container_healthy
+                docker exec noda-infra-nginx nginx -t
+                wait_container_healthy "noda-infra-nginx" 30
+                ;;
+            noda-ops)
+                # 容器 running 即可（无 HTTP 端点）
+                wait_container_healthy "noda-ops" 60
+                ;;
+            postgres)
+                # pg_isready 验证数据库可连接 + wait_container_healthy
+                docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
+                wait_container_healthy "noda-infra-postgres-prod" 90
+                ;;
+            *)
+                log_error "未知服务: $service"
+                return 1
+                ;;
+        esac
+    fi
 }
+
 
 # ============================================
 # 函数: pipeline_infra_verify
