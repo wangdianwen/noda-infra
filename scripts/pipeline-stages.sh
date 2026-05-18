@@ -197,26 +197,42 @@ pipeline_preflight()
         log_info "r4s 仓库同步完成"
     fi
 
-    # 检查 Docker daemon
+    # 检查 Docker daemon（本地，用于构建）
     docker info >/dev/null 2>&1 || {
         log_error "Docker daemon 不可用"
         return 1
     }
     log_info "Docker daemon 可用"
 
-    # 检查 nginx 容器
-    if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
-        log_error "nginx 容器未运行"
-        return 1
+    # 检查 nginx 容器（r4s 模式检查远程容器）
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        local nginx_running
+        nginx_running=$(remote_exec "docker inspect -f '{{.State.Running}}' $NGINX_CONTAINER 2>/dev/null || echo false")
+        if [ "$nginx_running" != "true" ]; then
+            log_error "nginx 容器未运行（r4s 远程检查）"
+            return 1
+        fi
+    else
+        if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
+            log_error "nginx 容器未运行"
+            return 1
+        fi
     fi
     log_info "nginx 容器运行中"
 
-    # 检查 noda-network
-    docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || {
-        log_error "Docker 网络 noda-network 不存在"
-        return 1
-    }
-    log_info "Docker 网络 noda-network 存在"
+    # 检查 noda-network（r4s 模式检查远程网络）
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        if ! remote_exec "docker network inspect $NETWORK_NAME >/dev/null 2>&1"; then
+            log_error "Docker 网络 $NETWORK_NAME 不存在（r4s 远程检查）"
+            return 1
+        fi
+    else
+        docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || {
+            log_error "Docker 网络 noda-network 不存在"
+            return 1
+        }
+    fi
+    log_info "Docker 网络 $NETWORK_NAME 存在"
 
     local service="${SERVICE_NAME:-noda-apps}"
 
