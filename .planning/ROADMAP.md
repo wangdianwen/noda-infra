@@ -87,7 +87,19 @@ Plans:
 3. Jenkinsfile 基础设施部署 Pipeline 同步改造为 SSH 远程部署
 4. SSH 远程部署 Pipeline 端到端验证通过（构建 → 传输 → 部署 → 健康检查）
 
-**Plans**: TBD
+Plans:
+**Wave 1**
+
+- [ ] 60-01-PLAN.md — 创建 SSH 远程操作封装层（remote-ops.sh）+ pipeline-stages.sh/health.sh 支持框架
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 60-02-PLAN.md — 改造应用部署 Pipeline 函数（apps Pipeline）支持 r4s 远程部署
+- [ ] 60-03-PLAN.md — 改造基础设施部署 Pipeline 函数（infra Pipeline）支持 r4s 远程部署
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 60-04-PLAN.md — Jenkins 配置 + Jenkinsfile 改造 + r4s 仓库同步 + 端到端验证
 
 ### Phase 61: 备份与网络迁移
 
@@ -132,7 +144,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 58. 基础设施迁移 | 3/3 | Complete    | 2026-05-17 |
 | 59. 应用服务迁移 | 3/3 | Complete    | 2026-05-18 |
-| 60. CI/CD 改造 | 0/4 | Not started | - |
+| 60. CI/CD 改造 | 4/4 | Planned     | - |
 | 61. 备份与网络迁移 | 0/8 | Not started | - |
 | 62. 切换与验证 | 0/3 | Not started | - |
 
