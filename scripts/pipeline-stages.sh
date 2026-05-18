@@ -1285,10 +1285,28 @@ pipeline_health_check_preprod()
 {
     log_info "Pre-prod 健康检查..."
 
-    # 主应用 (3000)
-    http_health_check "$PREPROD_CONTAINER" "3000" "/api/health" "$HEALTH_CHECK_MAX_RETRIES" "$HEALTH_CHECK_INTERVAL"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程健康检查模式
+        log_info "Pre-prod 健康检查（r4s 远程）..."
+        wait_container_healthy "$PREPROD_CONTAINER" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))" true true
 
-    log_success "Pre-prod 健康检查通过"
+        # HTTP 健康检查（通过 r4s 执行 curl）
+        log_info "HTTP 健康检查（r4s 远程）..."
+        if remote_exec "curl -sf http://localhost:3000/api/health"; then
+            log_success "HTTP 健康检查通过（r4s）"
+        else
+            log_error "HTTP 健康检查失败（r4s）"
+            return 1
+        fi
+
+        log_success "Pre-prod 健康检查通过（r4s）"
+    else
+        # 本地模式（原有逻辑）
+        # 主应用 (3000)
+        http_health_check "$PREPROD_CONTAINER" "3000" "/api/health" "$HEALTH_CHECK_MAX_RETRIES" "$HEALTH_CHECK_INTERVAL"
+
+        log_success "Pre-prod 健康检查通过"
+    fi
 }
 
 # ============================================
