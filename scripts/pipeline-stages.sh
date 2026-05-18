@@ -37,6 +37,7 @@ IMAGE_RETENTION_DAYS="${IMAGE_RETENTION_DAYS:-7}"
 # 部署目标配置（per D-04）
 DEPLOY_TARGET="${DEPLOY_TARGET:-local}"  # local 或 r4s
 R4S_HOST="${R4S_HOST:-root@192.168.100.1}"  # r4s 主机
+R4S_GIT_BRANCH="${R4S_GIT_BRANCH:-main}"   # r4s 同步分支
 
 # 固定容器名 / 网络 / Nginx 容器
 NETWORK_NAME="noda-network"
@@ -189,7 +190,7 @@ pipeline_preflight()
         log_info "部署锁获取成功"
         # 在 r4s 上同步最新代码（per D-08/D-10）
         log_info "同步 r4s 仓库..."
-        if ! remote_exec "cd /opt/noda/noda-infra && git pull origin main"; then
+        if ! remote_exec "cd /opt/noda/noda-infra && git pull origin ${R4S_GIT_BRANCH}"; then
             log_error "r4s 仓库同步失败"
             return 1
         fi
