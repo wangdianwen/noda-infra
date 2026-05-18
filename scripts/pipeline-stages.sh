@@ -1321,37 +1321,63 @@ pipeline_infra_verify()
 {
     local service="$1"
 
-    case "$service" in
-        keycloak)
-            # 通过 nginx 验证 Keycloak 可达（生产模式无 /health/ready，用根路径）
-            docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://noda-infra-keycloak:8080/ 2>/dev/null
-            log_success "Keycloak E2E 验证通过"
-            ;;
-        nginx)
-            # 通过 nginx 容器 wget 自身验证（nginx 监听 81 端口）
-            docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://127.0.0.1:81/ 2>/dev/null
-            log_success "Nginx E2E 验证通过"
-            ;;
-        noda-ops)
-            # 验证容器运行中
-            local running
-            running=$(docker ps --filter name=noda-ops --filter status=running --format '{{.Names}}')
-            if [ -z "$running" ]; then
-                log_error "noda-ops 容器未运行"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        case "$service" in
+            keycloak)
+                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --spider http://noda-infra-keycloak:8080/ 2>/dev/null"
+                log_success "Keycloak E2E 验证通过（r4s）"
+                ;;
+            nginx)
+                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --spider http://127.0.0.1:81/ 2>/dev/null"
+                log_success "Nginx E2E 验证通过（r4s）"
+                ;;
+            noda-ops)
+                local running
+                running=$(remote_exec "docker ps --filter name=noda-ops --filter status=running --format '{{.Names}}'")
+                if [ -z "$running" ]; then
+                    log_error "noda-ops 容器未运行（r4s）"
+                    return 1
+                fi
+                log_success "noda-ops 验证通过（r4s）: 容器运行中"
+                ;;
+            postgres)
+                remote_exec "docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432"
+                log_success "PostgreSQL 验证通过（r4s）"
+                ;;
+            *)
+                log_error "未知服务: $service"
                 return 1
-            fi
-            log_success "noda-ops 验证通过: 容器运行中"
-            ;;
-        postgres)
-            # pg_isready 验证
-            docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
-            log_success "PostgreSQL 验证通过"
-            ;;
-        *)
-            log_error "未知服务: $service"
-            return 1
-            ;;
-    esac
+                ;;
+        esac
+    else
+        case "$service" in
+            keycloak)
+                docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://noda-infra-keycloak:8080/ 2>/dev/null
+                log_success "Keycloak E2E 验证通过"
+                ;;
+            nginx)
+                docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://127.0.0.1:81/ 2>/dev/null
+                log_success "Nginx E2E 验证通过"
+                ;;
+            noda-ops)
+                local running
+                running=$(docker ps --filter name=noda-ops --filter status=running --format '{{.Names}}')
+                if [ -z "$running" ]; then
+                    log_error "noda-ops 容器未运行"
+                    return 1
+                fi
+                log_success "noda-ops 验证通过: 容器运行中"
+                ;;
+            postgres)
+                docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
+                log_success "PostgreSQL 验证通过"
+                ;;
+            *)
+                log_error "未知服务: $service"
+                return 1
+                ;;
+        esac
+    fi
 }
 
 # ============================================
