@@ -43,7 +43,7 @@
 ### 端口映射与 Pre-prod 路由
 
 - **D-09:** 不需要从外部暴露 Nginx 高端口给外网。Cloudflare Tunnel 走 Docker 内部网络（noda-nginx:81），外部访问通过 Tunnel 完成。
-- **D-10:** Pre-prod 访问通过 r4s:8080 端口（复用现有 r4s overlay 配置 `8080:80`）。本地 /etc/hosts 修改 `class.noda.dev` 指向 r4s IP:8080。
+- **D-10:** Pre-prod 访问通过 r4s:8443 端口（r4s overlay 配置 `8443:443`）。本地 /etc/hosts 修改 `class.noda.test` 指向 r4s IP，通过 `https://class.noda.test:8443` 访问。8080 端口为 HTTP 重定向入口。
 - **D-11:** r4s 上 80 端口被 iStoreOS 管理界面占用，使用高端口 8080 作为 pre-prod 访问入口。
 
 ### Mac 旧服务清理
@@ -141,8 +141,8 @@
 <specifics>
 ## Specific Ideas
 
-- config.yml 中 `service: http://noda-nginx:81` 使用容器名 `noda-nginx`，但实际容器名可能是 `noda-infra-nginx`。需要在 Docker 内部网络验证 DNS 解析是否正确。如果 `noda-nginx` 不能解析，可能需要改为 `noda-infra-nginx` 或在 Docker Compose 中添加 `hostname: noda-nginx`。
-- Pre-prod 访问方式：本地 /etc/hosts 添加 `class.noda.dev` → r4s IP，然后通过 `http://class.noda.dev:8080` 访问 pre-prod 环境。
+- config.yml 中 `service: http://noda-nginx:81` 使用容器名 `noda-nginx`，但实际容器名可能是 `noda-infra-nginx`。但 Tunnel 使用 token 模式，config.yml 不生效（per RESEARCH.md Pitfall 1）。
+- Pre-prod 访问方式：本地 /etc/hosts 添加 `class.noda.test` → r4s IP，然后通过 `https://class.noda.test:8443` 访问 pre-prod 环境。
 - r4s noda-ops 健康检查使用 `pg_isready`（Dockerfile 中已定义 HEALTHCHECK），可通过 `docker inspect` 检查容器健康状态。
 
 </specifics>
