@@ -120,7 +120,14 @@ Plans:
 7. Nginx 端口映射（80/443）在 r4s 上正常工作，不与软路由端口冲突
 8. pre-prod 域名路由在 r4s Nginx 上正常工作
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1** (并行)
+- [ ] 61-01-PLAN.md — 验证 r4s 备份 cronjob（pg_dump + B2 + Doppler + 周验证）
+- [ ] 61-02-PLAN.md — 验证 Cloudflare Tunnel + Nginx 端口映射 + pre-prod 路由
+
+**Wave 2** *(blocked on Wave 1)*
+- [ ] 61-03-PLAN.md — 停止 Mac 旧 noda-ops 容器，确认 r4s 独立运行
 
 ### Phase 62: 切换与验证
 
@@ -145,7 +152,7 @@ Plans:
 | 58. 基础设施迁移 | 3/3 | Complete    | 2026-05-17 |
 | 59. 应用服务迁移 | 3/3 | Complete    | 2026-05-18 |
 | 60. CI/CD 改造 | 4/4 | Planned     | - |
-| 61. 备份与网络迁移 | 0/8 | Not started | - |
+| 61. 备份与网络迁移 | 0/3 | Planned     | - |
 | 62. 切换与验证 | 0/3 | Not started | - |
 
 ## Dependencies
