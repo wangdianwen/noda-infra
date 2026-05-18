@@ -617,81 +617,165 @@ pipeline_infra_preflight()
 
     log_info "基础设施前置检查: $service"
 
-    # 检查 Docker daemon
-    docker info >/dev/null 2>&1 || {
-        log_error "Docker daemon 不可用"
-        return 1
-    }
-    log_info "Docker daemon 可用"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程模式：检查远程 Docker daemon
+        log_info "r4s 远程模式前置检查..."
+        remote_exec "docker info >/dev/null 2>&1" || {
+            log_error "r4s Docker daemon 不可用"
+            return 1
+        }
+        log_info "r4s Docker daemon 可用"
 
-    # 检查 nginx 容器（部署 nginx 本身时自动启动）
-    if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
-        if [ "$service" = "nginx" ]; then
-            log_info "nginx 容器未运行，正在通过 docker compose 启动..."
-            docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --no-deps nginx || {
-                log_error "docker compose 启动 nginx 失败"
-                return 1
-            }
-            # 等待 nginx 就绪
-            local _wait=0
-            while [ "$_wait" -lt 30 ]; do
-                if [ "$(is_container_running "$NGINX_CONTAINER")" = "true" ]; then
-                    log_info "nginx 容器已启动（等待 ${_wait} 秒）"
-                    break
+        # 检查远程 nginx 容器（部署 nginx 本身时自动启动）
+        local running
+        running=$(remote_exec "docker inspect -f '{{.State.Running}}' $NGINX_CONTAINER 2>/dev/null || echo false")
+        if [ "$running" != "true" ]; then
+            if [ "$service" = "nginx" ]; then
+                log_info "nginx 容器未运行，正在通过 docker compose 启动（r4s 远程）..."
+                remote_compose "up -d --no-deps nginx" \
+                    "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml" || {
+                    log_error "docker compose 启动 nginx 失败（r4s）"
+                    return 1
+                }
+                # 等待 nginx 就绪
+                local _wait=0
+                while [ "$_wait" -lt 30 ]; do
+                    running=$(remote_exec "docker inspect -f '{{.State.Running}}' $NGINX_CONTAINER 2>/dev/null || echo false")
+                    if [ "$running" = "true" ]; then
+                        log_info "nginx 容器已启动（等待 ${_wait} 秒）"
+                        break
+                    fi
+                    sleep 1
+                    _wait=$((_wait + 1))
+                done
+                running=$(remote_exec "docker inspect -f '{{.State.Running}}' $NGINX_CONTAINER 2>/dev/null || echo false")
+                if [ "$running" != "true" ]; then
+                    log_error "nginx 启动超时（30秒）"
+                    return 1
                 fi
-                sleep 1
-                _wait=$((_wait + 1))
-            done
-            if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
-                log_error "nginx 启动超时（30秒）"
+            else
+                log_error "nginx 容器未运行（请先通过 infra-deploy Pipeline 部署 nginx）"
                 return 1
             fi
         else
-            log_error "nginx 容器未运行（请先通过 infra-deploy Pipeline 部署 nginx）"
-            return 1
+            log_info "nginx 容器运行中（r4s）"
         fi
-    else
-        log_info "nginx 容器运行中"
-    fi
 
-    # 检查 noda-network
-    docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || {
-        log_error "Docker 网络 noda-network 不存在"
-        return 1
-    }
-    log_info "Docker 网络 noda-network 存在"
-
-    # 服务专属检查
-    case "$service" in
-        keycloak)
-            if [ -z "${SERVICE_IMAGE:-}" ]; then
-                log_error "SERVICE_IMAGE 未设置（Keycloak 需要指定官方镜像）"
-                return 1
-            fi
-            log_info "Keycloak 镜像: $SERVICE_IMAGE"
-            ;;
-        nginx)
-            # 无额外检查
-            ;;
-        noda-ops)
-            # 无额外检查
-            ;;
-        postgres)
-            # 检查 postgres 容器是否 running
-            if [ "$(is_container_running "noda-infra-postgres-prod")" != "true" ]; then
-                log_error "noda-infra-postgres-prod 容器未运行"
-                return 1
-            fi
-            log_info "noda-infra-postgres-prod 容器运行中"
-            ;;
-        *)
-            log_error "未知服务: $service"
+        # 检查远程 noda-network
+        remote_exec "docker network inspect $NETWORK_NAME >/dev/null 2>&1" || {
+            log_error "r4s Docker 网络 $NETWORK_NAME 不存在"
             return 1
-            ;;
-    esac
+        }
+        log_info "r4s Docker 网络 $NETWORK_NAME 存在"
+
+        # 服务专属检查（r4s 模式）
+        case "$service" in
+            keycloak)
+                if [ -z "${SERVICE_IMAGE:-}" ]; then
+                    log_error "SERVICE_IMAGE 未设置（Keycloak 需要指定官方镜像）"
+                    return 1
+                fi
+                log_info "Keycloak 镜像: $SERVICE_IMAGE"
+                ;;
+            nginx)
+                # 无额外检查
+                ;;
+            noda-ops)
+                # 无额外检查
+                ;;
+            postgres)
+                # 检查 postgres 容器是否 running（远程）
+                running=$(remote_exec "docker inspect -f '{{.State.Running}}' noda-infra-postgres-prod 2>/dev/null || echo false")
+                if [ "$running" != "true" ]; then
+                    log_error "noda-infra-postgres-prod 容器未运行（r4s）"
+                    return 1
+                fi
+                log_info "noda-infra-postgres-prod 容器运行中（r4s）"
+                ;;
+            *)
+                log_error "未知服务: $service"
+                return 1
+                ;;
+        esac
+    else
+        # 本地模式：保持现有逻辑
+        # 检查 Docker daemon
+        docker info >/dev/null 2>&1 || {
+            log_error "Docker daemon 不可用"
+            return 1
+        }
+        log_info "Docker daemon 可用"
+
+        # 检查 nginx 容器（部署 nginx 本身时自动启动）
+        if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
+            if [ "$service" = "nginx" ]; then
+                log_info "nginx 容器未运行，正在通过 docker compose 启动..."
+                docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --no-deps nginx || {
+                    log_error "docker compose 启动 nginx 失败"
+                    return 1
+                }
+                # 等待 nginx 就绪
+                local _wait=0
+                while [ "$_wait" -lt 30 ]; do
+                    if [ "$(is_container_running "$NGINX_CONTAINER")" = "true" ]; then
+                        log_info "nginx 容器已启动（等待 ${_wait} 秒）"
+                        break
+                    fi
+                    sleep 1
+                    _wait=$((_wait + 1))
+                done
+                if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
+                    log_error "nginx 启动超时（30秒）"
+                    return 1
+                fi
+            else
+                log_error "nginx 容器未运行（请先通过 infra-deploy Pipeline 部署 nginx）"
+                return 1
+            fi
+        else
+            log_info "nginx 容器运行中"
+        fi
+
+        # 检查 noda-network
+        docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || {
+            log_error "Docker 网络 noda-network 不存在"
+            return 1
+        }
+        log_info "Docker 网络 noda-network 存在"
+
+        # 服务专属检查
+        case "$service" in
+            keycloak)
+                if [ -z "${SERVICE_IMAGE:-}" ]; then
+                    log_error "SERVICE_IMAGE 未设置（Keycloak 需要指定官方镜像）"
+                    return 1
+                fi
+                log_info "Keycloak 镜像: $SERVICE_IMAGE"
+                ;;
+            nginx)
+                # 无额外检查
+                ;;
+            noda-ops)
+                # 无额外检查
+                ;;
+            postgres)
+                # 检查 postgres 容器是否 running
+                if [ "$(is_container_running "noda-infra-postgres-prod")" != "true" ]; then
+                    log_error "noda-infra-postgres-prod 容器未运行"
+                    return 1
+                fi
+                log_info "noda-infra-postgres-prod 容器运行中"
+                ;;
+            *)
+                log_error "未知服务: $service"
+                return 1
+                ;;
+        esac
+    fi
 
     log_success "前置检查全部通过"
 }
+
 
 # ============================================
 # 函数: pipeline_backup_database
