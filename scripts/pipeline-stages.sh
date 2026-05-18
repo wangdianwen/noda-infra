@@ -911,58 +911,122 @@ pipeline_deploy_keycloak_prod()
 
     log_info "Keycloak 直接替换部署: $container_name ($image)"
 
-    # 停止并移除旧容器
-    if [ "$(is_container_running "$container_name")" = "true" ]; then
-        log_info "停止旧容器: $container_name"
-        docker stop -t 30 "$container_name"
-        docker rm "$container_name"
-    elif docker inspect "$container_name" >/dev/null 2>&1; then
-        docker rm "$container_name"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程部署模式
+        # 停止并移除旧容器（远程）
+        local running
+        running=$(remote_exec "docker inspect -f '{{.State.Running}}' $container_name 2>/dev/null || echo false")
+        if [ "$running" = "true" ]; then
+            log_info "停止旧容器（r4s）: $container_name"
+            remote_exec "docker stop -t 30 $container_name || true"
+            remote_exec "docker rm $container_name || true"
+        elif remote_exec "docker inspect $container_name >/dev/null 2>&1"; then
+            remote_exec "docker rm $container_name || true"
+        fi
+
+        # 准备 env 文件（本地生成，传输到 r4s）
+        local tmp_env
+        tmp_env=$(prepare_keycloak_env_file)
+        log_info "传输 env 文件到 r4s..."
+        cat "$tmp_env" | remote_exec "cat > /tmp/keycloak.env"
+
+        # 拉取官方镜像（在 r4s 上，per D-07）
+        log_info "拉取 Keycloak 镜像（r4s）: $image"
+        remote_exec "docker pull $image"
+
+        # 启动新容器（远程）
+        log_info "启动容器（r4s）: $container_name ($image)"
+        remote_exec "docker run -d \
+            --name $container_name \
+            --network $NETWORK_NAME \
+            --network-alias $container_name \
+            --restart unless-stopped \
+            --stop-timeout 30 \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            -v /opt/noda/noda-infra/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro \
+            --tmpfs /opt/keycloak/data \
+            --memory 1g \
+            --memory-reservation 512m \
+            --cpus 1 \
+            --log-driver json-file \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
+            --env-file /tmp/keycloak.env \
+            --label com.docker.compose.project=noda-infra \
+            --label com.docker.compose.service=keycloak \
+            --label noda.service-group=infra \
+            --label noda.environment=prod \
+            --health-cmd \"echo > /dev/tcp/localhost/8080 2>/dev/null || exit 1\" \
+            --health-interval 10s \
+            --health-timeout 5s \
+            --health-retries 10 \
+            --health-start-period 60s \
+            $image \
+            start --hostname-strict=false --proxy-headers=xforwarded"
+
+        rm -f "$tmp_env"
+
+        # reload nginx（远程）
+        reload_nginx
+
+        log_success "Keycloak 部署完成（r4s）: $container_name ($image)"
+    else
+        # 本地模式：保持现有逻辑
+        # 停止并移除旧容器
+        if [ "$(is_container_running "$container_name")" = "true" ]; then
+            log_info "停止旧容器: $container_name"
+            docker stop -t 30 "$container_name"
+            docker rm "$container_name"
+        elif docker inspect "$container_name" >/dev/null 2>&1; then
+            docker rm "$container_name"
+        fi
+
+        # 准备 env 文件
+        local tmp_env
+        tmp_env=$(prepare_keycloak_env_file)
+
+        # 启动新容器
+        log_info "启动容器: $container_name ($image)"
+
+        docker run -d \
+            --name "$container_name" \
+            --network "$NETWORK_NAME" \
+            --network-alias "$container_name" \
+            --restart unless-stopped \
+            --stop-timeout 30 \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            -v "$PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro" \
+            --tmpfs /opt/keycloak/data \
+            --memory 1g \
+            --memory-reservation 512m \
+            --cpus 1 \
+            --log-driver json-file \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
+            --env-file "$tmp_env" \
+            --label "com.docker.compose.project=noda-infra" \
+            --label "com.docker.compose.service=keycloak" \
+            --label "noda.service-group=infra" \
+            --label noda.environment=prod \
+            --health-cmd "echo > /dev/tcp/localhost/8080 2>/dev/null || exit 1" \
+            --health-interval 10s \
+            --health-timeout 5s \
+            --health-retries 10 \
+            --health-start-period 60s \
+            "$image" \
+            start --hostname-strict=false --proxy-headers=xforwarded
+
+        rm -f "$tmp_env"
+
+        # reload nginx 刷新 DNS 缓存（容器重建后 IP 会变）
+        reload_nginx
+
+        log_success "Keycloak 部署完成: $container_name ($image)"
     fi
-
-    # 准备 env 文件
-    local tmp_env
-    tmp_env=$(prepare_keycloak_env_file)
-
-    # 启动新容器
-    log_info "启动容器: $container_name ($image)"
-
-    docker run -d \
-        --name "$container_name" \
-        --network "$NETWORK_NAME" \
-        --network-alias "$container_name" \
-        --restart unless-stopped \
-        --stop-timeout 30 \
-        --security-opt no-new-privileges \
-        --cap-drop ALL \
-        -v "$PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro" \
-        --tmpfs /opt/keycloak/data \
-        --memory 1g \
-        --memory-reservation 512m \
-        --cpus 1 \
-        --log-driver json-file \
-        --log-opt max-size=10m \
-        --log-opt max-file=3 \
-        --env-file "$tmp_env" \
-        --label "com.docker.compose.project=noda-infra" \
-        --label "com.docker.compose.service=keycloak" \
-        --label "noda.service-group=infra" \
-        --label noda.environment=prod \
-        --health-cmd "echo > /dev/tcp/localhost/8080 2>/dev/null || exit 1" \
-        --health-interval 10s \
-        --health-timeout 5s \
-        --health-retries 10 \
-        --health-start-period 60s \
-        "$image" \
-        start --hostname-strict=false --proxy-headers=xforwarded
-
-    rm -f "$tmp_env"
-
-    # reload nginx 刷新 DNS 缓存（容器重建后 IP 会变）
-    reload_nginx
-
-    log_success "Keycloak 部署完成: $container_name ($image)"
 }
+
 
 # ============================================
 # 函数: prepare_keycloak_env_file
