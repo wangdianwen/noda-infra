@@ -223,7 +223,7 @@ release_deploy_lock()
 
     log_info "释放部署锁..."
 
-    remote_exec "rmdir /tmp/noda-deploy.lock 2>/dev/null"
+    remote_exec "rmdir /tmp/noda-deploy.lock 2>/dev/null || true"
 
     log_success "部署锁已释放"
     return 0
