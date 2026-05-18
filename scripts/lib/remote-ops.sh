@@ -15,8 +15,8 @@ source "$PROJECT_ROOT/scripts/lib/log.sh"
 # ============================================
 # 全局变量（由 setup_remote 初始化）
 # ============================================
-SSH_KEY_FILE=""  # SSH 密钥文件路径
-R4S_HOST=""      # r4s 主机地址（user@host 格式）
+SSH_KEY_FILE="${SSH_KEY_FILE:-}"  # SSH 密钥文件路径
+R4S_HOST="${R4S_HOST:-}"          # r4s 主机地址（user@host 格式）
 
 # ============================================
 # 函数: setup_remote
