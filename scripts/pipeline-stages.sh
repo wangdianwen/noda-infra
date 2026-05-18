@@ -1100,61 +1100,140 @@ pipeline_deploy_preprod()
 
     log_info "部署 Pre-prod 环境..."
 
-    # 停止旧 preprod 容器
-    if [ "$(is_container_running "$PREPROD_CONTAINER")" = "true" ]; then
-        log_info "停止旧 preprod 容器: $PREPROD_CONTAINER"
-        docker stop -t 30 "$PREPROD_CONTAINER"
-        docker rm "$PREPROD_CONTAINER"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程部署模式
+        log_info "r4s 远程部署模式：传输镜像到 r4s..."
+        transfer_image "$image" "$image"
+
+        # 停止旧 preprod 容器（远程）
+        if remote_exec "docker inspect $PREPROD_CONTAINER >/dev/null 2>&1"; then
+            if [ "$(remote_exec "docker inspect -f '{{.State.Running}}' $PREPROD_CONTAINER")" = "true" ]; then
+                log_info "停止旧 preprod 容器（r4s）: $PREPROD_CONTAINER"
+                remote_exec "docker stop -t 30 $PREPROD_CONTAINER || true"
+                remote_exec "docker rm $PREPROD_CONTAINER || true"
+            else
+                remote_exec "docker rm $PREPROD_CONTAINER || true"
+            fi
+        fi
+
+        # 准备 preprod 专用 env 文件（本地生成，传输到 r4s）
+        local tmp_env
+        tmp_env=$(prepare_preprod_env_file)
+        log_info "传输 env 文件到 r4s..."
+        envsubst < "$tmp_env" | remote_exec "cat > /tmp/preprod.env"
+
+        # 启动新 preprod 容器（远程）
+        log_info "启动 preprod 容器（r4s）: $PREPROD_CONTAINER ($image)"
+        remote_exec "docker run -d \
+            --name $PREPROD_CONTAINER \
+            --network $NETWORK_NAME \
+            --network-alias $PREPROD_CONTAINER \
+            --restart unless-stopped \
+            --stop-timeout 30 \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            --read-only \
+            --tmpfs /tmp \
+            --tmpfs /app/scripts/logs \
+            --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+            --memory 512m \
+            --memory-reservation 128m \
+            --cpus 0.5 \
+            --log-driver json-file \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
+            --env-file /tmp/preprod.env \
+            --label com.docker.compose.project=noda-apps \
+            --label com.docker.compose.service=noda-apps-preprod \
+            --label noda.service-group=apps \
+            --label noda.environment=preprod \
+            --health-cmd \"node -e \\\"fetch('http://localhost:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\\\"\" \
+            --health-interval 30s \
+            --health-timeout 10s \
+            --health-retries 3 \
+            --health-start-period 60s \
+            $image"
+
+        rm -f "$tmp_env"
+
+        # 更新 preprod upstream 配置（远程）
+        local upstream_content="# noda-apps preprod upstream 变量 — 在 pre-prod server block 中 include
+# 使用 resolver 127.0.0.11 动态解析 DNS，容器重建后自动刷新 IP
+# 由 pipeline_deploy_preprod() 更新
+# 容器名: noda-apps-preprod（单容器，非蓝绿）
+set \$preprod_findclass_upstream ${PREPROD_CONTAINER}:3000;
+set \$preprod_www_upstream ${PREPROD_CONTAINER}:3002;
+set \$preprod_auth_app_upstream ${PREPROD_CONTAINER}:3004;
+set \$preprod_admin_upstream ${PREPROD_CONTAINER}:3006;
+set \$preprod_admin_api_upstream ${PREPROD_CONTAINER}:3011;"
+
+        log_info "更新 preprod upstream 配置（r4s）..."
+        echo "$upstream_content" | remote_exec "mkdir -p /opt/noda/noda-infra/config/nginx/snippets && cat > /opt/noda/noda-infra/config/nginx/snippets/upstream-preprod.conf"
+
+        # reload nginx（远程）
+        reload_nginx
+
+        log_success "Pre-prod 部署完成（r4s）: $PREPROD_CONTAINER ($image)"
+    else
+        # 本地模式（原有逻辑）
+        # 停止旧 preprod 容器
+        if [ "$(is_container_running "$PREPROD_CONTAINER")" = "true" ]; then
+            log_info "停止旧 preprod 容器: $PREPROD_CONTAINER"
+            docker stop -t 30 "$PREPROD_CONTAINER"
+            docker rm "$PREPROD_CONTAINER"
+        fi
+
+        # 准备 preprod 专用 env 文件
+        local tmp_env
+        tmp_env=$(prepare_preprod_env_file)
+
+        # 启动新 preprod 容器
+        log_info "启动 preprod 容器: $PREPROD_CONTAINER ($image)"
+
+        docker run -d \
+            --name "$PREPROD_CONTAINER" \
+            --network "$NETWORK_NAME" \
+            --network-alias "$PREPROD_CONTAINER" \
+            --restart unless-stopped \
+            --stop-timeout 30 \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            --read-only \
+            --tmpfs /tmp \
+            --tmpfs /app/scripts/logs \
+            --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+            --memory 512m \
+            --memory-reservation 128m \
+            --cpus 0.5 \
+            --log-driver json-file \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
+            --env-file "$tmp_env" \
+            --label "com.docker.compose.project=noda-apps" \
+            --label "com.docker.compose.service=noda-apps-preprod" \
+            --label "noda.service-group=apps" \
+            --label noda.environment=preprod \
+            --health-cmd "node -e \"fetch('http://localhost:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"" \
+            --health-interval 30s \
+            --health-timeout 10s \
+            --health-retries 3 \
+            --health-start-period 60s \
+            "$image"
+
+        rm -f "$tmp_env"
+
+        # 更新 preprod upstream 配置
+        update_preprod_upstream
+
+        # reload nginx 使 preprod server blocks 生效
+        reload_nginx
+
+        log_success "Pre-prod 部署完成: $PREPROD_CONTAINER ($image)"
     fi
-
-    # 准备 preprod 专用 env 文件
-    local tmp_env
-    tmp_env=$(prepare_preprod_env_file)
-
-    # 启动新 preprod 容器
-    log_info "启动 preprod 容器: $PREPROD_CONTAINER ($image)"
-
-    docker run -d \
-        --name "$PREPROD_CONTAINER" \
-        --network "$NETWORK_NAME" \
-        --network-alias "$PREPROD_CONTAINER" \
-        --restart unless-stopped \
-        --stop-timeout 30 \
-        --security-opt no-new-privileges \
-        --cap-drop ALL \
-        --read-only \
-        --tmpfs /tmp \
-        --tmpfs /app/scripts/logs \
-        --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
-        --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
-        --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
-        --memory 512m \
-        --memory-reservation 128m \
-        --cpus 0.5 \
-        --log-driver json-file \
-        --log-opt max-size=10m \
-        --log-opt max-file=3 \
-        --env-file "$tmp_env" \
-        --label "com.docker.compose.project=noda-apps" \
-        --label "com.docker.compose.service=noda-apps-preprod" \
-        --label "noda.service-group=apps" \
-        --label noda.environment=preprod \
-        --health-cmd "node -e \"fetch('http://localhost:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"" \
-        --health-interval 30s \
-        --health-timeout 10s \
-        --health-retries 3 \
-        --health-start-period 60s \
-        "$image"
-
-    rm -f "$tmp_env"
-
-    # 更新 preprod upstream 配置
-    update_preprod_upstream
-
-    # reload nginx 使 preprod server blocks 生效
-    reload_nginx
-
-    log_success "Pre-prod 部署完成: $PREPROD_CONTAINER ($image)"
 }
 
 # prepare_preprod_env_file - 生成 preprod 环境变量文件
