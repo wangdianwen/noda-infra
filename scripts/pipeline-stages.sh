@@ -287,7 +287,10 @@ pipeline_build()
 
     log_info "构建镜像..."
 
-    # 使用 docker build 直接构建，避免 compose 文件中其他服务的环境变量要求
+    # r4s 远程部署模式：镜像将在 Mac 构建后通过 SSH 传输到 r4s（per D-07）
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        log_info "r4s 远程部署模式：镜像将在 Mac 构建后通过 SSH 传输到 r4s（per D-07）"
+    fi
     if [ "$service" = "noda-apps" ]; then
         docker build \
             -t "${service}:latest" \
