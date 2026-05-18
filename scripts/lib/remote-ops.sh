@@ -179,35 +179,40 @@ remote_docker_exec()
 # ============================================
 # 函数: acquire_deploy_lock
 # ============================================
-# 获取 flock 文件锁
+# 获取部署锁（mkdir 原子操作，兼容 BusyBox）
 # 参数:
-#   $1: timeout - 锁超时秒数（默认 3600，per D-20）
+#   $1: max_wait - 最大等待秒数（默认 60）
 # 返回: 0=获取成功，1=获取失败
 acquire_deploy_lock()
 {
-    local timeout="${1:-3600}"
+    local max_wait="${1:-60}"
 
     if [ -z "$R4S_HOST" ]; then
         log_error "R4S_HOST 未初始化，请先调用 setup_remote"
         return 1
     fi
 
-    log_info "尝试获取部署锁（超时 ${timeout} 秒）..."
+    log_info "尝试获取部署锁（最多等待 ${max_wait} 秒）..."
 
-    # flock -n: 非阻塞模式，-w: 超时
-    if remote_exec "flock -n -w $timeout /tmp/noda-deploy.lock true"; then
-        log_success "部署锁获取成功"
-        return 0
-    else
-        log_error "无法获取部署锁，可能有其他部署进行中"
-        return 1
-    fi
+    # mkdir 是原子操作，兼容 BusyBox（r4s/iStoreOS）
+    local elapsed=0
+    while [ $elapsed -lt $max_wait ]; do
+        if remote_exec "mkdir /tmp/noda-deploy.lock 2>/dev/null"; then
+            log_success "部署锁获取成功"
+            return 0
+        fi
+        sleep 5
+        elapsed=$((elapsed + 5))
+    done
+
+    log_error "无法获取部署锁，可能有其他部署进行中"
+    return 1
 }
 
 # ============================================
 # 函数: release_deploy_lock
 # ============================================
-# 释放 flock 文件锁
+# 释放部署锁（rmdir，兼容 BusyBox）
 # 返回: 0=释放成功
 release_deploy_lock()
 {
@@ -218,8 +223,7 @@ release_deploy_lock()
 
     log_info "释放部署锁..."
 
-    # flock -u: 释放锁
-    remote_exec "flock -u /tmp/noda-deploy.lock"
+    remote_exec "rmdir /tmp/noda-deploy.lock 2>/dev/null"
 
     log_success "部署锁已释放"
     return 0
