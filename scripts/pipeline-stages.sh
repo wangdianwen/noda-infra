@@ -1134,22 +1134,55 @@ pipeline_deploy_nginx()
 # 返回: 0=成功，1=失败
 pipeline_deploy_noda_ops()
 {
-    log_info "noda-ops 重建部署（docker compose recreate）"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程部署模式
+        log_info "noda-ops 重建部署（r4s 远程）"
 
-    # 从 Doppler Cloud 拉取密钥（B2、PostgreSQL、Cloudflare 等）
-    local secrets_file
-    secrets_file=$(mktemp /tmp/noda-ops-secrets.XXXXXX.env)
-    doppler secrets download --project noda --config prd --format env --no-file "$secrets_file"
-    log_info "已从 Doppler 拉取密钥: $(grep -c '=' "$secrets_file") 个变量"
+        # 在 Mac 上构建 noda-ops 镜像（保持现有逻辑）
+        log_info "构建 noda-ops 镜像（Mac 本地）..."
+        docker build -t noda-ops:latest -f docker/Dockerfile.noda-ops .
 
-    # noda-ops 使用 build 模式，需要 --build
-    docker compose --env-file "$secrets_file" \
-        -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
-        up -d --build --force-recreate --no-deps noda-ops
+        # 传输镜像到 r4s
+        log_info "传输 noda-ops 镜像到 r4s..."
+        transfer_image "noda-ops:latest" "noda-ops:latest"
 
-    rm -f "$secrets_file"
-    log_success "noda-ops 重建完成"
+        # 从 Doppler Cloud 拉取密钥（在 Mac 上，per D-22）
+        local secrets_file
+        secrets_file=$(mktemp /tmp/noda-ops-secrets.XXXXXX.env)
+        doppler secrets download --project noda --config prd --format env --no-file "$secrets_file"
+        log_info "已从 Doppler 拉取密钥: $(grep -c '=' "$secrets_file") 个变量"
+
+        # 传输密钥文件到 r4s
+        log_info "传输密钥文件到 r4s..."
+        cat "$secrets_file" | remote_exec "cat > /tmp/noda-ops-secrets.env"
+        rm -f "$secrets_file"
+
+        # 在 r4s 上启动容器（使用 --build 标志）
+        remote_exec "docker compose --env-file /tmp/noda-ops-secrets.env \
+            -f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml \
+            up -d --build --force-recreate --no-deps noda-ops"
+
+        log_success "noda-ops 重建完成（r4s）"
+    else
+        # 本地模式：保持现有逻辑
+        log_info "noda-ops 重建部署（docker compose recreate）"
+
+        # 从 Doppler Cloud 拉取密钥（B2、PostgreSQL、Cloudflare 等）
+        local secrets_file
+        secrets_file=$(mktemp /tmp/noda-ops-secrets.XXXXXX.env)
+        doppler secrets download --project noda --config prd --format env --no-file "$secrets_file"
+        log_info "已从 Doppler 拉取密钥: $(grep -c '=' "$secrets_file") 个变量"
+
+        # noda-ops 使用 build 模式，需要 --build
+        docker compose --env-file "$secrets_file" \
+            -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+            up -d --build --force-recreate --no-deps noda-ops
+
+        rm -f "$secrets_file"
+        log_success "noda-ops 重建完成"
+    fi
 }
+
 
 # ============================================
 # 函数: pipeline_deploy_postgres
