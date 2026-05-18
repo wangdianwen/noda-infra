@@ -788,41 +788,83 @@ pipeline_infra_preflight()
 pipeline_backup_database()
 {
     local service="$1"
-    local backup_dir="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}/infra-pipeline/${service}"
-    local timestamp
-    timestamp=$(date +"%Y%m%d-%H%M%S")
-    local backup_file="${backup_dir}/${timestamp}.sql.gz"
+    
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程模式：备份文件存储在 r4s 上
+        local backup_dir="/opt/noda/noda-infra/docker/volumes/backup/infra-pipeline/${service}"
+        local timestamp
+        timestamp=$(date +"%Y%m%d-%H%M%S")
+        local backup_file="${backup_dir}/${timestamp}.sql.gz"
 
-    # nginx/noda-ops 不需要备份
-    if [ "$service" != "keycloak" ] && [ "$service" != "postgres" ]; then
-        log_info "$service 不需要备份（无持久化数据）"
-        return 0
+        # nginx/noda-ops 不需要备份
+        if [ "$service" != "keycloak" ] && [ "$service" != "postgres" ]; then
+            log_info "$service 不需要备份（无持久化数据）"
+            return 0
+        fi
+
+        # 在 r4s 上创建备份目录
+        remote_exec "mkdir -p $backup_dir"
+
+        log_info "部署前备份（r4s）: $service -> $backup_file"
+
+        if [ "$service" = "keycloak" ]; then
+            remote_docker_exec "noda-infra-postgres-prod" \
+                "pg_dump -U postgres --clean --if-exists keycloak | gzip > ${backup_file}/${timestamp}.sql.gz"
+        elif [ "$service" = "postgres" ]; then
+            remote_docker_exec "noda-infra-postgres-prod" \
+                "pg_dumpall -U postgres --clean --if-exists | gzip > ${backup_file}/${timestamp}.sql.gz"
+        fi
+
+        # 验证备份文件大小 > 1KB（在 r4s 上检查）
+        local file_size
+        file_size=$(remote_exec "stat -c%s ${backup_file}/${timestamp}.sql.gz 2>/dev/null || echo 0")
+        if [ "$file_size" -lt 1024 ]; then
+            log_error "备份文件异常（${file_size} 字节），中止部署"
+            return 1
+        fi
+
+        log_success "备份完成（r4s）: $backup_file (${file_size} bytes)"
+        INFRA_BACKUP_FILE="$backup_file"
+        export INFRA_BACKUP_FILE
+    else
+        # 本地模式：保持现有逻辑
+        local backup_dir="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}/infra-pipeline/${service}"
+        local timestamp
+        timestamp=$(date +"%Y%m%d-%H%M%S")
+        local backup_file="${backup_dir}/${timestamp}.sql.gz"
+
+        # nginx/noda-ops 不需要备份
+        if [ "$service" != "keycloak" ] && [ "$service" != "postgres" ]; then
+            log_info "$service 不需要备份（无持久化数据）"
+            return 0
+        fi
+
+        mkdir -p "$backup_dir"
+
+        log_info "部署前备份: $service -> $backup_file"
+
+        if [ "$service" = "keycloak" ]; then
+            docker exec noda-infra-postgres-prod pg_dump -U postgres --clean --if-exists keycloak |
+                gzip >"$backup_file"
+        elif [ "$service" = "postgres" ]; then
+            docker exec noda-infra-postgres-prod pg_dumpall -U postgres --clean --if-exists |
+                gzip >"$backup_file"
+        fi
+
+        # 验证备份文件大小 > 1KB
+        local file_size
+        file_size=$(stat -f%z "$backup_file" 2>/dev/null || stat -c%s "$backup_file" 2>/dev/null || echo "0")
+        if [ "$file_size" -lt 1024 ]; then
+            log_error "备份文件异常（${file_size} 字节），中止部署"
+            return 1
+        fi
+
+        log_success "备份完成: $backup_file (${file_size} bytes)"
+        INFRA_BACKUP_FILE="$backup_file"
+        export INFRA_BACKUP_FILE
     fi
-
-    mkdir -p "$backup_dir"
-
-    log_info "部署前备份: $service -> $backup_file"
-
-    if [ "$service" = "keycloak" ]; then
-        docker exec noda-infra-postgres-prod pg_dump -U postgres --clean --if-exists keycloak |
-            gzip >"$backup_file"
-    elif [ "$service" = "postgres" ]; then
-        docker exec noda-infra-postgres-prod pg_dumpall -U postgres --clean --if-exists |
-            gzip >"$backup_file"
-    fi
-
-    # 验证备份文件大小 > 1KB
-    local file_size
-    file_size=$(stat -f%z "$backup_file" 2>/dev/null || stat -c%s "$backup_file" 2>/dev/null || echo "0")
-    if [ "$file_size" -lt 1024 ]; then
-        log_error "备份文件异常（${file_size} 字节），中止部署"
-        return 1
-    fi
-
-    log_success "备份完成: $backup_file (${file_size} bytes)"
-    INFRA_BACKUP_FILE="$backup_file"
-    export INFRA_BACKUP_FILE
 }
+
 
 # ============================================
 # 函数: pipeline_infra_deploy
