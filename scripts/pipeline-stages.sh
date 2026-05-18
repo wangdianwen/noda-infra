@@ -36,7 +36,7 @@ IMAGE_RETENTION_DAYS="${IMAGE_RETENTION_DAYS:-7}"
 
 # 部署目标配置（per D-04）
 DEPLOY_TARGET="${DEPLOY_TARGET:-local}"  # local 或 r4s
-R4S_HOST="${R4S_HOST:-root@192.168.1.1}"  # r4s 主机
+R4S_HOST="${R4S_HOST:-root@192.168.100.1}"  # r4s 主机
 
 # 固定容器名 / 网络 / Nginx 容器
 NETWORK_NAME="noda-network"
