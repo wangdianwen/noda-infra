@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.12
 milestone_name: 迁移到 iStoreOS (r4s)
-status: Ready for Phase 60
-last_updated: "2026-05-18T03:52:00.228Z"
+status: executing
+last_updated: "2026-05-18T04:06:56.984Z"
 progress:
   total_phases: 5
   completed_phases: 2
-  total_plans: 6
+  total_plans: 10
   completed_plans: 6
   percent: 40
 ---
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-05-17)
 
 Phase: 59 complete
 Plan: All 3 plans done
-Status: Ready for Phase 60
+Status: Ready to execute
 Progress: 2/5 phases (40%)
 
 ### Phase 58 目标

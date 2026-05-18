@@ -470,22 +470,11 @@ ssh root@<R4S_IP> "cd /path/to/noda-infra && \
 
 **注：** A1-A5 依赖 Phase 57 的执行结果。Phase 57 已标记完成，但这些假设需要在迁移开始前验证。
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **r4s 的实际 IP 地址和仓库路径**
-   - What we know: STATE.md 记录 `ssh root@192.168.1.1`，但当前 Mac 无法连通（可能不在同一网络）
-   - What's unclear: 实际可用的 IP 地址、r4s 上的代码仓库路径
-   - Recommendation: Planner 应在 Plan 01 中包含 "验证 r4s 连接和环境" 步骤
-
-2. **r4s 上 git clone 的具体路径**
-   - What we know: 需要 bind mount 的文件（nginx 配置、PG 配置、备份脚本等）必须存在于 r4s
-   - What's unclear: r4s 上 repo 的具体 clone 路径
-   - Recommendation: 建议使用 `/opt/noda/noda-infra` 或用户指定的路径
-
-3. **pg_restore 的 --no-owner --no-privileges 参数是否需要**
-   - What we know: Mac 上所有表属于 postgres 用户，r4s 上也是 postgres 用户
-   - What's unclear: pg_dump/pg_restore 是否正确传递 owner 信息
-   - Recommendation: 保守起见使用 `--no-owner`，避免跨容器 owner 不匹配问题
+1. **r4s 的实际 IP 地址和仓库路径** — RESOLVED: Plan 58-01 Task 0 checkpoint:human-verify 在执行时验证 SSH 连接和确认路径。executor 设置 R4S_HOST 环境变量。
+2. **r4s 上 git clone 的具体路径** — RESOLVED: 使用 R4S_REPO_PATH 变量，executor 在 checkpoint 时确认。推荐路径 `/opt/noda/noda-infra`。
+3. **pg_restore 的 --no-owner 参数** — RESOLVED: 推荐使用 `--no-owner --no-privileges`，保守避免跨容器 owner 不匹配。所有表实际属于 postgres 用户，使用 `--no-owner` 是安全降级。
 
 ## Environment Availability
 
