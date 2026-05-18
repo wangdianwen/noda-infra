@@ -41,7 +41,7 @@ pipeline {
                         returnStdout: true
                     ).trim()
                 }
-                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
@@ -54,7 +54,7 @@ pipeline {
 
         stage('Build') {
             steps {
-                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
@@ -89,7 +89,7 @@ pipeline {
 
         stage('Deploy Pre-prod') {
             steps {
-                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
@@ -102,7 +102,7 @@ pipeline {
 
         stage('Health Check Pre-prod') {
             steps {
-                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
@@ -129,7 +129,7 @@ pipeline {
 
         stage('Deploy Prod') {
             steps {
-                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
@@ -194,7 +194,7 @@ pipeline {
     post {
         always {
             script {
-                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
