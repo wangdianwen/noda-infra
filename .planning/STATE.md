@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.12
 milestone_name: 迁移到 iStoreOS (r4s)
-status: Phase 61 context gathered
-last_updated: "2026-05-19T10:00:00.000Z"
+status: Phase 61 planned
+last_updated: "2026-05-19T12:00:00.000Z"
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 10
+  total_plans: 13
   completed_plans: 10
   percent: 60
 ---
@@ -20,13 +20,13 @@ See: .planning/PROJECT.md (updated 2026-05-17)
 
 **Core value:** 数据库永不丢失。迁移不改变核心功能，只改变运行位置。
 
-**Current focus:** Phase 61 备份与网络迁移 - context 已收集
+**Current focus:** Phase 61 备份与网络迁移 - 已规划（3 个计划）
 
 ## Current Position
 
-Phase: 61 context gathered
-Plan: 0/0 plans
-Status: Phase 61 context 已收集，准备规划
+Phase: 61 planned
+Plan: 3/3 plans (Wave 1: 61-01, 61-02 | Wave 2: 61-03)
+Status: Phase 61 已规划，准备执行
 Progress: 3/5 phases (60%)
 
 ### Phase 58 目标
@@ -99,16 +99,11 @@ Phase 58 完成当：
 - [ ] Jenkinsfile 基础设施 Pipeline 改造
 - [ ] SSH 远程部署验证
 
-**Phase 61 待办**:
+**Phase 61 待办** (已规划 3 个计划):
 
-- [ ] pg_dump 备份 cronjob 迁移
-- [ ] B2 云备份迁移
-- [ ] Doppler 密钥备份 cronjob 迁移
-- [ ] 周验证测试 cronjob 迁移
-- [ ] Mac 旧备份清理
-- [ ] Cloudflare Tunnel 迁移
-- [ ] Nginx 端口映射验证
-- [ ] pre-prod 域名路由验证
+- [ ] 61-01: 验证 r4s 备份 cronjob（pg_dump + B2 + Doppler + 周验证）
+- [ ] 61-02: 验证 Cloudflare Tunnel + Nginx 端口映射 + pre-prod 路由
+- [ ] 61-03: 停止 Mac 旧 noda-ops 容器
 
 **Phase 62 待办**:
 
