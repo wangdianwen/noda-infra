@@ -364,65 +364,134 @@ pipeline_deploy_prod()
 
     log_info "生产环境部署: $PROD_CONTAINER ($image)"
 
-    # 停止并移除旧容器
-    if [ "$(is_container_running "$PROD_CONTAINER")" = "true" ]; then
-        log_info "停止旧容器: $PROD_CONTAINER"
-        docker stop -t 30 "$PROD_CONTAINER"
-        docker rm "$PROD_CONTAINER"
-    elif docker inspect "$PROD_CONTAINER" >/dev/null 2>&1; then
-        # 容器存在但未运行
-        docker rm "$PROD_CONTAINER"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程部署模式
+        log_info "r4s 远程部署模式：传输镜像到 r4s..."
+        transfer_image "$image" "$image"
+
+        # 停止并移除旧容器（远程）
+        if remote_exec "docker inspect $PROD_CONTAINER >/dev/null 2>&1"; then
+            if [ "$(remote_exec "docker inspect -f '{{.State.Running}}' $PROD_CONTAINER")" = "true" ]; then
+                log_info "停止旧容器（r4s）: $PROD_CONTAINER"
+                remote_exec "docker stop -t 30 $PROD_CONTAINER || true"
+                remote_exec "docker rm $PROD_CONTAINER || true"
+            else
+                remote_exec "docker rm $PROD_CONTAINER || true"
+            fi
+        fi
+
+        # 准备 env 文件（本地生成，传输到 r4s）
+        local tmp_env
+        tmp_env=$(prepare_prod_env_file)
+        log_info "传输 env 文件到 r4s..."
+        cat "$tmp_env" | remote_exec "cat > /tmp/prod.env"
+
+        # 启动新容器（远程）
+        log_info "启动容器（r4s）: $PROD_CONTAINER ($image)"
+        remote_exec "docker run -d \
+            --name $PROD_CONTAINER \
+            --network $NETWORK_NAME \
+            --network-alias $PROD_CONTAINER \
+            --restart unless-stopped \
+            --stop-timeout 30 \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            --read-only \
+            --tmpfs /tmp \
+            --tmpfs /app/scripts/logs \
+            --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+            --memory 1g \
+            --memory-reservation 128m \
+            --cpus 1 \
+            --log-driver json-file \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
+            --env-file /tmp/prod.env \
+            --label com.docker.compose.project=noda-apps \
+            --label com.docker.compose.service=noda-apps \
+            --label noda.service-group=apps \
+            --label noda.environment=prod \
+            --health-cmd \"node -e \\\"fetch('http://localhost:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\\\"\" \
+            --health-interval 30s \
+            --health-timeout 10s \
+            --health-retries 3 \
+            --health-start-period 60s \
+            $image"
+
+        rm -f "$tmp_env"
+
+        # reload nginx（远程）
+        reload_nginx
+
+        # 健康检查（远程模式）
+        log_info "等待容器健康检查（r4s 远程）..."
+        wait_container_healthy "$PROD_CONTAINER" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))" true true
+
+        log_success "生产环境部署完成（r4s）: $PROD_CONTAINER ($image)"
+    else
+        # 本地模式（原有逻辑）
+        # 停止并移除旧容器
+        if [ "$(is_container_running "$PROD_CONTAINER")" = "true" ]; then
+            log_info "停止旧容器: $PROD_CONTAINER"
+            docker stop -t 30 "$PROD_CONTAINER"
+            docker rm "$PROD_CONTAINER"
+        elif docker inspect "$PROD_CONTAINER" >/dev/null 2>&1; then
+            # 容器存在但未运行
+            docker rm "$PROD_CONTAINER"
+        fi
+
+        # 准备 env 文件
+        local tmp_env
+        tmp_env=$(prepare_prod_env_file)
+
+        # 启动新容器
+        log_info "启动容器: $PROD_CONTAINER ($image)"
+
+        docker run -d \
+            --name "$PROD_CONTAINER" \
+            --network "$NETWORK_NAME" \
+            --network-alias "$PROD_CONTAINER" \
+            --restart unless-stopped \
+            --stop-timeout 30 \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            --read-only \
+            --tmpfs /tmp \
+            --tmpfs /app/scripts/logs \
+            --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+            --memory 1g \
+            --memory-reservation 128m \
+            --cpus 1 \
+            --log-driver json-file \
+            --log-opt max-size=10m \
+            --log-opt max-file=3 \
+            --env-file "$tmp_env" \
+            --label "com.docker.compose.project=noda-apps" \
+            --label "com.docker.compose.service=noda-apps" \
+            --label "noda.service-group=apps" \
+            --label noda.environment=prod \
+            --health-cmd "node -e \"fetch('http://localhost:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"" \
+            --health-interval 30s \
+            --health-timeout 10s \
+            --health-retries 3 \
+            --health-start-period 60s \
+            "$image"
+
+        rm -f "$tmp_env"
+
+        # reload nginx 刷新 DNS 缓存（容器重建后 IP 会变）
+        reload_nginx
+
+        # 健康检查
+        log_info "等待容器健康检查..."
+        wait_container_healthy "$PROD_CONTAINER" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))"
+
+        log_success "生产环境部署完成: $PROD_CONTAINER ($image)"
     fi
-
-    # 准备 env 文件
-    local tmp_env
-    tmp_env=$(prepare_prod_env_file)
-
-    # 启动新容器
-    log_info "启动容器: $PROD_CONTAINER ($image)"
-
-    docker run -d \
-        --name "$PROD_CONTAINER" \
-        --network "$NETWORK_NAME" \
-        --network-alias "$PROD_CONTAINER" \
-        --restart unless-stopped \
-        --stop-timeout 30 \
-        --security-opt no-new-privileges \
-        --cap-drop ALL \
-        --read-only \
-        --tmpfs /tmp \
-        --tmpfs /app/scripts/logs \
-        --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
-        --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
-        --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
-        --memory 1g \
-        --memory-reservation 128m \
-        --cpus 1 \
-        --log-driver json-file \
-        --log-opt max-size=10m \
-        --log-opt max-file=3 \
-        --env-file "$tmp_env" \
-        --label "com.docker.compose.project=noda-apps" \
-        --label "com.docker.compose.service=noda-apps" \
-        --label "noda.service-group=apps" \
-        --label noda.environment=prod \
-        --health-cmd "node -e \"fetch('http://localhost:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"" \
-        --health-interval 30s \
-        --health-timeout 10s \
-        --health-retries 3 \
-        --health-start-period 60s \
-        "$image"
-
-    rm -f "$tmp_env"
-
-    # reload nginx 刷新 DNS 缓存（容器重建后 IP 会变）
-    reload_nginx
-
-    # 健康检查
-    log_info "等待容器健康检查..."
-    wait_container_healthy "$PROD_CONTAINER" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))"
-
-    log_success "生产环境部署完成: $PROD_CONTAINER ($image)"
 }
 
 # ============================================
