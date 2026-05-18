@@ -83,7 +83,7 @@ remote_exec()
         -o ConnectTimeout="$timeout" \
         -o StrictHostKeyChecking=no \
         -o ServerAliveInterval=10 \
-        root@"$R4S_HOST" \
+        "$R4S_HOST" \
         "$cmd"
 }
 
@@ -118,7 +118,7 @@ transfer_image()
         ssh -C -i "$SSH_KEY_FILE" \
             -o StrictHostKeyChecking=no \
             -o ServerAliveInterval=10 \
-            root@"$R4S_HOST" \
+            "$R4S_HOST" \
             "docker load && docker tag $local_image $remote_image"
 
     if [ $? -eq 0 ]; then
