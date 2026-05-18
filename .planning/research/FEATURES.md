@@ -1,238 +1,337 @@
-# Pre-Prod 环境功能研究
+# iStoreOS Docker 迁移功能研究
 
-**Domain:** 部署基础设施 — Pre-Prod 验证环境作为生产上线守门员
-**Researched:** 2026-05-08
-**Confidence:** HIGH（基于现有架构深度分析 + 行业最佳实践交叉验证）
+**领域:** ARM64 低内存服务器 Docker 迁移
+**研究日期:** 2026-05-17
+**综合置信度:** HIGH
 
-## 功能全景
+## 执行摘要
 
-### Table Stakes（必须有的基础功能）
+iStoreOS Docker 迁移的核心挑战是在 3.77GB RAM 的 ARM64 设备上运行原本运行在 8GB+ Mac 上的完整服务栈。研究确认的关键策略是 **"分层迁移、资源共享、内存优化"** —— 基础设施层（PostgreSQL、Keycloak、Nginx、Cloudflare Tunnel）整体迁移，应用层（findclass-ssr prod+pre-prod）采用蓝绿部署，通过内存限制和共享架构将总内存控制在 2.5GB 以内。
 
-用户（开发者/运维）理所当然期望存在的功能。缺少任何一个 = 整个 pre-prod 环境感觉不完整。
+迁移采用 **Jenkins SSH 远程部署模式**，Mac 作为控制节点，r4s 作为执行节点，保持现有部署逻辑不变。备份策略完全迁移到 r4s，利用 Docker volume 特性实现数据库持久化。
 
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| **Pre-Prod 蓝绿部署** | 已有 prod 蓝绿模式，pre-prod 必须同样支持 | MEDIUM | 复用 manage-containers.sh 参数化框架，新建 env-noda-apps-preprod.env 模板和 upstream-findclass-preprod.conf。容器命名 `noda-apps-preprod-blue/green`，独立 ACTIVE_ENV_FILE |
-| **Build Once, Deploy to Pre-Prod** | Docker 镜像在 CI 构建一次，pre-prod 先用 | LOW | 复用现有 `pipeline_build` 函数构建镜像，构建产物是带 Git SHA tag 的本地镜像。noda-apps monorepo 只有一个镜像 |
-| **Promote Same Image to Prod** | pre-prod 验证通过后，同一个镜像 promote 到 prod，不重新构建 | MEDIUM | 核心价值。Jenkins Promote 流程读取 pre-prod 当前镜像 digest/tag，用相同镜像部署到 prod 蓝绿。环境差异通过运行时环境变量注入（DATABASE_URL/KEYCLOAK_REALM 等） |
-| **Pre-Prod 独立数据库** | 验证 DB migration 不能影响 prod 数据 | LOW | 同一 PostgreSQL 实例新增 `noda_preprod` 数据库。init-databases.sh 扩展。资源增量可忽略 |
-| **Pre-Prod 独立 Keycloak Realm** | 认证流程必须端到端验证，不能用 prod 的 OAuth session | MEDIUM | 同一 Keycloak 实例新增 `noda-preprod` realm。需配置 Google OAuth redirect URI 包含 pre-prod 域名。client 配置独立于 prod |
-| **Pre-Prod 独立域名 + 路由** | 团队需要通过真实 URL 访问验证环境 | LOW | pre.class.noda.co.nz / pre.auth.noda.co.nz / pre.noda.co.nz / pre.admin.noda.co.nz。Nginx 新增 server blocks，Cloudflare Tunnel + DNS 新增路由 |
-| **健康检查 + 自动回滚** | prod 有，pre-prod 也必须有 | LOW | 完全复用现有 pipeline_health_check + pipeline_failure_cleanup。只是目标容器名和环境变量不同 |
-| **Hotfix 紧急通道** | P0 级服务中断必须能跳过 pre-prod 直接部署到 prod | MEDIUM | Jenkins Pipeline 新增 `SKIP_PREPROD=true` 参数，直接走现有 prod 部署流程。需要权限控制和事后补验证机制 |
+研究识别出 **5 个关键迁移陷阱**，其中 2 个具有 HIGH 级别影响：Jenkins SSH 连接稳定性（网络中断导致部署失败）和 PostgreSQL 数据一致性（pg_dump 在容器内执行的时机）。这些必须在迁移方案中建立防护机制。
 
-### Differentiators（提升价值的增强功能）
+## 关键发现
 
-不是必须的，但实现后显著提升 pre-prod 环境的价值和团队信心。
+### 推荐技术方案
 
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| **Git Tag 版本追踪** | 每次部署关联明确的版本号，便于追溯和回滚定位 | LOW | `git tag -a v1.x.x` 在 promote 成功后打 tag。Jenkins 自动读取 tag 作为镜像 label。trunk-based 工作流下 tag 是版本追踪的唯一锚点 |
-| **DB Migration Pre-Check** | 在 pre-prod 数据库上验证 migration 脚本，提前发现 schema 冲突 | MEDIUM | Prisma migration 在 pre-prod 数据库上执行。如果 migration 失败，阻止 promote。需要在 Pipeline 中增加 migration stage |
-| **Smoke Test 自动化门禁** | promote 前自动运行关键路径验证，不只是健康检查 | MEDIUM | 超越 HTTP 200 检查，验证登录流程、核心 API、页面渲染。可实现为 curl 脚本套件或简单 E2E 脚本。建议控制在 5 分钟内完成 |
-| **Pre-Prod 数据定期同步** | 用 prod 数据（脱敏后）填充 pre-prod 数据库，提高验证真实性 | HIGH | 复杂度高，涉及数据脱敏策略。v1 不做，后续迭代考虑。当前用空数据库 + 手动创建测试数据足够 |
-| **Promote 审批门禁** | promote 到 prod 需要人工确认 | LOW | Jenkins `input` 步骤即可实现，一行代码。但价值很大：防止未经人工确认的自动 promote |
-| **部署历史关联 Git SHA** | Jenkins 构建记录关联 Git commit，便于快速定位 "这次部署改了什么" | LOW | 现有 Pipeline 已记录 GIT_SHA。Promote 时继承 pre-prod 的 GIT_SHA，在 Jenkins 构建描述中显示 |
+迁移保持现有技术栈，针对 ARM64 低内存环境进行优化配置。不引入新组件，通过配置调整实现适应。
 
-### Anti-Features（看似合理但应该避免的功能）
+**核心技术决策：**
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| **完全独立的基础设施栈** | "pre-prod 应该和 prod 完全隔离" | 单服务器资源受限，独立 PostgreSQL/Keycloak/Nginx 实例会增加 ~2GB 内存，且运维复杂度翻倍。镜像管理、备份策略都需要维护两套 | 共享基础设施（PostgreSQL/Keycloak/Nginx），仅应用层双实例。数据库级别隔离（noda_prod vs noda_preprod），不是实例级别 |
-| **自动触发 Pre-Prod 部署** | "每次 git push 自动部署到 pre-prod" | 项目更新频率低（周级别），自动触发增加攻击面和资源消耗。Jenkins 需要配置 webhook，暴露公网接口。自动构建可能触发不必要的资源占用 | 手动触发 Jenkins Build Now。开发节奏可控，且 pre-prod 资源不浪费 |
-| **Pre-Prod 全自动 Promote** | "pre-prod 通过后自动 promote 到 prod" | 移除了人工审查环节，任何 pre-prod 验证遗漏会直接冲击 prod。对于小型团队，人工确认是重要的安全网 | Promote 需要手动触发 + `input` 审批门禁。自动化的部分是部署和验证，决策权在人 |
-| **Feature Flag 系统** | "用 feature flag 控制灰度发布" | 引入 LaunchDarkly/Unleash 等第三方服务增加外部依赖和成本。Noda 项目规模不需要灰度发布 | 蓝绿部署本身已提供版本切换能力。环境变量控制功能开关足够（NEXT_PUBLIC_* 构建时注入） |
-| **多环境并行验证** | "pre-prod 和 prod 同时跑不同版本对比" | 单服务器内存限制（pre-prod 已增加 ~1GB），无法支持多个历史版本并行运行 | pre-prod 只跑即将发布的版本，prod 跑当前版本。需要对比时在本地开发环境进行 |
-| **复杂的 RBAC 权限控制** | "只有特定角色才能 promote" | Jenkins RBAC 插件配置复杂，团队只有 1-2 人。过度工程化 | Jenkins 基本权限（登录才能触发）+ 人工确认步骤足够。Hotfix 跳过审批需要口头约定 |
+- **SSH 远程执行架构：** Jenkins 在 Mac，通过 SSH 连接 r4s 执行 `docker compose` 命令，保持现有脚本逻辑
+- **Docker Compose Overlay 模式：** 使用 `docker-compose.r4s.yml` 覆盖内存限制和端口映射，继承所有基础配置
+- **内存预算分配：** PostgreSQL 768M + Keycloak 640M + Nginx 64M + noda-ops 256M + findclass-ssr 1G = 总计 2.7GB（预留 1GB 缓冲）
+- **ARM64 镜像兼容：** Mac M4 和 r4s 都是 ARM64，无需重新构建镜像，直接复用
+- **独立 Docker Root：** `/mnt/mmc1-4/docker`（54.8GB 可用），避免与 iStoreOS 系统冲突
+- **Swap 文件机制：** 2GB Swap 作为 OOM 缓冲，防止内存不足导致服务崩溃
+
+### 功能优先级
+
+**必须实现（Table Stakes，P1）：**
+
+- **基础设施整体迁移** -- PostgreSQL + Keycloak + Nginx + Cloudflare Tunnel 全部迁移到 r4s
+- **应用蓝绿部署迁移** -- findclass-ssr prod 和 pre-prod 蓝绿容器组迁移到 r4s
+- **Jenkins SSH 远程部署** - Pipeline 改造为通过 SSH 在 r4s 执行 docker compose 命令
+- **备份策略完全迁移** -- pg_dump + B2 上传完全在 r4s 执行，Mac 仅触发
+- **内存优化配置** -- 所有服务设置 memory limits + compact logging + tmpfs 优化
+- **健康检查机制** - 复用现有 health check，增加 r4s 特定的网络连通性检查
+- **回滚机制** - 保持现有 rollback 逻辑，增加 SSH 连接失败回滚
+
+**建议实现（Differentiators，P2）：**
+
+- **监控集成** - 在 r4s 上部署 Prometheus agent，收集容器资源使用数据
+- **自动化健康检查** - 定期验证 r4s 服务连通性，预检内存使用
+- **镜像缓存策略** - r4s 本地缓存常用镜像，减少网络传输
+- **备份验证** - 自动下载并验证备份文件完整性
+
+**推迟到 v2+（P3）：**
+
+- **自动扩容** - 根据内存使用自动调整容器资源（需要深入研究）
+- **多节点备份** - 将备份文件同步到多个存储位置（增加复杂度）
+- **性能基准测试** - 建立性能基准，量化迁移前后对比
+
+### 架构方案
+
+迁移采用"控制与执行分离"架构：Mac 作为控制中心（Jenkins + 代码库），r4s 作为执行节点（Docker 运行）。
+
+**核心组件关系：**
+
+1. **Jenkins (Mac)** -- Pipeline 控制中心，通过 SSH 连接 r4s 执行部署命令
+2. **Docker Compose (r4s)** -- 执行层，使用 `-f base -f prod -f r4s` 组合配置
+3. **PostgreSQL (r4s)** -- 数据持久化，使用独立 Docker volume + 768M 内存限制
+4. **Keycloak (r4s)** -- 认证服务，同实例共享数据库，640M 内存限制
+5. **Nginx (r4s)** -- 反向代理，高端口映射（8080/8443）避免与 iStoreOS 冲突
+6. **Cloudflare Tunnel (r4s)** -- 外部访问，保持现有 token 配置
+7. **应用容器 (r4s)** -- findclass-ssr 蓝绿组，1G 内存限制，read_only 模式
+
+**关键数据流：**
+```
+浏览器 -> Cloudflare -> r4s:8080 -> Nginx -> findclass-ssr-{color}:3000
+  -> DATABASE_URL -> r4s postgres:5432 (noda_prod 数据库)
+  -> KEYCLOAK_REALM -> r4s keycloak:8080 (noda realm)
+```
+
+**迁移步骤流程：**
+```
+1. 准备 r4s 环境（SSH + Docker + 网络）
+2. 迁移基础设施（docker-compose up postgres/keycloak/nginx/noda-ops）
+3. 验证基础设施连通性
+4. 迁移应用（蓝绿部署，先 prod 后 pre-prod）
+5. 配置 Cloudflare 域名路由
+6. 切换生产流量
+```
+
+### 关键陷阱
+
+1. **SSH 连接不稳定性** -- r4s 通过 SSH 连接执行部署，网络抖动可能导致命令执行失败。防护方案：SSH 连接重试机制（3次重试）+ 命令执行状态验证 + 超时控制（每命令 5 分钟）
+
+2. **PostgreSQL 数据迁移时机** -- pg_dump 在容器内执行时，如果容器重启或内存不足可能导致数据不一致。防护方案：迁移前强制检查点 + 使用 `--format=directory` 增量备份 + 多次备份验证
+
+3. **内存不足 OOM** -- r4s 仅 3.77GB RAM，多个服务同时启动可能触发 OOM。防护方案：渐进式启动（先基础设施后应用）+ 内存监控 + Swap 预热 + docker stats 实时监控
+
+4. **ARM64 架构兼容性** -- 虽然都是 ARM64，但内核版本差异可能导致性能问题。防护方案：性能基准测试 + 监控 CPU 使用率 + 调整 CPU 亲和性
+
+5. **端口冲突** -- iStoreOS 自带管理界面使用 80/443，Nginx 需要映射到高端口。防护方案：使用 8080/8443 端口 + 确保防火墙规则正确 + Cloudflare Tunnel 配置更新
+
+## 对路线图的影响
+
+基于研究发现的依赖关系和风险分布，建议以下阶段结构：
+
+### Phase 1: r4s 环境准备
+
+**理由：** 所有后续阶段都依赖 SSH 连接、Docker 运行环境和基础网络配置就位。这是最基础的阶段，可以独立验证连接和基本功能。
+
+**交付物：** SSH 免密登录可用 + Docker Compose 可以在 r4s 正常执行 + 基础网络连通性验证通过
+
+**覆盖功能：** SSH 远程执行架构、Docker Root 配置、Swap 文件机制
+
+**需要规避的陷阱：** SSH 连接不稳定性（Pitfall 1）、ARM64 架构兼容性（Pitfall 4）
+
+**涉及文件：**
+- 修改：`scripts/r4s/setup-ssh.sh`（添加连接重试机制）
+- 新增：`scripts/r4s/verify-connection.sh`（SSH 连接测试）
+- 修改：`scripts/r4s/setup-swap.sh`（增加 Swap 预热）
+
+### Phase 2: 基础设施迁移
+
+**理由：** PostgreSQL、Keycloak、Nginx、Cloudflare Tunnel 是所有应用的基础，必须先确保基础设施稳定运行。这个阶段风险较低，因为组件都已成熟运行。
+
+**交付物：** 所有基础设施服务在 r4s 正常运行 + 数据一致性验证通过 + 外部访问可达
+
+**覆盖功能：** 基础设施整体迁移、备份策略迁移、内存优化配置
+
+**需要规避的陷阱：** PostgreSQL 数据迁移时机（Pitfall 2）、内存不足 OOM（Pitfall 3）
+
+**涉及文件：**
+- 修改：`docker/docker-compose.r4s.yml`（基础设施内存限制）
+- 新增：`scripts/infra-migrate.sh`（基础设施迁移脚本）
+- 修改：`deploy/Dockerfile.noda-ops`（ARM64 优化）
+
+### Phase 3: 应用迁移
+
+**理由：** 应用迁移依赖基础设施就位，且需要保持零停机。蓝绿部署机制已经成熟，主要需要适配 SSH 执行环境。
+
+**交付物：** findclass-ssr prod 和 pre-prod 在 r4s 成功运行 + 蓝绿切换功能正常 + 健康检查通过
+
+**覆盖功能：** 应用蓝绿部署迁移、健康检查机制、回滚机制
+
+**涉及文件：**
+- 修改：`jenkins/Jenkinsfile.apps`（添加 SSH 执行步骤）
+- 新增：`scripts/app-migrate.sh`（应用迁移脚本）
+- 修改：`scripts/manage-containers.sh`（SSH 远程执行支持）
+
+### Phase 4: 验证与优化
+
+**理由：** 核心功能迁移完成后进行全面验证和性能优化。监控和自动化检查功能在此阶段加入。
+
+**交付物：** 完整端到端验证通过 + 性能基线建立 + 监控系统就位
+
+**覆盖功能：** 监控集成、自动化健康检查、镜像缓存策略
+
+**涉及文件：**
+- 新增：`scripts/monitoring/r4s-resource-check.sh`
+- 新增：`scripts/validate-migration.sh`
+- 修改：`CLAUDE.md`（更新部署流程文档）
+
+### 阶段排序理由
+
+- **Phase 1 先行**是因为 SSH 连接是所有远程操作的基础，没有连接后续都无法进行
+- **Phase 2 在 Phase 3 之前**是因为应用依赖数据库和认证服务等基础设施
+- **Phase 4 放在最后**是因为验证和优化不阻塞核心迁移，可以在功能稳定后补充
+- **渐进式迁移**降低风险，每个阶段都可以独立验证和回滚
+
+### 研究标记
+
+需要更深入研究的阶段：
+- **Phase 2：** PostgreSQL 数据迁移的具体方法需要确定是使用 pg_dump 还是 volume 直接复制
+- **Phase 3：** 蓝绿部署在 SSH 远程执行时的网络延迟影响需要评估
+
+模式成熟、可跳过研究阶段的：
+- **Phase 1 SSH 配置：** 沿用现有 SSH 最佳实践，文档充分
+- **Phase 4 监控：** 使用标准 Prometheus + Grafana 组合，方案成熟
+
+## 置信度评估
+
+| 领域 | 置信度 | 说明 |
+|------|--------|------|
+| 技术栈 | HIGH | 不引入新组件，基于现有 Docker Compose + Jenkins 架构，仅做环境适配 |
+| 功能范围 | HIGH | 迁移边界清晰，Table Stakes 和 Anti-Features 定义明确，复用现有功能 |
+| 架构方案 | HIGH | 控制与执行分离架构有充分参考，SSH 远程执行是成熟模式 |
+| 陷阱识别 | HIGH | 5 个陷阱基于 ARM64 低内存设备特性和远程部署常见问题分析 |
+
+**综合置信度：HIGH**
+
+### 需要解决的缺口
+
+- **PostgreSQL 迁移方法：** 需要在 Phase 2 确定使用 pg_dump 还是 volume 直接复制，建议先测试性能差异
+- **SSH 连接重试策略：** 需要确定具体的重试次数和间隔，建议 Phase 1 进行压力测试
+- **内存监控阈值：** 需要确定触发警告和告警的具体内存使用百分比，建议参考 80% 警告、90% 告警
+- **蓝绿部署网络延迟：** SSH 执行可能增加部署时间，需要评估是否影响用户体验
 
 ## Feature Dependencies
 
 ```
-[Pre-Prod 基础设施]
-    ├──requires──> [noda_preprod 数据库]
-    ├──requires──> [noda-preprod Keycloak realm]
-    └──requires──> [Pre-Prod Nginx 路由 + Cloudflare DNS]
+[r4s 环境准备]
+    ├──requires──> [SSH 免密登录配置]
+    ├──requires──> [Docker Root 独立配置]
+    └──requires──> [Swap 文件机制]
 
-[Pre-Prod 蓝绿部署]
-    ├──requires──> [Pre-Prod 基础设施]
-    ├──requires──> [manage-containers.sh preprod 参数化]
-    └──requires──> [env-noda-apps-preprod.env 模板]
+[基础设施迁移]
+    ├──requires──> [r4s 环境准备]
+    ├──requires──> [PostgreSQL 数据迁移]
+    ├──requires──> [Keycloak 配置同步]
+    └──requires──> [Nginx + Cloudflare Tunnel 迁移]
 
-[Build Once + Promote Pipeline]
-    ├──requires──> [Pre-Prod 蓝绿部署]
-    └──requires──> [Jenkins Promote Pipeline 或参数化 DEPLOY_TARGET]
+[应用迁移]
+    ├──requires──> [基础设施迁移]
+    ├──requires──> [Jenkins SSH 远程部署改造]
+    ├──requires──> [蓝绿部署脚本适配]
+    └──requires──> [健康检查机制验证]
 
-[Hotfix 紧急通道]
-    ├──requires──> [现有 prod 蓝绿部署]（已有）
-    └──conflicts──> [Pre-Prod 必须先验证规则]（特殊情况豁免）
-
-[Git Tag 版本追踪]
-    └──enhances──> [Promote Pipeline]（tag 在 promote 成功后打）
-
-[Promote 审批门禁]
-    ├──requires──> [Promote Pipeline]
-    └──enhances──> [安全性]
-
-[Smoke Test 门禁]
-    ├──requires──> [Pre-Prod 蓝绿部署]
-    └──enhances──> [Promote Pipeline]（promote 前必须通过）
-
-[DB Migration Pre-Check]
-    ├──requires──> [noda_preprod 数据库]
-    └──enhances──> [Pre-Prod 部署流程]（部署阶段增加 migration step）
+[验证与优化]
+    ├──requires──> [应用迁移]
+    ├──requires──> [性能基准测试]
+    └──enhances──> [监控系统部署]
 ```
 
 ### Dependency Notes
 
-- **Pre-Prod 蓝绿部署 requires Pre-Prod 基础设施：** 数据库、Keycloak realm、路由必须先就位，否则容器启动后无法连接后端服务
-- **Build Once + Promote requires Pre-Prod 蓝绿部署：** 没有可部署的 pre-prod 环境就无法验证，promote 就没有意义
-- **Hotfix 紧急通道 conflicts Pre-Prod 规则：** hotfix 本质上豁免了 "必须先在 pre-prod 验证" 的规则。需要明确定义什么情况可以触发（仅 P0 服务中断/数据安全风险）
-- **Git Tag 版本追踪 enhances Promote：** tag 不是 promote 的前置条件，但在 promote 成功后打 tag 是最佳时机（确认代码已经安全上线）
-- **Smoke Test 门禁 enhances Promote Pipeline：** smoke test 不是 v1 的硬性要求，但实现后显著提高 promote 的信心
+- **基础设施迁移 requires r4s 环境准备：** Docker 和 SSH 必须先就位，否则无法执行部署命令
+- **应用迁移 requires 基础设施迁移：** 应用容器依赖数据库、认证等基础设施服务
+- **Jenkins SSH 远程部署改造 requires r4s 环境准备：** 需要先验证 SSH 连接可用
+- **验证与优化 enhances 所有功能：** 监控系统不是前置条件，但能提升整体可靠性
+
+## Table Stakes vs Differentiators
+
+### Table Stakes（必须实现的基础功能）
+
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| **SSH 远程执行架构** | 没有远程执行能力，迁移无法实现 | MEDIUM | Jenkins 通过 SSH 在 r4s 执行 docker compose，保持现有脚本逻辑 |
+| **基础设施整体迁移** | 数据库和认证服务必须迁移，否则应用无法运行 | HIGH | PostgreSQL + Keycloak + Nginx + Cloudflare Tunnel 全部迁移 |
+| **应用蓝绿部署迁移** | 生产环境需要零停机部署 | MEDIUM | findclass-ssr prod 和 pre-prod 迁移到 r4s，复用现有蓝绿机制 |
+| **备份策略完全迁移** | 数据库永不丢失是核心价值 | LOW | pg_dump + B2 上传完全在 r4s 执行，Mac 仅触发 |
+| **内存优化配置** | r4s 仅 3.77GB RAM，必须优化 | LOW | 所有服务设置 memory limits + compact logging + tmpfs |
+| **健康检查机制** | 验证服务正常运行 | LOW | 复用现有 health check，增加 r4s 网络连通性检查 |
+| **回滚机制** | 出错时能快速恢复 | LOW | 保持现有 rollback 逻辑，增加 SSH 失败回滚 |
+
+### Differentiators（提升价值的增强功能）
+
+| Feature | Value Proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| **监控集成** | 实时掌握 r4s 资源使用情况 | MEDIUM | Prometheus agent 收集容器 metrics，Grafana 可视化 |
+| **自动化健康检查** | 预防性发现潜在问题 | LOW | 定期验证服务连通性，内存使用预警 |
+| **镜像缓存策略** | 减少镜像传输时间 | LOW | r4s 本地缓存常用镜像，加速部署 |
+| **备份验证** | 确保备份文件可用 | LOW | 自动下载并验证备份文件完整性 |
+
+### Anti-Features（应该避免的功能）
+
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|-----------------|-------------|
+| **完全独立的基础设施** | "迁移应该完全隔离" | r4s 资源有限，独立部署会导致内存不足且复杂度倍增。共享架构更实际 | 共享基础设施，通过容器隔离实现多环境 |
+| **自动触发迁移** | "一键完成所有迁移" | 多阶段迁移需要验证每个步骤，自动执行会增加风险 | 分阶段手动执行，每步验证后继续 |
+| **实时数据同步** | "prod 数据实时同步到 r4s" | 增加网络负担和复杂性，且可能影响生产性能 | 定期手动备份 + 按需恢复 |
+| **Kubernetes 迁移** | "更现代的容器编排" | r4s 资源有限，K8s 开销大且不必要。Docker Compose 已足够 | 继续使用 Docker Compose，仅优化配置 |
+| **多节点集群** | "高可用性要求" | 单服务器架构，增加节点超出当前需求 | 单节点 + 备份策略实现数据安全 |
 
 ## MVP Definition
 
 ### Launch With (v1)
 
-最小可行 pre-prod 环境 — 能够做到 "先验证再上线"。
+最小可行迁移方案 — 能够实现完整服务栈迁移。
 
-- [ ] **Pre-Prod 基础设施** — noda_preprod 数据库 + noda-preprod Keycloak realm + Nginx 路由 + Cloudflare DNS。没有这些 pre-prod 无法运行
-- [ ] **Pre-Prod 蓝绿部署** — manage-containers.sh 支持 preprod 环境参数，env 模板和 upstream 配置独立。复用现有蓝绿框架
-- [ ] **Pre-Prod Jenkins Pipeline** — 独立 Jenkinsfile（或参数化），构建镜像并部署到 pre-prod。与现有 prod Pipeline 并行
-- [ ] **Promote to Prod 流程** — Jenkins Pipeline 读取 pre-prod 当前镜像，用相同镜像部署到 prod 蓝绿。build once, promote anywhere
-- [ ] **Hotfix 紧急通道** — `SKIP_PREPROD=true` 参数直接走 prod 部署。需要有明确的 P0 定义文档
+- [ ] **r4s 环境准备** -- SSH 连接 + Docker 配置 + Swap 文件。没有这些后续无法进行
+- [ ] **基础设施迁移** -- PostgreSQL + Keycloak + Nginx + Cloudflare Tunnel 迁移到 r4s
+- [ ] **应用迁移** -- findclass-ssr prod 和 pre-prod 蓝绿部署迁移到 r4s
+- [ ] **Jenkins SSH 远程部署** - Pipeline 改造为通过 SSH 在 r4s 执行命令
+- [ ] **备份策略迁移** -- pg_dump + B2 上传完全在 r4s 执行
 
 ### Add After Validation (v1.x)
 
-核心流程跑通后，增加提升信心和效率的功能。
+核心迁移完成后，增加监控和自动化功能。
 
-- [ ] **Git Tag 版本追踪** — pre-prod 部署后自动标记，promote 成功后打 release tag。触发条件：v1 流程稳定运行 2 周
-- [ ] **Promote 审批门禁** — Jenkins `input` 步骤要求人工确认。触发条件：出现一次未经确认的 promote 导致问题
-- [ ] **Smoke Test 自动化** — 超越 HTTP 健康检查，验证登录、核心 API。触发条件：手动验证流程成为瓶颈
-- [ ] **DB Migration Pre-Check** — pre-prod 部署时先跑 migration。触发条件：首次遇到 migration 在 prod 失败的情况
+- [ ] **监控集成** - Prometheus + Grafana 监控 r4s 资源使用
+- [ ] **自动化健康检查** - 定期验证服务连通性和内存状态
+- [ ] **镜像缓存策略** - r4s 本地缓存常用镜像
+- [ ] **备份验证** - 自动验证备份文件完整性
 
 ### Future Consideration (v2+)
 
-需要产品方向明确后才值得投入的功能。
+需要更多资源投入的功能。
 
-- [ ] **Pre-Prod 数据定期同步** — 需要数据脱敏策略，涉及隐私合规问题。推迟原因：当前空库 + 手动测试数据够用
-- [ ] **E2E 测试套件** — Playwright/Cypress 级别的端到端测试。推迟原因：团队只有 1-2 人，维护成本高于收益
-- [ ] **Slack/通知集成** — 部署状态推送到团队通讯工具。推迟原因：Jenkins UI 查看状态已够用
-
-## Feature Prioritization Matrix
-
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| Pre-Prod 基础设施（DB + Realm + DNS） | HIGH | LOW | P1 |
-| Pre-Prod 蓝绿部署 | HIGH | MEDIUM | P1 |
-| Pre-Prod Jenkins Pipeline | HIGH | MEDIUM | P1 |
-| Promote to Prod 流程 | HIGH | MEDIUM | P1 |
-| Hotfix 紧急通道 | HIGH | LOW | P1 |
-| Promote 审批门禁 | MEDIUM | LOW | P2 |
-| Git Tag 版本追踪 | MEDIUM | LOW | P2 |
-| Smoke Test 门禁 | MEDIUM | MEDIUM | P2 |
-| DB Migration Pre-Check | MEDIUM | MEDIUM | P3 |
-| Pre-Prod 数据同步 | LOW | HIGH | P3 |
-| E2E 测试套件 | LOW | HIGH | P3 |
-
-**Priority key:**
-- P1: v1 必须有 — pre-prod 环境的核心价值
-- P2: v1.x 加入 — 提升安全性和信心
-- P3: v2+ 考虑 — 需要更多场景验证投入产出比
+- [ ] **自动扩容** - 根据负载动态调整容器资源
+- [ ] **多节点备份** - 备份文件同步到多个位置
+- [ ] **性能基准测试** - 量化迁移前后的性能对比
 
 ## 部署流程对比
 
-### 当前流程（无 Pre-Prod）
+### 当前流程（Mac 部署）
 
 ```
-main push → Jenkins Build Now → Build → Test → Deploy Prod → Health → Switch → Verify → CDN Purge → Cleanup
+Jenkins 触发 → 本地 docker compose 执行 → 部署完成
 ```
 
-问题：没有验证缓冲区，构建直接上线。
-
-### 目标流程（有 Pre-Prod）
+### 目标流程（r4s 部署）
 
 ```
-# 正常流程
-main push → Jenkins Pre-Prod Build Now
-  → Build (一次) → Test → Deploy Pre-Prod → Health → Switch → Verify
-  → 团队在 pre.class.noda.co.nz 手动验证
-  → Jenkins Promote Build Now
-  → (读取同一镜像) → Deploy Prod → Health → Switch → Verify → CDN Purge → Cleanup
-
-# Hotfix 流程 (P0 紧急)
-hotfix commit → Jenkins Prod Build Now (SKIP_PREPROD=true)
-  → Build → Deploy Prod → Health → Switch → Verify → CDN Purge → Cleanup
-  → 事后补 Pre-Prod 验证
+Jenkins 触发 (Mac) → SSH 连接 r4s → 远程 docker compose 执行 → 部署完成
 ```
 
-### Promote 关键实现细节
-
-**镜像传递机制：** pre-prod 部署时镜像 tag 为 `noda-apps:{GIT_SHA}`。Promote Pipeline 读取 pre-prod 容器的镜像 tag（通过 `docker inspect` 或状态文件），用相同 tag 部署到 prod。
-
-**环境差异通过运行时变量隔离：** 同一镜像在不同环境只需替换：
-| 变量 | Pre-Prod | Prod |
-|------|----------|------|
-| DATABASE_URL | ...noda_preprod | ...noda_prod |
-| KEYCLOAK_URL | pre.auth.noda.co.nz | auth.noda.co.nz |
-| KEYCLOAK_REALM | noda-preprod | noda |
-| KEYCLOAK_CLIENT_ID | noda-frontend-preprod | noda-frontend |
-
-**注意：** NEXT_PUBLIC_* 变量是构建时注入的。Pre-prod 和 prod 的前端代码完全相同（同镜像），认证 URL 的差异通过运行时 Keycloak init 配置处理，或需要前端支持运行时配置注入。
-
-## Verification Criteria（Pre-Prod 验证标准）
-
-### 必须验证（Table Stakes）
-
-| 检查项 | 方法 | 通过标准 |
-|--------|------|----------|
-| 容器健康 | `docker inspect` healthcheck | `healthy` |
-| HTTP 可达性 | `curl pre.class.noda.co.nz` | HTTP 200 |
-| API 健康检查 | `curl pre.class.noda.co.nz/api/health` | HTTP 200 + JSON |
-| 数据库连接 | API health 响应包含 DB 状态 | 无连接错误 |
-| Keycloak 认证 | 浏览器手动登录测试 | 能完成 OAuth 登录流程 |
-| 静态资源 | 浏览器检查 Network 面板 | CSS/JS/图片全部加载 |
-
-### 建议验证（Differentiators）
-
-| 检查项 | 方法 | 通过标准 |
-|--------|------|----------|
-| 核心用户流程 | 手动走一遍关键路径 | 功能正常 |
-| Nginx 路由 | curl 各 pre-prod 域名 | 正确路由到对应服务 |
-| SSL/TLS | 浏览器访问 | 证书有效，无混合内容 |
-
-### 不需要验证（Anti-Pattern）
-
-| 检查项 | Why Skip |
-|--------|----------|
-| 压力测试 | Pre-prod 资源配置与 prod 不同，压测结果无参考价值 |
-| 全量 E2E 回归 | 维护成本高于收益，手动验证关键路径足够 |
-| 跨浏览器兼容性 | Pre-prod 目的是验证部署流程，不是 QA 环境 |
+**关键差异：**
+- 执行环境从本地改为远程
+- 需要维护 SSH 连接稳定性
+- 网络延迟影响部署时间
+- 错误处理需要包含 SSH 连接失败场景
 
 ## 与现有架构的集成点
 
-| 现有组件 | Pre-Prod 集成方式 | 变更范围 |
-|---------|-------------------|----------|
-| `manage-containers.sh` | 环境变量参数化支持 preprod：SERVICE_NAME 前缀、ACTIVE_ENV_FILE、UPSTREAM_CONF、ENV_TEMPLATE | MEDIUM — 新增 preprod 分支逻辑 |
-| `pipeline-stages.sh` | 新增 `pipeline_promote` 函数族（读取 pre-prod 镜像、部署到 prod 蓝绿） | MEDIUM — 新增函数，不修改现有函数 |
-| `blue-green-deploy.sh` | 不修改，通过环境变量适配 preprod | 无变更 |
-| `env-noda-apps.env` | 新增 `env-noda-apps-preprod.env` 模板 | 新增文件 |
-| `upstream-findclass.conf` | 新增 `upstream-findclass-preprod.conf` | 新增文件 |
-| `default.conf` | 新增 pre-prod server blocks（pre.class.noda.co.nz 等） | MEDIUM — 新增 4 个 server blocks |
-| `docker-compose.app.yml` | 不修改。蓝绿容器通过 `docker run` 管理，不走 compose | 无变更 |
-| `Jenkinsfile.noda-apps` | 可能增加 `DEPLOY_TARGET` 参数化，或新增独立 `Jenkinsfile.noda-apps-promote` | MEDIUM — 取决于单/双 Pipeline 决策 |
-| Cloudflare Tunnel | 新增 pre-prod 域名路由 | LOW — 配置变更 |
+| 现有组件 | 迁移集成方式 | 变更范围 |
+|---------|-------------|----------|
+| `docker-compose.yml` | 使用 `docker-compose.r4s.yml` overlay | 小 - 新增 overlay 文件 |
+| `jenkins/Jenkinsfile.apps` | 添加 SSH 执行步骤 + 远程路径 | 中 - 修改 pipeline 步骤 |
+| `scripts/manage-containers.sh` | 增加 SSH 远程执行支持 | 中 - 新增 SSH 模式 |
+| `deploy/Dockerfile.noda-ops` | ARM64 优化 + 可能的依赖调整 | 小 - 优化构建 |
+| `scripts/pipeline-stages.sh` | 备份脚本适配远程执行 | 中 - 修改备份路径 |
+| `CLAUDE.md` | 更新部署流程文档 | 小 - 文档更新 |
 
 ## Sources
 
-- [Build Once, Deploy Anywhere — Reddit r/devops](https://www.reddit.com/r/devops/comments/1qqhrbs/build_once_deploy_everywhere_and_build_on_merge/) — "Build once" 核心理念：构建一次，在不同环境之间 promote 相同制品，MEDIUM confidence
-- [Docker Image Build and Promotion Pipeline — DevOpsCube](https://devopscube.com/docker-image-build-and-promotion-pipeline/) — 标准最佳实践：构建一次，镜像 promote 到 prod，HIGH confidence
-- [Build Once, Deploy Anywhere — devm.io](https://devm.io/javascript/build-once-deploy-anywhere-applying-cicd-best-practices-to-frontend-apps) — 前端应用的 build once 策略，环境差异通过运行时配置注入，MEDIUM confidence
-- [Smoke Testing Best Practices — Harness](https://www.harness.io/harness-devops-academy/integrating-smoke-testing-into-your-ci-cd-pipeline-what-devops-needs-to-know) — Smoke test 应在 5 分钟内完成，promote 前自动运行，MEDIUM confidence
-- [Securing Staging Environments — Doppler](https://www.doppler.com/blog/securing-staging-environments-secrets-management) — Staging 需要与 prod 同等级别的安全配置（TLS、密钥管理），MEDIUM confidence
-- [Deployment Gatekeepers — Reddit r/ExperiencedDevs](https://www.reddit.com/r/ExperiencedDevs/comments/1hfn3aa/deployment_gatekeepers/) — 小型团队的实际 gatekeeper 经验分享，MEDIUM confidence
-- 项目代码分析：`docker/docker-compose.app.yml`、`jenkins/Jenkinsfile.noda-apps`、`scripts/manage-containers.sh`、`scripts/blue-green-deploy.sh`、`scripts/pipeline-stages.sh`、`config/nginx/conf.d/default.conf` — 现有架构深度分析，HIGH confidence
+### 主要来源（HIGH 置信度）
+
+- 项目源码分析：`docker/docker-compose.yml`、`docker/docker-compose.r4s.yml`、`docker/docker-compose.apps-prod.yml`、`jenkins/Jenkinsfile.apps`、`scripts/r4s/setup-ssh.sh`、`deploy/Dockerfile.noda-ops`
+- 项目架构文档：`CLAUDE.md`（Docker Compose 架构、Jenkins Pipeline 流程）
+- ARM64 Docker 优化指南：[Containerization Docker Best Practices 2026](https://github.com/github/awesome-copilot/blob/main/instructions/containerization-docker-best-practices.instructions.md)
+- Docker Compose SSH 部署：[Docker Compose Production Deployment Best Practices](https://mykolaaleksandrov.dev/posts/2026/02/docker-production-best-practices/)
+- PostgreSQL 迁移实践：[PostgreSQL Database Migration Guide](https://devopsinsight.medium.com/step-by-step-guide-migrate-a-self-hosted-postgresql-database-to-a-managed-service-8184784004f2)
+
+### 次要来源（MEDIUM 置信度）
+
+- Jenkins SSH Pipeline 教程：社区实践案例
+- 低内存设备优化：ARM64 性能调优指南
+- Cloudflare Tunnel 配置：官方文档参考
 
 ---
-*Feature research for: Pre-Prod 验证环境*
-*Researched: 2026-05-08*
+*研究完成日期: 2026-05-17*
+*路线图就绪: 是*

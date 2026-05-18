@@ -2,16 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.12
 milestone_name: 迁移到 iStoreOS (r4s)
-status: Not started
-stopped_at: Phase 57 context gathered
-last_updated: "2026-05-17T05:02:37.030Z"
-last_activity: 2026-05-17 — Milestone v1.12 规划完成
+status: executing
+last_updated: "2026-05-18T04:06:56.984Z"
 progress:
-  total_phases: 6
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 5
+  completed_phases: 2
+  total_plans: 10
+  completed_plans: 6
+  percent: 40
 ---
 
 # Project State
@@ -20,84 +18,156 @@ progress:
 
 See: .planning/PROJECT.md (updated 2026-05-17)
 
-**Core value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
+**Core value:** 数据库永不丢失。迁移不改变核心功能，只改变运行位置。
 
-**Current focus:** Phase 57 — 环境准备（r4s Docker 网络与资源限制配置）
+**Current focus:** Phase 60 — CI/CD 改造
 
 ## Current Position
 
-Phase: Phase 57 - 环境准备
-Plan: TBD
-Status: Not started
-Last activity: 2026-05-17 — Milestone v1.12 规划完成
+Phase: 59 complete
+Plan: All 3 plans done
+Status: Ready to execute
+Progress: 2/5 phases (40%)
+
+### Phase 58 目标
+
+所有基础设施容器（PostgreSQL、Keycloak、Nginx、noda-ops）在 r4s 上正常运行，数据完整迁移。
+
+### 完成定义
+
+Phase 58 完成当：
+
+1. PostgreSQL 数据从 Mac 完整迁移到 r4s，无数据丢失
+2. Keycloak 在 r4s 上启动，所有配置与 Mac 环境一致
+3. Nginx 在 r4s 上正常监听 80/443 端口
+4. noda-ops 容器在 r4s 上运行，Cloudflare Tunnel 能连接
+5. 所有基础设施容器加入 noda-network 外部网络
 
 ## Accumulated Context
 
-### Decisions
+### 关键决策记录
 
-- [v1.12]: r4s 作为生产服务器（Mac M4 和 r4s 都是 ARM64，Docker 镜像直接复用）
-- [v1.12]: Jenkins 保留在 Mac（r4s 内存不足，通过 SSH 远程部署）
-- [v1.12]: 共享基础设施（prod + pre-prod 共享 PostgreSQL/Keycloak，节省内存）
-- [v1.12]: 蓝绿部署移除（v1.11 已完成，简化部署流程）
-- [v1.12]: 回滚方案保留（Mac 上的所有脚本和配置保留，可快速切回）
-- [v1.11]: 共享基础设施、隔离应用层（PostgreSQL/Keycloak/Nginx 单实例，数据库/realm 级别隔离）
-- [v1.11]: Build Once / Promote Anywhere（Jenkins 构建一次镜像，pre-prod 验证后 promote 同一镜像到 prod）
-- [v1.11]: Doppler pre config 必须在 Pipeline 之前创建（PIPE-01 需要 DOPPLER_CONFIG=pre）
-- [v1.11]: Docker 网络别名隔离必须在 pre-prod 容器启动前完成（SEC-03）
-- [54-01]: 使用 _preprod_ 前缀命名所有 upstream 变量，防止蓝绿部署时与 prod 变量冲突
-- [54-01]: 共享 Keycloak 实例（pre-prod Auth App 使用 pre-prod upstream，Keycloak 路由使用共享 upstream）
-- [54-01]: Forwarded protocol 映射确保 pre-prod 域名的 X-Forwarded-Proto/Port 头正确（HTTPS/443）
-- [54-02]: Pre-prod 路由基础设施验证完成，Cloudflare Tunnel + Nginx 配置就绪
-- [55-01]: 使用 UPSTREAM_VARS_PREFIX 方案实现 manage-containers.sh 参数化，支持 prod 和 pre-prod 环境
-- [55-02]: 创建 pre-prod 环境变量模板、容器命名规范和状态文件管理
-- [55-03]: 更新 image-cleanup.sh 支持多环境，实现 Docker 网络别名隔离和安全验证
-- [55-01]: manage-containers.sh 支持 NODA_ENVIRONMENT 参数化（UPSTREAM_VARS_PREFIX 机制）
-- [55-02]: 创建 pre-prod 环境变量模板、状态文件管理和部署脚本
-- [55-03]: 镜像清理脚本参数化，网络别名隔离验证工具
-- [56-01]: 创建 Jenkinsfile.noda-apps-preprod，实现 pre-prod 完整部署流程
-- [56-02]: 创建 Jenkinsfile.noda-apps-promote，实现 Build Once / Promote Anywhere 流程
-- [56-03]: 实现 upstream 写入防护、Pipeline 并发锁和 Jenkins Job 初始化脚本
+| 决策 | 理由 | 结果 |
+|------|------|------|
+| r4s 作为目标服务器 | ARM64 架构与 Mac M4 兼容，Docker 镜像可直接复用 | ✅ 已确认 |
+| Jenkins 保留在 Mac | r4s 内存不足（3.77 GiB），Jenkins 需要独立环境 | ✅ 已确认 |
+| SSH 远程部署模式 | Jenkins 在 Mac 通过 SSH 执行 r4s 上的 docker compose 命令 | ✅ 已确认 |
+| 零停机迁移策略 | r4s 服务先启动，验证通过后切换 Cloudflare | ✅ 已确认 |
+| Phase 57 环境准备 | 独立网桥、Swap、内存限制、SSH 密钥配置 | ✅ 已完成 |
 
-### Blockers/Concerns
+### 技术约束
 
-- r4s 内存限制（3.77 GiB），需要合理分配所有容器内存限制
-- Swap 文件需要手动创建，iStoreOS 默认无 Swap
-- ~~manage-containers.sh update_upstream() 参数化方案需要在 Phase 55 实现时统一决策（UPSTREAM_VARS_PREFIX vs if/else 分支）~~ ✅ 已解决：采用 UPSTREAM_VARS_PREFIX 方案
-- Jenkins lock() 资源锁需要确认是否需要额外插件（Lockable Resources Plugin）
-- ~~Pre-prod 应用容器未部署（Phase 55 脚本已完成，等待 Phase 56 Jenkins Pipeline 自动部署）~~ ✅ v1.11 已完成
+**r4s 硬件限制**:
+
+- 内存: 3.77 GiB（需要容器内存限制）
+- 存储: 64GB SD卡（需要定期清理镜像）
+- 架构: ARM64（与 Mac M4 兼容）
+
+**网络约束**:
+
+- r4s 作为软路由，端口映射需要避免冲突
+- Cloudflare Tunnel 需要指向 r4s 公网 IP
+- Nginx 80/443 端口需要从 r4s 暴露
+
+**数据迁移约束**:
+
+- PostgreSQL 必须零数据丢失（pg_dump/pg_restore）
+- Keycloak 配置必须完整迁移（realm/客户端/用户）
+- 迁移期间服务不能中断（r4s 先启动，再切换）
+
+### 待办事项
+
+**Phase 58 待办**:
+
+- [ ] PostgreSQL 数据迁移（pg_dump/pg_restore）
+- [ ] Keycloak 配置迁移
+- [ ] Nginx 配置迁移
+- [ ] noda-ops 容器迁移
+- [ ] noda-network 外部网络创建
+
+**Phase 59 待办**:
+
+- [ ] findclass-ssr prod 容器迁移
+- [ ] findclass-ssr pre-prod 容器迁移
+- [ ] noda-admin 容器迁移
+- [ ] noda-auth 容器迁移
+
+**Phase 60 待办**:
+
+- [ ] Jenkinsfile 应用部署 Pipeline 改造
+- [ ] Docker 镜像传输流程（docker save/load）
+- [ ] Jenkinsfile 基础设施 Pipeline 改造
+- [ ] SSH 远程部署验证
+
+**Phase 61 待办**:
+
+- [ ] pg_dump 备份 cronjob 迁移
+- [ ] B2 云备份迁移
+- [ ] Doppler 密钥备份 cronjob 迁移
+- [ ] 周验证测试 cronjob 迁移
+- [ ] Mac 旧备份清理
+- [ ] Cloudflare Tunnel 迁移
+- [ ] Nginx 端口映射验证
+- [ ] pre-prod 域名路由验证
+
+**Phase 62 待办**:
+
+- [ ] 全链路验证
+- [ ] Mac 旧容器清理
+- [ ] 回滚方案验证
+
+### 已知问题
+
+无已知问题。
+
+### 阻塞问题
+
+无阻塞问题。
 
 ### Deferred Items
 
-Items acknowledged and deferred:
-
-| Category | Item | Status |
-|----------|------|--------|
-| v2 | MON-01: r4s 容器资源监控告警 | Deferred |
-| v2 | LOG-01: 集中式日志收集 | Deferred |
-| v2 | HA-01: r4s 高可用方案 | Deferred |
-| v2 | DISK-01: 1TB 机械硬盘挂载 | Deferred |
-| uat | Phase 32 (32-HUMAN-UAT.md) | partial, 2 pending |
-| uat | Phase 34 (34-HUMAN-UAT.md) | partial, 2 pending |
-| verification | Phase 32 (32-VERIFICATION.md) | human_needed |
-| verification | Phase 34 (32-VERIFICATION.md) | human_needed |
+无推迟项。
 
 ## Session Continuity
 
-Last session: 2026-05-17T05:02:37.025Z
-Stopped at: Phase 57 context gathered
-Resume file: .planning/phases/57-env-prep/57-CONTEXT.md
+**上次会话结束**: 2026-05-18
+**上次会话成果**: Phase 60 CI/CD 改造上下文收集完成（22 个决策）
+**下次会话重点**: Phase 60 CI/CD 改造规划
+**上下文恢复**: `.planning/phases/60-ci-cd/60-CONTEXT.md`
 
-### Next Steps
+**上下文提示**:
 
-1. 开始 Phase 57: 环境准备
-2. 在 r4s 上创建 Docker 独立网桥（noda-network）
-3. 创建 2GB Swap 文件
-4. 配置容器内存限制
-5. 配置 SSH 免密登录
+- r4s SSH 访问: `ssh root@192.168.1.1`（根据实际 IP 调整）
+- Docker 在 r4s 上的路径: `/mnt/mmc1-4/docker`
+- iStoreOS 版本: 24.10.6
+- Docker 版本: 27.3.1
+- Docker Compose 版本: v2.39.1
 
-### Context Handoff
+**快速恢复命令**:
 
-- **Current focus:** v1.12 迁移到 iStoreOS (r4s)
-- **Key constraint:** r4s 内存限制（3.77 GiB）
-- **Critical path:** 环境准备 → 基础设施迁移 → 应用迁移 → CI/CD 改造 → 备份网络迁移 → 切换验证
-- **Success criteria:** 所有服务在 r4s 上运行，Mac 清理干净，回滚方案就绪
+```bash
+
+# 检查 r4s Docker 状态
+
+ssh root@192.168.1.1 "docker ps -a"
+
+# 检查 r4s 网络
+
+ssh root@192.168.1.1 "docker network ls"
+
+# 检查 Mac 当前容器
+
+docker ps -a
+```
+
+**路线图阶段映射**:
+
+- Phase 58: INFRA-01~05（基础设施迁移）
+- Phase 59: APP-01~04（应用服务迁移）
+- Phase 60: CICD-01~04（CI/CD 改造）
+- Phase 61: BACKUP-01~05, NET-01~03（备份与网络迁移）
+- Phase 62: SWITCH-01~03（切换与验证）
+
+---
+*State created: 2026-05-17*
+*Last updated: 2026-05-17*

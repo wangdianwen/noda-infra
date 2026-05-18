@@ -1,22 +1,27 @@
 # Noda 基础设施项目
 
-## Current Milestone: v1.11 Pre-Prod 验证环境 + 安全上线流程
+## Current Milestone: v1.12 迁移到 iStoreOS (r4s)
 
-**Goal:** 在 prod 之前增加 pre-prod 验证环境作为上线守门员，所有代码必须先在 pre-prod 验证通过后才能 promote 到 prod。
+**Goal:** 将所有 Docker 服务从 Mac 迁移到 r4s (iStoreOS)，Jenkins 保留在 Mac 通过 SSH 远程部署，现有部署逻辑不变。
 
 **Target features:**
-- Pre-prod 基础设施（PostgreSQL noda_preprod 数据库 + Keycloak noda-preprod realm + Nginx 路由 + Cloudflare DNS）
-- Pre-prod 蓝绿部署（noda-apps 双实例，共享 noda-infra 基础设施）
-- Jenkins Pipeline 改造（pre-prod 部署 Pipeline + promote to prod 流程 + hotfix 路径）
+- r4s 环境搭建（iStoreOS Docker 配置 + 独立网桥 + Swap + 内存限制）
+- 基础设施迁移（PostgreSQL + Keycloak + Nginx + Cloudflare Tunnel → r4s）
+- 应用服务迁移（findclass-ssr prod + pre-prod 共享基础设施 → r4s）
+- Jenkinsfile 改造（本地 docker compose → SSH 远程部署到 r4s）
+- 备份策略迁移（pg_dump + B2 上传完全迁到 r4s）
 
 **Key context:**
-- noda-infra 共享（PostgreSQL/Keycloak/Nginx/Cloudflare 跑一份）
-- noda-apps 双实例（prod 和 pre-prod 各自蓝绿部署）
-- Git 策略：Trunk + Tag 推进（main → pre-prod → promote → prod）
-- 域名规划：pre.class.noda.co.nz / pre.auth.noda.co.nz / pre.noda.co.nz
-- 增量资源约 1GB 内存
+- r4s: FriendlyARM NanoPi R4S, 6核 ARM64, 3.77 GiB RAM, 64GB SD卡, iStoreOS 24.10.6
+- Mac M4 和 r4s 都是 ARM64 — Docker 镜像可直接复用，无需重新构建
+- Docker 27.3.1 + Compose v2.39.1 已就绪，当前无运行容器
+- Docker Root: /mnt/mmc1-4/docker (54.8GB 可用)
+- 无 Swap — 需要创建 Swap 文件作为 OOM 缓冲
+- 内存预算：prod + pre-prod 共享 PostgreSQL/Keycloak，需要容器内存限制
+- Mac 保留 Jenkins + 开发环境（npm dev）
+- 网络方案：Docker 独立网桥 + 端口映射
 
-**Last shipped:** v1.10 Docker 镜像瘦身优化 (2026-04-21)
+**Last shipped:** v1.11 Pre-Prod 验证环境 + 蓝绿移除 (2026-05-10)
 
 ## Shipped Milestones
 
@@ -209,4 +214,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-08 — v1.11 milestone started*
+*Last updated: 2026-05-17 — v1.12 milestone started*
