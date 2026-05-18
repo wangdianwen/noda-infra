@@ -42,14 +42,17 @@ pipeline {
     stages {
         stage('Pre-flight') {
             steps {
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-                    if [ "$SERVICE" = "keycloak" ]; then
-                        export SERVICE_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
-                    fi
-                    pipeline_infra_preflight "$SERVICE"
-                '''
+                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        if [ "$SERVICE" = "keycloak" ]; then
+                            export SERVICE_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
+                        fi
+                        export SSH_KEY_FILE
+                        pipeline_infra_preflight "$SERVICE"
+                    '''
+                }
             }
         }
 
@@ -58,11 +61,14 @@ pipeline {
                 expression { params.SERVICE == 'postgres' }
             }
             steps {
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-                    pipeline_backup_database "$SERVICE"
-                '''
+                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        pipeline_backup_database "$SERVICE"
+                    '''
+                }
             }
         }
 
@@ -83,49 +89,73 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-                    if [ "$SERVICE" = "keycloak" ]; then
-                        export SERVICE_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
-                    fi
-                    pipeline_infra_deploy "$SERVICE"
-                '''
+                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        if [ "$SERVICE" = "keycloak" ]; then
+                            export SERVICE_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
+                        fi
+                        export SSH_KEY_FILE
+                        pipeline_infra_deploy "$SERVICE"
+                    '''
+                }
             }
         }
 
         stage('Health Check') {
             steps {
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-                    pipeline_infra_health_check "$SERVICE"
-                '''
+                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        pipeline_infra_health_check "$SERVICE"
+                    '''
+                }
             }
         }
 
         stage('Verify') {
             steps {
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-                    pipeline_infra_verify "$SERVICE"
-                '''
+                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        pipeline_infra_verify "$SERVICE"
+                    '''
+                }
             }
         }
 
         stage('Cleanup') {
             steps {
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-                    pipeline_infra_cleanup "$SERVICE"
-                '''
+                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        pipeline_infra_cleanup "$SERVICE"
+                    '''
+                }
             }
         }
     }
 
     post {
+        always {
+            script {
+                withCredentials([string(credentialsId: 'r4s-ssh-key', variable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        pipeline_release_lock
+                    '''
+                }
+            }
+        }
         failure {
             script {
                 sh '''
