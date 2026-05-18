@@ -1192,13 +1192,25 @@ pipeline_deploy_noda_ops()
 # 返回: 0=成功，1=失败
 pipeline_deploy_postgres()
 {
-    log_info "PostgreSQL 重启部署（docker compose restart）"
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # r4s 远程部署模式
+        log_info "PostgreSQL 重启部署（r4s 远程 docker compose restart）"
+        
+        remote_compose "restart postgres" \
+            "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml"
+        
+        log_success "PostgreSQL 重启完成（r4s）"
+    else
+        # 本地模式：保持现有逻辑
+        log_info "PostgreSQL 重启部署（docker compose restart）"
 
-    docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
-        restart postgres
+        docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+            restart postgres
 
-    log_success "PostgreSQL 重启完成"
+        log_success "PostgreSQL 重启完成"
+    fi
 }
+
 
 # ============================================
 # 函数: pipeline_infra_health_check
