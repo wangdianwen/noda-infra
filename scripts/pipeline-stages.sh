@@ -13,6 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$PROJECT_ROOT/scripts/lib/log.sh"
+source "$PROJECT_ROOT/scripts/lib/remote-ops.sh"
 source "$PROJECT_ROOT/scripts/lib/health.sh"
 source "$PROJECT_ROOT/scripts/lib/secrets.sh"
 source "$PROJECT_ROOT/scripts/lib/deploy-check.sh"
@@ -32,6 +33,10 @@ E2E_INTERVAL="${E2E_INTERVAL:-2}"
 BACKUP_HOST_DIR="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}"
 BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-12}"
 IMAGE_RETENTION_DAYS="${IMAGE_RETENTION_DAYS:-7}"
+
+# 部署目标配置（per D-04）
+DEPLOY_TARGET="${DEPLOY_TARGET:-local}"  # local 或 r4s
+R4S_HOST="${R4S_HOST:-root@192.168.1.1}"  # r4s 主机
 
 # 固定容器名 / 网络 / Nginx 容器
 NETWORK_NAME="noda-network"
@@ -157,6 +162,21 @@ pipeline_preflight()
 {
     local apps_dir="${1:-$WORKSPACE/noda-apps}"
     log_info "前置检查..."
+
+    # 远程部署模式初始化（per D-04）
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        # SSH 密钥由 Jenkins withCredentials 注入（per D-05）
+        SSH_KEY_FILE="${SSH_KEY_FILE:-$HOME/.ssh/id_rsa_noda_deploy}"
+        setup_remote "$SSH_KEY_FILE" "$R4S_HOST"
+        log_info "远程部署模式: $R4S_HOST"
+
+        # 获取部署锁（per D-19/D-20）
+        if ! acquire_deploy_lock 3600; then
+            log_error "无法获取部署锁，可能有其他部署进行中"
+            return 1
+        fi
+        log_info "部署锁获取成功"
+    fi
 
     # 检查 Docker daemon
     docker info >/dev/null 2>&1 || {
@@ -1118,6 +1138,19 @@ pipeline_health_check_preprod()
     http_health_check "$PREPROD_CONTAINER" "3000" "/api/health" "$HEALTH_CHECK_MAX_RETRIES" "$HEALTH_CHECK_INTERVAL"
 
     log_success "Pre-prod 健康检查通过"
+}
+
+# ============================================
+# 函数: pipeline_release_lock
+# ============================================
+# 释放部署锁（供 Jenkins post 块调用）
+# 返回: 0=释放成功
+pipeline_release_lock()
+{
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        release_deploy_lock
+        log_info "部署锁已释放"
+    fi
 }
 
 # ============================================
