@@ -152,7 +152,7 @@ Plans:
 - [ ] 62-01-PLAN.md — 全链路 E2E 验证（prod + pre-prod 域名 + OAuth 登录 + 备份系统）
 
 **Wave 2** *(blocked on Wave 1)*
-- [ ] 62-02-PLAN.md — 回滚方案验证（Mac 环境检查 + Tunnel/DB 回滚测试 + Runbook 编写 + Dry Run）
+- [x] 62-02-PLAN.md — 回滚方案验证（Mac 环境检查 + Tunnel/DB 回滚测试 + Runbook 编写 + Dry Run）
 
 **Wave 3** *(blocked on Wave 2)*
 - [ ] 62-03-PLAN.md — Mac 旧容器清理（盘点 + 清理决策 + 执行 + 清理后验证）
@@ -165,7 +165,7 @@ Plans:
 | 59. 应用服务迁移 | 3/3 | Complete    | 2026-05-18 |
 | 60. CI/CD 改造 | 4/4 | Complete    | 2026-05-19 |
 | 61. 备份与网络迁移 | 4/4 | Complete    | 2026-05-19 |
-| 62. 切换与验证 | 0/3 | Planned     | - |
+| 62. 切换与验证 | 1/3 | In Progress|  |
 
 ## Dependencies
 
