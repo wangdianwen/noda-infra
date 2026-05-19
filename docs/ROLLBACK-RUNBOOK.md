@@ -245,12 +245,18 @@ curl -I https://auth.noda.co.nz/realms/noda/.well-known/openid-configuration
 
 回滚完成后，逐项验证：
 
-### 外部访问
+### 外部访问（公网）
 
 - [ ] `https://class.noda.co.nz` 可访问
 - [ ] `https://auth.noda.co.nz` 可访问
 - [ ] `https://www.noda.co.nz` 可访问
-- [ ] `https://admin.noda.co.nz` 可访问
+
+### 内网访问（管理后台）
+
+> **安全设计**: admin.noda.co.nz 仅通过内网访问，不暴露到公网
+
+- [ ] 内网访问管理后台：`http://admin.noda.test:8443`（通过 /etc/hosts 映射）
+- [ ] 或在 r4s 内网直接访问容器端口
 
 ### 功能验证
 
