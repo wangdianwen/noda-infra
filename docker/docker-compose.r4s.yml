@@ -80,6 +80,8 @@ services:
   # ----------------------------------------
   noda-ops:
     <<: *r4s-logging
+    volumes:
+      - /opt/noda/noda-infra/docker/volumes/backup/config.sh:/app/backup/lib/config.sh:ro
     deploy:
       resources:
         limits:
