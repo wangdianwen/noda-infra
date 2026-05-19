@@ -82,6 +82,7 @@ services:
     <<: *r4s-logging
     volumes:
       - /opt/noda/noda-infra/docker/volumes/backup/config.sh:/app/backup/lib/config.sh:ro
+      - /opt/noda/noda-infra/docker/volumes/backup/test-verify.sh:/app/backup/lib/test-verify.sh:ro
     deploy:
       resources:
         limits:
