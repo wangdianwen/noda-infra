@@ -37,7 +37,7 @@ create_test_database()
     local original_db=$1
     local test_db="${TEST_DB_PREFIX}${original_db}"
 
-    log_info "创建测试数据库: $test_db"
+    log_info "创建测试数据库: $test_db" >&2
 
     # 获取 PostgreSQL 连接参数
     local pg_host
@@ -48,16 +48,16 @@ create_test_database()
     pg_user=$(get_postgres_user)
 
     # 检查数据库是否已存在
-    if psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
+    if PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
         -d postgres -t -c "SELECT 1 FROM pg_database WHERE datname='$test_db'" 2>/dev/null | grep -q 1; then
-        log_warn "测试数据库已存在，将删除重建: $test_db"
+        log_warn "测试数据库已存在，将删除重建: $test_db" >&2
         drop_test_database "$test_db"
     fi
 
     # 创建测试数据库
-    if psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
+    if PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
         -d postgres -c "CREATE DATABASE $test_db" >/dev/null 2>&1; then
-        log_success "测试数据库创建成功: $test_db"
+        log_success "测试数据库创建成功: $test_db" >&2
         echo "$test_db"
     else
         log_error "测试数据库创建失败: $test_db"
@@ -88,7 +88,7 @@ drop_test_database()
 
     log_info "删除测试数据库: $test_db"
 
-    if psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
+    if PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
         -d postgres -c "DROP DATABASE IF EXISTS $test_db" >/dev/null 2>&1; then
         log_success "测试数据库已删除: $test_db"
     else
@@ -112,7 +112,7 @@ download_latest_backup()
     local max_retries=$TEST_MAX_RETRIES
     local attempt=1
 
-    log_info "下载最新备份: $db_name"
+    log_info "下载最新备份: $db_name" >&2
 
     # 创建临时目录
     mkdir -p "$TEST_BACKUP_DIR"
@@ -130,11 +130,11 @@ download_latest_backup()
     local backup_path
     backup_path=$(echo "$backups" | awk '{print $2}')
 
-    log_info "找到备份文件: $backup_path"
+    log_info "找到备份文件: $backup_path" >&2
 
     # 下载（带重试）
     while [[ $attempt -le $max_retries ]]; do
-        log_info "下载尝试 $attempt/$max_retries"
+        log_info "下载尝试 $attempt/$max_retries" >&2
 
         local backup_file
         backup_file=$(download_backup "$backup_path" "$TEST_BACKUP_DIR" 2>/dev/null)
@@ -142,7 +142,7 @@ download_latest_backup()
         if [[ -f "$backup_file" ]]; then
             local file_size
             file_size=$(du -h "$backup_file" | cut -f1)
-            log_success "下载成功: $backup_file ($file_size)"
+            log_success "下载成功: $backup_file ($file_size)" >&2
             echo "$backup_file"
             return 0
         fi
@@ -150,7 +150,7 @@ download_latest_backup()
         ((attempt++))
         if [[ $attempt -le $max_retries ]]; then
             local wait_time=$((2 ** (attempt - 1)))
-            log_info "等待 ${wait_time}s 后重试..."
+            log_info "等待 ${wait_time}s 后重试..." >&2
             sleep $wait_time
         fi
     done
@@ -190,7 +190,7 @@ restore_to_test_database()
 
     if [[ "$file_ext" == "dump" ]]; then
         # 使用 pg_restore 恢复 custom format
-        if pg_restore -h "$pg_host" -p "$pg_port" -U "$pg_user" \
+        if PGPASSWORD="$POSTGRES_PASSWORD" pg_restore -h "$pg_host" -p "$pg_port" -U "$pg_user" \
             -d "$test_db" -j 4 "$backup_file" >/dev/null 2>&1; then
             log_success "数据恢复成功（pg_restore）"
         else
@@ -199,7 +199,7 @@ restore_to_test_database()
         fi
     elif [[ "$file_ext" == "sql" ]]; then
         # 使用 psql 恢复 plain SQL
-        if psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
+        if PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
             -d "$test_db" -f "$backup_file" >/dev/null 2>&1; then
             log_success "数据恢复成功（psql）"
         else
@@ -236,7 +236,7 @@ verify_table_count()
 
     # 查询表数量
     local count
-    count=$(psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
+    count=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
         -d "$test_db" -t -c "
       SELECT COUNT(*)
       FROM information_schema.tables
@@ -272,7 +272,7 @@ verify_data_exists()
 
     # 获取第一个有数据的表
     local table
-    table=$(psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
+    table=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
         -d "$test_db" -t -c "
       SELECT table_name
       FROM information_schema.tables
@@ -288,7 +288,7 @@ verify_data_exists()
 
     # 检查记录数
     local count
-    count=$(psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
+    count=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
         -d "$test_db" -t -c "
       SELECT COUNT(*) FROM $table;
     " 2>/dev/null | xargs || echo "0")

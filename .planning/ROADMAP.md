@@ -11,7 +11,7 @@
 - [x] **Phase 58: 基础设施迁移** - PostgreSQL、Keycloak、Nginx、noda-ops 容器迁移到 r4s (completed 2026-05-17)
 - [x] **Phase 59: 应用服务迁移** - findclass-ssr、noda-admin、noda-auth 容器迁移到 r4s (completed 2026-05-18)
 - [ ] **Phase 60: CI/CD 改造** - Jenkins Pipeline 改造为 SSH 远程部署
-- [ ] **Phase 61: 备份与网络迁移** - cronjob 和 Cloudflare Tunnel 迁移到 r4s
+- [x] **Phase 61: 备份与网络迁移** - cronjob 和 Cloudflare Tunnel 迁移到 r4s (completed 2026-05-19)
 - [ ] **Phase 62: 切换与验证** - 全链路验证、清理和回滚方案
 
 ## Phase Details
@@ -120,7 +120,17 @@ Plans:
 7. Nginx 端口映射（80/443）在 r4s 上正常工作，不与软路由端口冲突
 8. pre-prod 域名路由在 r4s Nginx 上正常工作
 
-**Plans**: TBD
+**Plans**: 4 plans
+
+**Wave 1** (并行)
+- [x] 61-01-PLAN.md — 验证 r4s 备份 cronjob（pg_dump + B2 + Doppler + 周验证）
+- [x] 61-02-PLAN.md — 验证 Cloudflare Tunnel + Nginx 端口映射 + pre-prod 路由
+
+**Wave 2** *(blocked on Wave 1)*
+- [x] 61-03-PLAN.md — 停止 Mac 旧 noda-ops 容器，确认 r4s 独立运行
+
+**Gap Closure**
+- [x] 61-04-PLAN.md — 修复验证缺口（config.sh、DOPPLER_TOKEN、pre-prod hosts、周验证测试）
 
 ### Phase 62: 切换与验证
 
@@ -136,7 +146,16 @@ Plans:
 2. Mac 上旧容器已停止并清理，不再占用端口和资源
 3. 回滚方案已验证：如果 r4s 出问题，可以快速切回 Mac 运行
 
-**Plans**: TBD
+**Plans**: 3 plans
+
+**Wave 1**
+- [ ] 62-01-PLAN.md — 全链路 E2E 验证（prod + pre-prod 域名 + OAuth 登录 + 备份系统）
+
+**Wave 2** *(blocked on Wave 1)*
+- [x] 62-02-PLAN.md — 回滚方案验证（Mac 环境检查 + Tunnel/DB 回滚测试 + Runbook 编写 + Dry Run）
+
+**Wave 3** *(blocked on Wave 2)*
+- [ ] 62-03-PLAN.md — Mac 旧容器清理（盘点 + 清理决策 + 执行 + 清理后验证）
 
 ## Progress
 
@@ -144,9 +163,9 @@ Plans:
 |-------|----------------|--------|-----------|
 | 58. 基础设施迁移 | 3/3 | Complete    | 2026-05-17 |
 | 59. 应用服务迁移 | 3/3 | Complete    | 2026-05-18 |
-| 60. CI/CD 改造 | 4/4 | Planned     | - |
-| 61. 备份与网络迁移 | 0/8 | Not started | - |
-| 62. 切换与验证 | 0/3 | Not started | - |
+| 60. CI/CD 改造 | 4/4 | Complete    | 2026-05-19 |
+| 61. 备份与网络迁移 | 4/4 | Complete    | 2026-05-19 |
+| 62. 切换与验证 | 1/3 | In Progress|  |
 
 ## Dependencies
 
@@ -187,4 +206,4 @@ Phase 62 (切换与验证)
 
 ---
 *Roadmap created: 2026-05-17*
-*Last updated: 2026-05-18*
+*Last updated: 2026-05-19*

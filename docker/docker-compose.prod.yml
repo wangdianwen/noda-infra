@@ -148,6 +148,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - /root/.doppler
       - /home/nodaops:uid=100,gid=101,mode=0700
       - /var/spool/cron/cronstamps:uid=100,gid=101,mode=0700
 
