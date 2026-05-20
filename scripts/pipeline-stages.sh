@@ -190,8 +190,8 @@ pipeline_preflight()
         log_info "部署锁获取成功"
         # 在 r4s 上同步最新代码（per D-08/D-10）
         log_info "同步 r4s 仓库..."
-        # 先 stash 未提交的更改，避免 pull 冲突
-        remote_exec "cd /opt/noda/noda-infra && git stash push -m 'jenkins-deploy-stash'"
+        # 强制 reset 本地更改，避免 pull 冲突
+        remote_exec "cd /opt/noda/noda-infra && git reset --hard HEAD && git clean -fd"
         if ! remote_exec "cd /opt/noda/noda-infra && git pull origin ${R4S_GIT_BRANCH}"; then
             log_error "r4s 仓库同步失败"
             return 1
