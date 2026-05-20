@@ -35,7 +35,7 @@ BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-12}"
 IMAGE_RETENTION_DAYS="${IMAGE_RETENTION_DAYS:-7}"
 
 # 部署目标配置（per D-04）
-DEPLOY_TARGET="${DEPLOY_TARGET:-local}"  # local 或 r4s
+DEPLOY_TARGET="${DEPLOY_TARGET:-r4s}"  # r4s 或 local（默认 r4s）
 R4S_HOST="${R4S_HOST:-root@192.168.100.1}"  # r4s 主机
 R4S_GIT_BRANCH="${R4S_GIT_BRANCH:-main}"   # r4s 同步分支
 
@@ -1166,6 +1166,7 @@ pipeline_deploy_nginx()
 # 函数: pipeline_deploy_noda_ops
 # ============================================
 # noda-ops docker compose recreate（使用 build 模式）
+# noda-ops 功能：数据库备份 + Cloudflare Tunnel + 爬虫（Python 虚拟环境）
 # 返回: 0=成功，1=失败
 pipeline_deploy_noda_ops()
 {
@@ -1175,7 +1176,7 @@ pipeline_deploy_noda_ops()
 
         # 在 Mac 上构建 noda-ops 镜像（保持现有逻辑）
         log_info "构建 noda-ops 镜像（Mac 本地）..."
-        docker build -t noda-ops:latest -f docker/Dockerfile.noda-ops .
+        docker build -t noda-ops:latest -f deploy/Dockerfile.noda-ops .
 
         # 传输镜像到 r4s
         log_info "传输 noda-ops 镜像到 r4s..."
@@ -1269,7 +1270,7 @@ pipeline_infra_health_check()
                 wait_container_healthy "noda-infra-nginx" 30 true true
                 ;;
             noda-ops)
-                # 容器 running 即可（无 HTTP 端点）
+                # 容器健康检查（备份 + Cloudflare Tunnel + 爬虫）
                 wait_container_healthy "noda-ops" 60 true true
                 ;;
             postgres)
@@ -1294,7 +1295,7 @@ pipeline_infra_health_check()
                 wait_container_healthy "noda-infra-nginx" 30
                 ;;
             noda-ops)
-                # 容器 running 即可（无 HTTP 端点）
+                # 容器健康检查（备份 + Cloudflare Tunnel + 爬虫）
                 wait_container_healthy "noda-ops" 60
                 ;;
             postgres)
@@ -1338,7 +1339,7 @@ pipeline_infra_verify()
                     log_error "noda-ops 容器未运行（r4s）"
                     return 1
                 fi
-                log_success "noda-ops 验证通过（r4s）: 容器运行中"
+                log_success "noda-ops 验证通过（r4s）: 容器运行中（备份 + Cloudflare Tunnel + 爬虫）"
                 ;;
             postgres)
                 remote_exec "docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432"
@@ -1366,7 +1367,7 @@ pipeline_infra_verify()
                     log_error "noda-ops 容器未运行"
                     return 1
                 fi
-                log_success "noda-ops 验证通过: 容器运行中"
+                log_success "noda-ops 验证通过: 容器运行中（备份 + Cloudflare Tunnel + 爬虫）"
                 ;;
             postgres)
                 docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
