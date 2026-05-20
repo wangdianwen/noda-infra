@@ -1,29 +1,53 @@
 # Noda 基础设施项目
 
-## Current Milestone: v1.12 迁移到 iStoreOS (r4s)
+## Current State: v1.13 待规划
 
-**Goal:** 将所有 Docker 服务从 Mac 迁移到 r4s (iStoreOS)，Jenkins 保留在 Mac 通过 SSH 远程部署，现有部署逻辑不变。
+**Current Milestone**: v1.13（未定义）
 
-**Target features:**
-- r4s 环境搭建（iStoreOS Docker 配置 + 独立网桥 + Swap + 内存限制）
-- 基础设施迁移（PostgreSQL + Keycloak + Nginx + Cloudflare Tunnel → r4s）
-- 应用服务迁移（findclass-ssr prod + pre-prod 共享基础设施 → r4s）
-- Jenkinsfile 改造（本地 docker compose → SSH 远程部署到 r4s）
-- 备份策略迁移（pg_dump + B2 上传完全迁到 r4s）
+**Last Shipped**: v1.12 迁移到 iStoreOS (r4s) — 2026-05-20
 
-**Key context:**
-- r4s: FriendlyARM NanoPi R4S, 6核 ARM64, 3.77 GiB RAM, 64GB SD卡, iStoreOS 24.10.6
-- Mac M4 和 r4s 都是 ARM64 — Docker 镜像可直接复用，无需重新构建
-- Docker 27.3.1 + Compose v2.39.1 已就绪，当前无运行容器
-- Docker Root: /mnt/mmc1-4/docker (54.8GB 可用)
-- 无 Swap — 需要创建 Swap 文件作为 OOM 缓冲
-- 内存预算：prod + pre-prod 共享 PostgreSQL/Keycloak，需要容器内存限制
-- Mac 保留 Jenkins + 开发环境（npm dev）
-- 网络方案：Docker 独立网桥 + 端口映射
+**Current Architecture:**
+- **生产服务器**: r4s (NanoPi R4S, 6核 ARM64, 3.77 GiB RAM, iStoreOS 24.10.6)
+  - 所有 Docker 容器在 r4s 上运行
+  - PostgreSQL、Keycloak、Nginx、noda-ops、findclass-ssr、noda-admin、noda-auth
+- **Jenkins**: Mac 宿主机（通过 SSH 远程部署到 r4s）
+- **开发环境**: Mac 宿主机 PostgreSQL + npm dev
+- **备份**: r4s noda-ops 容器（pg_dump + B2 云备份）
+- **外部访问**: Cloudflare Tunnel → r4s Nginx
 
-**Last shipped:** v1.11 Pre-Prod 验证环境 + 蓝绿移除 (2026-05-10)
+**Known Issues:**
+- nginx 配置手动修复（移除 HTTPS 强制重定向，修复 8080 端口）
+- Phase 60 (CI/CD 改造) 未完全执行
+- Phase 62-01 (全链路 E2E 验证) 和 62-03 (Mac 清理) 未执行
+- noda-ops Jenkins 部署失败但容器运行正常
 
 ## Shipped Milestones
+
+### v1.12 迁移到 iStoreOS (r4s) ✅ (2026-05-20)
+
+5 phases (58-62), 17 plans (15 completed, 2 deferred), 103 commits
+
+- Phase 58: 基础设施迁移（PostgreSQL、Keycloak、Nginx、noda-ops → r4s）
+- Phase 59: 应用服务迁移（findclass-ssr prod/pre-prod、noda-admin、noda-auth → r4s）
+- Phase 60: CI/CD 改造（Jenkins Pipeline SSH 远程部署，部分完成）
+- Phase 61: 备份与网络迁移（cronjob + Cloudflare Tunnel → r4s）
+- Phase 62: 切换与验证（回滚方案验证完成，全链路验证和 Mac 清理延后）
+
+**关键决策**:
+- r4s 作为目标服务器（ARM64 与 Mac M4 兼容）
+- Jenkins 保留在 Mac（r4s 内存不足）
+- SSH 远程部署模式（Jenkins 在 Mac 通过 SSH 执行 r4s 命令）
+- 零停机迁移策略（r4s 先启动，验证后切换 Cloudflare）
+
+**问题解决**:
+- nginx 端口冲突（8080:80 替代 80:80）
+- HTTPS 强制重定向导致跳转到 iStoreOS
+- Jenkins pipeline DEPLOY_TARGET 配置
+- r4s git 同步冲突（强制 reset 本地更改）
+
+**技术债务**:
+- r4s Docker 镜像过旧（通过 volume mount 覆盖脚本）
+- nginx 配置手动修复（未通过完整验证流程）
 
 ### v1.8 密钥管理集中化 ✅ (2026-04-19)
 
