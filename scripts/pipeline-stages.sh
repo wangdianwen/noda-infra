@@ -1196,9 +1196,9 @@ pipeline_deploy_noda_ops()
         rm -f "$secrets_file"
 
         # 在 r4s 上启动容器（使用 --build 标志）
-        remote_exec "docker compose --env-file /tmp/noda-ops-secrets.env \
+        remote_exec "cd /opt/noda/noda-infra && docker compose --env-file /tmp/noda-ops-secrets.env \
             -f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml \
-            up -d --build --force-recreate --no-deps noda-ops"
+            up -d --force-recreate --no-deps noda-ops"
 
         log_success "noda-ops 重建完成（r4s）"
     else
