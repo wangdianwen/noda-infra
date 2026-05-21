@@ -82,6 +82,11 @@ COPY --chown=nodaops:nodaops deploy/crawler-tutoring.sh /app/crawler/crawler-tut
 COPY --chown=nodaops:nodaops deploy/crawler-hobby.sh /app/crawler/crawler-hobby.sh
 RUN chmod +x /app/crawler/crawler-*.sh
 
+# 复制课程入库脚本
+COPY --chown=nodaops:nodaops deploy/crawler/import-courses.py /app/crawler/import-courses.py
+COPY --chown=nodaops:nodaops deploy/crawler/import-courses.sh /app/crawler/import-courses.sh
+RUN chmod +x /app/crawler/import-courses.sh
+
 # 复制 supervisord 配置
 COPY --chown=nodaops:nodaops deploy/supervisord.conf /etc/supervisord.conf
 

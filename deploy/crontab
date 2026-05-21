@@ -22,6 +22,10 @@
 # Hobby: 每周一 7:00 抓取第一页所有内容
 0 7 * * 1 nodaops /app/crawler/crawler-hobby.sh
 
+# 课程入库任务（爬虫完成后执行）
+# 每天 8:00 执行课程入库（Tutoring 爬虫 7:00 之后）
+0 8 * * * nodaops /app/crawler/import-courses.sh
+
 # 注意：Docker 镜像清理在 r4s 宿主机上通过 cron 执行
 # 文件位置：/opt/noda/cleanup-docker-images.sh
 # 执行时间：每周日凌晨 5:00 (root crontab)
