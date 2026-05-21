@@ -91,6 +91,10 @@ services:
       CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
       # Doppler 密钥备份配置
       DOPPLER_TOKEN: ${DOPPLER_TOKEN}
+      # 爬虫 LLM 配置
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.z.ai/api/anthropic}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
     volumes:
       - ./volumes/backup:/tmp/postgres_backups
       - ./volumes/history:/app/history
