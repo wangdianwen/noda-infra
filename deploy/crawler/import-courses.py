@@ -28,6 +28,7 @@ def psql_command(sql):
         f'-p{DB_PORT}',
         f'-U{DB_USER}',
         f'-d{DB_NAME}',
+        '-t',  # 禁用表头和格式化，只输出数据行
         '-c', sql
     ]
     env = os.environ.copy()
