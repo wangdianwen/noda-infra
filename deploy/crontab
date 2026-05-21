@@ -17,10 +17,10 @@
 30 3 * * * /app/backup/backup-doppler-secrets.sh --project noda --config prd >> /var/log/noda-backup/doppler-backup.log 2>&1
 
 # 爬虫任务（脚本内随机延迟 10分钟-12小时）
-# Tutoring: 每天 7:00 抓取第一页所有内容
-0 7 * * * nodaops /app/crawler/crawler-tutoring.sh
-# Hobby: 每周一 7:00 抓取第一页所有内容
-0 7 * * 1 nodaops /app/crawler/crawler-hobby.sh
+# Hobby (兴趣爱好): 每天 7:00 抓取第一页所有内容
+0 7 * * * nodaops /app/crawler/crawler-hobby.sh
+# Tutoring (课外辅导): 每周一 7:00 抓取第一页所有内容
+0 7 * * 1 nodaops /app/crawler/crawler-tutoring.sh
 
 # 课程入库任务（爬虫完成后执行）
 # 每天 8:00 执行课程入库（Tutoring 爬虫 7:00 之后）
