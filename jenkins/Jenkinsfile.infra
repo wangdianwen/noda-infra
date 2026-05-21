@@ -19,8 +19,8 @@ pipeline {
     options {
         // 禁止并发构建，防止两个 Pipeline 同时操作基础设施服务
         disableConcurrentBuilds()
-        // 保留最近 20 次构建日志
-        buildDiscarder(logRotator(numToKeepStr: '20'))
+        // 保留最近 10 次构建日志
+        buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
     }
 
