@@ -15,3 +15,9 @@
 
 # 每天凌晨 3:30 执行 Doppler 密钥备份（错开数据库备份 3:00）
 30 3 * * * /app/backup/backup-doppler-secrets.sh --project noda --config prd >> /var/log/noda-backup/doppler-backup.log 2>&1
+
+# 爬虫任务（脚本内随机延迟 10分钟-12小时）
+# Tutoring: 每天 7:00 抓取第一页所有内容
+0 7 * * * nodaops /app/crawler/crawler-tutoring.sh
+# Hobby: 每周一 7:00 抓取第一页所有内容
+0 7 * * 1 nodaops /app/crawler/crawler-hobby.sh
