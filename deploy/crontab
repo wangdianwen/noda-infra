@@ -21,3 +21,7 @@
 0 7 * * * nodaops /app/crawler/crawler-tutoring.sh
 # Hobby: 每周一 7:00 抓取第一页所有内容
 0 7 * * 1 nodaops /app/crawler/crawler-hobby.sh
+
+# 注意：Docker 镜像清理在 r4s 宿主机上通过 cron 执行
+# 文件位置：/opt/noda/cleanup-docker-images.sh
+# 执行时间：每周日凌晨 5:00 (root crontab)
