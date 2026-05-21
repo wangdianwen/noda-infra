@@ -11,9 +11,22 @@ RUNNING_IMAGES=$(docker ps --format '{{.ImageID}}' | sort -u | tr '\n' '|')
 RUNNING_IMAGES="${RUNNING_IMAGES%|}"  # 移除最后的 |
 echo "当前运行的镜像: $(echo "$RUNNING_IMAGES" | tr '|' '\n' | wc -l | tr -d ' ') 个"
 
+# 清理悬空容器（已停止的无名容器）
+echo ""
+echo "1. 清理悬空容器..."
+DANGLING_CONTAINERS=$(docker ps -a -f "status=exited" -f "status=created" --format "{{.ID}}\t{{.Image}}" | grep "<none>" | awk '{print $1}')
+if [ -n "$DANGLING_CONTAINERS" ]; then
+    echo "$DANGLING_CONTAINERS" | while read CONTAINER_ID; do
+        docker rm "$CONTAINER_ID" 2>/dev/null || true
+    done
+    echo "✅ 清理了 $(echo "$DANGLING_CONTAINERS" | wc -w | tr -d ' ') 个悬空容器"
+else
+    echo "✅ 没有悬空容器"
+fi
+
 # 清理悬空镜像（无标签的镜像）
 echo ""
-echo "1. 清理悬空镜像..."
+echo "2. 清理悬空镜像..."
 DANGLING=$(docker images -f "dangling=true" -q)
 if [ -n "$DANGLING" ]; then
     docker rmi $DANGLING 2>/dev/null || true
@@ -24,7 +37,7 @@ fi
 
 # 清理旧的 noda-apps 镜像（保留 latest 和前 1 个）
 echo ""
-echo "2. 清理旧的 noda-apps 镜像..."
+echo "3. 清理旧的 noda-apps 镜像..."
 NODA_APPS_IMAGES=$(docker images --format '{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.CreatedAt}}' | \
     grep 'noda-apps' | \
     grep -v ':latest$' | \
@@ -50,7 +63,7 @@ fi
 
 # 清理旧的 noda-ops 镜像（保留 latest 和 test）
 echo ""
-echo "3. 清理旧的 noda-ops 镜像..."
+echo "4. 清理旧的 noda-ops 镜像..."
 NODA_OPS_IMAGES=$(docker images --format '{{.ID}}\t{{.Repository}}\t{{.Tag}}' | \
     grep 'noda-ops' | \
     grep -vE ':latest$|:test$' | \
@@ -74,7 +87,7 @@ fi
 
 # 清理构建缓存
 echo ""
-echo "4. 清理构建缓存..."
+echo "5. 清理构建缓存..."
 CACHE_BEFORE=$(docker system df --format '{{.BuildCacheSize}}' 2>/dev/null || echo "0B")
 docker system prune -f 2>/dev/null || true
 echo "✅ 清理完成"

@@ -116,18 +116,55 @@ pipeline {
         stage('Human Approval') {
             steps {
                 timeout(time: 6, unit: 'HOURS') {
-                    input message: """Pre-prod 部署完成，请验证：
+                    script {
+                        def userInput = input(
+                            message: """Pre-prod 部署完成，请验证：
   - 主应用: http://class.noda.test/
   - 认证: http://auth.noda.test/
   - 官网: http://www.noda.test/
   - 管理后台: http://admin.noda.test/
   镜像: noda-apps:${env.GIT_SHA}
-  确认部署到生产环境？"""
+
+  请选择下一步操作：""",
+                            parameters: [
+                                choice(name: 'ACTION', choices: ['deploy_prod', 'rebuild_preprod', 'abort'], description: '选择操作：\n- deploy_prod: 验证通过，部署到生产环境\n- rebuild_preprod: 重新部署 pre-prod（无需重新构建）\n- abort: 中止部署')
+                            ]
+                        )
+                        env.DEPLOY_ACTION = userInput
+                    }
+                }
+            }
+        }
+
+        stage('Rebuild Pre-prod') {
+            when {
+                expression { env.DEPLOY_ACTION == 'rebuild_preprod' }
+            }
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        echo "🔄 清理旧镜像和容器..."
+                        # 停止并删除 pre-prod 容器
+                        ssh -i "$SSH_KEY_FILE" root@192.168.100.1 "docker compose -f /opt/noda/docker-compose.yml -f /opt/noda/docker-compose.preprod.yml stop findclass-ssr"
+                        ssh -i "$SSH_KEY_FILE" root@192.168.100.1 "docker compose -f /opt/noda/docker-compose.yml -f /opt/noda/docker-compose.preprod.yml rm -f findclass-ssr"
+                        # 删除 pre-prod 使用的镜像
+                        ssh -i "$SSH_KEY_FILE" root@192.168.100.1 "docker rmi noda-apps:${GIT_SHA} 2>/dev/null || true"
+                        echo "✅ 清理完成，重新部署 Pre-prod..."
+                        pipeline_deploy_preprod "$GIT_SHA"
+                        pipeline_health_check_preprod
+                        echo "✅ Pre-prod 重新部署完成，请验证后再次运行 Pipeline 选择 deploy_prod"
+                    '''
                 }
             }
         }
 
         stage('Deploy Prod') {
+            when {
+                expression { env.DEPLOY_ACTION == 'deploy_prod' }
+            }
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
@@ -180,7 +217,23 @@ pipeline {
             }
         }
 
+        stage('Abort') {
+            when {
+                expression { env.DEPLOY_ACTION == 'abort' }
+            }
+            steps {
+                script {
+                    currentBuild.result = 'ABORTED'
+                    echo "❌ 用户中止部署。Pre-prod 环境保持运行，可重新触发 Pipeline 验证后继续部署。"
+                    error("用户中止部署")
+                }
+            }
+        }
+
         stage('Cleanup') {
+            when {
+                expression { env.DEPLOY_ACTION != 'abort' }
+            }
             steps {
                 sh '''
                     source scripts/lib/log.sh
