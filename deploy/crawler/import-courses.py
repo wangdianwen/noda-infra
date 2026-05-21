@@ -88,7 +88,7 @@ def find_or_create_teacher(contact_wechat, contact_phone, teacher_info):
     return str(uuid.uuid4())
 
 def import_course(course_data):
-    """导入单条课程数据"""
+    """导入单条课程数据（更新已存在或插入新课程）"""
     # 提取字段
     title = course_data.get('title', '')
     price_str = course_data.get('price')
@@ -112,9 +112,13 @@ def import_course(course_data):
     check_sql = f"SELECT id FROM courses WHERE source_url = '{source_url}' LIMIT 1;"
     result = psql_command(check_sql)
 
+    existing_id = None
     if result.stdout.strip():
-        print(f"  跳过（已存在）: {title}")
-        return 'skip'
+        lines = result.stdout.strip().split('\n')
+        for line in lines:
+            if '-' in line and len(line) == 36:  # UUID
+                existing_id = line.strip()
+                break
 
     # 查找或创建教师
     teacher_id = find_or_create_teacher(contact_wechat, contact_phone, teacher_info)
@@ -134,44 +138,77 @@ def import_course(course_data):
     # 处理标签数组
     tags_array = '{' + ','.join([f'"{tag}"' for tag in tags]) + '}' if tags else '{}'
 
-    # 插入新课程
-    insert_sql = f"""
-    INSERT INTO courses (
-        teacher_id, title, subject, grade_level, region, location_type,
-        price, price_unit, price_note, trial_lesson, description,
-        source_url, source_platform, original_content, tags,
-        source, data_quality_score, created_at, updated_at
-    ) VALUES (
-        '{teacher_id}',
-        {psql_escape(title)},
-        {psql_escape(subject)},
-        {psql_escape(grade_level)},
-        {psql_escape(region)},
-        {psql_escape(location_type)},
-        {price if price else 'NULL'},
-        '小时',
-        {psql_escape(price_note)},
-        {trial_lesson},
-        {psql_escape(description)},
-        {psql_escape(source_url)},
-        {psql_escape(source_platform)},
-        {psql_escape(original_content[:1000])},  -- 限制长度
-        '{tags_array}'::text[],
-        'crawler',
-        {int(confidence * 100)},
-        NOW(),
-        NOW()
-    )
-    """
+    # 更新或插入
+    if existing_id:
+        # 更新已存在的课程
+        update_sql = f"""
+        UPDATE courses SET
+            teacher_id = '{teacher_id}',
+            title = {psql_escape(title)},
+            subject = {psql_escape(subject)},
+            grade_level = {psql_escape(grade_level)},
+            region = {psql_escape(region)},
+            location_type = {psql_escape(location_type)},
+            price = {price if price else 'NULL'},
+            price_note = {psql_escape(price_note)},
+            trial_lesson = {trial_lesson},
+            description = {psql_escape(description)},
+            source_platform = {psql_escape(source_platform)},
+            original_content = {psql_escape(original_content[:1000])},
+            tags = '{tags_array}'::text[],
+            source = 'crawler',
+            data_quality_score = {int(confidence * 100)},
+            updated_at = NOW()
+        WHERE id = '{existing_id}'
+        """
 
-    result = psql_command(insert_sql)
+        result = psql_command(update_sql)
 
-    if result.returncode == 0:
-        print(f"  ✅ 导入: {title}")
-        return 'insert'
+        if result.returncode == 0:
+            print(f"  🔄 更新: {title}")
+            return 'update'
+        else:
+            print(f"  ❌ 更新失败: {title} - {result.stderr}")
+            return 'error'
     else:
-        print(f"  ❌ 失败: {title} - {result.stderr}")
-        return 'error'
+        # 插入新课程
+        insert_sql = f"""
+        INSERT INTO courses (
+            teacher_id, title, subject, grade_level, region, location_type,
+            price, price_unit, price_note, trial_lesson, description,
+            source_url, source_platform, original_content, tags,
+            source, data_quality_score, created_at, updated_at
+        ) VALUES (
+            '{teacher_id}',
+            {psql_escape(title)},
+            {psql_escape(subject)},
+            {psql_escape(grade_level)},
+            {psql_escape(region)},
+            {psql_escape(location_type)},
+            {price if price else 'NULL'},
+            '小时',
+            {psql_escape(price_note)},
+            {trial_lesson},
+            {psql_escape(description)},
+            {psql_escape(source_url)},
+            {psql_escape(source_platform)},
+            {psql_escape(original_content[:1000])},
+            '{tags_array}'::text[],
+            'crawler',
+            {int(confidence * 100)},
+            NOW(),
+            NOW()
+        )
+        """
+
+        result = psql_command(insert_sql)
+
+        if result.returncode == 0:
+            print(f"  ✅ 新增: {title}")
+            return 'insert'
+        else:
+            print(f"  ❌ 插入失败: {title} - {result.stderr}")
+            return 'error'
 
 def psql_escape(value):
     """转义 SQL 字符串"""
@@ -234,7 +271,7 @@ def main():
     print("=" * 60)
     print("✅ 导入完成")
     print(f"  新增: {stats.get('insert', 0)} 条")
-    print(f"  跳过: {stats.get('skip', 0)} 条")
+    print(f"  更新: {stats.get('update', 0)} 条")
     print(f"  失败: {stats.get('error', 0)} 条")
     print("=" * 60)
 
