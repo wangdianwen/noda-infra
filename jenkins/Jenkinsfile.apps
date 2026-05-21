@@ -115,7 +115,7 @@ pipeline {
 
         stage('Human Approval') {
             steps {
-                timeout(time: 30, unit: 'MINUTES') {
+                timeout(time: 6, unit: 'HOURS') {
                     input message: """Pre-prod 部署完成，请验证：
   - 主应用: http://class.noda.test/
   - 认证: http://auth.noda.test/
