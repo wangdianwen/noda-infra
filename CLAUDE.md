@@ -136,7 +136,7 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 
 | Job | Jenkinsfile | 用途 | 阶段 |
 |-----|-------------|------|------|
-| **apps-deploy** | `Jenkinsfile.apps` | 统一应用部署（pre-prod 验证 + prod 蓝绿） | 12 阶段: Pre-flight → Build → Test → Deploy Pre-prod → Health Check Pre-prod → Human Approval → Deploy Prod → Health Check Prod → Switch → Verify → CDN Purge → Cleanup |
+| **apps-deploy** | `Jenkinsfile.apps` | 统一应用部署（pre-prod 验证 + prod 直接替换） | 10 阶段: Pre-flight → Build → Test → Deploy Pre-prod → Health Check Pre-prod → Human Approval → Deploy Prod → Verify → CDN Purge → Cleanup |
 | **infra-deploy** | `Jenkinsfile.infra` | 基础设施部署（nginx/noda-ops/keycloak/postgres） | 7 阶段，参数化服务选择 |
 | **cleanup** | `Jenkinsfile.cleanup` | 定期清理 workspace + 缓存 | 每周一 03:00 自动触发 |
 
@@ -144,7 +144,7 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 1. 触发 `apps-deploy` — 自动构建并部署到 pre-prod
 2. 人工在 pre-prod 环境验证（`http://class.noda.test/`）
 3. 在 Jenkins UI 点击 "Proceed" 确认上线
-4. Pipeline 自动完成 prod 蓝绿部署
+4. Pipeline 自动完成 prod 部署（停旧启新）
 
 **Pre-prod 访问（通过 /etc/hosts）：**
 ```
@@ -173,7 +173,7 @@ curl -sf -c /tmp/jenkins-cookies -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD
   "$JENKINS_URL/crumbIssuer/api/json" > /tmp/crumb.json
 CRUMB=$(python3 -c "import json; print(json.load(open('/tmp/crumb.json'))['crumb'])")
 
-# 触发应用部署（pre-prod 验证 + prod 蓝绿）
+# 触发应用部署（pre-prod 验证 + prod 部署）
 curl -s -b /tmp/jenkins-cookies -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
   -X POST -H "Jenkins-Crumb: $CRUMB" \
   "$JENKINS_URL/job/apps-deploy/build"
@@ -222,9 +222,8 @@ bash scripts/deploy/deploy-apps-prod.sh
 # Docker Compose 容器状态
 docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.dev.yml ps
 
-# 蓝绿容器状态
-cat /opt/noda/active-env  # 当前活跃环境（blue/green）
-docker ps --filter name=findclass-ssr  # 蓝绿容器列表
+# 应用容器状态
+docker ps --filter name=noda-apps
 ```
 
 <!-- GSD:project-start source:PROJECT.md -->
@@ -265,8 +264,7 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 ### Blue-Green Deployment: Nginx Upstream 切换方案
 | Component | Mechanism | Confidence |
 |-----------|-----------|------------|
-| Nginx upstream 切换 | 修改 upstream 块中 server 地址 + `nginx -s reload` | HIGH |
-| Docker Compose 蓝绿容器 | `docker-compose.app.yml` 中定义 `findclass-ssr-blue` 和 `findclass-ssr-green` 两个服务 | HIGH |
+| Pre-prod 验证 + 直接替换 | 先部署到 pre-prod 验证，通过后停旧 prod 容器启新 | HIGH |
 | 健康检查网关 | 复用现有 `wait_container_healthy` 函数 + HTTP E2E curl 检查 | HIGH |
 ### 必要的 Jenkins 插件
 | Plugin | Version | Purpose | Why Needed | Confidence |
@@ -275,7 +273,7 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 | Git | 最新稳定版 | SCM 集成 | 从 Git 仓库拉取代码和 Jenkinsfile | HIGH |
 | Pipeline: Stage View | 最新稳定版 | Pipeline 可视化 | 阶段视图，查看每阶段状态 | HIGH |
 | Credentials Binding | 最新稳定版 | 凭据管理 | 安全使用 Docker Hub 凭据、数据库密码等 | HIGH |
-| Timestamper | 最新稳定版 | 构建日志时间戳 | 蓝绿部署调试时精确到秒的日志 | MEDIUM |
+| Timestamper | 最新稳定版 | 构建日志时间戳 | 部署调试时精确到秒的日志 | MEDIUM |
 | Plugin | Why NOT Needed |
 |--------|----------------|
 | Docker Pipeline (docker-workflow) | 我们不需要 Jenkins 在容器内构建；Jenkins 在宿主机直接调用 `docker compose` 命令 |
@@ -287,8 +285,8 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 | 场景 | 回滚动作 | 触发条件 |
 |------|---------|---------|
 | 构建失败 | 不启动新容器，一切不变 | `docker compose build` 返回非零 |
-| 新容器健康检查失败 | 切回旧 upstream，停新容器 | `wait_container_healthy` 超时 |
-| E2E HTTP 检查失败 | 切回旧 upstream，停新容器 | curl 返回非 200 或超时 |
+| 新容器健康检查失败 | 保留旧容器，停新容器 | `wait_container_healthy` 超时 |
+| E2E HTTP 检查失败 | 保留旧容器，停新容器 | curl 返回非 200 或超时 |
 | 部署后人工确认回滚 | Pipeline `input` 步骤等待确认 | 手动触发 |
 ### E2E 健康检查
 | Check | Method | URL | Expected |
@@ -297,8 +295,6 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 | HTTP API | `curl` | `http://findclass-ssr-{color}:3001/api/health` | HTTP 200 |
 | 外部可达性 | `curl` | `https://class.noda.co.nz/api/health` | HTTP 200 |
 ## Docker Compose 变更
-# 当前（单容器）:
-# 蓝绿部署（双容器，同一文件，同时只启动一个）:
 ## Alternatives Considered
 ### Jenkins 安装方式
 | Recommended | Alternative | Why Not |
@@ -307,11 +303,10 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 | Jenkins LTS | Jenkins Weekly | Weekly 版本更新频繁但不保证稳定性，生产环境必须用 LTS |
 | | GitHub Actions | 需要公网可访问的 runner，单服务器架构不适合；且项目已有手动部署流程，迁移成本高 |
 | | GitLab CI | 需要安装 GitLab 实例，资源消耗远大于 Jenkins；项目不需要 GitLab 的完整 DevOps 平台功能 |
-### 蓝绿部署实现方案
+### 部署实现方案
 | Recommended | Alternative | Why Not |
 |-------------|-------------|---------|
-| Nginx upstream 切换 | Docker 负载均衡（两个容器同时运行） | 单服务器资源有限，两个 findclass-ssr 实例同时运行会超出内存限制（每个 512MB limit）；且应用有状态（SSR session），负载均衡可能导致不一致 |
-| | 端口直接替换（停旧启新） | 存在停机窗口（旧容器停 → 新容器启动 → 健康检查通过），不符合零停机目标 |
+| Pre-prod 验证 + 直接替换 | Docker 负载均衡（两个容器同时运行） | 单服务器资源有限，两个实例同时运行会超出内存限制；且应用有状态（SSR session），负载均衡可能导致不一致 |
 | | Traefik 自动路由 | 需要引入新的反向代理组件，替代现有 Nginx 架构，改动范围过大 |
 | | Docker Compose `scale` + Nginx 负载均衡 | 与应用架构不匹配（SSR 有状态），且单服务器资源受限 |
 ### CI/CD 触发方式
@@ -329,14 +324,9 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 | Docker Pipeline 插件 | 设计用于 Pipeline 中运行 Docker 容器作为构建环境，不是用于管理宿主机的 Docker Compose 服务 | 直接 `sh 'docker compose ...'` 命令 |
 | Jenkins Configuration as Code (JCasC) | 单服务器、单一 Jenkinsfile 场景下，JCasC 配置比手动初始化更复杂 | 手动初始化 Jenkins + 在 UI 中配置必要参数 |
 ## Stack Patterns by Variant
-- 可以考虑让两个 findclass-ssr 实例同时运行一段时间
-- 在 Nginx 切换后等待 30 秒再停旧容器，确保所有长连接完成
-- 默认配置即可，因为当前方案已经是最保守的
-- 每次部署前用 `docker image tag` 保存当前镜像为 `findclass-ssr:rollback`
-- 回滚时直接 `docker compose up` 使用 rollback tag
+- 每次部署前用 `docker image tag` 保存当前镜像为 `noda-apps:rollback`
+- 回滚时直接启动使用 rollback tag 的容器
 - 不依赖 Docker registry，纯本地镜像管理
-- 同样的蓝绿模式，定义 `noda-site-blue` 和 `noda-site-green`
-- Nginx 的 `noda_site_backend` upstream 做同样的切换
 - 复用 Pipeline 框架，参数化服务名
 ## Version Compatibility
 | Component | Version | Compatible With | Notes |
@@ -369,8 +359,7 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 ## 与现有架构的集成点
 | 现有组件 | 集成方式 | 变更范围 |
 |---------|---------|---------|
-| `docker-compose.app.yml` | 添加 blue/green 双服务定义 | 中等 — 重构 findclass-ssr 为两个服务 |
-| `config/nginx/conf.d/default.conf` | upstream 改为 `include` 引用可切换文件 | 小 — 添加 upstream include |
+| `config/nginx/conf.d/default.conf` | upstream 使用 `include` 引用配置文件 | 小 — upstream include |
 | `scripts/lib/health.sh` | Pipeline 直接复用 `wait_container_healthy` | 无变更 |
 | `deploy-apps-prod.sh` | 逻辑迁移到 Jenkinsfile，脚本保留作为回退 | 新增 Jenkinsfile，脚本不变 |
 | `scripts/deploy/deploy-apps-prod.sh` | 保留作为无 Jenkins 时的手动部署入口 | 无变更 |
@@ -417,6 +406,23 @@ Use these entry points:
 - `/gsd-execute-phase` for planned phase work
 
 Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
+<!-- GSD:workflow-end -->
+
+## 运维操作规则
+
+### 禁止手动操作生产容器
+
+**严禁 LLM 手动执行 `docker stop/rm/run` 等命令操作生产容器。** 所有容器部署、重启、重建必须通过 Jenkins Pipeline 或项目脚本执行。
+
+| 操作 | 正确方式 |
+|------|----------|
+| 重建 noda-ops | `Jenkins infra-deploy?SERVICE=noda-ops` |
+| 重建 nginx | `Jenkins infra-deploy?SERVICE=nginx` |
+| 部署应用 | `Jenkins apps-deploy` |
+| 运行爬虫 | `Jenkins run-crawler-temp` |
+| 导入数据 | 先确保 `crawl-skykiwi.py` 输出文件在 `/app/crawler/logs/`，然后 `docker exec noda-ops bash -c 'cd /app/crawler && /usr/bin/python3 import-courses.py'`（只读操作） |
+
+**允许的只读操作：** `docker ps`、`docker logs`、`docker exec`（查看状态）、`docker inspect`、`curl` 健康检查。
 <!-- GSD:workflow-end -->
 
 <!-- GSD:profile-start -->
