@@ -1197,7 +1197,11 @@ pipeline_deploy_noda_ops()
         cat "$secrets_file" | remote_exec "cat > /tmp/noda-ops-secrets.env"
         rm -f "$secrets_file"
 
-        # 在 r4s 上启动容器（使用 --build 标志）
+        # 清理可能存在的旧容器（手动创建或僵尸容器）
+        log_info "清理旧 noda-ops 容器..."
+        remote_exec "docker rm -f noda-ops 2>/dev/null || true"
+
+        # 在 r4s 上启动容器
         remote_exec "cd /opt/noda/noda-infra && docker compose --env-file /tmp/noda-ops-secrets.env \
             -f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml \
             up -d --force-recreate --no-deps noda-ops"
