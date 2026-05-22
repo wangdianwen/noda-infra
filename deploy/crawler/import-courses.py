@@ -20,6 +20,75 @@ DB_PASSWORD = os.getenv('POSTGRES_PASSWORD', 'postgres_password_change_me')
 # 爬虫日志目录
 CRAWLER_LOGS_DIR = Path('/app/crawler/logs')
 
+# subject → categorySlug 映射表
+SUBJECT_TO_CATEGORY = {
+    # 驾照培训
+    '驾驶培训': 'skills-driving',
+    '驾照培训': 'skills-driving',
+    '大车驾驶培训': 'skills-driving',
+    '大车培训': 'skills-driving',
+    '叉车培训': 'skills-driving',
+    '卡车驾照': 'skills-driving',
+    # 学科辅导
+    '英语': 'academic-english',
+    '雅思': 'academic-english',
+    '语言': 'academic-english',
+    '数学': 'academic-math',
+    '物理': 'academic-science',
+    '商科': 'academic-business',
+    '会计': 'academic-business',
+    '全科辅导': 'academic-english',
+    # 音乐
+    '钢琴': 'music-piano',
+    '声乐': 'music-vocal',
+    '古筝': 'music-instruments',
+    '琵琶': 'music-instruments',
+    # 舞蹈
+    '舞蹈': 'dance-dance',
+    # 体育
+    '健身': 'sports-fitness',
+    '高尔夫': 'sports-fitness',
+    # 技能
+    '咖啡制作': 'skills-vocational',
+    '咖啡技能': 'skills-vocational',
+    '自媒体营销': 'skills-vocational',
+    '创意设计编程': 'skills-vocational',
+    '信息技术': 'skills-vocational',
+    '个人成长与习惯养成': 'skills-life-skills',
+}
+
+def resolve_category_id(category_slug: str, subject: str) -> str:
+    """解析 categorySlug 到数据库 category_id
+
+    优先级：
+    1. 使用 categorySlug 直接查询
+    2. 使用 subject → categorySlug 映射
+    3. 返回 None（未分类）
+    """
+    # 尝试直接查询 categorySlug
+    if category_slug:
+        check_sql = f"SELECT id FROM categories WHERE slug = '{category_slug}' LIMIT 1;"
+        result = psql_command(check_sql)
+        if result.stdout.strip():
+            lines = result.stdout.strip().split('\n')
+            for line in lines:
+                if '-' in line and len(line) == 36:
+                    return line.strip()
+
+    # 尝试 subject 映射
+    if subject in SUBJECT_TO_CATEGORY:
+        mapped_slug = SUBJECT_TO_CATEGORY[subject]
+        check_sql = f"SELECT id FROM categories WHERE slug = '{mapped_slug}' LIMIT 1;"
+        result = psql_command(check_sql)
+        if result.stdout.strip():
+            lines = result.stdout.strip().split('\n')
+            for line in lines:
+                if '-' in line and len(line) == 36:
+                    return line.strip()
+
+    # 未找到匹配
+    return None
+
 def psql_command(sql):
     """执行 psql 命令"""
     cmd = [
@@ -124,6 +193,10 @@ def import_course(course_data):
     # 查找或创建教师
     teacher_id = find_or_create_teacher(contact_wechat, contact_phone, teacher_info)
 
+    # 解析分类
+    category_slug = course_data.get('categorySlug', '')
+    resolved_category_id = resolve_category_id(category_slug, subject)
+
     # 处理价格
     price = None
     if price_str and price_str not in ['面议', '待定', '']:
@@ -142,6 +215,8 @@ def import_course(course_data):
     # 更新或插入
     if existing_id:
         # 更新已存在的课程
+        category_id_value = f"'{resolved_category_id}'" if resolved_category_id else 'NULL'
+        category_ids_value = f"ARRAY['{resolved_category_id}']" if resolved_category_id else 'ARRAY[]::text[]'
         update_sql = f"""
         UPDATE courses SET
             teacher_id = '{teacher_id}',
@@ -155,6 +230,8 @@ def import_course(course_data):
             trial_lesson = {trial_lesson},
             description = {psql_escape(description)},
             teacher_qualifications = {psql_escape(teacher_info)},
+            category_id = {category_id_value},
+            category_ids = {category_ids_value},
             source_platform = {psql_escape(source_platform)},
             original_content = {psql_escape(original_content[:1000])},
             tags = '{tags_array}'::text[],
@@ -174,11 +251,13 @@ def import_course(course_data):
             return 'error'
     else:
         # 插入新课程
+        category_id_value = f"'{resolved_category_id}'" if resolved_category_id else 'NULL'
+        category_ids_value = f"ARRAY['{resolved_category_id}']::text[]" if resolved_category_id else "ARRAY[]::text[]"
         insert_sql = f"""
         INSERT INTO courses (
             teacher_id, title, subject, grade_level, region, location_type,
             price, price_unit, price_note, trial_lesson, description,
-            teacher_qualifications,
+            teacher_qualifications, category_id, category_ids,
             source_url, source_platform, original_content, tags,
             source, data_quality_score, created_at, updated_at
         ) VALUES (
@@ -194,6 +273,8 @@ def import_course(course_data):
             {trial_lesson},
             {psql_escape(description)},
             {psql_escape(teacher_info)},
+            {category_id_value},
+            {category_ids_value},
             {psql_escape(source_url)},
             {psql_escape(source_platform)},
             {psql_escape(original_content[:1000])},
