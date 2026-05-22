@@ -427,3 +427,8 @@ cleanup_periodic_maintenance()
 
     log_success "=== 定期维护清理完成 ==="
 }
+
+# 别名函数（向后兼容）
+cleanup_dangling() {
+    cleanup_dangling_images
+}

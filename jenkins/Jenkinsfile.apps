@@ -230,18 +230,6 @@ pipeline {
             }
         }
 
-        stage('Cleanup') {
-            when {
-                expression { env.DEPLOY_ACTION != 'abort' }
-            }
-            steps {
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-                    pipeline_cleanup
-                '''
-            }
-        }
     }
 
     post {
@@ -252,23 +240,33 @@ pipeline {
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
                         export SSH_KEY_FILE
+
+                        # === 1. 释放部署锁（总是执行）===
                         pipeline_release_lock
+
+                        # === 2. 清理旧镜像（总是执行，增强容错）===
+                        # 即使前面步骤失败，也确保清理旧镜像释放磁盘空间
+                        if [ "${DEPLOY_ACTION:-}" != "abort" ]; then
+                            echo "🧹 执行镜像清理..."
+                            pipeline_cleanup || {
+                                echo "⚠️ 镜像清理部分失败，继续执行..."
+                                # 至少清理悬空镜像
+                                cleanup_dangling || true
+                            }
+                        else
+                            echo "⏭️ 部署已中止，跳过镜像清理"
+                        fi
                     '''
                 }
             }
         }
         failure {
             script {
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-                    pipeline_failure_cleanup
-                '''
                 archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
             }
         }
         success {
-            echo "部署成功: noda-apps-prod (镜像: noda-apps:${env.GIT_SHA})"
+            echo "✅ 部署成功: noda-apps-prod (镜像: noda-apps:${env.GIT_SHA})"
         }
     }
 }

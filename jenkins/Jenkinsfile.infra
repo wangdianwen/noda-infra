@@ -129,18 +129,6 @@ pipeline {
             }
         }
 
-        stage('Cleanup') {
-            steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
-                    sh '''
-                        source scripts/lib/log.sh
-                        source scripts/pipeline-stages.sh
-                        export SSH_KEY_FILE
-                        pipeline_infra_cleanup "$SERVICE"
-                    '''
-                }
-            }
-        }
     }
 
     post {
@@ -151,23 +139,28 @@ pipeline {
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
                         export SSH_KEY_FILE
+
+                        # === 1. 释放部署锁（总是执行）===
                         pipeline_release_lock
+
+                        # === 2. 清理旧镜像（总是执行，增强容错）===
+                        # 即使前面步骤失败，也确保清理旧镜像释放磁盘空间
+                        echo "🧹 执行基础设施服务清理: $SERVICE"
+                        pipeline_infra_cleanup "$SERVICE" || {
+                            echo "⚠️ 清理部分失败，尝试至少清理悬空镜像..."
+                            cleanup_dangling || true
+                        }
                     '''
                 }
             }
         }
         failure {
             script {
-                sh '''
-                    source scripts/lib/log.sh
-                    source scripts/pipeline-stages.sh
-                    pipeline_infra_failure_cleanup "$SERVICE"
-                '''
                 archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
             }
         }
         success {
-            echo "基础设施服务 ${params.SERVICE} 部署成功"
+            echo "✅ 基础设施服务 ${params.SERVICE} 部署成功"
         }
     }
 }
