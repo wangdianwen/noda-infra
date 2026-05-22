@@ -99,6 +99,7 @@ services:
       - ./volumes/backup:/tmp/postgres_backups
       - ./volumes/history:/app/history
       - ./volumes/logs:/var/log/noda-backup
+      - ./volumes/crawler-logs:/app/crawler/logs
     networks:
       - noda-network
     depends_on:
