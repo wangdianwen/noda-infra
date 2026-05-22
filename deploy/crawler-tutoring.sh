@@ -27,6 +27,8 @@ fi
 
 # 运行爬虫（使用虚拟环境中的 Python）
 cd /app/crawler
-/app/crawler-venv/bin/python3 crawl-skykiwi.py --board tutoring >> /var/log/noda-backup/crawler-tutoring.log 2>&1
+/app/crawler-venv/bin/python3 crawl-skykiwi.py --board tutoring \
+    1> /app/crawler/logs/crawl_output_tutoring_$(date +%Y%m%d).json \
+    2>> /var/log/noda-backup/crawler-tutoring.log
 
 echo "===== Skykiwi Tutoring 爬虫完成 $(date) ====="

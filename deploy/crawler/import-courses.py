@@ -221,27 +221,42 @@ def psql_escape(value):
 
 def read_crawler_json():
     """读取爬虫输出的 JSON 文件"""
-    # 查找最新的批次日志文件
-    batch_files = sorted(CRAWLER_LOGS_DIR.glob('batch_*.json'), reverse=True)
+    from datetime import date
 
-    if not batch_files:
-        print("❌ 未找到爬虫批次日志文件")
-        return []
-
-    # 读取最新的批次日志
-    latest_batch = batch_files[0]
-    print(f"📄 读取批次日志: {latest_batch}")
-
-    # 读取所有相关的 JSON 文件
     courses = []
 
-    # 读取 extract_log
-    extract_log = CRAWLER_LOGS_DIR / 'extract_log_2026-05-21.json'
-    if extract_log.exists():
-        with open(extract_log, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            if isinstance(data, list):
-                courses.extend(data)
+    # 1. 优先读取最新的 extract_log（LLM 提取后的完整数据）
+    extract_logs = sorted(CRAWLER_LOGS_DIR.glob('extract_log_*.json'), reverse=True)
+    if extract_logs:
+        latest_extract = extract_logs[0]
+        print(f"📄 读取提取日志: {latest_extract}")
+        try:
+            with open(latest_extract, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    courses.extend(data)
+                    print(f"  ✓ 提取日志: {len(data)} 条")
+        except Exception as e:
+            print(f"  ⚠️ 提取日志读取失败: {e}")
+
+    # 2. 回退到读取 crawl_output_*.json（stdout 输出）
+    if not courses:
+        today = date.today().strftime('%Y%m%d')
+        for board in ['hobby', 'tutoring']:
+            output_file = CRAWLER_LOGS_DIR / f'crawl_output_{board}_{today}.json'
+            if output_file.exists():
+                print(f"📄 读取爬虫输出: {output_file}")
+                try:
+                    with open(output_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            courses.extend(data)
+                            print(f"  ✓ 爬虫输出: {len(data)} 条")
+                except Exception as e:
+                    print(f"  ⚠️ 爬虫输出读取失败: {e}")
+
+    if not courses:
+        print("❌ 未找到任何课程数据（既无 extract_log 也无 crawl_output）")
 
     return courses
 

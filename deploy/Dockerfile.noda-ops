@@ -47,7 +47,12 @@ RUN apk add --no-cache \
     postgresql17-client \
     age \
     python3 \
-    py3-pip
+    py3-pip \
+    tzdata
+
+# 设置时区为新西兰（Pacific/Auckland = NZST/NZDT）
+ENV TZ=Pacific/Auckland
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 从构建阶段传递二进制文件（per D-02）
 COPY --from=builder /usr/local/bin/cloudflared /usr/local/bin/cloudflared

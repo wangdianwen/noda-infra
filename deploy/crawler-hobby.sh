@@ -27,6 +27,8 @@ fi
 
 # 运行爬虫（使用虚拟环境中的 Python）
 cd /app/crawler
-/app/crawler-venv/bin/python3 crawl-skykiwi.py --board hobby >> /var/log/noda-backup/crawler-hobby.log 2>&1
+/app/crawler-venv/bin/python3 crawl-skykiwi.py --board hobby \
+    1> /app/crawler/logs/crawl_output_hobby_$(date +%Y%m%d).json \
+    2>> /var/log/noda-backup/crawler-hobby.log
 
 echo "===== Skykiwi Hobby 爬虫完成 $(date) ====="
