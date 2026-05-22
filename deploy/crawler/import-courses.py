@@ -154,6 +154,7 @@ def import_course(course_data):
             price_note = {psql_escape(price_note)},
             trial_lesson = {trial_lesson},
             description = {psql_escape(description)},
+            teacher_qualifications = {psql_escape(teacher_info)},
             source_platform = {psql_escape(source_platform)},
             original_content = {psql_escape(original_content[:1000])},
             tags = '{tags_array}'::text[],
@@ -177,6 +178,7 @@ def import_course(course_data):
         INSERT INTO courses (
             teacher_id, title, subject, grade_level, region, location_type,
             price, price_unit, price_note, trial_lesson, description,
+            teacher_qualifications,
             source_url, source_platform, original_content, tags,
             source, data_quality_score, created_at, updated_at
         ) VALUES (
@@ -191,6 +193,7 @@ def import_course(course_data):
             {psql_escape(price_note)},
             {trial_lesson},
             {psql_escape(description)},
+            {psql_escape(teacher_info)},
             {psql_escape(source_url)},
             {psql_escape(source_platform)},
             {psql_escape(original_content[:1000])},
