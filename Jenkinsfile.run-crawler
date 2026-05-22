@@ -1,0 +1,31 @@
+#!/usr/bin/env groovy
+// 临时任务：手动触发爬虫
+pipeline {
+    agent any
+
+    stages {
+        stage('Run Crawler') {
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        echo "=== 触发 Skykiwi Hobby 板块爬虫 ==="
+                        ssh -i $SSH_KEY_FILE -o StrictHostKeyChecking=no -o ServerAliveInterval=10 root@192.168.100.1 \
+                            "docker exec noda-ops bash -c 'cd /app/crawler && /app/crawler-venv/bin/python3 crawl-skykiwi.py --board hobby'"
+                    '''
+                }
+            }
+        }
+
+        stage('Check Logs') {
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        echo "=== 检查爬虫日志 ==="
+                        ssh -i $SSH_KEY_FILE -o StrictHostKeyChecking=no root@192.168.100.1 \
+                            "docker exec noda-ops ls -lh /app/crawler/logs/ && echo && docker exec noda-ops cat /app/crawler/logs/llm_extract.log | tail -20"
+                    '''
+                }
+            }
+        }
+    }
+}
