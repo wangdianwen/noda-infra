@@ -811,6 +811,18 @@ def write_extract_log(results: list, board: str, log_dir=None):
             "auditPassed": course.get("llmAuditPassed", None),
             "descriptionLength": len(course.get("description", "") or ""),
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            # 完整提取字段（修复数据丢失问题）
+            "contactWechat": course.get("contactWechat", ""),
+            "contactPhone": course.get("contactPhone", ""),
+            "teacherInfo": course.get("teacherInfo", ""),
+            "description": course.get("description", ""),
+            "price": course.get("price"),
+            "priceNote": course.get("priceNote", ""),
+            "priceUnit": course.get("priceUnit", "小时"),
+            "gradeLevel": course.get("gradeLevel", ""),
+            "region": course.get("region", "奥克兰"),
+            "locationType": course.get("locationType", "线下"),
+            "trialLesson": course.get("trialLesson", False),
         })
 
     # 追加写入（如文件已存在则追加）
