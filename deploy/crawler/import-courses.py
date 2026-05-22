@@ -62,7 +62,7 @@ def find_or_create_teacher(contact_wechat, contact_phone, teacher_info):
                     return line.strip()
 
     # 创建新的教师 profile（不使用 teacher_info 作为名字，它应该是 teacher_qualifications）
-    teacher_name = '爬虫导入教师'
+    teacher_name = '匿名教师'
     create_sql = f"""
     INSERT INTO profiles (name, wechat, phone, source, source_platform, created_at, updated_at)
     VALUES (
