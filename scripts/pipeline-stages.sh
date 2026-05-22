@@ -1178,7 +1178,8 @@ pipeline_deploy_noda_ops()
 
         # 在 Mac 上构建 noda-ops 镜像（保持现有逻辑）
         log_info "构建 noda-ops 镜像（Mac 本地）..."
-        docker build -t noda-ops:latest -f deploy/Dockerfile.noda-ops .
+        # 爬虫脚本更新后必须使用 --no-cache 重建，否则 Docker 会缓存旧的文件
+        docker build --no-cache -t noda-ops:latest -f deploy/Dockerfile.noda-ops .
 
         # 传输镜像到 r4s
         log_info "传输 noda-ops 镜像到 r4s..."
