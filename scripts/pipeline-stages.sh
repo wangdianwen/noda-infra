@@ -1186,9 +1186,10 @@ pipeline_deploy_noda_ops()
         transfer_image "noda-ops:latest" "noda-ops:latest"
 
         # 从 Doppler Cloud 拉取密钥（在 Mac 上，per D-22）
+        # 使用 --no-file > file 获取明文格式（直接写入文件是加密格式）
         local secrets_file
         secrets_file=$(mktemp /tmp/noda-ops-secrets.XXXXXX.env)
-        doppler secrets download --project noda --config prd --format env "$secrets_file"
+        doppler secrets download --project noda --config prd --format env --no-file > "$secrets_file"
         log_info "已从 Doppler 拉取密钥: $(grep -c '=' "$secrets_file") 个变量"
 
         # 传输密钥文件到 r4s
@@ -1207,9 +1208,10 @@ pipeline_deploy_noda_ops()
         log_info "noda-ops 重建部署（docker compose recreate）"
 
         # 从 Doppler Cloud 拉取密钥（B2、PostgreSQL、Cloudflare 等）
+        # 使用 --no-file > file 获取明文格式（直接写入文件是加密格式）
         local secrets_file
         secrets_file=$(mktemp /tmp/noda-ops-secrets.XXXXXX.env)
-        doppler secrets download --project noda --config prd --format env "$secrets_file"
+        doppler secrets download --project noda --config prd --format env --no-file > "$secrets_file"
         log_info "已从 Doppler 拉取密钥: $(grep -c '=' "$secrets_file") 个变量"
 
         # noda-ops 使用 build 模式，需要 --build
