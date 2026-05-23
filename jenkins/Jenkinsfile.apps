@@ -73,16 +73,12 @@ pipeline {
                         source "$WORKSPACE/scripts/pipeline-stages.sh"
                         pipeline_test "$PWD"
                     '''
-                    sh 'pnpm lint >lint-result.txt 2>&1 || echo "LINT_FAILED" >> lint-result.txt'
-                    sh 'pnpm test >test-result.txt 2>&1 || echo "TEST_FAILED" >> test-result.txt'
-                    script {
-                        if (fileExists('lint-result.txt') && readFile('lint-result.txt').contains('LINT_FAILED')) {
-                            echo "WARNING: pnpm lint 失败，详见 lint-result.txt"
-                        }
-                        if (fileExists('test-result.txt') && readFile('test-result.txt').contains('TEST_FAILED')) {
-                            echo "WARNING: pnpm test 失败，详见 test-result.txt"
-                        }
-                    }
+                    echo '🧪 运行 Lint 检查...'
+                    sh 'pnpm lint'
+                    echo '✅ Lint 通过'
+                    echo '🧪 运行单元测试...'
+                    sh 'pnpm test'
+                    echo '✅ 测试通过'
                 }
             }
         }
