@@ -82,6 +82,9 @@ RUN python3 -m venv /app/crawler-venv && \
 COPY deploy/crontab /etc/crontabs/nodaops
 RUN chmod 600 /etc/crontabs/nodaops && chown nodaops:nodaops /etc/crontabs/nodaops
 
+# 添加爬虫定时任务（构建时配置，避免运行时只读文件系统问题）
+RUN echo "0 7 * * * /app/crawler/crawler-daily.sh >> /var/log/crawler-cron.log 2>&1" >> /etc/crontabs/nodaops
+
 # 复制爬虫 cronjob 脚本
 COPY --chown=nodaops:nodaops deploy/crawler-tutoring.sh /app/crawler/crawler-tutoring.sh
 COPY --chown=nodaops:nodaops deploy/crawler-hobby.sh /app/crawler/crawler-hobby.sh
