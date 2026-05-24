@@ -100,7 +100,6 @@ services:
       - ./volumes/history:/app/history
       - ./volumes/logs:/var/log/noda-backup
       - ./volumes/crawler-logs:/app/crawler/logs
-      - ../../deploy/crawler:/app/crawler:ro
     networks:
       - noda-network
     depends_on:
