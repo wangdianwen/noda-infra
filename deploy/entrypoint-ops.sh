@@ -72,6 +72,13 @@ else
   echo "⚠ DOPPLER_TOKEN 未配置，密钥备份将禁用"
 fi
 
+# 配置爬虫定时任务（如果环境变量启用）
+if [ "${ENABLE_CRAWLER_CRON:-true}" = "true" ]; then
+  echo "配置爬虫定时任务..."
+  # 每天 7:00 执行爬虫，随机延迟 10-720 分钟
+  (crontab -l 2>/dev/null; echo "0 7 * * * /app/crawler/crawler-daily.sh >> /var/log/crawler-cron.log 2>&1") | crontab -
+fi
+
 # 显示定时任务
 echo ""
 echo "已配置的定时任务:"
