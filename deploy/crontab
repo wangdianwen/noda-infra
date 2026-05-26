@@ -2,10 +2,10 @@
 # 格式: 分 时 日 月 周 命令
 
 # 每天凌晨 3:00 执行备份
-0 3 * * * /app/backup/backup-postgres.sh >> /var/log/noda-backup/backup.log 2>&1
+0 3 * * * /app/backup/backup-postgres.sh >> /app/crawler/logs/backup.log 2>&1
 
 # 每周日凌晨 3:00 执行验证测试
-0 3 * * 0 /app/backup/test-verify-weekly.sh >> /var/log/noda-backup/test.log 2>&1
+0 3 * * 0 /app/backup/test-verify-weekly.sh >> /app/crawler/logs/test.log 2>&1
 
 # 每 6 小时清理旧历史记录
 0 */6 * * * /app/backup/lib/metrics.sh cleanup 2>/dev/null || true
@@ -14,17 +14,17 @@
 0 4 * * * find /tmp/postgres_backups -type f -name "*.dump" -mtime +7 -delete 2>/dev/null || true
 
 # 每天凌晨 3:30 执行 Doppler 密钥备份（错开数据库备份 3:00）
-30 3 * * * /app/backup/backup-doppler-secrets.sh --project noda --config prd >> /var/log/noda-backup/doppler-backup.log 2>&1
+30 3 * * * /app/backup/backup-doppler-secrets.sh --project noda --config prd >> /app/crawler/logs/doppler-backup.log 2>&1
 
 # 爬虫任务（脚本内随机延迟 10分钟-12小时）
 # Hobby (兴趣爱好): 每天 7:00 抓取第一页所有内容
-0 7 * * * /app/crawler/crawler-hobby.sh >> /var/log/crawler-cron.log 2>&1
+0 7 * * * /app/crawler/crawler-hobby.sh >> /app/crawler/logs/crawler-cron.log 2>&1
 # Tutoring (课外辅导): 每周一 7:00 抓取第一页所有内容
-0 7 * * * 1 /app/crawler/crawler-tutoring.sh >> /var/log/crawler-cron.log 2>&1
+0 7 * * * 1 /app/crawler/crawler-tutoring.sh >> /app/crawler/logs/crawler-cron.log 2>&1
 
 # 课程入库任务（爬虫完成后执行）
 # 每天 8:00 执行课程入库（Tutoring 爬虫 7:00 之后）
-0 8 * * * /app/crawler/import-courses.sh >> /var/log/crawler-cron.log 2>&1
+0 8 * * * /app/crawler/import-courses.sh >> /app/crawler/logs/crawler-cron.log 2>&1
 
 # 注意：Docker 镜像清理在 r4s 宿主机上通过 cron 执行
 # 文件位置：/opt/noda/cleanup-docker-images.sh
