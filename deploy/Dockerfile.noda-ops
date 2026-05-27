@@ -61,8 +61,8 @@ COPY --from=builder /usr/bin/doppler /usr/bin/doppler
 # 设置工作目录
 WORKDIR /app
 
-# 创建非 root 用户
-RUN addgroup -S nodaops && adduser -S -G nodaops nodaops
+# 创建非 root 用户（设置正确的 shell 以支持 cron 任务）
+RUN addgroup -S nodaops && adduser -S -G nodaops -s /bin/sh nodaops
 
 # 修复 crond 权限：dcron 安装后 crond 仅 root 可执行，nodaops 用户需要执行权限
 RUN chmod 755 /usr/sbin/crond
