@@ -34,6 +34,11 @@ load_secrets()
         return 1
     fi
 
+    # doppler 可能安装在 brew 路径下，Jenkins 的 PATH 可能找不到
+    if [ -x /opt/homebrew/bin/doppler ]; then
+        export PATH="/opt/homebrew/bin:$PATH"
+    fi
+
     if ! command -v doppler >/dev/null 2>&1; then
         log_error "DOPPLER_TOKEN 已设置但 doppler CLI 不可用"
         log_error "安装方式: brew install dopplerhq/cli/doppler"
