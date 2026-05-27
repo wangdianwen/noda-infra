@@ -9,6 +9,7 @@ pipeline {
     agent any
 
     environment {
+        PATH = "/usr/local/bin:/opt/homebrew/bin:${env.PATH}"
         PROJECT_ROOT = "${WORKSPACE}"
         COMPOSE_BASE = "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml"
         BACKUP_HOST_DIR = "${WORKSPACE}/docker/volumes/backup"
