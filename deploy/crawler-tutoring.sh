@@ -32,3 +32,9 @@ cd /app/crawler
     2>> /var/log/noda-backup/crawler-tutoring.log
 
 echo "===== Skykiwi Tutoring 爬虫完成 $(date) ====="
+
+# 爬虫完成后立即执行课程入库
+echo "===== 开始课程入库 $(date) ====="
+cd /app/crawler
+/usr/bin/python3 import-courses.py >> /var/log/noda-backup/import-courses.log 2>&1
+echo "===== 课程入库完成 $(date) ====="
