@@ -20,7 +20,7 @@
 # Hobby (兴趣爱好): 每天 7:00 抓取第一页所有内容 + 入库
 0 7 * * * root /app/crawler/crawler-hobby.sh >> /var/log/noda-backup/crawler-hobby.log 2>&1
 # Tutoring (课外辅导): 每周一 7:00 抓取第一页所有内容 + 入库
-0 7 * * * 1 root /app/crawler/crawler-tutoring.sh >> /var/log/noda-backup/crawler-tutoring.log 2>&1
+0 7 * * 1 root /app/crawler/crawler-tutoring.sh >> /var/log/noda-backup/crawler-tutoring.log 2>&1
 
 # 注意：Docker 镜像清理在 r4s 宿主机上通过 cron 执行
 # 文件位置：/opt/noda/cleanup-docker-images.sh
