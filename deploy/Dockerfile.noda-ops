@@ -78,9 +78,11 @@ COPY --chown=nodaops:nodaops deploy/crawler/ /app/crawler/
 RUN python3 -m venv /app/crawler-venv && \
     /app/crawler-venv/bin/pip3 install --no-cache-dir -r /app/crawler/requirements.txt
 
-# 复制 crontab 配置（dcron 要求 600 权限，否则跳过非 root 用户 crontab）
-COPY deploy/crontab /etc/crontabs/nodaops
-RUN chmod 600 /etc/crontabs/nodaops && chown nodaops:nodaops /etc/crontabs/nodaops
+# 复制 crontab 配置到 /etc/cron.d/（dcron 的 -s 目录）
+# 注意：dcron 不加载 /etc/crontabs/ 下的非 root 用户 crontab
+# 必须放到 /etc/cron.d/ 才能被读取，且每行需要 user 字段
+COPY deploy/crontab /etc/cron.d/nodaops
+RUN chmod 644 /etc/cron.d/nodaops
 
 # crawler-daily 已合并到 crawler-hobby.sh，不再单独添加
 
