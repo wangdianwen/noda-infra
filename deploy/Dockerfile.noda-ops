@@ -79,8 +79,8 @@ RUN python3 -m venv /app/crawler-venv && \
     /app/crawler-venv/bin/pip3 install --no-cache-dir -r /app/crawler/requirements.txt
 
 # 复制 crontab 配置到 /etc/cron.d/（dcron 的 -s 目录）
-# 注意：dcron 不加载 /etc/crontabs/ 下的非 root 用户 crontab
-# 必须放到 /etc/cron.d/ 才能被读取，且每行需要 user 字段
+# dcron /etc/cron.d/ 格式：无 user 字段（用户由文件 owner 决定）
+# 不同于标准 cron 的 /etc/cron.d/ 格式，dcron 不解析第 6 字段的 user
 COPY deploy/crontab /etc/cron.d/nodaops
 RUN chmod 644 /etc/cron.d/nodaops
 
