@@ -298,7 +298,7 @@ main()
     local databases
     if [[ -z "$TEST_DATABASES" ]]; then
         # 从备份目录自动发现数据库（取最近备份中涉及的数据库名）
-        databases=$(ls "${BACKUP_DIR:-/tmp/postgres_backups}"/202*/*/*.dump 2>/dev/null | xargs -I{} basename {} | sed 's/_[0-9]*.dump$//' | sort -u | head -3)
+        databases=$(find "${BACKUP_DIR:-/tmp/postgres_backups}" -name "*.dump" -type f 2>/dev/null | xargs -I{} basename {} | sed 's/_[0-9]*.dump$//' | sort -u | head -3)
         if [[ -z "$databases" ]]; then
             databases="noda_prod keycloak"
         fi
