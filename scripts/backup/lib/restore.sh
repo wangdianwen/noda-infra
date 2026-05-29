@@ -106,7 +106,7 @@ download_backup()
     log_info "下载备份文件: $backup_filename" >&2
 
     # 验证文件名格式（使用纯文件名）
-    if [[ ! $backup_filename =~ ^[^_]+_[0-9]{8}_[0-9]{6}\.(sql|dump)$ ]]; then
+    if [[ ! $backup_filename =~ ^.+_[0-9]{8}_[0-9]{6}\.(sql|dump)$ ]]; then
         log_error "无效的备份文件名格式: $backup_filename"
         return 1
     fi
