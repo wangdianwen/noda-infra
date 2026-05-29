@@ -4,14 +4,23 @@
 
 set -e
 
+# --now: 跳过随机延迟，立即执行（用于手动触发）
+SKIP_DELAY=false
+for arg in "$@"; do
+    [[ "$arg" == "--now" ]] && SKIP_DELAY=true
+done
+
 echo "===== Skykiwi Tutoring 爬虫开始 $(date) ====="
 
-# 随机延迟 10分钟到 12小时（600秒到 43200秒）
-RANDOM_DELAY=$((RANDOM % 42601 + 600))
-RANDOM_MINUTES=$((RANDOM_DELAY / 60))
-echo "随机延迟: ${RANDOM_MINUTES} 分钟 (${RANDOM_DELAY} 秒)"
-sleep $RANDOM_DELAY
-echo "===== 延迟结束，开始爬取 $(date) ====="
+if [[ "$SKIP_DELAY" == "false" ]]; then
+    RANDOM_DELAY=$((RANDOM % 42601 + 600))
+    RANDOM_MINUTES=$((RANDOM_DELAY / 60))
+    echo "随机延迟: ${RANDOM_MINUTES} 分钟 (${RANDOM_DELAY} 秒)"
+    sleep $RANDOM_DELAY
+    echo "===== 延迟结束，开始爬取 $(date) ====="
+else
+    echo "手动触发，跳过延迟"
+fi
 
 # 设置环境变量
 export DATABASE_URL="postgresql://postgres:postgres_password_change_me@noda-infra-postgres-prod:5432/noda_prod"
