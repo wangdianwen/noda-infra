@@ -5,10 +5,21 @@
 """
 import json
 import os
+import re
 import sys
 import subprocess
 from datetime import datetime
 from pathlib import Path
+
+
+def clean_decorative_symbols(text):
+    """移除装饰符号（█★●◆⭐🎨等），保留中文/英文/数字/基本标点"""
+    if not text:
+        return text
+    text = re.sub(r'[─-╿▀-▟■-◿☀-⛿✀-➿⭐⭕⬛⬜®©™　]+', ' ', text)
+    text = re.sub(r'[\U0001F300-\U0001F9FF\U00002600-\U000027BF\U0000FE00-\U0000FE0F\U0000200D\U00002764\U00002B50]+', ' ', text)
+    text = re.sub(r'\s{2,}', ' ', text)
+    return text.strip()
 
 # 数据库配置
 DB_HOST = os.getenv('POSTGRES_HOST', 'noda-infra-postgres-prod')
@@ -159,13 +170,13 @@ def find_or_create_teacher(contact_wechat, contact_phone, teacher_info):
 
 def import_course(course_data):
     """导入单条课程数据（更新已存在或插入新课程）"""
-    # 提取字段
-    title = course_data.get('title', '')
+    # 提取字段（清洗装饰符号）
+    title = clean_decorative_symbols(course_data.get('title', ''))
     price_str = course_data.get('price')
     price_note = course_data.get('priceNote', '')
     contact_wechat = course_data.get('contactWechat', '')
     contact_phone = course_data.get('contactPhone', '')
-    subject = course_data.get('subject', '')
+    subject = clean_decorative_symbols(course_data.get('subject', ''))
     region = course_data.get('region', '奥克兰')
     grade_level = course_data.get('gradeLevel', '')
     teacher_info = course_data.get('teacherInfo', '')
