@@ -170,8 +170,15 @@ def find_or_create_teacher(contact_wechat, contact_phone, teacher_info):
 
 def import_course(course_data):
     """导入单条课程数据（更新已存在或插入新课程）"""
+    # 质量门控：跳过 LLM 提取失败的 placeholder 记录
+    title = course_data.get('title', '')
+    confidence = course_data.get('confidence', 0)
+    if title in ('课程信息待提取', '待提取', '') or confidence <= 0:
+        print(f"  ⏭️ 跳过（低质量）: {title[:30]} (confidence={confidence})")
+        return 'skip'
+
     # 提取字段（清洗装饰符号）
-    title = clean_decorative_symbols(course_data.get('title', ''))
+    title = clean_decorative_symbols(title)
     price_str = course_data.get('price')
     price_note = course_data.get('priceNote', '')
     contact_wechat = course_data.get('contactWechat', '')
