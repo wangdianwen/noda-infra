@@ -30,7 +30,9 @@ def clean_title(text):
     text = re.sub(r'[─-╿▀-▟■-◿☀-⛿✀-➿⭐⭕⬛⬜®©™　]+', ' ', text)
     # 2. 移除 emoji（杂项符号、表情符号等 Unicode 块）
     text = re.sub(r'[\U0001F300-\U0001F9FF\U00002600-\U000027BF\U0000FE00-\U0000FE0F\U0000200D\U00002764\U00002B50]+', ' ', text)
-    # 3. 清理多余空格
+    # 3. 全角竖线→空格
+    text = text.replace('｜', ' ').replace('|', ' ')
+    # 4. 清理多余空格
     text = re.sub(r'\s{2,}', ' ', text)
     return text.strip()
 

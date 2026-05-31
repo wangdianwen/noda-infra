@@ -16,8 +16,9 @@ def clean_decorative_symbols(text):
     """移除装饰符号（█★●◆⭐🎨等），保留中文/英文/数字/基本标点"""
     if not text:
         return text
-    text = re.sub(r'[─-╿▀-▟■-◿☀-⛿✀-➿⭐⭕⬛⬜®©™　]+', ' ', text)
+    text = re.sub(r'[─-╿▀-▟■-◿☀-⛑✀-➿⭐⭕⬛⬜®©™　]+', ' ', text)
     text = re.sub(r'[\U0001F300-\U0001F9FF\U00002600-\U000027BF\U0000FE00-\U0000FE0F\U0000200D\U00002764\U00002B50]+', ' ', text)
+    text = text.replace('｜', ' ').replace('|', ' ')
     text = re.sub(r'\s{2,}', ' ', text)
     return text.strip()
 
@@ -173,8 +174,12 @@ def import_course(course_data):
     # 质量门控：跳过 LLM 提取失败的 placeholder 记录
     title = course_data.get('title', '')
     confidence = course_data.get('confidence', 0)
+    description = course_data.get('description', '')
     if title in ('课程信息待提取', '待提取', '') or confidence <= 0:
         print(f"  ⏭️ 跳过（低质量）: {title[:30]} (confidence={confidence})")
+        return 'skip'
+    if description.startswith('改写描述为') or description.startswith('需要从原始'):
+        print(f"  ⏭️ 跳过（template 描述）: {title[:30]}")
         return 'skip'
 
     # 提取字段（清洗装饰符号）
