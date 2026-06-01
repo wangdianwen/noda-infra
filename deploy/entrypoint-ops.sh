@@ -55,6 +55,19 @@ fi
 # 验证 Cloudflare Tunnel
 if [ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
   echo "✓ Cloudflare Tunnel 配置验证通过"
+  # DNS 预热：等待 Cloudflare edge DNS 解析稳定
+  echo "  等待 DNS 解析稳定..."
+  for i in $(seq 1 10); do
+    if nslookup region1.v2.argotunnel.com >/dev/null 2>&1; then
+      EDGE_IP=$(nslookup region1.v2.argotunnel.com 2>/dev/null | grep -A1 'Name:' | grep 'Address' | awk '{print $2}')
+      # 198.41.x.x 或 198.18.5.x 是正常 edge IP；198.18.0.x 是 WARP 地址，可能不稳定
+      if echo "$EDGE_IP" | grep -qE '^198\.41\.|^198\.18\.[1-9]'; then
+        echo "  ✓ DNS 解析正常: $EDGE_IP"
+        break
+      fi
+    fi
+    sleep 2
+  done
 else
   echo "⚠ CLOUDFLARE_TUNNEL_TOKEN 未配置，隧道功能将禁用"
   # 将 supervisord.conf 复制到可写路径并禁用 cloudflared
