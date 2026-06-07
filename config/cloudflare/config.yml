@@ -29,6 +29,9 @@ ingress:
   # Admin Dashboard（内网访问）
   - hostname: admin.noda.co.nz
     service: http://noda-nginx:81
+  # Remark42 评论服务
+  - hostname: comments.noda.co.nz
+    service: http://noda-nginx:81
 
   # 默认规则 - 必须是最后一条
   - service: http_status:404
