@@ -1,0 +1,74 @@
+# ============================================
+# Remark42 评论服务
+# ============================================
+# 部署: docker compose -f docker/docker-compose.remark42.yml up -d
+# 网络: 加入 noda-network 与其他服务通信
+
+name: remark42
+
+services:
+  remark42:
+    image: umputun/remark42:latest
+    container_name: remark42
+    labels:
+      - "noda.service-group=apps"
+      - "noda.environment=prod"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      REMARK_URL: https://comments.noda.co.nz
+      REMARK_SITE: class
+      REMARK_PORT: "8080"
+      # PostgreSQL 存储（复用现有 PG）
+      REMARK_STORE_TYPE: postgres
+      REMARK_STORE_POSTGRES_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod?sslmode=disable
+      # Keycloak OAuth2
+      REMARK_KEYCLOAK_CID: remark42
+      REMARK_KEYCLOAK_CSEC: ${REMARK42_KEYCLOAK_SECRET}
+      REMARK_KEYCLOAK_URL: https://auth.noda.co.nz/realms/noda
+      # 管理
+      REMARK_ADMIN_PASSWD: ${REMARK42_ADMIN_PASSWORD}
+      REMARK_ADMIN_TYPE: role
+      REMARK_ADMIN_ROLE: remark42-admin
+      # 审核
+      REMARK_MAX_COMMENT_SIZE: "2000"
+      REMARK_EDIT_TIME: "300"
+      REMARK_SIMPLE_VIEW: "true"
+      REMARK_WORDS_BAN_LIST: ${REMARK42_WORDS_BAN_LIST:-}
+      # 通知（暂关闭，后续可接 email）
+      REMARK_NOTIFY_TYPE: none
+      # 图片
+      REMARK_IMAGE_PROXY: "true"
+      REMARK_EMOJI: "true"
+    volumes:
+      - remark42-avatar:/srv/var/avatar
+    networks:
+      - noda-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+volumes:
+  remark42-avatar:
+
+networks:
+  noda-network:
+    external: true
+    name: noda-network
