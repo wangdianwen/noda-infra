@@ -928,6 +928,9 @@ pipeline_infra_deploy()
         postgres)
             pipeline_deploy_postgres
             ;;
+        remark42)
+            pipeline_deploy_remark42
+            ;;
         *)
             log_error "未知服务: $service"
             return 1
@@ -1086,6 +1089,76 @@ prepare_keycloak_env_file()
 }
 
 # ============================================
+# 函数: pipeline_deploy_remark42
+# ============================================
+# Remark42 评论服务 docker compose 部署
+# 独立 compose 文件，不影响其他服务
+# 返回: 0=成功，1=失败
+pipeline_deploy_remark42()
+{
+    local compose_file="docker/docker-compose.remark42.yml"
+
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        log_info "Remark42 部署（r4s 远程）"
+
+        # 拉取最新镜像
+        log_info "拉取 Remark42 镜像..."
+        remote_exec "docker pull umputun/remark42:latest"
+
+        # 停止旧容器
+        remote_exec "docker rm -f remark42 2>/dev/null || true"
+
+        # 启动新容器
+        remote_exec "cd /opt/noda/noda-infra && docker compose \
+            --env-file docker/.env \
+            -f ${compose_file} up -d"
+
+        # 等待健康检查
+        log_info "等待 Remark42 就绪..."
+        local _max_wait=30
+        local _elapsed=0
+        while [ $_elapsed -lt $_max_wait ]; do
+            local _healthy
+            _healthy=$(remote_exec "docker inspect --format='{{.State.Health.Status}}' remark42 2>/dev/null || echo unknown")
+            if [ "$_healthy" = "healthy" ]; then
+                log_info "Remark42 已就绪（等待 ${_elapsed} 秒）"
+                break
+            fi
+            sleep 2
+            _elapsed=$((_elapsed + 2))
+        done
+        if [ $_elapsed -ge $_max_wait ]; then
+            log_warn "Remark42 健康检查超时，检查日志..."
+            remote_exec "docker logs remark42 --tail 20 2>/dev/null || true"
+        fi
+        log_success "Remark42 部署完成（r4s）"
+    else
+        # 本地模式
+        log_info "Remark42 部署（本地 docker compose）"
+
+        docker compose --env-file docker/.env -f ${compose_file} up -d
+
+        log_info "等待 Remark42 就绪..."
+        local _max_wait=30
+        local _elapsed=0
+        while [ $_elapsed -lt $_max_wait ]; do
+            local _healthy
+            _healthy=$(docker inspect --format='{{.State.Health.Status}}' remark42 2>/dev/null || echo "unknown")
+            if [ "$_healthy" = "healthy" ]; then
+                log_info "Remark42 已就绪（等待 ${_elapsed} 秒）"
+                break
+            fi
+            sleep 2
+            _elapsed=$((_elapsed + 2))
+        done
+        if [ $_elapsed -ge $_max_wait ]; then
+            log_warn "Remark42 健康检查超时"
+            docker logs remark42 --tail 20 2>/dev/null || true
+        fi
+        log_success "Remark42 部署完成"
+    fi
+}
+
 # 函数: pipeline_deploy_nginx
 # ============================================
 # Nginx docker compose recreate（秒级中断，非零停机）

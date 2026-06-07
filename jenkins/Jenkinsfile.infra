@@ -30,7 +30,7 @@ pipeline {
     parameters {
         choice(
             name: 'SERVICE',
-            choices: ['nginx', 'noda-ops', 'keycloak', 'postgres'],
+            choices: ['nginx', 'noda-ops', 'keycloak', 'postgres', 'remark42'],
             description: '选择要部署的基础设施服务'
         )
         string(
