@@ -30,10 +30,10 @@ services:
       REMARK_STORE_POSTGRES_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod?sslmode=disable
       # Keycloak OAuth2
       REMARK_KEYCLOAK_CID: remark42
-      REMARK_KEYCLOAK_CSEC: ${REMARK42_KEYCLOAK_SECRET}
+      REMARK_KEYCLOAK_CSEC: ${REMARK42_KEYCLOAK_SECRET:-change-me-in-doppler}
       REMARK_KEYCLOAK_URL: https://auth.noda.co.nz/realms/noda
       # 管理
-      REMARK_ADMIN_PASSWD: ${REMARK42_ADMIN_PASSWORD}
+      REMARK_ADMIN_PASSWD: ${REMARK42_ADMIN_PASSWORD:-change-me-in-doppler}
       REMARK_ADMIN_TYPE: role
       REMARK_ADMIN_ROLE: remark42-admin
       # 审核
