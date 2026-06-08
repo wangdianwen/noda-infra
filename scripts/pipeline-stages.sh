@@ -1114,8 +1114,8 @@ pipeline_deploy_remark42()
         # 停止旧容器
         remote_exec "docker rm -f remark42 2>/dev/null || true"
 
-        # 启动新容器
-        remote_exec "cd /opt/noda/noda-infra && docker compose \
+        # 启动新容器（传递 Doppler 环境变量）
+        remote_exec "cd /opt/noda/noda-infra && REMARK42_ADMIN_PASSWORD=\"${REMARK42_ADMIN_PASSWORD}\" REMARK42_KEYCLOAK_SECRET=\"${REMARK42_KEYCLOAK_SECRET}\" docker compose \
             --env-file docker/.env \
             -f ${compose_file} up -d"
 
