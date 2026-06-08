@@ -48,15 +48,11 @@ pipeline {
     stages {
         stage('Pre-flight') {
             steps {
-                // Manual checkout - skip tags to avoid git show-ref --tags -d hang
+                // Simple checkout (no extensions to avoid git show-ref --tags -d hang)
                 checkout([
                     $class: 'GitSCM',
                     branches: [[name: '*/main']],
-                    userRemoteConfigs: [[url: 'git@github.com:wangdianwen/noda-infra.git', credentialsId: 'noda-infra-git-credentials']],
-                    extensions: [
-                        [$class: 'CloneOption', noTags: true, shallow: true, depth: 1, timeout: 60],
-                        [$class: 'LocalBranch', localBranch: 'main']
-                    ]
+                    userRemoteConfigs: [[url: 'git@github.com:wangdianwen/noda-infra.git', credentialsId: 'noda-infra-git-credentials']]
                 ])
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
