@@ -729,6 +729,9 @@ pipeline_infra_preflight()
                 fi
                 log_info "noda-infra-postgres-prod 容器运行中（r4s）"
                 ;;
+            remark42)
+                # 无额外检查
+                ;;
             *)
                 log_error "未知服务: $service"
                 return 1
@@ -802,6 +805,9 @@ pipeline_infra_preflight()
                     return 1
                 fi
                 log_info "noda-infra-postgres-prod 容器运行中"
+                ;;
+            remark42)
+                # 无额外检查
                 ;;
             *)
                 log_error "未知服务: $service"
@@ -1360,6 +1366,9 @@ pipeline_infra_health_check()
                 remote_docker_exec "noda-infra-postgres-prod" "pg_isready -h localhost -p 5432"
                 wait_container_healthy "noda-infra-postgres-prod" 90 true true
                 ;;
+            remark42)
+                wait_container_healthy "remark42" 60 true true
+                ;;
             *)
                 log_error "未知服务: $service"
                 return 1
@@ -1384,6 +1393,9 @@ pipeline_infra_health_check()
                 # pg_isready 验证数据库可连接 + wait_container_healthy
                 docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
                 wait_container_healthy "noda-infra-postgres-prod" 90
+                ;;
+            remark42)
+                wait_container_healthy "remark42" 60
                 ;;
             *)
                 log_error "未知服务: $service"
@@ -1427,6 +1439,10 @@ pipeline_infra_verify()
                 remote_exec "docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432"
                 log_success "PostgreSQL 验证通过（r4s）"
                 ;;
+            remark42)
+                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --spider http://remark42:8080/ping 2>/dev/null"
+                log_success "Remark42 E2E 验证通过（r4s）"
+                ;;
             *)
                 log_error "未知服务: $service"
                 return 1
@@ -1454,6 +1470,10 @@ pipeline_infra_verify()
             postgres)
                 docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
                 log_success "PostgreSQL 验证通过"
+                ;;
+            remark42)
+                docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://remark42:8080/ping 2>/dev/null
+                log_success "Remark42 E2E 验证通过"
                 ;;
             *)
                 log_error "未知服务: $service"
@@ -1489,6 +1509,9 @@ pipeline_infra_cleanup()
         postgres)
             log_info "PostgreSQL 无需额外清理"
             ;;
+        remark42)
+            cleanup_dangling
+            ;;
         *)
             log_info "未知服务: $service，跳过清理"
             ;;
@@ -1522,6 +1545,9 @@ pipeline_infra_failure_cleanup()
             ;;
         postgres)
             container_name="noda-infra-postgres-prod"
+            ;;
+        remark42)
+            container_name="remark42"
             ;;
         *)
             container_name="$service"
