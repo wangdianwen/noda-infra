@@ -8,11 +8,6 @@
 pipeline {
     agent any
 
-    // Skip automatic checkout - manual clone in Pre-flight stage
-    options {
-        skipDefaultCheckout(true)
-    }
-
     environment {
         PATH = "/usr/local/bin:/opt/homebrew/bin:${env.PATH}"
         PROJECT_ROOT = "${WORKSPACE}"
@@ -23,6 +18,8 @@ pipeline {
     }
 
     options {
+        // Skip automatic checkout
+        skipDefaultCheckout(true)
         // 禁止并发构建，防止两个 Pipeline 同时操作基础设施服务
         disableConcurrentBuilds()
         // 保留最近 10 次构建日志
