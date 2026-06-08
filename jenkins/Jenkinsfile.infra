@@ -8,6 +8,11 @@
 pipeline {
     agent any
 
+    // Skip automatic checkout - manual clone in Pre-flight stage
+    options {
+        skipDefaultCheckout(true)
+    }
+
     environment {
         PATH = "/usr/local/bin:/opt/homebrew/bin:${env.PATH}"
         PROJECT_ROOT = "${WORKSPACE}"
@@ -43,6 +48,16 @@ pipeline {
     stages {
         stage('Pre-flight') {
             steps {
+                // Manual checkout - skip tags to avoid git show-ref --tags -d hang
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[url: 'git@github.com:wangdianwen/noda-infra.git', credentialsId: 'noda-infra-git-credentials']],
+                    extensions: [
+                        [$class: 'CloneOption', noTags: true, shallow: true, depth: 1, timeout: 60],
+                        [$class: 'LocalBranch', localBranch: 'main']
+                    ]
+                ])
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
