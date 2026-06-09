@@ -200,6 +200,8 @@ pipeline_preflight()
     fi
 
     # 检查 Docker daemon（本地，用于构建）
+    # 确保 PATH 包含 Docker 可执行文件路径（macOS: /usr/local/bin）
+    export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
     docker info >/dev/null 2>&1 || {
         log_error "Docker daemon 不可用"
         return 1
