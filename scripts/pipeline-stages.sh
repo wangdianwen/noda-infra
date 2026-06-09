@@ -339,6 +339,7 @@ pipeline_build()
             --build-arg NEXT_PUBLIC_KEYCLOAK_REALM=noda \
             --build-arg NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=noda-frontend \
             --build-arg NEXT_PUBLIC_AUTH_KEYCLOAK_CLIENT_ID=noda-auth \
+            --build-arg NEXT_PUBLIC_REMARK_URL=https://comments.noda.co.nz \
             "$apps_dir"
     else
         docker build \
