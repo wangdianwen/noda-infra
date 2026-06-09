@@ -69,15 +69,17 @@ pipeline {
             steps {
                 dir('noda-apps') {
                     sh '''
+                        # 设置 PATH 包含 Node.js 和 pnpm
+                        export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
                         source "$WORKSPACE/scripts/lib/log.sh"
                         source "$WORKSPACE/scripts/pipeline-stages.sh"
                         pipeline_test "$PWD"
                     '''
                     echo '🧪 运行 Lint 检查...'
-                    sh 'pnpm lint'
+                    sh 'export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH" && pnpm lint'
                     echo '✅ Lint 通过'
                     echo '🧪 运行单元测试...'
-                    sh 'pnpm test'
+                    sh 'export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH" && pnpm test'
                     echo '✅ 测试通过'
                 }
             }
