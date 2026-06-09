@@ -3,6 +3,10 @@
 # 通用日志库（带颜色）
 # ============================================
 
+# 确保 PATH 包含 Docker 可执行文件路径（所有脚本依赖）
+# macOS Homebrew: /usr/local/bin, /opt/homebrew/bin
+export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+
 _GREEN='\033[0;32m'
 _YELLOW='\033[1;33m'
 _RED='\033[0;31m'
