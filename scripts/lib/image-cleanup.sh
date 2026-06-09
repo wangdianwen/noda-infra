@@ -13,6 +13,9 @@ if [[ -n "${_NODA_IMAGE_CLEANUP_LOADED:-}" ]]; then
 fi
 _NODA_IMAGE_CLEANUP_LOADED=1
 
+# 确保 PATH 包含 Docker 可执行文件路径（macOS: /usr/local/bin）
+export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+
 # 环境参数
 NODA_ENVIRONMENT="${NODA_ENVIRONMENT:-prod}"
 
