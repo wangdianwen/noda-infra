@@ -30,6 +30,12 @@ cleanup_docker_build_cache()
 {
     local retention_hours="${1:-$BUILD_CACHE_RETENTION_HOURS}"
 
+    # 检查 Docker 是否可用
+    if ! command -v docker >/dev/null 2>&1; then
+        log_info "Docker 不可用，跳过 build cache 清理"
+        return 0
+    fi
+
     log_info "清理 Docker build cache（保留 ${retention_hours} 小时内）..."
 
     local before_size
@@ -48,6 +54,12 @@ cleanup_docker_build_cache()
 # 返回：无（清理无标签的 dangling images）
 cleanup_dangling_images()
 {
+    # 检查 Docker 是否可用
+    if ! command -v docker >/dev/null 2>&1; then
+        log_info "Docker 不可用，跳过 dangling images 清理"
+        return 0
+    fi
+
     log_info "检查 dangling images..."
 
     local count
@@ -70,6 +82,12 @@ cleanup_dangling_images()
 cleanup_stopped_containers()
 {
     local retention_hours="${1:-$CONTAINER_RETENTION_HOURS}"
+
+    # 检查 Docker 是否可用
+    if ! command -v docker >/dev/null 2>&1; then
+        log_info "Docker 不可用，跳过已停止容器清理"
+        return 0
+    fi
 
     log_info "清理超过 ${retention_hours} 小时的已停止容器..."
 
