@@ -338,7 +338,11 @@ pipeline_build()
             --build-arg NEXT_PUBLIC_KEYCLOAK_URL=https://auth.noda.co.nz \
             --build-arg NEXT_PUBLIC_KEYCLOAK_REALM=noda \
             --build-arg NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=noda-frontend \
+            --build-arg NEXT_PUBLIC_AUTH_APP_URL=https://auth.noda.co.nz \
+            --build-arg NEXT_PUBLIC_AUTH_BYPASS=false \
             --build-arg NEXT_PUBLIC_AUTH_KEYCLOAK_CLIENT_ID=noda-auth \
+            --build-arg NEXT_PUBLIC_ALLOWED_ORIGINS=https://class.noda.co.nz,https://noda.co.nz \
+            --build-arg NEXT_PUBLIC_SITE_URL=https://class.noda.co.nz \
             --build-arg NEXT_PUBLIC_REMARK_URL=https://comments.noda.co.nz \
             "$apps_dir"
     else
