@@ -23,12 +23,9 @@ services:
         max-file: "3"
     environment:
       REMARK_URL: https://comments.noda.co.nz
-      REMARK_SITE: class
+      SITE: class
       SECRET: ${REMARK42_SECRET:-change-me-in-doppler}
       REMARK_PORT: "8080"
-      # PostgreSQL 存储（复用现有 PG）
-      REMARK_STORE_TYPE: postgres
-      REMARK_STORE_POSTGRES_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod?sslmode=disable
       # Keycloak OAuth2
       REMARK_KEYCLOAK_CID: remark42
       REMARK_KEYCLOAK_CSEC: ${REMARK42_KEYCLOAK_SECRET:-change-me-in-doppler}
@@ -48,7 +45,7 @@ services:
       REMARK_IMAGE_PROXY: "true"
       REMARK_EMOJI: "true"
     volumes:
-      - remark42-avatar:/srv/var/avatar
+      - remark42-data:/srv/var
     networks:
       - noda-network
     healthcheck:
@@ -67,7 +64,7 @@ services:
           memory: 64M
 
 volumes:
-  remark42-avatar:
+  remark42-data:
 
 networks:
   noda-network:
