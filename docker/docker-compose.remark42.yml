@@ -26,10 +26,14 @@ services:
       SITE: class
       SECRET: ${REMARK42_SECRET:-change-me-in-doppler}
       REMARK_PORT: "8080"
-      # Keycloak OAuth2
-      REMARK_KEYCLOAK_CID: remark42
-      REMARK_KEYCLOAK_CSEC: ${REMARK42_KEYCLOAK_SECRET:-change-me-in-doppler}
-      REMARK_KEYCLOAK_URL: https://auth.noda.co.nz/realms/noda
+      # Keycloak OAuth2 (custom provider)
+      AUTH_CUSTOM_NAME: keycloak
+      AUTH_CUSTOM_CID: remark42
+      AUTH_CUSTOM_CSEC: ${REMARK42_KEYCLOAK_SECRET:-change-me-in-doppler}
+      AUTH_CUSTOM_AUTH_URL: https://auth.noda.co.nz/realms/noda/protocol/openid-connect/auth
+      AUTH_CUSTOM_TOKEN_URL: https://auth.noda.co.nz/realms/noda/protocol/openid-connect/token
+      AUTH_CUSTOM_INFO_URL: https://auth.noda.co.nz/realms/noda/protocol/openid-connect/userinfo
+      AUTH_CUSTOM_SCOPES: "openid profile email"
       # 管理
       REMARK_ADMIN_PASSWD: ${REMARK42_ADMIN_PASSWORD:-change-me-in-doppler}
       REMARK_ADMIN_TYPE: role
