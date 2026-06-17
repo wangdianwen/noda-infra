@@ -1189,6 +1189,9 @@ pipeline_deploy_nginx()
         # r4s 远程部署模式
         log_info "Nginx 重建部署（r4s 远程 docker compose recreate）"
 
+        # 从 Doppler 恢复 SSL 证书（确保 git reset --hard 后证书仍在）
+        restore_ssl_certs || return 1
+
         # 先停止并移除旧容器，再创建新容器
         log_info "停止旧 nginx 容器（r4s）..."
         remote_exec "docker stop noda-infra-nginx 2>/dev/null || true"
@@ -1221,6 +1224,9 @@ pipeline_deploy_nginx()
     else
         # 本地模式：保持现有逻辑
         log_info "Nginx 重建部署（docker compose recreate）"
+
+        # 从 Doppler 恢复 SSL 证书（确保 git reset --hard 后证书仍在）
+        restore_ssl_certs || return 1
 
         # 先停止并移除旧容器，再创建新容器
         # 不使用 --force-recreate：该选项在新容器创建时网络连接尚未就绪，

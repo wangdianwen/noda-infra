@@ -61,3 +61,109 @@ load_secrets()
 
     log_success "密钥已从 Doppler 加载（project=noda, config=${_config:-unknown}）"
 }
+
+# ============================================
+# 函数: restore_ssl_certs
+# ============================================
+# 从 Doppler 恢复 SSL 证书到磁盘
+#   - r4s 远程模式（DEPLOY_TARGET=r4s）：通过 remote_exec 写入 r4s 的 config/nginx/ssl/
+#   - 本地模式：直接写入本地 config/nginx/ssl/
+# 用途：git reset --hard 会删除未跟踪的证书文件，部署 nginx 前需确保证书存在
+# 前提：DOPPLER_TOKEN 已设置，NGINX_SSL_CERT_B64 / NGINX_SSL_KEY_B64 存在于 Doppler
+# 返回：0=成功，1=失败
+restore_ssl_certs()
+{
+    # log 函数 fallback
+    if ! declare -f log_info >/dev/null 2>&1; then
+        log_info()    { echo "[INFO] $*"; }
+        log_error()   { echo "[ERROR] $*" >&2; }
+        log_success() { echo "[OK] $*"; }
+        log_warn()    { echo "[WARN] $*"; }
+    fi
+
+    if [ -z "${DOPPLER_TOKEN:-}" ]; then
+        log_error "DOPPLER_TOKEN 未设置，无法恢复 SSL 证书"
+        return 1
+    fi
+
+    # doppler 可能安装在 brew 路径下
+    if [ -x /opt/homebrew/bin/doppler ]; then
+        export PATH="/opt/homebrew/bin:$PATH"
+    fi
+
+    local _config="${DOPPLER_CONFIG:-prd}"
+    local _ssl_dir="$PROJECT_ROOT/config/nginx/ssl"
+
+    log_info "从 Doppler 恢复 SSL 证书..."
+
+    # 下载证书到本地临时文件并 base64 解码
+    local _crt_tmp _key_tmp
+    _crt_tmp=$(mktemp /tmp/noda-ssl-cert.XXXXXX.crt)
+    _key_tmp=$(mktemp /tmp/noda-ssl-key.XXXXXX.key)
+
+    # 确保临时文件在退出时被清理（防止密钥残留）
+    _SSL_RESTORE_TMP_FILES=("$_crt_tmp" "$_key_tmp")
+    _ssl_restore_cleanup() {
+        rm -f "${_SSL_RESTORE_TMP_FILES[@]}" 2>/dev/null || true
+    }
+    trap '_ssl_restore_cleanup' EXIT
+
+    # 从 Doppler 下载 base64 编码的证书并解码
+    if ! doppler secrets get NGINX_SSL_CERT_B64 --project noda --config "$_config" --plain 2>/dev/null | base64 -d > "$_crt_tmp"; then
+        log_error "无法从 Doppler 获取 NGINX_SSL_CERT_B64"
+        _ssl_restore_cleanup
+        return 1
+    fi
+
+    if ! doppler secrets get NGINX_SSL_KEY_B64 --project noda --config "$_config" --plain 2>/dev/null | base64 -d > "$_key_tmp"; then
+        log_error "无法从 Doppler 获取 NGINX_SSL_KEY_B64"
+        _ssl_restore_cleanup
+        return 1
+    fi
+
+    # 校验解码后的文件非空
+    if [ ! -s "$_crt_tmp" ] || [ ! -s "$_key_tmp" ]; then
+        log_error "SSL 证书解码后为空（检查 Doppler 中 NGINX_SSL_CERT_B64 / NGINX_SSL_KEY_B64）"
+        _ssl_restore_cleanup
+        return 1
+    fi
+
+    if [ "${DEPLOY_TARGET:-}" = "r4s" ]; then
+        # r4s 远程模式：通过 SSH 管道写入远程文件
+        if ! declare -f remote_exec >/dev/null 2>&1; then
+            log_error "remote_exec 不可用（未 source remote-ops.sh？）"
+            _ssl_restore_cleanup
+            return 1
+        fi
+
+        local _remote_ssl_dir="/opt/noda/noda-infra/config/nginx/ssl"
+        log_info "写入 SSL 证书到 r4s: $_remote_ssl_dir"
+
+        remote_exec "mkdir -p $_remote_ssl_dir"
+
+        # 通过 stdin 管道传输文件（二进制安全，per D-22 模式）
+        cat "$_crt_tmp" | remote_exec "cat > $_remote_ssl_dir/noda.dev.crt"
+        if [ $? -ne 0 ]; then
+            log_error "SSL 证书写入 r4s 失败"
+            _ssl_restore_cleanup
+            return 1
+        fi
+
+        cat "$_key_tmp" | remote_exec "cat > $_remote_ssl_dir/noda.dev.key && chmod 600 $_remote_ssl_dir/noda.dev.key"
+        if [ $? -ne 0 ]; then
+            log_error "SSL 私钥写入 r4s 失败"
+            _ssl_restore_cleanup
+            return 1
+        fi
+    else
+        # 本地模式：直接写入本地 ssl 目录
+        mkdir -p "$_ssl_dir"
+
+        cp "$_crt_tmp" "$_ssl_dir/noda.dev.crt"
+        cp "$_key_tmp" "$_ssl_dir/noda.dev.key"
+        chmod 600 "$_ssl_dir/noda.dev.key"
+    fi
+
+    _ssl_restore_cleanup
+    log_success "SSL 证书恢复完成"
+}
