@@ -96,7 +96,13 @@ restore_ssl_certs()
         log_warn()    { echo "[WARN] $*"; }
     fi
 
+    # 安全防护：从函数入口就禁用 bash trace，避免 DOPPLER_TOKEN 检查
+    # 和 doppler 下载内容打印到 Jenkins 日志
+    local _restore_trace=""
+    if [[ $- == *x* ]]; then _restore_trace="set -x"; set +x; fi
+
     if [ -z "${DOPPLER_TOKEN:-}" ]; then
+        $_restore_trace
         log_error "DOPPLER_TOKEN 未设置，无法恢复 SSL 证书"
         return 1
     fi
@@ -109,7 +115,11 @@ restore_ssl_certs()
     local _config="${DOPPLER_CONFIG:-prd}"
     local _ssl_dir="$PROJECT_ROOT/config/nginx/ssl"
 
+    $_restore_trace
     log_info "从 Doppler 恢复 SSL 证书..."
+    # 重新禁用 trace 用于下载阶段
+    _restore_trace=""
+    if [[ $- == *x* ]]; then _restore_trace="set -x"; set +x; fi
 
     # 下载证书到本地临时文件并 base64 解码
     local _crt_tmp _key_tmp
@@ -122,10 +132,6 @@ restore_ssl_certs()
         rm -f "${_SSL_RESTORE_TMP_FILES[@]}" 2>/dev/null || true
     }
     trap '_ssl_restore_cleanup' EXIT
-
-    # 安全防护：禁用 bash trace，避免 doppler 下载的密钥内容打印到 Jenkins 日志
-    local _restore_trace=""
-    if [[ $- == *x* ]]; then _restore_trace="set -x"; set +x; fi
 
     # 从 Doppler 下载 base64 编码的证书并解码
     if ! doppler secrets get NGINX_SSL_CERT_B64 --project noda --config "$_config" --plain 2>/dev/null | base64 -d > "$_crt_tmp"; then
