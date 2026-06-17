@@ -190,12 +190,12 @@ pipeline_preflight()
         log_info "部署锁获取成功"
         # 在 r4s 上同步最新代码（per D-08/D-10）
         log_info "同步 r4s 仓库..."
-        # 强制 reset 本地更改，避免 pull 冲突
-        remote_exec "cd /opt/noda/noda-infra && git reset --hard HEAD && git clean -fd"
-        if ! remote_exec "cd /opt/noda/noda-infra && git pull origin ${R4S_GIT_BRANCH}"; then
+        # 使用 fetch + reset --hard origin 替代 git pull，确保即使远程历史被重写（force push）
+        # 也能正确同步；用 -e 排除运行时数据目录（history/crawler-logs 等），保护生产数据
+        remote_exec "cd /opt/noda/noda-infra && git fetch origin ${R4S_GIT_BRANCH} && git reset --hard origin/${R4S_GIT_BRANCH} && git clean -fd -e docker/volumes/" || {
             log_error "r4s 仓库同步失败"
             return 1
-        fi
+        }
         log_info "r4s 仓库同步完成"
     fi
 
@@ -657,10 +657,18 @@ pipeline_infra_preflight()
 
         # 同步 r4s 仓库
         log_info "同步 r4s 仓库..."
-        if ! remote_exec "cd /opt/noda/noda-infra && git pull origin ${R4S_GIT_BRANCH}"; then
-            log_error "r4s 仓库同步失败"
+        # 使用 fetch + reset --hard 替代 git pull，确保即使远程历史被重写（force push）
+        # 也能正确同步；清理本地修改避免冲突
+        # 注意: git clean -fd 不删除 .gitignore 忽略的文件（如 backup/logs）；
+        # 用 -e 排除运行时数据目录（history/crawler-logs 等），保护生产数据
+        remote_exec "cd /opt/noda/noda-infra && git fetch origin ${R4S_GIT_BRANCH}" || {
+            log_error "r4s 仓库 fetch 失败"
             return 1
-        fi
+        }
+        remote_exec "cd /opt/noda/noda-infra && git reset --hard origin/${R4S_GIT_BRANCH} && git clean -fd -e docker/volumes/" || {
+            log_error "r4s 仓库 reset 失败"
+            return 1
+        }
         log_info "r4s 仓库同步完成"
 
         # 检查远程 Docker daemon
