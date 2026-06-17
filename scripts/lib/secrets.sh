@@ -29,7 +29,16 @@ load_secrets()
         log_warn()    { echo "[WARN] $*"; }
     fi
 
+    # 安全防护：从函数入口就禁用 bash trace（set -x），否则 Jenkins 的 sh 步骤
+    # （以 bash -xe 运行）会在以下点泄露密钥：
+    #   - [ -z "$DOPPLER_TOKEN" ] 检查打印 token 值
+    #   - _secrets=$(doppler ...) 赋值打印所有密钥
+    #   - eval "$_secrets" 展开打印每个 VAR="value"
+    local _restore_trace=""
+    if [[ $- == *x* ]]; then _restore_trace="set -x"; set +x; fi
+
     if [ -z "${DOPPLER_TOKEN:-}" ]; then
+        $_restore_trace
         log_error "DOPPLER_TOKEN 未设置。请 export DOPPLER_TOKEN=<service-token> 后重试。"
         return 1
     fi
@@ -40,6 +49,7 @@ load_secrets()
     fi
 
     if ! command -v doppler >/dev/null 2>&1; then
+        $_restore_trace
         log_error "DOPPLER_TOKEN 已设置但 doppler CLI 不可用"
         log_error "安装方式: brew install dopplerhq/cli/doppler"
         return 1
@@ -48,12 +58,6 @@ load_secrets()
     # DOPPLER_CONFIG 环境变量控制加载哪个 config，默认 prd（向后兼容）
     local _config="${DOPPLER_CONFIG:-prd}"
     local _secrets
-
-    # 安全防护：禁用 bash trace（set -x），否则 Jenkins 的 sh 步骤（以 bash -xe
-    # 运行）会将密钥下载赋值、eval 展开的每个 VAR="secret_value" 打印到控制台日志
-    # 必须覆盖从 doppler download 到 eval 的整个块（变量赋值和展开都会泄露）
-    local _restore_trace=""
-    if [[ $- == *x* ]]; then _restore_trace="set -x"; set +x; fi
 
     _secrets=$(doppler secrets download --no-file --format=env --project noda --config "$_config" 2>/dev/null)
 
