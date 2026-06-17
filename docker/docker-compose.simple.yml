@@ -91,7 +91,7 @@ services:
   # Cloudflare Tunnel（自动启用）
   # ----------------------------------------
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2026.6.0
     labels:
       - "noda.service-group=infra"
       - "noda.environment=prod"

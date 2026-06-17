@@ -17,6 +17,8 @@ services:
       - "noda.service-group=infra"
       - "noda.environment=prod"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -43,6 +45,8 @@ services:
       - "noda.service-group=infra"
       - "noda.environment=prod"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "80:80"
       - "81:81"
@@ -56,6 +60,12 @@ services:
       - noda-network
     depends_on:
       - postgres
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/ || curl -sf http://localhost:80/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # ----------------------------------------
   # Noda Ops - 运维工具集（备份 + Cloudflare Tunnel）
@@ -71,6 +81,8 @@ services:
       - "noda.service-group=infra"
       - "noda.environment=prod"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       # 备份系统配置
       POSTGRES_HOST: noda-infra-postgres-prod

@@ -555,6 +555,7 @@ prepare_prod_env_file()
 
     local vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY}'
     envsubst "$vars" <"$env_template" >"$tmp_file"
+    chmod 600 "$tmp_file"
     echo "$tmp_file"
 }
 
@@ -1740,6 +1741,7 @@ prepare_preprod_env_file()
 
     local vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${KEYCLOAK_ACTIVE_CONTAINER} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY}'
     envsubst "$vars" <"$env_template" >"$tmp_file"
+    chmod 600 "$tmp_file"
     echo "$tmp_file"
 }
 

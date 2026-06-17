@@ -25,6 +25,15 @@ PROD_CONTAINER="noda-apps-prod"
 NETWORK_NAME="noda-network"
 NGINX_CONTAINER="noda-infra-nginx"
 
+# 临时密钥文件清理（防止脚本异常退出时密钥残留在 /tmp）
+_TMP_SECRET_FILES=()
+cleanup_tmp_secrets() {
+    for f in "${_TMP_SECRET_FILES[@]}"; do
+        [ -f "$f" ] && rm -f "$f" 2>/dev/null || true
+    done
+}
+trap cleanup_tmp_secrets EXIT INT TERM
+
 is_container_running()
 {
     local name="$1"
@@ -55,6 +64,8 @@ prepare_prod_env_file()
 
     local vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY}'
     envsubst "$vars" <"$env_template" >"$tmp_file"
+    chmod 600 "$tmp_file"
+    _TMP_SECRET_FILES+=("$tmp_file")
     echo "$tmp_file"
 }
 
@@ -152,7 +163,8 @@ docker run -d \
     --health-start-period 60s \
     "noda-apps:${APPS_GIT_SHA}"
 
-rm -f "$tmp_env"
+# 注意：不在此处删除 $tmp_env，由 trap cleanup_tmp_secrets 在脚本退出时统一清理
+# 这样回滚逻辑（需要重新用 $tmp_env 启动容器）才能正常工作
 
 # reload nginx 刷新 DNS 缓存
 reload_nginx

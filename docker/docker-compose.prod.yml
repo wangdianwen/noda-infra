@@ -7,9 +7,8 @@
 name: noda-infra
 
 # 共享安全加固配置（YAML anchors）
+# 注意：no-new-privileges 已在基础 docker-compose.yml 中统一设置，此处不再重复
 x-common-security: &common-security
-  security_opt:
-    - no-new-privileges:true
   logging:
     driver: json-file
     options:

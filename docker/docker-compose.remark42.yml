@@ -8,7 +8,7 @@ name: remark42
 
 services:
   remark42:
-    image: umputun/remark42:latest
+    image: umputun/remark42:v1.16.1
     container_name: remark42
     labels:
       - "noda.service-group=apps"

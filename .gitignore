@@ -32,6 +32,11 @@ config/secrets.local.yaml
 config/nginx/snippets/upstream-findclass.conf
 config/nginx/snippets/upstream-noda-site.conf
 
+# SSL 证书和私钥（不要提交到 git）
+config/nginx/ssl/*.key
+config/nginx/ssl/*.crt
+config/nginx/ssl/*.pem
+
 # GSD 工作目录
 .planning/phases/
 workspace/
