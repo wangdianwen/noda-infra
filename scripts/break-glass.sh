@@ -24,7 +24,7 @@ PLATFORM="$(detect_platform)"
 # ============================================
 # 常量
 # ============================================
-JENKINS_PORT=8888
+JENKINS_PORT=8080
 JENKINS_HEALTH_URL="http://localhost:${JENKINS_PORT}/login"
 JENKINS_HEALTH_TIMEOUT=10
 AUDIT_LOG="/var/log/noda/break-glass.log"

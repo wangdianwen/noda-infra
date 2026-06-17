@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$PROJECT_ROOT/scripts/lib/log.sh"
 
-JENKINS_PORT=8888
+JENKINS_PORT=8080
 JENKINS_URL="http://localhost:${JENKINS_PORT}"
 ADMIN_ENV_FILE="$SCRIPT_DIR/config/jenkins-admin.env"
 GROOVY_SCRIPT="$SCRIPT_DIR/init.groovy.d/99-delete-noda-apps-deploy.groovy"

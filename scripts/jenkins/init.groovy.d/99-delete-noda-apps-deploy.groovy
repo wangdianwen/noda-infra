@@ -10,7 +10,7 @@
 //   JENKINS_ADMIN_USER=admin
 //   JENKINS_ADMIN_PASSWORD=password
 //   GROOVY_SCRIPT=$(cat 99-delete-noda-apps-deploy.groovy)
-//   curl -sf "http://localhost:8888/scriptText" \
+//   curl -sf "http://localhost:8080/scriptText" \
 //     -u "${JENKINS_ADMIN_USER}:${JENKINS_ADMIN_PASSWORD}" \
 //     --data-urlencode "script=${GROOVY_SCRIPT}"
 

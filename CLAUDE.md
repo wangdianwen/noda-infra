@@ -132,7 +132,7 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 
 ### 主要部署方式：Jenkins Pipeline
 
-通过 Jenkins UI 手动触发部署 Pipeline（http://localhost:8888）：
+通过 Jenkins UI 手动触发部署 Pipeline（http://localhost:8080）：
 
 | Job | Jenkinsfile | 用途 | 阶段 |
 |-----|-------------|------|------|
@@ -159,14 +159,14 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 
 ### Jenkins API 远程触发（curl Runbook）
 
-Jenkins 运行在本机 `http://localhost:8888`，可通过 curl 直接触发 Pipeline。
+Jenkins 运行在本机 `http://localhost:8080`，可通过 curl 直接触发 Pipeline。
 
 **凭据：** `scripts/jenkins/config/jenkins-admin.env`
 
 ```bash
 # 加载凭据
 source scripts/jenkins/config/jenkins-admin.env
-JENKINS_URL="http://localhost:8888"
+JENKINS_URL="http://localhost:8080"
 
 # 获取 CSRF Crumb（每次请求前必须获取，需要 cookie jar）
 curl -sf -c /tmp/jenkins-cookies -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
@@ -343,10 +343,10 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 # 1. 安装 Java 21
 # 2. 安装 Jenkins LTS
 # 3. 配置 Jenkins 用户权限
-# 4. 可选：修改 Jenkins 端口（如果 8080 与 Keycloak 冲突）
+# 4. 可选：修改 Jenkins 端口（如果 8080 与其他服务冲突）
 # 添加:
 # [Service]
-# Environment="JENKINS_PORT=8888"
+# Environment="JENKINS_PORT=8080"
 # 5. 启动 Jenkins
 # 6. 获取初始密码
 # 7. 浏览器访问 http://<server-ip>:8080

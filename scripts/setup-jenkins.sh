@@ -19,7 +19,7 @@ PLATFORM="$(detect_platform)"
 # ============================================
 # 常量
 # ============================================
-JENKINS_PORT=8888
+JENKINS_PORT=8080
 JENKINS_HOME_LINUX="/var/lib/jenkins"
 JENKINS_LOG="/var/log/jenkins"
 JENKINS_OVERRIDE_DIR="/etc/systemd/system/jenkins.service.d"
@@ -93,7 +93,7 @@ EOF
 # 返回：0=就绪，1=超时
 wait_for_jenkins()
 {
-    local port="${JENKINS_PORT:-8888}"
+    local port="${JENKINS_PORT:-8080}"
     local max_wait=120
     local waited=0
 
@@ -164,7 +164,7 @@ cmd_install()
     sudo apt install -y jenkins
     log_success "Jenkins 包安装完成"
 
-    # 步骤 6/10: 配置端口 8888 (systemd override)
+    # 步骤 6/10: 配置端口 8080 (systemd override)
     log_info "步骤 6/10: 配置端口 ${JENKINS_PORT} (systemd override)"
     sudo mkdir -p "$JENKINS_OVERRIDE_DIR"
     sudo tee "$JENKINS_OVERRIDE_CONF" >/dev/null <<EOF
