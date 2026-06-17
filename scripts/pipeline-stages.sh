@@ -1130,8 +1130,24 @@ pipeline_deploy_remark42()
         # 停止旧容器
         remote_exec "docker rm -f remark42 2>/dev/null || true"
 
-        # 启动新容器（传递 Doppler 环境变量）
-        remote_exec "cd /opt/noda/noda-infra && export REMARK42_ADMIN_PASSWORD=\"${REMARK42_ADMIN_PASSWORD}\" REMARK42_KEYCLOAK_SECRET=\"${REMARK42_KEYCLOAK_SECRET}\" REMARK42_SECRET=\"${REMARK42_SECRET}\" && docker compose --env-file docker/.env -f ${compose_file} up -d"
+        # 从 Doppler 下载密钥到临时文件（避免在 SSH 命令中内联展开密钥）
+        local secrets_file
+        secrets_file=$(mktemp /tmp/remark42-secrets.XXXXXX.env)
+        chmod 600 "$secrets_file"
+        # 安全防护：doppler 下载时禁用 trace（避免密钥值打印到 Jenkins 日志）
+        local _restore_trace=""
+        if [[ $- == *x* ]]; then _restore_trace="set -x"; set +x; fi
+        doppler secrets download --project noda --config prd --format env --no-file > "$secrets_file"
+        $_restore_trace
+        log_info "已从 Doppler 拉取 Remark42 密钥"
+
+        # 传输密钥文件到 r4s
+        log_info "传输密钥文件到 r4s..."
+        cat "$secrets_file" | remote_exec "cat > /tmp/remark42-secrets.env"
+        rm -f "$secrets_file"
+
+        # 启动新容器（使用 --env-file 传递密钥，不在命令行中暴露密钥值）
+        remote_exec "cd /opt/noda/noda-infra && docker compose --env-file /tmp/remark42-secrets.env --env-file docker/.env -f ${compose_file} up -d"
 
         # 等待健康检查
         log_info "等待 Remark42 就绪..."

@@ -48,9 +48,17 @@ load_secrets()
     # DOPPLER_CONFIG 环境变量控制加载哪个 config，默认 prd（向后兼容）
     local _config="${DOPPLER_CONFIG:-prd}"
     local _secrets
+
+    # 安全防护：禁用 bash trace（set -x），否则 Jenkins 的 sh 步骤（以 bash -xe
+    # 运行）会将密钥下载赋值、eval 展开的每个 VAR="secret_value" 打印到控制台日志
+    # 必须覆盖从 doppler download 到 eval 的整个块（变量赋值和展开都会泄露）
+    local _restore_trace=""
+    if [[ $- == *x* ]]; then _restore_trace="set -x"; set +x; fi
+
     _secrets=$(doppler secrets download --no-file --format=env --project noda --config "$_config" 2>/dev/null)
 
     if [ $? -ne 0 ]; then
+        $_restore_trace
         log_error "Doppler 密钥拉取失败（检查 DOPPLER_TOKEN 是否有效）"
         return 1
     fi
@@ -58,6 +66,9 @@ load_secrets()
     set -a
     eval "$_secrets"
     set +a
+
+    # 恢复 trace 状态
+    $_restore_trace
 
     log_success "密钥已从 Doppler 加载（project=noda, config=${_config:-unknown}）"
 }
@@ -108,14 +119,20 @@ restore_ssl_certs()
     }
     trap '_ssl_restore_cleanup' EXIT
 
+    # 安全防护：禁用 bash trace，避免 doppler 下载的密钥内容打印到 Jenkins 日志
+    local _restore_trace=""
+    if [[ $- == *x* ]]; then _restore_trace="set -x"; set +x; fi
+
     # 从 Doppler 下载 base64 编码的证书并解码
     if ! doppler secrets get NGINX_SSL_CERT_B64 --project noda --config "$_config" --plain 2>/dev/null | base64 -d > "$_crt_tmp"; then
+        $_restore_trace
         log_error "无法从 Doppler 获取 NGINX_SSL_CERT_B64"
         _ssl_restore_cleanup
         return 1
     fi
 
     if ! doppler secrets get NGINX_SSL_KEY_B64 --project noda --config "$_config" --plain 2>/dev/null | base64 -d > "$_key_tmp"; then
+        $_restore_trace
         log_error "无法从 Doppler 获取 NGINX_SSL_KEY_B64"
         _ssl_restore_cleanup
         return 1
@@ -123,10 +140,14 @@ restore_ssl_certs()
 
     # 校验解码后的文件非空
     if [ ! -s "$_crt_tmp" ] || [ ! -s "$_key_tmp" ]; then
+        $_restore_trace
         log_error "SSL 证书解码后为空（检查 Doppler 中 NGINX_SSL_CERT_B64 / NGINX_SSL_KEY_B64）"
         _ssl_restore_cleanup
         return 1
     fi
+
+    # 密钥内容已安全写入文件，恢复 trace 状态
+    $_restore_trace
 
     if [ "${DEPLOY_TARGET:-}" = "r4s" ]; then
         # r4s 远程模式：通过 SSH 管道写入远程文件
