@@ -1780,7 +1780,7 @@ pipeline_health_check_preprod()
         local i
         for i in $(seq 1 "$retries"); do
             local code
-            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3007/api/health 2>/dev/null)
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3007/api/health 2>/dev/null || echo "000")
             if [ "$code" = "200" ]; then
                 log_success "Pre-prod 健康检查通过（本地 Mac, liuyao-api:200）"
                 return 0
