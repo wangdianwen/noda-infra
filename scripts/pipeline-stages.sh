@@ -217,26 +217,10 @@ pipeline_preflight()
             return 1
         fi
     else
-        if [ "$(is_container_running "$NGINX_CONTAINER")" != "true" ]; then
-            log_error "nginx 容器未运行"
-            return 1
-        fi
+        # 本地模式（Mac）：preprod 用 docker-compose 自带 nginx + postgres，
+        # 不需要独立的 noda-infra-nginx 容器或 noda-network
+        log_info "本地模式：跳过 nginx/network 检查（compose 自带）"
     fi
-    log_info "nginx 容器运行中"
-
-    # 检查 noda-network（r4s 模式检查远程网络）
-    if [ "$DEPLOY_TARGET" = "r4s" ]; then
-        if ! remote_exec "docker network inspect $NETWORK_NAME >/dev/null 2>&1"; then
-            log_error "Docker 网络 $NETWORK_NAME 不存在（r4s 远程检查）"
-            return 1
-        fi
-    else
-        docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 || {
-            log_error "Docker 网络 noda-network 不存在"
-            return 1
-        }
-    fi
-    log_info "Docker 网络 $NETWORK_NAME 存在"
 
     local service="${SERVICE_NAME:-noda-apps}"
 
@@ -1696,62 +1680,23 @@ set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;"
 
         log_success "Pre-prod 部署完成（r4s）: $PREPROD_CONTAINER ($image)"
     else
-        # 本地模式（原有逻辑）
-        # 停止旧 preprod 容器
-        if [ "$(is_container_running "$PREPROD_CONTAINER")" = "true" ]; then
-            log_info "停止旧 preprod 容器: $PREPROD_CONTAINER"
-            docker stop -t 30 "$PREPROD_CONTAINER"
-            docker rm "$PREPROD_CONTAINER"
-        fi
+        # 本地模式（Mac）：用 docker-compose.preprod-local.yml
+        # 包含 nginx + postgres + noda-apps，独立于 prod 基础设施
+        local compose_file="$PROJECT_ROOT/docker/docker-compose.preprod-local.yml"
 
-        # 准备 preprod 专用 env 文件
-        local tmp_env
-        tmp_env=$(prepare_preprod_env_file)
+        log_info "启动本地 preprod (docker compose): $image"
 
-        # 启动新 preprod 容器
-        log_info "启动 preprod 容器: $PREPROD_CONTAINER ($image)"
+        COMPOSE_PROJECT_NAME=preprod \
+        NORA_APPS_IMAGE="$image" \
+        docker compose -f "$compose_file" up -d --force-recreate
 
-        docker run -d \
-            --name "$PREPROD_CONTAINER" \
-            --network "$NETWORK_NAME" \
-            --network-alias "$PREPROD_CONTAINER" \
-            --restart unless-stopped \
-            --stop-timeout 30 \
-            --security-opt no-new-privileges \
-            --cap-drop ALL \
-            --read-only \
-            --tmpfs /tmp \
-            --tmpfs /app/scripts/logs \
-            --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
-            --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
-            --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
-            --memory 512m \
-            --memory-reservation 128m \
-            --cpus 0.5 \
-            --log-driver json-file \
-            --log-opt max-size=10m \
-            --log-opt max-file=3 \
-            --env-file "$tmp_env" \
-            --label "com.docker.compose.project=noda-apps" \
-            --label "com.docker.compose.service=noda-apps-preprod" \
-            --label "noda.service-group=apps" \
-            --label noda.environment=preprod \
-            --health-cmd "node -e \"fetch('http://localhost:3000/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))\"" \
-            --health-interval 30s \
-            --health-timeout 10s \
-            --health-retries 3 \
-            --health-start-period 60s \
-            "$image"
+        # 等待容器就绪
+        log_info "等待容器启动..."
+        sleep 10
 
-        rm -f "$tmp_env"
-
-        # 更新 preprod upstream 配置
-        update_preprod_upstream
-
-        # reload nginx 使 preprod server blocks 生效
-        reload_nginx
-
-        log_success "Pre-prod 部署完成: $PREPROD_CONTAINER ($image)"
+        log_success "Pre-prod 部署完成（本地 Mac）: $image"
+        log_info "  liuyao:    https://liuyao.noda.test/"
+        log_info "  findclass: http://localhost:3000/"
     fi
 }
 
@@ -1818,11 +1763,23 @@ pipeline_health_check_preprod()
 
         log_success "Pre-prod 健康检查通过（r4s）"
     else
-        # 本地模式（原有逻辑）
-        # 主应用 (3000)
-        http_health_check "$PREPROD_CONTAINER" "3000" "/api/health" "$HEALTH_CHECK_MAX_RETRIES" "$HEALTH_CHECK_INTERVAL"
-
-        log_success "Pre-prod 健康检查通过"
+        # 本地模式（Mac）：直接 curl 容器端口（不依赖 nginx 容器 exec）
+        log_info "Pre-prod 健康检查（本地 Mac）..."
+        local retries="${HEALTH_CHECK_MAX_RETRIES:-30}"
+        local interval="${HEALTH_CHECK_INTERVAL:-4}"
+        local i
+        for i in $(seq 1 "$retries"); do
+            local code
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3007/api/health 2>/dev/null)
+            if [ "$code" = "200" ]; then
+                log_success "Pre-prod 健康检查通过（本地 Mac, liuyao-api:200）"
+                return 0
+            fi
+            log_info "等待 preprod 就绪... ($i/$retries, HTTP $code)"
+            sleep "$interval"
+        done
+        log_error "Pre-prod 健康检查超时（本地 Mac）"
+        return 1
     fi
 }
 

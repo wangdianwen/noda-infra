@@ -92,6 +92,7 @@ pipeline {
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
                         export SSH_KEY_FILE
+                        export DEPLOY_TARGET=local
                         pipeline_deploy_preprod "$GIT_SHA"
                     '''
                 }
@@ -105,6 +106,7 @@ pipeline {
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
                         export SSH_KEY_FILE
+                        export DEPLOY_TARGET=local
                         pipeline_health_check_preprod
                     '''
                 }
@@ -116,11 +118,9 @@ pipeline {
                 timeout(time: 6, unit: 'HOURS') {
                     script {
                         def userInput = input(
-                            message: """Pre-prod 部署完成，请验证：
-  - 主应用: http://class.noda.test/
-  - 认证: http://auth.noda.test/
-  - 官网: http://www.noda.test/
-  - 管理后台: http://admin.noda.test/
+                            message: """Pre-prod 部署完成（本机 Mac），请验证：
+  - 六爻算卦: https://liuyao.noda.test/
+  - 主应用: http://localhost:3000/
   镜像: noda-apps:${env.GIT_SHA}
 
   请选择下一步操作：""",
@@ -144,16 +144,11 @@ pipeline {
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
                         export SSH_KEY_FILE
-                        echo "🔄 清理旧镜像和容器..."
-                        # 停止并删除 pre-prod 容器
-                        ssh -i "$SSH_KEY_FILE" root@192.168.100.1 "docker compose -f /opt/noda/docker-compose.yml -f /opt/noda/docker-compose.preprod.yml stop findclass-ssr"
-                        ssh -i "$SSH_KEY_FILE" root@192.168.100.1 "docker compose -f /opt/noda/docker-compose.yml -f /opt/noda/docker-compose.preprod.yml rm -f findclass-ssr"
-                        # 删除 pre-prod 使用的镜像
-                        ssh -i "$SSH_KEY_FILE" root@192.168.100.1 "docker rmi noda-apps:${GIT_SHA} 2>/dev/null || true"
-                        echo "✅ 清理完成，重新部署 Pre-prod..."
+                        export DEPLOY_TARGET=local
+                        echo "🔄 重新部署 Pre-prod（本机 Mac）..."
                         pipeline_deploy_preprod "$GIT_SHA"
                         pipeline_health_check_preprod
-                        echo "✅ Pre-prod 重新部署完成，请验证后再次运行 Pipeline 选择 deploy_prod"
+                        echo "✅ Pre-prod 重新部署完成，请验证 https://liuyao.noda.test/ 后再次选择 deploy_prod"
                     '''
                 }
             }
@@ -169,6 +164,7 @@ pipeline {
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
                         export SSH_KEY_FILE
+                        export DEPLOY_TARGET=r4s
                         pipeline_deploy_prod "$GIT_SHA"
                     '''
                 }
