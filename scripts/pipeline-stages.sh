@@ -1686,6 +1686,11 @@ set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;"
 
         log_info "启动本地 preprod (docker compose): $image"
 
+        # 先停止并清理旧的 preprod 容器（避免容器名冲突）
+        log_info "清理旧的 preprod 容器..."
+        COMPOSE_PROJECT_NAME=preprod \
+        docker compose -f "$compose_file" down --remove-orphans 2>/dev/null || true
+
         COMPOSE_PROJECT_NAME=preprod \
         NORA_APPS_IMAGE="$image" \
         docker compose -f "$compose_file" up -d --force-recreate
