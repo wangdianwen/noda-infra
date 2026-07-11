@@ -1687,7 +1687,12 @@ set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;"
         log_info "启动本地 preprod (docker compose): $image"
 
         # 先停止并清理旧的 preprod 容器（避免容器名冲突）
+        # 注意：旧容器可能由不同 project name 创建，compose down 无法清理
+        # 因此先按固定容器名 docker rm -f，再 compose down 清理孤儿
         log_info "清理旧的 preprod 容器..."
+        for cname in preprod-postgres preprod-noda-apps preprod-nginx; do
+            docker rm -f "$cname" 2>/dev/null || true
+        done
         COMPOSE_PROJECT_NAME=preprod \
         docker compose -f "$compose_file" down --remove-orphans 2>/dev/null || true
 
