@@ -51,7 +51,7 @@ services:
       KC_HOSTNAME_STRICT: "false"
       KC_PROXY: "edge"
       KC_PROXY_HEADERS: "xforwarded"
-      KC_FRONTEND_URL: "https://auth.noda.test"
+      KC_FRONTEND_URL: "https://auth-preprod.noda.co.nz"
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin_password_change_me
       GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-180691835704-oqiknqfklc5cjg3iaomu24uhk3i2gj1p.apps.googleusercontent.com}"
@@ -78,7 +78,7 @@ services:
       DATABASE_URL: "postgresql://postgres:postgres_password_change_me@postgres:5432/noda_preprod"
       DIRECT_URL: "postgresql://postgres:postgres_password_change_me@postgres:5432/noda_preprod"
       AUTH_BYPASS: "false"
-      KEYCLOAK_URL: "https://auth.noda.test"
+      KEYCLOAK_URL: "https://auth-preprod.noda.co.nz"
       KEYCLOAK_REALM: "noda"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ANTHROPIC_AUTH_TOKEN: "${ANTHROPIC_AUTH_TOKEN:-}"
