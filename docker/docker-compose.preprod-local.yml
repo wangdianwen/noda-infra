@@ -57,8 +57,6 @@ services:
       GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-180691835704-oqiknqfklc5cjg3iaomu24uhk3i2gj1p.apps.googleusercontent.com}"
       GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-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}"
     command: ["start", "--import-realm"]
-    ports:
-      - "8080:8080"
     volumes:
       - ./keycloak-realm.json:/opt/keycloak/data/import/noda-realm.json:ro
     healthcheck:
