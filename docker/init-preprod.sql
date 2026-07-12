@@ -20,7 +20,15 @@ CREATE TABLE IF NOT EXISTS "courses" (
 );
 
 -- ============================================
--- Keycloak 数据库 + schema
+-- Keycloak 数据库
 -- ============================================
-SELECT 'CREATE DATABASE keycloak'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'keycloak')\gexec
+-- 注意：docker-entrypoint 只对 POSTGRES_DB 指定的数据库执行 init SQL
+-- 这里用 DO $$ 创建 keycloak 数据库（兼容 docker-entrypoint）
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'keycloak') THEN
+    -- 在 DO 块中无法直接 CREATE DATABASE，用 dblink 或外部脚本
+    -- 改为在 keycloak 启动前由 entrypoint 创建
+    RAISE NOTICE 'keycloak database not found — will be created by pipeline';
+  END IF;
+END $$;

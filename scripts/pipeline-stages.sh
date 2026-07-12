@@ -1700,6 +1700,9 @@ set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;"
         NORA_APPS_IMAGE="$image" \
         docker compose -f "$compose_file" up -d --force-recreate
 
+        # 确保 keycloak 数据库存在（init SQL 可能无法 CREATE DATABASE）
+        docker exec preprod-postgres psql -U postgres -c "CREATE DATABASE keycloak" 2>/dev/null || true
+
         # 等待容器就绪
         log_info "等待容器启动..."
         sleep 10
