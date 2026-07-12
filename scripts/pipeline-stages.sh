@@ -1708,7 +1708,7 @@ set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;"
         sleep 10
 
         log_success "Pre-prod 部署完成（本地 Mac）: $image"
-        log_info "  liuyao:    https://liuyao.noda.test/"
+        log_info "  liuyao:    https://liuyao-preprod.noda.co.nz/"
         log_info "  findclass: http://localhost:3000/"
     fi
 }
@@ -1777,16 +1777,16 @@ pipeline_health_check_preprod()
         log_success "Pre-prod 健康检查通过（r4s）"
     else
         # 本地模式（Mac）：noda-apps 容器没有端口映射到宿主机
-        # 必须通过 nginx 反代检查：https://liuyao.noda.test/api/health
+        # 必须通过 nginx 反代检查：https://liuyao-preprod.noda.co.nz/api/health
         log_info "Pre-prod 健康检查（本地 Mac, via nginx）..."
         local retries="${HEALTH_CHECK_MAX_RETRIES:-30}"
         local interval="${HEALTH_CHECK_INTERVAL:-4}"
         local i
         for i in $(seq 1 "$retries"); do
             local code
-            code=$(curl -sk -o /dev/null -w "%{http_code}" https://liuyao.noda.test/api/health 2>/dev/null || echo "000")
+            code=$(curl -sk -o /dev/null -w "%{http_code}" https://liuyao-preprod.noda.co.nz/api/health 2>/dev/null || echo "000")
             if [ "$code" = "200" ]; then
-                log_success "Pre-prod 健康检查通过（本地 Mac, https://liuyao.noda.test → 200）"
+                log_success "Pre-prod 健康检查通过（本地 Mac, https://liuyao-preprod.noda.co.nz → 200）"
                 return 0
             fi
             log_info "等待 preprod 就绪... ($i/$retries, HTTP $code)"

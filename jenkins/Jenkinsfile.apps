@@ -119,7 +119,7 @@ pipeline {
                     script {
                         def userInput = input(
                             message: """Pre-prod 部署完成（本机 Mac），请验证：
-  - 六爻算卦: https://liuyao.noda.test/
+  - 六爻算卦: https://liuyao-preprod.noda.co.nz/
   - 主应用: http://localhost:3000/
   镜像: noda-apps:${env.GIT_SHA}
 
@@ -148,7 +148,7 @@ pipeline {
                         echo "🔄 重新部署 Pre-prod（本机 Mac）..."
                         pipeline_deploy_preprod "$GIT_SHA"
                         pipeline_health_check_preprod
-                        echo "✅ Pre-prod 重新部署完成，请验证 https://liuyao.noda.test/ 后再次选择 deploy_prod"
+                        echo "✅ Pre-prod 重新部署完成，请验证 https://liuyao-preprod.noda.co.nz/ 后再次选择 deploy_prod"
                     '''
                 }
             }

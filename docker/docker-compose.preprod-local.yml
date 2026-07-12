@@ -6,9 +6,9 @@
 # 使用：
 #   NORA_APPS_IMAGE=noda-apps:<sha> docker compose -f docker/docker-compose.preprod-local.yml up -d
 #
-# 访问（需 /etc/hosts 加 127.0.0.1 liuyao.noda.test auth.noda.test）：
-#   liuyao:   https://liuyao.noda.test/
-#   keycloak: https://auth.noda.test/
+# 访问（需 /etc/hosts 加 127.0.0.1 liuyao-preprod.noda.co.nz auth-preprod.noda.co.nz）：
+#   liuyao:   https://liuyao-preprod.noda.co.nz/
+#   keycloak: https://auth-preprod.noda.co.nz/
 #
 # 也可直接用 localhost:端口：
 #   liuyao-web:  http://localhost:3005

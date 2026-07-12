@@ -31,17 +31,17 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "redirectUris": [
-        "https://liuyao.noda.test/*",
+        
         "https://liuyao-preprod.noda.co.nz/*",
         "http://localhost:3005/*"
       ],
       "webOrigins": [
-        "https://liuyao.noda.test",
+        
         "https://liuyao-preprod.noda.co.nz",
         "http://localhost:3005"
       ],
       "attributes": {
-        "post.logout.redirect.uris": "https://liuyao.noda.test/*,https://liuyao-preprod.noda.co.nz/*,http://localhost:3005/*"
+        "post.logout.redirect.uris": "https://liuyao-preprod.noda.co.nz/*,http://localhost:3005/*"
       }
     },
     {
