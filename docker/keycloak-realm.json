@@ -1,0 +1,55 @@
+{
+  "realm": "noda",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "eventsEnabled": false,
+  "identityProviders": [
+    {
+      "alias": "google",
+      "providerId": "google",
+      "displayName": "Google",
+      "enabled": true,
+      "config": {
+        "clientId": "${GOOGLE_OAUTH_CLIENT_ID}",
+        "clientSecret": "${GOOGLE_OAUTH_CLIENT_SECRET}",
+        "useJwksUrl": "true"
+      }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "noda-liuyao",
+      "name": "Liuyao Divination",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "https://liuyao.noda.test/*",
+        "http://localhost:3005/*"
+      ],
+      "webOrigins": [
+        "https://liuyao.noda.test",
+        "http://localhost:3005"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "https://liuyao.noda.test/*,http://localhost:3005/*"
+      }
+    },
+    {
+      "clientId": "noda-frontend",
+      "name": "Noda Frontend",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "redirectUris": ["*"],
+      "webOrigins": ["+"]
+    }
+  ]
+}

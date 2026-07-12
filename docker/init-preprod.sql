@@ -18,3 +18,9 @@ CREATE TABLE IF NOT EXISTS "courses" (
   "created_at" timestamptz DEFAULT now(),
   "updated_at" timestamptz DEFAULT now()
 );
+
+-- ============================================
+-- Keycloak 数据库 + schema
+-- ============================================
+SELECT 'CREATE DATABASE keycloak'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'keycloak')\gexec

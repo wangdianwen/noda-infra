@@ -1,19 +1,19 @@
 # ============================================
-# 本机 Mac Preprod 环境（含 liuyao）
+# 本机 Mac Preprod 环境（含 liuyao + Keycloak）
 # ============================================
-# 轻量级 preprod：nginx + noda-apps 多进程容器 + postgres
-# 不起 Keycloak（liuyao 用 authBypass）
+# 轻量级 preprod：nginx + noda-apps 多进程容器 + postgres + keycloak
 #
 # 使用：
 #   NORA_APPS_IMAGE=noda-apps:<sha> docker compose -f docker/docker-compose.preprod-local.yml up -d
 #
-# 访问（需 /etc/hosts 加 127.0.0.1 liuyao.noda.test）：
+# 访问（需 /etc/hosts 加 127.0.0.1 liuyao.noda.test auth.noda.test）：
 #   liuyao:   https://liuyao.noda.test/
-#   findclass: http://localhost:3000/
+#   keycloak: https://auth.noda.test/
 #
 # 也可直接用 localhost:端口：
 #   liuyao-web:  http://localhost:3005
 #   liuyao-api:  http://localhost:3007/api/health
+#   keycloak:    http://localhost:8080
 
 services:
   postgres:
@@ -35,6 +35,39 @@ services:
       timeout: 5s
       retries: 5
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.2.3
+    container_name: preprod-keycloak
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres_password_change_me
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_PROXY: "edge"
+      KC_PROXY_HEADERS: "xforwarded"
+      KC_FRONTEND_URL: "https://auth.noda.test"
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin_password_change_me
+      GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-180691835704-oqiknqfklc5cjg3iaomu24uhk3i2gj1p.apps.googleusercontent.com}"
+      GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-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}"
+    command: ["start", "--import-realm"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak-realm.json:/opt/keycloak/data/import/noda-realm.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
   noda-apps:
     image: ${NORA_APPS_IMAGE:-noda-apps:latest}
     container_name: preprod-noda-apps
@@ -47,7 +80,7 @@ services:
       DATABASE_URL: "postgresql://postgres:postgres_password_change_me@postgres:5432/noda_preprod"
       DIRECT_URL: "postgresql://postgres:postgres_password_change_me@postgres:5432/noda_preprod"
       AUTH_BYPASS: "false"
-      KEYCLOAK_URL: "https://auth.noda.co.nz"
+      KEYCLOAK_URL: "https://auth.noda.test"
       KEYCLOAK_REALM: "noda"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ANTHROPIC_AUTH_TOKEN: "${ANTHROPIC_AUTH_TOKEN:-}"
@@ -69,6 +102,7 @@ services:
     restart: unless-stopped
     depends_on:
       - noda-apps
+      - keycloak
     ports:
       - "80:80"
       - "443:443"
