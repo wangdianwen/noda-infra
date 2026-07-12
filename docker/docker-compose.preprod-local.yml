@@ -46,7 +46,7 @@ services:
       NODE_ENV: production
       DATABASE_URL: "postgresql://postgres:postgres_password_change_me@postgres:5432/noda_preprod"
       DIRECT_URL: "postgresql://postgres:postgres_password_change_me@postgres:5432/noda_preprod"
-      AUTH_BYPASS: "true"
+      AUTH_BYPASS: "false"
       KEYCLOAK_URL: "https://auth.noda.co.nz"
       KEYCLOAK_REALM: "noda"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
