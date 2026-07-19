@@ -90,7 +90,17 @@ remote_exec()
 # ============================================
 # 函数: transfer_image
 # ============================================
-# SSH 管道传输镜像
+# 三步式安全传输镜像到 r4s（避免内存峰值叠加导致路由器 OOM）
+#
+# 旧方式 docker save | ssh docker load 会同时在 r4s 上运行
+# ssh 压缩 + docker load 解压，内存峰值 800MB+，在 3.77GB RAM 的
+# r4s 上容易触发 OOM panic 导致路由器死机。
+#
+# 新方式分三步，降低 r4s 端峰值内存：
+#   1. 本地 docker save | gzip（压缩在 Mac 上，不占 r4s 内存）
+#   2. scp 传输压缩文件（纯网络 IO，r4s 内存 ~0）
+#   3. r4s 端 docker load -i（只做 load，不做 ssh 压缩）
+#
 # 参数:
 #   $1: local_image - 本地镜像名
 #   $2: remote_image - 远程镜像名（传输后打 tag）
@@ -110,24 +120,44 @@ transfer_image()
         return 1
     fi
 
-    log_info "传输镜像: $local_image -> $R4S_HOST:$remote_image"
+    local ssh_opts="-i $SSH_KEY_FILE -o StrictHostKeyChecking=no -o ServerAliveInterval=10"
+    local remote_tmp="/mnt/mmc1-4/docker-images"
+    local tmp_gz="/tmp/${local_image//[:\/]/_}.tar.gz"
 
-    # docker save | ssh | docker load（per D-03）
-    # -C: 启用压缩减少传输时间
-    docker save "$local_image" | \
-        ssh -C -i "$SSH_KEY_FILE" \
-            -o StrictHostKeyChecking=no \
-            -o ServerAliveInterval=10 \
-            "$R4S_HOST" \
-            "docker load && docker tag $local_image $remote_image"
+    log_info "传输镜像（三步式）: $local_image -> $R4S_HOST:$remote_image"
 
-    if [ $? -eq 0 ]; then
-        log_success "镜像传输完成: $remote_image"
-        return 0
-    else
-        log_error "镜像传输失败: $local_image"
+    # Step 1: 本地 save + gzip 压缩（在 Mac 上完成，不占 r4s 内存）
+    log_info "Step 1/3: 本地压缩镜像..."
+    if ! docker save "$local_image" | gzip > "$tmp_gz"; then
+        log_error "镜像压缩失败: $local_image"
+        rm -f "$tmp_gz"
         return 1
     fi
+    local size_mb=$(( $(stat -f%z "$tmp_gz" 2>/dev/null || stat -c%s "$tmp_gz") / 1048576 ))
+    log_info "压缩完成: ${size_mb}MB"
+
+    # Step 2: scp 传输（纯网络 IO，r4s 内存消耗极低）
+    log_info "Step 2/3: 传输到 r4s..."
+    ssh $ssh_opts "$R4S_HOST" "mkdir -p $remote_tmp" 2>/dev/null
+    if ! scp $ssh_opts "$tmp_gz" "$R4S_HOST:$remote_tmp/$(basename "$tmp_gz")"; then
+        log_error "镜像传输失败: scp error"
+        rm -f "$tmp_gz"
+        return 1
+    fi
+    rm -f "$tmp_gz"  # 清理本地临时文件
+
+    # Step 3: r4s 端 docker load（只做 load，不做 ssh 压缩）
+    log_info "Step 3/3: r4s 端加载镜像..."
+    if ! ssh $ssh_opts "$R4S_HOST" \
+        "docker load -i $remote_tmp/$(basename "$tmp_gz") && \
+         docker tag $local_image $remote_image && \
+         rm -f $remote_tmp/$(basename "$tmp_gz")"; then
+        log_error "镜像加载失败（r4s 端）"
+        return 1
+    fi
+
+    log_success "镜像传输完成: $remote_image"
+    return 0
 }
 
 # ============================================
