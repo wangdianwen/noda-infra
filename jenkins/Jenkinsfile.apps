@@ -159,6 +159,7 @@ pipeline {
                 expression { env.DEPLOY_ACTION == 'deploy_prod' }
             }
             steps {
+                timeout(time: 15, unit: 'MINUTES') {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
@@ -168,11 +169,13 @@ pipeline {
                         pipeline_deploy_prod "$GIT_SHA"
                     '''
                 }
+                }
             }
         }
 
         stage('Verify') {
             steps {
+                timeout(time: 5, unit: 'MINUTES') {
                 sh '''
                     source scripts/lib/log.sh
                     source scripts/pipeline-stages.sh
@@ -187,6 +190,7 @@ pipeline {
                     echo "E2E 验证失败: class.noda.co.nz/api/health 不可达"
                     exit 1
                 '''
+                }
             }
         }
 

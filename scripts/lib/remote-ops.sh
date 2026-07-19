@@ -59,6 +59,9 @@ setup_remote()
 #   $2: timeout - 连接超时秒数（默认 30）
 # 返回: 命令的退出码
 # 输出: 直接显示在 Jenkins console（不捕获，per D-22）
+#
+# 参数 $2 在旧版仅作为 ConnectTimeout；现在同时作为命令执行超时
+# （r4s 上用 timeout 命令包裹，避免 docker load 等长时间操作挂住）
 remote_exec()
 {
     local cmd="$1"
@@ -75,16 +78,18 @@ remote_exec()
     fi
 
     # SSH 连接参数（per D-05）
-    # -i: 密钥文件
-    # -o ConnectTimeout: 连接超时
-    # -o StrictHostKeyChecking=no: 跳过主机密钥检查（内网环境）
-    # -o ServerAliveInterval: 保活间隔
+    # ConnectTimeout: SSH 连接超时
+    # ServerAliveInterval: 保活间隔（防止 NAT 超时断连）
+    # 远程命令用 timeout 包裹防止挂死（timeout 值 = connect timeout * 20，最少 120s）
+    local exec_timeout=$(( timeout * 20 ))
+    [ "$exec_timeout" -lt 120 ] && exec_timeout=120
+
     ssh -i "$SSH_KEY_FILE" \
         -o ConnectTimeout="$timeout" \
         -o StrictHostKeyChecking=no \
         -o ServerAliveInterval=10 \
         "$R4S_HOST" \
-        "$cmd"
+        "timeout ${exec_timeout} sh -c '$cmd'"
 }
 
 # ============================================
@@ -100,6 +105,10 @@ remote_exec()
 #   1. 本地 docker save | gzip（压缩在 Mac 上，不占 r4s 内存）
 #   2. scp 传输压缩文件（纯网络 IO，r4s 内存 ~0）
 #   3. r4s 端 docker load -i（只做 load，不做 ssh 压缩）
+#
+# 安全措施：
+#   - 传输前预检 r4s 可用内存（至少 800MB 空闲）和磁盘空间
+#   - docker load 失败时清理 r4s 上的临时 tar.gz，避免磁盘累积
 #
 # 参数:
 #   $1: local_image - 本地镜像名
@@ -123,8 +132,27 @@ transfer_image()
     local ssh_opts="-i $SSH_KEY_FILE -o StrictHostKeyChecking=no -o ServerAliveInterval=10"
     local remote_tmp="/mnt/mmc1-4/docker-images"
     local tmp_gz="/tmp/${local_image//[:\/]/_}.tar.gz"
+    local remote_gz="$remote_tmp/$(basename "$tmp_gz")"
 
     log_info "传输镜像（三步式）: $local_image -> $R4S_HOST:$remote_image"
+
+    # Step 0: 预检 r4s 资源（内存 >= 800MB 空闲，磁盘 >= 2GB 空闲）
+    log_info "Step 0/3: 预检 r4s 资源..."
+    local mem_avail_kb disk_avail_kb
+    mem_avail_kb=$(ssh $ssh_opts "$R4S_HOST" "awk '/MemAvailable/{print \$2}' /proc/meminfo" 2>/dev/null)
+    disk_avail_kb=$(ssh $ssh_opts "$R4S_HOST" "df -P /mnt/mmc1-4 | tail -1 | awk '{print \$4}'" 2>/dev/null)
+    local mem_mb=$(( mem_avail_kb / 1024 ))
+    local disk_gb=$(( disk_avail_kb / 1048576 ))
+    log_info "r4s 可用内存: ${mem_mb}MB, 可用磁盘: ${disk_gb}GB"
+
+    if [ "$mem_mb" -lt 800 ] 2>/dev/null; then
+        log_error "r4s 可用内存不足 (${mem_mb}MB < 800MB)，放弃传输避免 OOM"
+        return 1
+    fi
+    if [ "$disk_gb" -lt 2 ] 2>/dev/null; then
+        log_error "r4s 磁盘空间不足 (${disk_gb}GB < 2GB)，放弃传输"
+        return 1
+    fi
 
     # Step 1: 本地 save + gzip 压缩（在 Mac 上完成，不占 r4s 内存）
     log_info "Step 1/3: 本地压缩镜像..."
@@ -139,7 +167,7 @@ transfer_image()
     # Step 2: scp 传输（纯网络 IO，r4s 内存消耗极低）
     log_info "Step 2/3: 传输到 r4s..."
     ssh $ssh_opts "$R4S_HOST" "mkdir -p $remote_tmp" 2>/dev/null
-    if ! scp $ssh_opts "$tmp_gz" "$R4S_HOST:$remote_tmp/$(basename "$tmp_gz")"; then
+    if ! scp $ssh_opts "$tmp_gz" "$R4S_HOST:$remote_gz"; then
         log_error "镜像传输失败: scp error"
         rm -f "$tmp_gz"
         return 1
@@ -147,12 +175,19 @@ transfer_image()
     rm -f "$tmp_gz"  # 清理本地临时文件
 
     # Step 3: r4s 端 docker load（只做 load，不做 ssh 压缩）
+    # 无论成功失败都清理 remote tar.gz（用 ; 分隔确保 rm 总是执行）
     log_info "Step 3/3: r4s 端加载镜像..."
-    if ! ssh $ssh_opts "$R4S_HOST" \
-        "docker load -i $remote_tmp/$(basename "$tmp_gz") && \
-         docker tag $local_image $remote_image && \
-         rm -f $remote_tmp/$(basename "$tmp_gz")"; then
-        log_error "镜像加载失败（r4s 端）"
+    local load_rc
+    ssh $ssh_opts "$R4S_HOST" \
+        "docker load -i $remote_gz && \
+         docker tag $local_image $remote_image; \
+         rc=\$?; rm -f $remote_gz; exit \$rc"
+    load_rc=$?
+
+    if [ "$load_rc" -ne 0 ]; then
+        log_error "镜像加载失败（r4s 端，exit=$load_rc）"
+        # 确保清理（可能上面 rm 也没执行到）
+        ssh $ssh_opts "$R4S_HOST" "rm -f $remote_gz" 2>/dev/null
         return 1
     fi
 

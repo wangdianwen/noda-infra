@@ -394,10 +394,11 @@ pipeline_deploy_prod()
 
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         # r4s 远程部署模式
-        log_info "r4s 远程部署模式：传输镜像到 r4s..."
-        transfer_image "$image" "$image"
+        # ⚠️ 安全顺序：先停旧容器再传镜像，降低 r4s 内存峰值
+        # 旧容器占 ~500MB，docker load 峰值 ~800MB，同时跑会 OOM
+        # 先停旧容器释放内存，再传镜像加载
 
-        # 停止并移除旧容器（远程）
+        # Step 1: 先停旧容器（释放 r4s 内存，为 docker load 腾出空间）
         if remote_exec "docker inspect $PROD_CONTAINER >/dev/null 2>&1"; then
             if [ "$(remote_exec "docker inspect -f '{{.State.Running}}' $PROD_CONTAINER")" = "true" ]; then
                 log_info "停止旧容器（r4s）: $PROD_CONTAINER"
@@ -407,6 +408,10 @@ pipeline_deploy_prod()
                 remote_exec "docker rm $PROD_CONTAINER || true"
             fi
         fi
+
+        # Step 2: 传输镜像（旧容器已停，内存峰值降低）
+        log_info "r4s 远程部署模式：传输镜像到 r4s..."
+        transfer_image "$image" "$image"
 
         # 准备 env 文件（本地生成，传输到 r4s）
         local tmp_env
