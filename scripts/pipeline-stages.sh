@@ -379,9 +379,47 @@ pipeline_pull_image()
 }
 
 # ============================================
+# 内部函数: _restart_prod_container
+# ============================================
+# 用指定镜像重启 prod 容器（用于传镜像失败时的回滚）
+# 参数: $1 = image name
+# 返回: 0=成功, 1=失败
+_restart_prod_container()
+{
+    local rollback_image="$1"
+    log_info "回滚: 用镜像 $rollback_image 重启 $PROD_CONTAINER..."
+
+    # 确保 env 文件存在
+    if ! remote_exec "test -f /tmp/prod.env"; then
+        local tmp_env
+        tmp_env=$(prepare_prod_env_file)
+        cat "$tmp_env" | remote_exec "cat > /tmp/prod.env"
+        rm -f "$tmp_env"
+    fi
+
+    remote_exec "docker run -d \
+        --name $PROD_CONTAINER \
+        --network $NETWORK_NAME \
+        --network-alias $PROD_CONTAINER \
+        --restart unless-stopped \
+        --memory 1g --cpus 1 \
+        --env-file /tmp/prod.env \
+        $rollback_image" 2>/dev/null
+
+    if [ $? -eq 0 ]; then
+        log_success "回滚完成: $PROD_CONTAINER 已用 $rollback_image 启动"
+        return 0
+    else
+        log_error "回滚失败: 无法用 $rollback_image 启动容器"
+        return 1
+    fi
+}
+
+# ============================================
 # 函数: pipeline_deploy_prod
 # ============================================
-# 生产环境直接替换部署：停旧容器 -> 启新容器 -> 健康检查
+# 生产环境直接替换部署：停旧容器 -> 传镜像 -> 启新容器 -> 健康检查
+# 安全措施：传镜像失败时用旧镜像回滚，避免 r4s 裸奔
 # 参数: $1 = GIT_SHA
 pipeline_deploy_prod()
 {
@@ -399,9 +437,12 @@ pipeline_deploy_prod()
         # 先停旧容器释放内存，再传镜像加载
 
         # Step 1: 先停旧容器（释放 r4s 内存，为 docker load 腾出空间）
+        # 记录旧镜像名，万一传镜像失败可以回滚
+        local old_image=""
         if remote_exec "docker inspect $PROD_CONTAINER >/dev/null 2>&1"; then
+            old_image=$(remote_exec "docker inspect -f '{{.Config.Image}}' $PROD_CONTAINER" 2>/dev/null | tr -d "'")
             if [ "$(remote_exec "docker inspect -f '{{.State.Running}}' $PROD_CONTAINER")" = "true" ]; then
-                log_info "停止旧容器（r4s）: $PROD_CONTAINER"
+                log_info "停止旧容器（r4s）: $PROD_CONTAINER (image: $old_image)"
                 remote_exec "docker stop -t 30 $PROD_CONTAINER || true"
                 remote_exec "docker rm $PROD_CONTAINER || true"
             else
@@ -410,8 +451,16 @@ pipeline_deploy_prod()
         fi
 
         # Step 2: 传输镜像（旧容器已停，内存峰值降低）
+        # ⚠️ 如果传镜像失败，尝试用旧镜像回滚容器
         log_info "r4s 远程部署模式：传输镜像到 r4s..."
-        transfer_image "$image" "$image"
+        if ! transfer_image "$image" "$image"; then
+            log_error "镜像传输失败"
+            if [ -n "$old_image" ]; then
+                log_info "尝试回滚：用旧镜像 $old_image 重启容器..."
+                _restart_prod_container "$old_image"
+            fi
+            return 1
+        fi
 
         # 准备 env 文件（本地生成，传输到 r4s）
         local tmp_env
@@ -421,7 +470,7 @@ pipeline_deploy_prod()
 
         # 启动新容器（远程）
         log_info "启动容器（r4s）: $PROD_CONTAINER ($image)"
-        remote_exec "docker run -d \
+        if ! remote_exec "docker run -d \
             --name $PROD_CONTAINER \
             --network $NETWORK_NAME \
             --network-alias $PROD_CONTAINER \
@@ -451,7 +500,11 @@ pipeline_deploy_prod()
             --health-timeout 10s \
             --health-retries 3 \
             --health-start-period 60s \
-            $image"
+            $image"; then
+            log_error "容器启动失败"
+            _restart_prod_container "$old_image"
+            return 1
+        fi
 
         rm -f "$tmp_env"
 
@@ -460,7 +513,14 @@ pipeline_deploy_prod()
 
         # 健康检查（远程模式）
         log_info "等待容器健康检查（r4s 远程）..."
-        wait_container_healthy "$PROD_CONTAINER" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))" true true
+        if ! wait_container_healthy "$PROD_CONTAINER" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))" true true; then
+            log_error "健康检查失败 — 回滚到旧镜像"
+            remote_exec "docker stop -t 30 $PROD_CONTAINER || true"
+            remote_exec "docker rm $PROD_CONTAINER || true"
+            _restart_prod_container "$old_image"
+            reload_nginx
+            return 1
+        fi
 
         log_success "生产环境部署完成（r4s）: $PROD_CONTAINER ($image)"
     else
