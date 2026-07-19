@@ -542,7 +542,7 @@ pipeline_deploy_prod()
         # 启动新容器
         log_info "启动容器: $PROD_CONTAINER ($image)"
 
-        docker run -d \
+        if ! docker run -d \
             --name "$PROD_CONTAINER" \
             --network "$NETWORK_NAME" \
             --network-alias "$PROD_CONTAINER" \
@@ -572,7 +572,11 @@ pipeline_deploy_prod()
             --health-timeout 10s \
             --health-retries 3 \
             --health-start-period 60s \
-            "$image"
+            "$image"; then
+            log_error "容器启动失败（本地模式）"
+            rm -f "$tmp_env"
+            return 1
+        fi
 
         rm -f "$tmp_env"
 
@@ -581,7 +585,10 @@ pipeline_deploy_prod()
 
         # 健康检查
         log_info "等待容器健康检查..."
-        wait_container_healthy "$PROD_CONTAINER" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))"
+        if ! wait_container_healthy "$PROD_CONTAINER" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))"; then
+            log_error "健康检查失败（本地模式）"
+            return 1
+        fi
 
         log_success "生产环境部署完成: $PROD_CONTAINER ($image)"
     fi
@@ -1345,9 +1352,12 @@ pipeline_deploy_noda_ops()
         # 爬虫脚本更新后必须使用 --no-cache 重建，否则 Docker 会缓存旧的文件
         docker build --no-cache -t noda-ops:latest -f deploy/Dockerfile.noda-ops .
 
-        # 传输镜像到 r4s
+        # 传输镜像到 r4s（先传再删旧容器，避免传失败导致服务中断）
         log_info "传输 noda-ops 镜像到 r4s..."
-        transfer_image "noda-ops:latest" "noda-ops:latest"
+        if ! transfer_image "noda-ops:latest" "noda-ops:latest"; then
+            log_error "noda-ops 镜像传输失败，旧容器保留"
+            return 1
+        fi
 
         # 从 Doppler Cloud 拉取密钥（在 Mac 上，per D-22）
         # 使用 --no-file > file 获取明文格式（直接写入文件是加密格式）
@@ -1366,9 +1376,12 @@ pipeline_deploy_noda_ops()
         remote_exec "docker rm -f noda-ops 2>/dev/null || true"
 
         # 在 r4s 上启动容器
-        remote_exec "cd /opt/noda/noda-infra && docker compose --env-file /tmp/noda-ops-secrets.env \
+        if ! remote_exec "cd /opt/noda/noda-infra && docker compose --env-file /tmp/noda-ops-secrets.env \
             -f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml \
-            up -d --force-recreate --no-deps noda-ops"
+            up -d --force-recreate --no-deps noda-ops"; then
+            log_error "noda-ops 容器启动失败"
+            return 1
+        fi
 
         log_success "noda-ops 重建完成（r4s）"
     else
@@ -1669,8 +1682,12 @@ pipeline_deploy_preprod()
 
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         # r4s 远程部署模式
+        # ⚠️ 先传镜像再停旧容器（如果传失败，旧容器保留服务不断）
         log_info "r4s 远程部署模式：传输镜像到 r4s..."
-        transfer_image "$image" "$image"
+        if ! transfer_image "$image" "$image"; then
+            log_error "Pre-prod 镜像传输失败，旧容器保留"
+            return 1
+        fi
 
         # 停止旧 preprod 容器（远程）
         if remote_exec "docker inspect $PREPROD_CONTAINER >/dev/null 2>&1"; then
