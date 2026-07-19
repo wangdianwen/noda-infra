@@ -79,39 +79,20 @@ remote_exec()
 
     # SSH 连接参数（per D-05）
     # ConnectTimeout: SSH 连接超时
-    # ServerAliveInterval: 保活间隔（防止 NAT 超时断连）
-    # 远程命令用 timeout 包裹防止挂死（timeout 值 = connect timeout * 20，最少 120s）
-    # 注意：r4s 是 iStoreOS/OpenWrt (BusyBox)，可能没有 GNU timeout 命令
-    #       首次调用时检测并缓存结果，不可用时跳过超时包裹
-    if [ -z "${_R4S_HAS_TIMEOUT:-}" ]; then
-        if ssh -i "$SSH_KEY_FILE" -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
-            "$R4S_HOST" 'which timeout >/dev/null 2>&1'; then
-            _R4S_HAS_TIMEOUT=yes
-        else
-            _R4S_HAS_TIMEOUT=no
-        fi
-    fi
-
+    # ServerAliveInterval/CountMax: 保活检测，连续 6 次（60s）无响应则断开
+    # Mac 端用 timeout 命令包裹整个 SSH 调用（不依赖 r4s 上的 timeout）
+    #   - r4s 是 iStoreOS/OpenWrt (BusyBox)，没有 GNU timeout 命令
+    #   - 在 Mac（Jenkins host）端用 timeout 是唯一可靠的超时方案
     local exec_timeout=$(( timeout * 20 ))
     [ "$exec_timeout" -lt 120 ] && exec_timeout=120
 
-    if [ "$_R4S_HAS_TIMEOUT" = "yes" ]; then
-        ssh -i "$SSH_KEY_FILE" \
-            -o ConnectTimeout="$timeout" \
-            -o StrictHostKeyChecking=no \
-            -o ServerAliveInterval=10 \
-            "$R4S_HOST" \
-            "timeout ${exec_timeout} $cmd"
-    else
-        # r4s 无 timeout 命令（BusyBox），依赖 SSH ServerAliveInterval 防卡死
-        ssh -i "$SSH_KEY_FILE" \
-            -o ConnectTimeout="$timeout" \
-            -o StrictHostKeyChecking=no \
-            -o ServerAliveInterval=10 \
-            -o ServerAliveCountMax=6 \
-            "$R4S_HOST" \
-            "$cmd"
-    fi
+    timeout "$exec_timeout" ssh -i "$SSH_KEY_FILE" \
+        -o ConnectTimeout="$timeout" \
+        -o StrictHostKeyChecking=no \
+        -o ServerAliveInterval=10 \
+        -o ServerAliveCountMax=6 \
+        "$R4S_HOST" \
+        "$cmd"
 }
 
 # ============================================
