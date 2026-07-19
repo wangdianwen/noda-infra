@@ -80,13 +80,18 @@ remote_exec()
     # SSH 连接参数（per D-05）
     # ConnectTimeout: SSH 连接超时
     # ServerAliveInterval/CountMax: 保活检测，连续 6 次（60s）无响应则断开
-    # Mac 端用 timeout 命令包裹整个 SSH 调用（不依赖 r4s 上的 timeout）
-    #   - r4s 是 iStoreOS/OpenWrt (BusyBox)，没有 GNU timeout 命令
-    #   - 在 Mac（Jenkins host）端用 timeout 是唯一可靠的超时方案
+    # 超时方案：用 perl 的 alarm 信号包裹 SSH 调用
+    #   - Mac 没有 GNU timeout（需要 brew install coreutils）
+    #   - r4s BusyBox 也没有 timeout
+    #   - perl 是 Mac 和 Linux 都自带的，用它实现超时是唯一可移植方案
     local exec_timeout=$(( timeout * 20 ))
     [ "$exec_timeout" -lt 120 ] && exec_timeout=120
 
-    timeout "$exec_timeout" ssh -i "$SSH_KEY_FILE" \
+    perl -e '
+        alarm shift @ARGV;
+        exec @ARGV or die "exec failed: $!";
+    ' -- "$exec_timeout" \
+    ssh -i "$SSH_KEY_FILE" \
         -o ConnectTimeout="$timeout" \
         -o StrictHostKeyChecking=no \
         -o ServerAliveInterval=10 \
