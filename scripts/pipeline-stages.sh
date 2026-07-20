@@ -484,6 +484,7 @@ pipeline_deploy_prod()
             --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/liuyao/web/.next/cache \
             --memory 1g \
             --memory-reservation 128m \
             --cpus 1 \
@@ -556,6 +557,7 @@ pipeline_deploy_prod()
             --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/liuyao/web/.next/cache \
             --memory 1g \
             --memory-reservation 128m \
             --cpus 1 \
@@ -1722,6 +1724,7 @@ pipeline_deploy_preprod()
             --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/liuyao/web/.next/cache \
             --memory 512m \
             --memory-reservation 128m \
             --cpus 0.5 \
