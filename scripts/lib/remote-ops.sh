@@ -103,29 +103,27 @@ remote_exec()
 # ============================================
 # 函数: transfer_image
 # ============================================
-# 三步式安全传输镜像到 r4s（避免内存峰值叠加导致路由器 OOM）
+# 通过 Docker Registry 增量传输镜像到 r4s
 #
-# 旧方式 docker save | ssh docker load 会同时在 r4s 上运行
-# ssh 压缩 + docker load 解压，内存峰值 800MB+，在 3.77GB RAM 的
-# r4s 上容易触发 OOM panic 导致路由器死机。
+# 原理：Mac 上起 Registry 容器（端口 5001），通过 SSH reverse tunnel
+# 让 r4s 的 localhost:5001 → Mac 的 registry。
+# docker pull 是流式按层拉取——如果 node_modules 层没变，r4s 已有缓存，
+# 只拉变化的几 MB。内存峰值远低于 docker load（不需要解压整个 tar）。
 #
-# 新方式分三步，降低 r4s 端峰值内存：
-#   1. 本地 docker save | gzip（压缩在 Mac 上，不占 r4s 内存）
-#   2. scp 传输压缩文件（纯网络 IO，r4s 内存 ~0）
-#   3. r4s 端 docker load -i（只做 load，不做 ssh 压缩）
-#
-# 安全措施：
-#   - 传输前预检 r4s 可用内存（至少 800MB 空闲）和磁盘空间
-#   - docker load 失败时清理 r4s 上的临时 tar.gz，避免磁盘累积
+# 流程：
+#   1. 确保 SSH tunnel 建立（r4s localhost:5001 → Mac registry）
+#   2. Mac 上 docker tag + push 到 localhost:5001
+#   3. r4s 上 docker pull localhost:5001/... + docker tag
 #
 # 参数:
-#   $1: local_image - 本地镜像名
+#   $1: local_image - 本地镜像名（如 noda-apps:abc123）
 #   $2: remote_image - 远程镜像名（传输后打 tag）
 # 返回: 0=成功，1=失败
 transfer_image()
 {
     local local_image="$1"
     local remote_image="$2"
+    local registry="localhost:5001"
 
     if [ -z "$R4S_HOST" ]; then
         log_error "R4S_HOST 未初始化，请先调用 setup_remote"
@@ -138,66 +136,51 @@ transfer_image()
     fi
 
     local ssh_opts="-i $SSH_KEY_FILE -o StrictHostKeyChecking=no -o ServerAliveInterval=10"
-    local remote_tmp="/mnt/mmc1-4/docker-images"
-    local tmp_gz="/tmp/${local_image//[:\/]/_}.tar.gz"
-    local remote_gz="$remote_tmp/$(basename "$tmp_gz")"
+    local registry_image="${registry}/${local_image}"
 
-    log_info "传输镜像（三步式）: $local_image -> $R4S_HOST:$remote_image"
+    log_info "传输镜像（Registry 增量）: $local_image -> $R4S_HOST:$remote_image"
 
-    # Step 0: 预检 r4s 资源（内存 >= 800MB 空闲，磁盘 >= 2GB 空闲）
-    log_info "Step 0/3: 预检 r4s 资源..."
-    local mem_avail_kb disk_avail_kb
-    mem_avail_kb=$(ssh $ssh_opts "$R4S_HOST" "awk '/MemAvailable/{print \$2}' /proc/meminfo" 2>/dev/null)
-    disk_avail_kb=$(ssh $ssh_opts "$R4S_HOST" "df -P /mnt/mmc1-4 | tail -1 | awk '{print \$4}'" 2>/dev/null)
-    local mem_mb=$(( mem_avail_kb / 1024 ))
-    local disk_gb=$(( disk_avail_kb / 1048576 ))
-    log_info "r4s 可用内存: ${mem_mb}MB, 可用磁盘: ${disk_gb}GB"
-
-    if [ "$mem_mb" -lt 800 ] 2>/dev/null; then
-        log_error "r4s 可用内存不足 (${mem_mb}MB < 800MB)，放弃传输避免 OOM"
-        return 1
-    fi
-    if [ "$disk_gb" -lt 2 ] 2>/dev/null; then
-        log_error "r4s 磁盘空间不足 (${disk_gb}GB < 2GB)，放弃传输"
-        return 1
+    # Step 0: 确保 Mac registry 容器在运行
+    if ! docker ps --format '{{.Names}}' | grep -q noda-registry; then
+        log_info "启动 Mac Registry..."
+        docker run -d -p 5001:5000 --name noda-registry --restart unless-stopped \
+            -v registry-data:/var/lib/registry registry:2 >/dev/null 2>&1
+        sleep 2
     fi
 
-    # Step 1: 本地 save + gzip 压缩（在 Mac 上完成，不占 r4s 内存）
-    log_info "Step 1/3: 本地压缩镜像..."
-    if ! docker save "$local_image" | gzip > "$tmp_gz"; then
-        log_error "镜像压缩失败: $local_image"
-        rm -f "$tmp_gz"
+    # Step 1: 确保 SSH reverse tunnel 建立（r4s:5001 → Mac:5001）
+    if ! ssh $ssh_opts "$R4S_HOST" 'curl -sf http://localhost:5001/v2/ >/dev/null 2>&1'; then
+        log_info "建立 SSH tunnel (r4s:5001 → Mac:5001)..."
+        ssh -fnN -R 5001:localhost:5001 "$R4S_HOST" $ssh_opts 2>/dev/null
+        sleep 2
+        if ! ssh $ssh_opts "$R4S_HOST" 'curl -sf http://localhost:5001/v2/ >/dev/null 2>&1'; then
+            log_error "SSH tunnel 建立失败"
+            return 1
+        fi
+    fi
+    log_info "Registry tunnel就绪"
+
+    # Step 2: Mac 上 tag + push（增量推送——变化的层才上传）
+    log_info "Push 到 Registry..."
+    if ! docker tag "$local_image" "$registry_image" 2>/dev/null; then
+        log_error "docker tag 失败: $local_image → $registry_image"
         return 1
     fi
-    local size_mb=$(( $(stat -f%z "$tmp_gz" 2>/dev/null || stat -c%s "$tmp_gz") / 1048576 ))
-    log_info "压缩完成: ${size_mb}MB"
-
-    # Step 2: scp 传输（纯网络 IO，r4s 内存消耗极低）
-    log_info "Step 2/3: 传输到 r4s..."
-    ssh $ssh_opts "$R4S_HOST" "mkdir -p $remote_tmp" 2>/dev/null
-    if ! scp $ssh_opts "$tmp_gz" "$R4S_HOST:$remote_gz"; then
-        log_error "镜像传输失败: scp error"
-        rm -f "$tmp_gz"
+    if ! docker push "$registry_image" 2>/dev/null; then
+        log_error "docker push 失败: $registry_image"
         return 1
     fi
-    rm -f "$tmp_gz"  # 清理本地临时文件
+    docker rmi "$registry_image" >/dev/null 2>&1  # 清理本地 tag
 
-    # Step 3: r4s 端 docker load（只做 load，不做 ssh 压缩）
-    # 无论成功失败都清理 remote tar.gz（用 ; 分隔确保 rm 总是执行）
-    log_info "Step 3/3: r4s 端加载镜像..."
-    local load_rc
-    ssh $ssh_opts "$R4S_HOST" \
-        "docker load -i $remote_gz && \
-         docker tag $local_image $remote_image; \
-         rc=\$?; rm -f $remote_gz; exit \$rc"
-    load_rc=$?
-
-    if [ "$load_rc" -ne 0 ]; then
-        log_error "镜像加载失败（r4s 端，exit=$load_rc）"
-        # 确保清理（可能上面 rm 也没执行到）
-        ssh $ssh_opts "$R4S_HOST" "rm -f $remote_gz" 2>/dev/null
+    # Step 3: r4s 上 pull（增量拉取——已有层的跳过）
+    log_info "r4s 端 pull（增量）..."
+    if ! ssh $ssh_opts "$R4S_HOST" "docker pull $registry_image"; then
+        log_error "docker pull 失败（r4s 端）"
         return 1
     fi
+
+    # Step 4: r4s 上打正确的 tag
+    ssh $ssh_opts "$R4S_HOST" "docker tag $registry_image $remote_image && docker rmi $registry_image 2>/dev/null"
 
     log_success "镜像传输完成: $remote_image"
     return 0
