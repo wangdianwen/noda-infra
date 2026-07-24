@@ -672,6 +672,22 @@ pipeline_cleanup()
 
     # === 部署后全面清理（per D-03）===
     cleanup_after_deploy "${WORKSPACE:-$PWD}"
+
+    # === 清理 r4s 上的旧镜像（保留当前运行 + 上一个版本用于回滚）===
+    if [ "${DEPLOY_TARGET:-}" = "r4s" ] && [ -n "${SSH_KEY_FILE:-}" ]; then
+        log_info "清理 r4s 旧镜像..."
+        # 列出所有 noda-apps 镜像，保留最新的 2 个（当前 + 回滚），删除其余
+        remote_exec "
+            docker images noda-apps --format '{{.ID}} {{.Tag}}' | \
+            grep -v '<none>' | \
+            sort -k2 -r | \
+            tail -n +3 | \
+            awk '{print \$1}' | \
+            while read id; do docker rmi \$id 2>/dev/null; done
+            docker image prune -f 2>/dev/null
+        " 2>/dev/null || true
+        log_info "r4s 镜像清理完成"
+    fi
 }
 
 # pipeline_failure_cleanup - 部署失败时捕获日志并清理
