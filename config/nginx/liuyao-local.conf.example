@@ -4,8 +4,7 @@
 # 独立配置，不依赖 upstream-preprod.conf（那是给 r4s 用的）
 # 直接 proxy_pass 到 compose service name:port
 
-# resolver for dynamic container DNS
-resolver_note: "（主 nginx.conf 已声明 resolver 127.0.0.11，conf.d 内重复声明会 emerg 且阻止 nginx 启动）
+# resolver：主 nginx.conf 已声明 resolver 127.0.0.11，conf.d 内重复声明会 emerg 且阻止 nginx 启动
 
 # ── HTTP → HTTPS 重定向 ──
 server {
