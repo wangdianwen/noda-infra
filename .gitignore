@@ -40,3 +40,6 @@ config/nginx/ssl/*.pem
 # GSD 工作目录
 .planning/phases/
 workspace/
+
+# 本机 liuyao 开发 nginx 配置（从 liuyao-local.conf.example 复制）
+config/nginx/liuyao-local.conf
