@@ -16,6 +16,9 @@ services:
         NEXT_PUBLIC_KEYCLOAK_URL: https://auth.noda.co.nz
         NEXT_PUBLIC_KEYCLOAK_REALM: noda
         NEXT_PUBLIC_KEYCLOAK_CLIENT_ID: noda-frontend
+        # GA4 分站 property（SEO 修复：三站拆分，避免互相污染数据）
+        NEXT_PUBLIC_GA4_WWW_ID: G-FPEF7LXD2F
+        NEXT_PUBLIC_GA4_LIUYAO_ID: G-ZXK92PWTEF
     image: noda-apps:latest
     labels:
       - "noda.service-group=apps-prod"

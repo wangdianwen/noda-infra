@@ -26,6 +26,9 @@ ingress:
   # FindClass 应用
   - hostname: class.noda.co.nz
     service: http://noda-nginx:81
+  # 旧域名 301 → class.noda.co.nz（SEO 修复：NXDOMAIN 断链恢复）
+  - hostname: findclass.noda.co.nz
+    service: http://noda-nginx:81
   # Admin Dashboard（内网访问）
   - hostname: admin.noda.co.nz
     service: http://noda-nginx:81
