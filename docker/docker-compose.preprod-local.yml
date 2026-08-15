@@ -60,7 +60,9 @@ services:
     volumes:
       - ./keycloak-realm.json:/opt/keycloak/data/import/noda-realm.json:ro
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready || exit 1"]
+      # Keycloak 26 镜像（UBI micro）无 curl/wget，且默认未开 health 端点
+      # 容器 /bin/sh 即 bash，用 /dev/tcp 探公开端点 /realms/noda
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /realms/noda HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && timeout 3 cat <&3 | head -1 | grep -q ' 200 '"]
       interval: 10s
       timeout: 5s
       retries: 10
