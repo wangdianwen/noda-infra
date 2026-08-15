@@ -201,6 +201,14 @@ def import_course(course_data):
     original_content = course_data.get('originalContent', '')
     tags = course_data.get('tags', [])
 
+    # 英文翻译字段（Phase 108，llm_translate 产出；缺失为 None）
+    title_en = course_data.get('titleEn')
+    subject_en = course_data.get('subjectEn')
+    grade_level_en = course_data.get('gradeLevelEn')
+    description_en = course_data.get('descriptionEn')
+    teacher_qualifications_en = course_data.get('teacherInfoEn')
+    price_note_en = course_data.get('priceNoteEn')
+
     # 检查是否已存在
     check_sql = f"SELECT id FROM courses WHERE source_url = '{source_url}' LIMIT 1;"
     result = psql_command(check_sql)
@@ -250,6 +258,12 @@ def import_course(course_data):
             location_type = {psql_escape(location_type)},
             price = {price if price else 'NULL'},
             price_note = {psql_escape(price_note)},
+            title_en = COALESCE({psql_escape(title_en)}, title_en),
+            subject_en = COALESCE({psql_escape(subject_en)}, subject_en),
+            grade_level_en = COALESCE({psql_escape(grade_level_en)}, grade_level_en),
+            description_en = COALESCE({psql_escape(description_en)}, description_en),
+            teacher_qualifications_en = COALESCE({psql_escape(teacher_qualifications_en)}, teacher_qualifications_en),
+            price_note_en = COALESCE({psql_escape(price_note_en)}, price_note_en),
             trial_lesson = {trial_lesson},
             description = {psql_escape(description)},
             teacher_qualifications = {psql_escape(teacher_info)},
@@ -282,6 +296,7 @@ def import_course(course_data):
             price, price_unit, price_note, trial_lesson, description,
             teacher_qualifications, category_id, category_ids,
             source_url, source_platform, original_content, tags,
+            title_en, subject_en, grade_level_en, description_en, teacher_qualifications_en, price_note_en,
             source, data_quality_score, created_at, updated_at
         ) VALUES (
             '{teacher_id}',
@@ -302,6 +317,12 @@ def import_course(course_data):
             {psql_escape(source_platform)},
             {psql_escape(original_content[:1000])},
             '{tags_array}'::text[],
+            {psql_escape(title_en)},
+            {psql_escape(subject_en)},
+            {psql_escape(grade_level_en)},
+            {psql_escape(description_en)},
+            {psql_escape(teacher_qualifications_en)},
+            {psql_escape(price_note_en)},
             'crawler',
             {int(confidence * 100)},
             NOW(),
