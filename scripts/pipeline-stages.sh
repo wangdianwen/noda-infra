@@ -101,11 +101,36 @@ reload_nginx()
 # 返回：0=备份新鲜，1=备份过期或不存在
 # 环境变量：
 #   BACKUP_HOST_DIR - 备份目录（默认 $PROJECT_ROOT/docker/volumes/backup）
-#   BACKUP_MAX_AGE_HOURS - 最大允许年龄小时数（默认 12）
+#   BACKUP_MAX_AGE_HOURS - 最大允许年龄小时数（默认 26，匹配每日备份节奏）
 check_backup_freshness()
 {
     local backup_dir="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}"
-    local max_age_hours="${BACKUP_MAX_AGE_HOURS:-12}"
+    # 默认 26h：备份每日 03:00 NZST 跑一次，12h 阈值会让下午部署误报过期
+    local max_age_hours="${BACKUP_MAX_AGE_HOURS:-26}"
+
+    # r4s 远程模式：生产数据库和备份都在 r4s 上，本地目录是旧残留（迁移前）
+    # Jenkins Pre-flight 注入 SSH_KEY_FILE 时走远程检查；本地开发无 key，走本地目录
+    # r4s 是 BusyBox：find 不支持 -printf，用 -mmin 判断新鲜度（最老可接受 = 阈值小时）
+    if [ -n "$SSH_KEY_FILE" ] && [ -n "$R4S_HOST" ]; then
+        local remote_backup_dir="${R4S_BACKUP_DIR:-/opt/noda/noda-infra/docker/volumes/backup}"
+        local max_age_minutes=$(( max_age_hours * 60 ))
+        local fresh_file
+        fresh_file=$(remote_exec "find '${remote_backup_dir}' -type f \( -name '*.dump' -o -name '*.sql' \) -mmin -${max_age_minutes} 2>/dev/null | head -1" 30 | grep -v '^\s*$' | head -1)
+        if [ -n "$fresh_file" ]; then
+            log_info "备份检查通过（r4s）: 存在 ${max_age_hours} 小时内的新备份: $fresh_file"
+            return 0
+        fi
+        # 无新鲜文件：确认目录里是否完全没有备份文件（区分"过期"与"从未备份"）
+        local any_file
+        any_file=$(remote_exec "find '${remote_backup_dir}' -type f \( -name '*.dump' -o -name '*.sql' \) 2>/dev/null | sort | tail -1" 30 | grep -v '^\s*$' | tail -1)
+        if [ -z "$any_file" ]; then
+            log_error "r4s 上未找到任何备份文件 (查找路径: $remote_backup_dir)"
+        else
+            log_error "r4s 备份已过期（阈值: ${max_age_hours} 小时）"
+            log_error "最新备份: $any_file"
+        fi
+        return 1
+    fi
 
     # 策略：先检查当天目录，再检查前一天（D-04）
     local today today_minus1
