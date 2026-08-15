@@ -328,6 +328,8 @@ pipeline_build()
             --build-arg NEXT_PUBLIC_ALLOWED_ORIGINS=https://class.noda.co.nz,https://noda.co.nz \
             --build-arg NEXT_PUBLIC_SITE_URL=https://class.noda.co.nz \
             --build-arg NEXT_PUBLIC_REMARK_URL=https://comments.noda.co.nz \
+            --build-arg NEXT_PUBLIC_GA4_WWW_ID=G-FPEF7LXD2F \
+            --build-arg NEXT_PUBLIC_GA4_LIUYAO_ID=G-ZXK92PWTEF \
             "$apps_dir"
     else
         docker build \
