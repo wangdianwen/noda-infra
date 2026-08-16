@@ -18,23 +18,7 @@ import argparse
 import time
 import os
 import httpx
-import unicodedata
 from scrapling.parser import Adaptor
-
-
-def clean_title(text):
-    """移除标题中的装饰符号（█★●◆⭐🎨等），保留中文/英文/数字/基本标点"""
-    if not text:
-        return text
-    # 1. 移除装饰性 Unicode 符号和 emoji
-    text = re.sub(r'[─-╿▀-▟■-◿☀-⛿✀-➿⭐⭕⬛⬜®©™　]+', ' ', text)
-    # 2. 移除 emoji（杂项符号、表情符号等 Unicode 块）
-    text = re.sub(r'[\U0001F300-\U0001F9FF\U00002600-\U000027BF\U0000FE00-\U0000FE0F\U0000200D\U00002764\U00002B50]+', ' ', text)
-    # 3. 全角竖线→空格
-    text = text.replace('｜', ' ').replace('|', ' ')
-    # 4. 清理多余空格
-    text = re.sub(r'\s{2,}', ' ', text)
-    return text.strip()
 
 # 性能监控（D-18）
 start_time = time.time()
@@ -311,7 +295,8 @@ def extract_post_data(post_element, board_name):
     if not title_el:
         return None
 
-    title = clean_title(title_el.text.strip()) if title_el.text else ''
+    title = title_el.text.strip() if title_el.text else ''
+    href = title_el.attrib.get('href', '')
 
     # 拼接完整 URL
     if href.startswith('http'):
@@ -462,7 +447,7 @@ def extract_post_data_from_page(page, url):
 
     title_els = page.css('#thread_subject') or page.css('h1')
     title_el = title_els[0] if title_els else None
-    title = clean_title(title_el.text.strip()) if title_el and title_el.text else ''
+    title = title_el.text.strip() if title_el and title_el.text else ''
 
     combined_text = f"{title} {content_text}"
 
@@ -894,6 +879,17 @@ def main():
         combined_stats['total'] += gate_stats.get('total', 0)
         combined_stats['llm_rejected'] += gate_stats.get('llm_rejected', 0)
         combined_stats['no_contact'] += gate_stats.get('no_contact', 0)
+
+    # === LLM 英文翻译（Phase 108，入库前产出 *En 字段）===
+    if results:
+        try:
+            from llm_translate import translate_courses
+            results = translate_courses(results)
+            translated = sum(1 for c in results if c.get("titleEn"))
+            sys.stderr.write(
+                f"[llm_translate] 翻译完成: {translated}/{len(results)} 条含英文字段\n")
+        except Exception as e:
+            sys.stderr.write(f"[llm_translate] 翻译失败（继续无英文结果）: {e}\n")
 
     elapsed = time.time() - start_time
     sys.stderr.write(f"抓取耗时: {elapsed:.2f}s\n")
