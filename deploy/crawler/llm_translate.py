@@ -146,6 +146,7 @@ def translate_courses(courses, batch_size=DEFAULT_BATCH_SIZE):
 
     for start in range(0, len(courses), batch_size):
         batch = courses[start:start + batch_size]
+        index_map = None
         try:
             if client is None:
                 raise RuntimeError("无可用客户端")
@@ -154,12 +155,28 @@ def translate_courses(courses, batch_size=DEFAULT_BATCH_SIZE):
             sys.stderr.write(
                 f"[llm_translate] 批次 {start // batch_size} 翻译失败"
                 f"（{len(batch)} 条置 None）: {e}\n")
-            index_map = {}
 
         for i, course in enumerate(batch):
+            if index_map is None:
+                # 批整体失败：标记让回填跳过写库（兜底拷源值会污染 en 列）
+                course['_translate_failed'] = True
+                for field in TRANSLATABLE_FIELDS:
+                    course[f"{field}En"] = None
+                continue
             t = index_map.get(i, {})
             for field in TRANSLATABLE_FIELDS:
                 value = t.get(f"{field}En")
-                course[f"{field}En"] = value if isinstance(value, str) and value.strip() else None
+                if isinstance(value, str) and value.strip():
+                    course[f"{field}En"] = value
+                elif isinstance(value, str):
+                    # LLM 返回空串（键存在）= 源为空或已是英文/数字，无需翻译。
+                    # 拷贝源值进 _en 列——否则该字段永不写库，回填游标永不推进（死循环）。
+                    # 仅限全 ASCII 源；中文源时 LLM 回空串属异常，不拷防污染。
+                    src = course.get(field)
+                    course[f"{field}En"] = (
+                        src if isinstance(src, str) and src.strip() and src.isascii() else None
+                    )
+                else:
+                    course[f"{field}En"] = None  # 键缺失/非串 = 翻译失败
 
     return courses
