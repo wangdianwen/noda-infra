@@ -26,6 +26,7 @@ echo "===== Phase 1: Preflight ====="
 pipeline_preflight "$PROJECT_ROOT/../noda-apps"
 
 echo "===== Phase 2: Build image ====="
+export DOCKERFILE="$HOME/project/noda-apps/infra/docker/Dockerfile.noda-apps"
 pipeline_build "$PROJECT_ROOT/../noda-apps" "$GIT_SHA"
 
 echo "===== Phase 3: Deploy preprod ====="
