@@ -11,7 +11,10 @@ export DEPLOY_TARGET="local"
 
 echo "===== Loading Doppler secrets ====="
 # 绕过 load_secrets（它需要 service token），直接用 CLI 导出
+# set -a：eval 注入的变量自动 export，否则 docker compose 子进程继承不到（STRIPE_* 会是空）
+set -a
 eval "$(doppler secrets download --project noda --config prd_pre --no-file --format=env 2>/dev/null)"
+set +a
 export DOPPLER_TOKEN="cli-bypass"  # 占位，load_secrets 检查非空即可
 export SKIP_LOAD_SECRETS=1  # secrets 已由上方 eval 注入，跳过 pipeline 顶层 load_secrets
 
