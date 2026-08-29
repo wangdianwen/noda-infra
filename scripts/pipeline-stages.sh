@@ -21,7 +21,8 @@ source "$PROJECT_ROOT/scripts/lib/image-cleanup.sh"
 source "$PROJECT_ROOT/scripts/lib/cleanup.sh"
 
 # 加载密钥（Doppler 双模式，per D-03/D-04/D-10）
-load_secrets
+# SKIP_LOAD_SECRETS=1 时跳过（调用者自行注入 secrets，如 _deploy_liuyao_preprod.sh 用 CLI eval prd_pre）
+[ "${SKIP_LOAD_SECRETS:-0}" = "1" ] || load_secrets
 
 # ============================================
 # 常量
@@ -638,7 +639,7 @@ prepare_prod_env_file()
         return 1
     fi
 
-    local vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${KEYCLOAK_CLIENT_SECRET} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY}'
+    local vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${KEYCLOAK_CLIENT_SECRET} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY} ${STRIPE_SECRET_KEY} ${STRIPE_WEBHOOK_SECRET} ${STRIPE_PRICE_DEEP_READ} ${LIUYAO_WEB_BASE_URL}'
     envsubst "$vars" <"$env_template" >"$tmp_file"
     chmod 600 "$tmp_file"
     echo "$tmp_file"

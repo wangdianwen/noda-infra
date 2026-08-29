@@ -89,6 +89,10 @@ services:
       ANTHROPIC_MAX_TOKENS: "8000"
       LIYUAO_API_PORT: "3007"
       NEXT_PUBLIC_LOCAL_API_URL: "http://localhost:3001"
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:-}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:-}"
+      STRIPE_PRICE_DEEP_READ: "${STRIPE_PRICE_DEEP_READ:-}"
+      LIUYAO_WEB_BASE_URL: "${LIUYAO_WEB_BASE_URL:-https://liuyao-preprod.noda.co.nz}"
     volumes:
       - preprod-python-cache:/app/apps/findclass/scripts/python/cache
     deploy:

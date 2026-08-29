@@ -7,13 +7,13 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 export SSH_KEY_FILE="$HOME/.ssh/id_ed25519"
-export DEPLOY_TARGET="r4s"
-export R4S_HOST="root@192.168.100.1"
+export DEPLOY_TARGET="local"
 
 echo "===== Loading Doppler secrets ====="
 # 绕过 load_secrets（它需要 service token），直接用 CLI 导出
-eval "$(doppler secrets download --project noda --config prd --no-file --format=env 2>/dev/null)"
+eval "$(doppler secrets download --project noda --config prd_pre --no-file --format=env 2>/dev/null)"
 export DOPPLER_TOKEN="cli-bypass"  # 占位，load_secrets 检查非空即可
+export SKIP_LOAD_SECRETS=1  # secrets 已由上方 eval 注入，跳过 pipeline 顶层 load_secrets
 
 echo "===== Loading pipeline functions ====="
 source scripts/lib/log.sh
