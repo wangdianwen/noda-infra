@@ -87,7 +87,7 @@ services:
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
       # 注意：ANTHROPIC_MODEL 不在此透传——宿主 shell 可能残留旧值（如 sonnet），
       # 留缺走 liuyao llm.ts 代码默认（glm-5.3-flash），与 ZAI 网关匹配
-      ANTHROPIC_MAX_TOKENS: "8000"
+      ANTHROPIC_MAX_TOKENS: "16000"
       LIYUAO_API_PORT: "3007"
       NEXT_PUBLIC_LOCAL_API_URL: "http://localhost:3001"
       STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:-}"
