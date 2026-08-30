@@ -183,16 +183,26 @@ pipeline {
                     for i in $(seq 1 5); do
                         if curl -sf --connect-timeout 5 --max-time 10 https://class.noda.co.nz/api/health; then
                             echo "E2E 验证通过 (attempt $i)"
+                            break
+                        fi
+                        if [ "$i" = 5 ]; then
+                            echo "E2E 验证失败: class.noda.co.nz/api/health 不可达"
+                            exit 1
+                        fi
+                        sleep 2
+                    done
+                    # liuyao 站健康检查（随镜像同容器部署，upstream noda-apps-prod:3005）
+                    for i in $(seq 1 5); do
+                        code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 https://liuyao.noda.co.nz/api/health)
+                        if [ "$code" = 200 ]; then
+                            echo "liuyao E2E 验证通过 (attempt $i)"
                             exit 0
                         fi
                         sleep 2
                     done
-                    echo "E2E 验证失败: class.noda.co.nz/api/health 不可达"
+                    echo "liuyao E2E 验证失败: liuyao.noda.co.nz/api/health 不可达"
                     exit 1
                 '''
-                }
-            }
-        }
 
         stage('CDN Purge') {
             steps {
