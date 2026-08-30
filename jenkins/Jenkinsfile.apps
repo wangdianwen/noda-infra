@@ -203,6 +203,9 @@ pipeline {
                     echo "liuyao E2E 验证失败: liuyao.noda.co.nz/api/health 不可达"
                     exit 1
                 '''
+                }
+            }
+        }
 
         stage('CDN Purge') {
             steps {
