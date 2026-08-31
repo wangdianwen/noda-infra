@@ -87,7 +87,12 @@ pipeline {
 
         stage('Deploy Pre-prod') {
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
+                    // prd_pre 专用 token：主 token 只授权 prd，读 prd_pre 会拿到空导出
+                    // （曾致 preprod 容器继承 prd 的 live key）
+                    string(credentialsId: 'doppler-service-token-preprod', variable: 'DOPPLER_TOKEN_PREPROD')
+                ]) {
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
@@ -139,7 +144,10 @@ pipeline {
                 expression { env.DEPLOY_ACTION == 'rebuild_preprod' }
             }
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
+                    string(credentialsId: 'doppler-service-token-preprod', variable: 'DOPPLER_TOKEN_PREPROD')
+                ]) {
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
