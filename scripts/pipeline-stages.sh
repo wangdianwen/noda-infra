@@ -1825,9 +1825,24 @@ set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;"
         COMPOSE_PROJECT_NAME=preprod \
         docker compose -f "$compose_file" down --remove-orphans 2>/dev/null || true
 
-        COMPOSE_PROJECT_NAME=preprod \
-        NORA_APPS_IMAGE="$image" \
-        docker compose -f "$compose_file" up -d --force-recreate
+        # 密钥源头隔离（环境隔离规则）：顶层 load_secrets 加载 prd（live key），
+        # preprod 禁用任何 prod key——此处从 Doppler prd_pre 覆盖 STRIPE_/ANTHROPIC_ 前缀。
+        # 子 shell 内覆盖，不污染父进程（prod 阶段 envsubst 仍取 prd 导出值）。
+        # ANTHROPIC 当前 prd_pre 与 prd 同值（共用违规待开发 key 建好后替换 prd_pre 值）
+        local _preprod_key_override
+        _preprod_key_override=$(doppler secrets download --project noda --config prd_pre --no-file --format=env 2>/dev/null | grep -E '^(STRIPE_|ANTHROPIC_)' || true)
+        if [ -z "$_preprod_key_override" ]; then
+            log_warn "prd_pre 密钥导出为空，preprod 将无 Stripe/Anthropic 凭据"
+        fi
+
+        (
+            if [ -n "$_preprod_key_override" ]; then
+                eval "export ${_preprod_key_override//$'\n'/ }"
+            fi
+            COMPOSE_PROJECT_NAME=preprod \
+            NORA_APPS_IMAGE="$image" \
+            docker compose -f "$compose_file" up -d --force-recreate
+        )
 
         # 确保 keycloak 数据库存在（init SQL 可能无法 CREATE DATABASE）
         docker exec preprod-postgres psql -U postgres -c "CREATE DATABASE keycloak" 2>/dev/null || true
