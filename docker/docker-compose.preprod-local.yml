@@ -91,11 +91,12 @@ services:
       LIYUAO_API_PORT: "3007"
       NEXT_PUBLIC_LOCAL_API_URL: "http://localhost:3001"
       # 环境隔离规则：preprod 禁用任何 prod key。专用 PREPROD_ 前缀防宿主 live 值吸入
-      # （宿主/Jenkins 环境 export 的 STRIPE_SECRET_KEY 是 prod live key）。
-      # test mode 值放 docker/.env（PREPROD_STRIPE_*），未配置则支付功能不可用——这是有意的
-      STRIPE_SECRET_KEY: "${PREPROD_STRIPE_SECRET_KEY:-}"
-      STRIPE_WEBHOOK_SECRET: "${PREPROD_STRIPE_WEBHOOK_SECRET:-}"
-      STRIPE_PRICE_DEEP_READ: "${PREPROD_STRIPE_PRICE_DEEP_READ:-}"
+      # Stripe test key 源头隔离：preprod 部署脚本从 Doppler config=prd_pre 导出
+      # （prd_pre 只存 test mode 值），与 prod（config=prd，live key）天然隔离，
+      # 变量名保持 STRIPE_* 与导出侧一致
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:-}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:-}"
+      STRIPE_PRICE_DEEP_READ: "${STRIPE_PRICE_DEEP_READ:-}"
       LIUYAO_WEB_BASE_URL: "${LIUYAO_WEB_BASE_URL:-https://liuyao-preprod.noda.co.nz}"
     volumes:
       - preprod-python-cache:/app/apps/findclass/scripts/python/cache
