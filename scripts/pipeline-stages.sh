@@ -430,7 +430,8 @@ _restart_prod_container()
         --network $NETWORK_NAME \
         --network-alias $PROD_CONTAINER \
         --restart always \
-        --memory 1g --cpus 1 \
+        --memory 768m --cpus 1 \
+        --env NODE_OPTIONS=--max-old-space-size=512 \
         --env-file /tmp/prod.env \
         $rollback_image" 2>/dev/null
 
@@ -522,8 +523,9 @@ pipeline_deploy_prod()
             --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/liuyao/web/.next/cache \
-            --memory 1g \
-            --memory-reservation 128m \
+            --memory 768m \
+            --memory-reservation 256m \
+            --env NODE_OPTIONS=--max-old-space-size=512 \
             --cpus 1 \
             --log-driver json-file \
             --log-opt max-size=10m \
@@ -595,8 +597,9 @@ pipeline_deploy_prod()
             --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/liuyao/web/.next/cache \
-            --memory 1g \
-            --memory-reservation 128m \
+            --memory 768m \
+            --memory-reservation 256m \
+            --env NODE_OPTIONS=--max-old-space-size=512 \
             --cpus 1 \
             --log-driver json-file \
             --log-opt max-size=10m \
