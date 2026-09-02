@@ -429,7 +429,7 @@ _restart_prod_container()
         --name $PROD_CONTAINER \
         --network $NETWORK_NAME \
         --network-alias $PROD_CONTAINER \
-        --restart unless-stopped \
+        --restart always \
         --memory 1g --cpus 1 \
         --env-file /tmp/prod.env \
         $rollback_image" 2>/dev/null
@@ -460,32 +460,39 @@ pipeline_deploy_prod()
 
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         # r4s 远程部署模式
-        # ⚠️ 安全顺序：先停旧容器再传镜像，降低 r4s 内存峰值
-        # 旧容器占 ~500MB，docker load 峰值 ~800MB，同时跑会 OOM
-        # 先停旧容器释放内存，再传镜像加载
+        # ⚠️ 安全顺序：先停（不删）旧容器再传镜像，降低 r4s 内存峰值
+        # 旧容器占 ~500MB，镜像传输峰值 ~800MB，同时跑会 OOM
+        #
+        # 事故教训（2026-09-02 #200）：旧版先 docker rm 再传镜像，传输中 r4s
+        # 死机重启，旧容器已不存在 → prod 无人接盘，502 约 7 小时。
+        # 现规则：镜像成功落地前绝不删除旧容器。
+        #   - 传输失败     → docker start 秒级回滚（容器配置/env 原样保留）
+        #   - 传输中死机   → 旧容器 Exited 保留在磁盘，配合 --restart always，
+        #                    r4s 重启后 daemon 自动拉起，无需人工介入
 
-        # Step 1: 先停旧容器（释放 r4s 内存，为 docker load 腾出空间）
-        # 记录旧镜像名，万一传镜像失败可以回滚
+        # Step 1: 只停旧容器（释放内存，容器保留用于回滚与死机自愈）
         local old_image=""
         if remote_exec "docker inspect $PROD_CONTAINER >/dev/null 2>&1"; then
             old_image=$(remote_exec "docker inspect -f '{{.Config.Image}}' $PROD_CONTAINER" 2>/dev/null | tr -d "'")
             if [ "$(remote_exec "docker inspect -f '{{.State.Running}}' $PROD_CONTAINER")" = "true" ]; then
-                log_info "停止旧容器（r4s）: $PROD_CONTAINER (image: $old_image)"
+                log_info "停止旧容器（r4s，不删除）: $PROD_CONTAINER (image: $old_image)"
                 remote_exec "docker stop -t 30 $PROD_CONTAINER || true"
-                remote_exec "docker rm $PROD_CONTAINER || true"
-            else
-                remote_exec "docker rm $PROD_CONTAINER || true"
             fi
         fi
 
-        # Step 2: 传输镜像（旧容器已停，内存峰值降低）
-        # ⚠️ 如果传镜像失败，尝试用旧镜像回滚容器
+        # Step 2: 传输镜像（旧容器已停，内存峰值降低；旧容器仍在，可回滚）
         log_info "r4s 远程部署模式：传输镜像到 r4s..."
         if ! transfer_image "$image" "$image"; then
             log_error "镜像传输失败"
             if [ -n "$old_image" ]; then
-                log_info "尝试回滚：用旧镜像 $old_image 重启容器..."
-                _restart_prod_container "$old_image"
+                log_info "尝试回滚：docker start 恢复旧容器 $PROD_CONTAINER..."
+                if remote_exec "docker start $PROD_CONTAINER" >/dev/null 2>&1; then
+                    reload_nginx
+                    log_success "已回滚：旧容器 $PROD_CONTAINER 已恢复运行"
+                else
+                    log_error "docker start 回滚失败，尝试用旧镜像重建..."
+                    _restart_prod_container "$old_image"
+                fi
             fi
             return 1
         fi
@@ -497,12 +504,14 @@ pipeline_deploy_prod()
         cat "$tmp_env" | remote_exec "cat > /tmp/prod.env"
 
         # 启动新容器（远程）
-        log_info "启动容器（r4s）: $PROD_CONTAINER ($image)"
+        # 镜像已确认落地，此刻才允许删除旧容器
+        log_info "删除旧容器并启动新容器（r4s）: $PROD_CONTAINER ($image)"
+        remote_exec "docker rm -f $PROD_CONTAINER >/dev/null 2>&1 || true"
         if ! remote_exec "docker run -d \
             --name $PROD_CONTAINER \
             --network $NETWORK_NAME \
             --network-alias $PROD_CONTAINER \
-            --restart unless-stopped \
+            --restart always \
             --stop-timeout 30 \
             --security-opt no-new-privileges \
             --cap-drop ALL \
