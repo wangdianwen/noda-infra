@@ -1111,18 +1111,22 @@ pipeline_deploy_keycloak_prod()
         remote_exec "docker pull $image"
 
         # 启动新容器（远程）
+        # realm 持久化在 postgres（KC_DB），data 目录挂持久卷防 realm 丢失
+        # ⚠️ 2026-09-02 教训：旧版 --tmpfs /opt/keycloak/data + 无 KC_DB，
+        #    每次部署 realm 全丢
         log_info "启动容器（r4s）: $container_name ($image)"
+        remote_exec "mkdir -p /opt/noda/noda-infra/docker/services/keycloak/data"
         remote_exec "docker run -d \
             --name $container_name \
             --network $NETWORK_NAME \
             --network-alias $container_name \
-            --restart unless-stopped \
+            --restart always \
             --stop-timeout 30 \
             --security-opt no-new-privileges \
             --cap-drop ALL \
             -v /opt/noda/noda-infra/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro \
-            --tmpfs /opt/keycloak/data \
-            --memory 1g \
+            -v /opt/noda/noda-infra/docker/services/keycloak/data:/opt/keycloak/data \
+            --memory 768m \
             --memory-reservation 512m \
             --cpus 1 \
             --log-driver json-file \
@@ -1139,7 +1143,7 @@ pipeline_deploy_keycloak_prod()
             --health-retries 10 \
             --health-start-period 60s \
             $image \
-            start --hostname-strict=false --proxy-headers=xforwarded"
+            start --hostname=auth.noda.co.nz --http-enabled=true"
 
         rm -f "$tmp_env"
 
@@ -1169,13 +1173,13 @@ pipeline_deploy_keycloak_prod()
             --name "$container_name" \
             --network "$NETWORK_NAME" \
             --network-alias "$container_name" \
-            --restart unless-stopped \
+            --restart always \
             --stop-timeout 30 \
             --security-opt no-new-privileges \
             --cap-drop ALL \
             -v "$PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro" \
-            --tmpfs /opt/keycloak/data \
-            --memory 1g \
+            -v "$PROJECT_ROOT/docker/services/keycloak/data:/opt/keycloak/data" \
+            --memory 768m \
             --memory-reservation 512m \
             --cpus 1 \
             --log-driver json-file \
@@ -1192,7 +1196,7 @@ pipeline_deploy_keycloak_prod()
             --health-retries 10 \
             --health-start-period 60s \
             "$image" \
-            start --hostname-strict=false --proxy-headers=xforwarded
+            start --hostname=auth.noda.co.nz --http-enabled=true
 
         rm -f "$tmp_env"
 
