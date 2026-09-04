@@ -1141,7 +1141,7 @@ pipeline_deploy_keycloak_prod()
             --health-interval 10s \
             --health-timeout 5s \
             --health-retries 10 \
-            --health-start-period 60s \
+            --health-start-period 900s \
             $image \
             start --hostname=auth.noda.co.nz --http-enabled=true"
 
@@ -1194,7 +1194,7 @@ pipeline_deploy_keycloak_prod()
             --health-interval 10s \
             --health-timeout 5s \
             --health-retries 10 \
-            --health-start-period 60s \
+            --health-start-period 900s \
             "$image" \
             start --hostname=auth.noda.co.nz --http-enabled=true
 
@@ -1510,7 +1510,12 @@ pipeline_infra_health_check()
         # r4s 远程健康检查模式
         case "$service" in
             keycloak)
-                wait_container_healthy "noda-infra-keycloak" 300 true true
+                # 900s：Keycloak 在 r4s（ARM）上冷启动实测 ~6-10 分钟；且配置变更（如
+                # JAVA_OPTS_APPEND）会触发 Quarkus 重新增强（实测 +175s）。docker 的
+                # --health-start-period 已同步设为 900s，宽限期内探测失败不计数，
+                # 两者必须保持一致，否则 boot 中途被标记 unhealthy 会误判部署失败
+                #（构建 #41 教训：60s 宽限 + 300s 门槛 → 启动到 ~160s 被误杀）。
+                wait_container_healthy "noda-infra-keycloak" 900 true true
                 ;;
             nginx)
                 # nginx -t 验证配置 + wait_container_healthy（远程）
