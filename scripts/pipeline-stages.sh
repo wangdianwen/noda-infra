@@ -194,7 +194,7 @@ check_backup_freshness()
 
 # pipeline_preflight - 前置检查
 # 检查 Docker daemon、nginx 容器、noda-network
-# findclass-ssr 额外检查 Node.js、pnpm、package.json、lint、test
+# noda-apps 额外检查 Node.js、pnpm、package.json、lint、test
 # 参数: $1 = APPS_DIR (可选，默认 $WORKSPACE/noda-apps)
 pipeline_preflight()
 {
@@ -1874,7 +1874,7 @@ set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;"
 
         log_success "Pre-prod 部署完成（本地 Mac）: $image"
         log_info "  liuyao:    https://liuyao-preprod.noda.co.nz/"
-        log_info "  findclass: http://localhost:3000/"
+        log_info "  class:     http://localhost:3000/"
     fi
 }
 

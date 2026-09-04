@@ -15,7 +15,7 @@ source "$SCRIPT_DIR/lib/log.sh"
 # 必要的数据库列表
 # ============================================
 REQUIRED_DBS=(
-    "noda_prod:Findclass Application Database"
+    "noda_prod:Noda Application Database"
     "keycloak:Keycloak Authentication Database"
 )
 

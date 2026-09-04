@@ -49,11 +49,11 @@ cp config/environments/.env.example config/environments/.env
    docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
    ```
 
-4. **构建并启动应用服务**（findclass-ssr）：
+4. **构建并部署应用服务**（noda-apps，镜像 noda-apps:latest）：
 
    ```bash
-   docker compose -f docker/docker-compose.app.yml build findclass-ssr
-   docker compose -f docker/docker-compose.app.yml up -d findclass-ssr
+   # 应用镜像由 noda-apps 仓 infra/docker/Dockerfile.noda-apps 构建，通过 Pipeline 部署
+   bash scripts/deploy/deploy-apps-prod.sh
    ```
 
 ## 服务概览
@@ -62,15 +62,15 @@ cp config/environments/.env.example config/environments/.env
 |------|-----------|------|------|
 | PostgreSQL | `postgres:17.9` | 5432（内部） | 数据库，数据持久化在 `postgres_data` 卷 |
 | Keycloak | `quay.io/keycloak/keycloak:26.2.3` | 8080, 9000 | 认证服务，通过 Cloudflare Tunnel 暴露为 `auth.noda.co.nz` |
-| Nginx | `nginx:1.25-alpine` | 80（内部） | 反向代理，将 `class.noda.co.nz` 路由到 findclass-ssr |
-| findclass-ssr | 自构建 | 3001 | SSR + API + 静态文件，三合一应用服务 |
+| Nginx | `nginx:1.25-alpine` | 80（内部） | 反向代理，将 `class.noda.co.nz` 路由到 noda-apps |
+| noda-apps | `noda-apps:latest` | 3000 | 应用服务（class/www/auth/admin 多应用，SSR + API + 静态文件） |
 | noda-ops | 自构建 | - | 运维工具集（PostgreSQL 备份 + Cloudflare Tunnel） |
 
 ## 流量架构
 
 ```
 浏览器 → Cloudflare CDN → Cloudflare Tunnel (noda-ops 容器) → Docker 内部网络
-  class.noda.co.nz → nginx:80 → findclass-ssr:3001 (SSR + API + 静态文件)
+  class.noda.co.nz → nginx:80 → noda-apps-prod:3000 (SSR + API + 静态文件)
   auth.noda.co.nz  → keycloak:8080
 ```
 
@@ -84,14 +84,12 @@ noda-infra/
 │   ├── nginx/          # Nginx 配置（nginx.conf, conf.d/, snippets/）
 │   └── cloudflare/     # Cloudflare Tunnel 配置
 ├── deploy/             # Docker 构建文件
-│   ├── Dockerfile.findclass-ssr   # 应用镜像构建
-│   ├── Dockerfile.noda-ops        # 运维工具镜像构建
-│   └── Dockerfile.backup          # 备份服务镜像构建
+│   ├── Dockerfile.noda-ops        # 运维工具镜像（应用镜像在 noda-apps 仓 infra/docker/Dockerfile.noda-apps）
 ├── docker/             # Docker Compose 编排文件
 │   ├── docker-compose.yml              # 基础服务定义
 │   ├── docker-compose.prod.yml         # 生产环境覆盖
 │   ├── docker-compose.dev.yml          # 开发环境覆盖
-│   ├── docker-compose.app.yml          # 应用服务（findclass-ssr）
+│   ├── docker-compose.apps-prod.yml    # 应用服务（noda-apps-prod）
 │   └── docker-compose.simple.yml       # 简化版（无构建服务）
 ├── scripts/            # 运维脚本
 │   ├── backup/         # 备份与恢复脚本（backup-postgres.sh, restore-postgres.sh）
@@ -113,9 +111,8 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 # 查看服务日志
 docker compose -f docker/docker-compose.yml logs -f <service-name>
 
-# 重建并启动应用（修改前端代码后）
-docker compose -f docker/docker-compose.app.yml build findclass-ssr --no-cache
-docker compose -f docker/docker-compose.app.yml up -d findclass-ssr
+# 重建并部署应用（修改前端代码后，Pipeline 优先）
+bash scripts/deploy/deploy-apps-prod.sh
 
 # 数据库备份
 scripts/backup/backup-postgres.sh

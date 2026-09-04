@@ -15,6 +15,3 @@ shell_variant = bash
 switch_case_indent = true
 function_next_line = true
 
-# 排除 DEPRECATED 脚本（per D-05）
-[scripts/deploy/deploy-findclass-zero-deps.sh]
-ignore = true

@@ -38,7 +38,7 @@ get_image_prefix()
 
 # cleanup_by_tag_count - 保留最近 N 个带标签的镜像，删除更早的
 # 参数:
-#   $1: 镜像名（如 findclass-ssr）
+#   $1: 镜像名（如 noda-apps）
 #   $2: 保留数量（默认 5）
 # 返回：无（删除旧镜像）
 cleanup_by_tag_count()
@@ -77,7 +77,7 @@ cleanup_by_tag_count()
 # cleanup_by_date_threshold - 删除不被任何容器使用的旧镜像和 dangling images
 # 策略：只保留正在被容器使用的镜像 + latest 标签，删除所有其他旧标签镜像
 # 参数:
-#   $1: 镜像名（如 findclass-ssr 或 keycloak）
+#   $1: 镜像名（如 noda-apps 或 keycloak）
 #   $2: 保留天数（已弃用，保留参数兼容性）
 # 返回：无（删除未使用的旧镜像）
 cleanup_by_date_threshold()

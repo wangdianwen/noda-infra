@@ -62,4 +62,4 @@ $$;
 
 \c findclass_dev;
 
--- findclass_dev 预留空库
+-- findclass_dev 预留空库（业务数据在 noda_dev）
