@@ -519,9 +519,9 @@ pipeline_deploy_prod()
             --read-only \
             --tmpfs /tmp \
             --tmpfs /app/scripts/logs \
-            --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
-            --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
-            --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/class/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/class/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/class/api/crawl-output:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/liuyao/web/.next/cache \
             --memory 768m \
             --memory-reservation 256m \
@@ -593,9 +593,9 @@ pipeline_deploy_prod()
             --read-only \
             --tmpfs /tmp \
             --tmpfs /app/scripts/logs \
-            --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
-            --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
-            --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/class/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/class/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/class/api/crawl-output:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/liuyao/web/.next/cache \
             --memory 768m \
             --memory-reservation 256m \
@@ -1781,9 +1781,9 @@ pipeline_deploy_preprod()
             --read-only \
             --tmpfs /tmp \
             --tmpfs /app/scripts/logs \
-            --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
-            --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
-            --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/class/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/class/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/apps/class/api/crawl-output:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/apps/liuyao/web/.next/cache \
             --memory 512m \
             --memory-reservation 128m \
@@ -1810,7 +1810,7 @@ pipeline_deploy_preprod()
 # 使用 resolver 127.0.0.11 动态解析 DNS，容器重建后自动刷新 IP
 # 由 pipeline_deploy_preprod() 更新
 # 容器名: noda-apps-preprod（单容器，非蓝绿）
-set \$preprod_findclass_upstream ${PREPROD_CONTAINER}:3000;
+set \$preprod_class_upstream ${PREPROD_CONTAINER}:3000;
 set \$preprod_www_upstream ${PREPROD_CONTAINER}:3002;
 set \$preprod_auth_app_upstream ${PREPROD_CONTAINER}:3004;
 set \$preprod_admin_upstream ${PREPROD_CONTAINER}:3006;
@@ -1906,7 +1906,7 @@ update_preprod_upstream()
 # 使用 resolver 127.0.0.11 动态解析 DNS，容器重建后自动刷新 IP
 # 由 pipeline_deploy_preprod() 更新
 # 容器名: noda-apps-preprod（单容器，非蓝绿）
-set \$preprod_findclass_upstream ${PREPROD_CONTAINER}:3000;
+set \$preprod_class_upstream ${PREPROD_CONTAINER}:3000;
 set \$preprod_www_upstream ${PREPROD_CONTAINER}:3002;
 set \$preprod_auth_app_upstream ${PREPROD_CONTAINER}:3004;
 set \$preprod_admin_upstream ${PREPROD_CONTAINER}:3006;
