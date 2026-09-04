@@ -29,7 +29,7 @@ scripts/backup/.env.backup
 config/keys/
 config/secrets.local.yaml
 .env.backup
-config/nginx/snippets/upstream-findclass.conf
+config/nginx/snippets/upstream-class.conf
 config/nginx/snippets/upstream-noda-site.conf
 
 # SSL 证书和私钥（不要提交到 git）

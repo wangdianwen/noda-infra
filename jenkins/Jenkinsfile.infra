@@ -89,7 +89,7 @@ pipeline {
                 timeout(time: 30, unit: 'MINUTES') {
                     input message: """确认重启 PostgreSQL?
                     服务: ${params.SERVICE}
-                    影响范围: Keycloak、findclass-ssr、noda-ops 将短暂断连数据库
+                    影响范围: Keycloak、noda-apps、noda-ops 将短暂断连数据库
                     备份文件: 请查看上方 Backup 阶段日志
                     """.stripIndent(), ok: '确认重启'
                 }

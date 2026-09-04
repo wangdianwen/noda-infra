@@ -2,13 +2,13 @@
 
 ## 项目概述
 
-Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL、Keycloak、Nginx、Cloudflare Tunnel、findclass-ssr 等服务。
+Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL、Keycloak、Nginx、Cloudflare Tunnel、noda-apps 等服务。
 
 ## 架构
 
 ```
 浏览器 → Cloudflare CDN → Cloudflare Tunnel (noda-ops 容器) → nginx → Docker 内部服务
-  class.noda.co.nz → nginx → findclass-ssr (SSR + API + 静态文件)
+  class.noda.co.nz → nginx → noda-apps-prod:3000 (SSR + API + 静态文件)
   auth.noda.co.nz  → nginx → keycloak:8080 (容器内部)
 ```
 
@@ -16,7 +16,7 @@ Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL
 |------|------|------|
 | PostgreSQL | 5432 | 数据持久化在 `noda-infra_postgres_data` 卷 |
 | Keycloak | 8080 (内部) | 不暴露外部端口，通过 nginx 反向代理访问 |
-| findclass-ssr | 3001 | SSR + 静态文件，通过 nginx 代理 |
+| noda-apps | 3000 | 应用服务（class/www/auth/admin 多应用），通过 nginx 代理 |
 | noda-ops | - | 备份 + Cloudflare Tunnel |
 | Nginx | 80 | 反向代理（所有外部流量统一入口） |
 
@@ -31,7 +31,7 @@ Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL
 | 操作 | 脚本 |
 |------|------|
 | 全量部署（基础设施+应用） | `bash scripts/deploy/deploy-infrastructure-prod.sh` |
-| 部署应用（findclass-ssr） | `bash scripts/deploy/deploy-apps-prod.sh` |
+| 部署应用（noda-apps） | `bash scripts/deploy/deploy-apps-prod.sh` |
 
 允许的 docker compose 命令仅限只读操作：`ps`、`logs`、`config`、`images`。
 
@@ -52,7 +52,7 @@ Vite 的 `VITE_*` 变量在 `docker build` 时写入 JS 文件，运行时环境
 
 | # | 层 | 问题 | 修复文件 |
 |---|---|------|----------|
-| 1 | 前端构建 | JS 中 Keycloak URL 硬编码为 `localhost:8080`（构建时未传 `VITE_KEYCLOAK_URL`） | `deploy/Dockerfile.findclass-ssr` 添加 ARG |
+| 1 | 前端构建 | JS 中 Keycloak URL 硬编码为 `localhost:8080`（构建时未传 `VITE_KEYCLOAK_URL`） | `noda-apps 仓 infra/docker/Dockerfile.noda-apps` 添加 ARG |
 | 2 | Nginx 路由 | `/auth/` 被代理到 Keycloak，覆盖了应用 `/auth/callback` | `config/nginx/conf.d/default.conf` 移除 `/auth/` 代理 |
 | 3 | SSR 中间件 | `url.startsWith('/auth')` 跳过了 `/auth/callback`，不渲染 SPA | `noda-apps/.../ssr-middleware.ts` 移除跳过条件 |
 | 4 | Keycloak 配置 | v1 hostname 选项废弃，`KC_HOSTNAME_PORT` 不生效 | `docker-compose.yml` 改为 `KC_HOSTNAME: "https://auth.noda.co.nz"` |
@@ -114,7 +114,7 @@ ARG VITE_KEYCLOAK_CLIENT_ID=noda-frontend
 | 2 | Keycloak 容器 `KC_PROXY=none` | 容器未重建，compose 配置未生效；导致 cookie 缺少 Secure 标记 | `docker compose up --force-recreate keycloak` |
 | 3 | nginx `X-Frame-Options: SAMEORIGIN` | 阻止 Keycloak SSO iframe 被 class.noda.co.nz 嵌入 | 改为 `ALLOW-FROM` + `CSP frame-ancestors` |
 
-### findclass-ssr 镜像重建
+### noda-apps 镜像重建
 
 shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法加载。Dockerfile 中添加：
 1. `tsc --build` 编译 TypeScript
@@ -212,7 +212,7 @@ Jenkins 不可用时，可使用旧部署脚本手动部署：
 # 全量部署（基础设施 + 应用）
 bash scripts/deploy/deploy-infrastructure-prod.sh
 
-# 仅部署应用（findclass-ssr）
+# 仅部署应用（noda-apps）
 bash scripts/deploy/deploy-apps-prod.sh
 ```
 
@@ -240,7 +240,7 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 - Nginx 1.25-alpine（反向代理 + 故障转移）
 - Cloudflare Tunnel（外部访问）
 - Backblaze B2 云存储（备份）
-- findclass-ssr（Node.js SSR 三合一服务）
+- noda-apps（Node.js SSR + API 多应用服务）
 
 **Core Value:** 数据库永不丢失。即使发生服务器崩溃、误删除、数据库损坏等灾难，也能从最近12小时内的备份中恢复数据。
 <!-- GSD:project-end -->
@@ -261,7 +261,7 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 # systemd 管理
 # 将 jenkins 用户加入 docker 组
 # 验证（重启 Jenkins 后）
-### Blue-Green Deployment: Nginx Upstream 切换方案
+### 部署策略：Pre-prod 验证 + 直接替换
 | Component | Mechanism | Confidence |
 |-----------|-----------|------------|
 | Pre-prod 验证 + 直接替换 | 先部署到 pre-prod 验证，通过后停旧 prod 容器启新 | HIGH |
@@ -292,7 +292,7 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 | Check | Method | URL | Expected |
 |-------|--------|-----|----------|
 | 容器健康 | `docker inspect` | Docker healthcheck | `healthy` |
-| HTTP API | `curl` | `http://findclass-ssr-{color}:3001/api/health` | HTTP 200 |
+| HTTP API | `curl` | `http://noda-apps-prod:3000/api/health` | HTTP 200 |
 | 外部可达性 | `curl` | `https://class.noda.co.nz/api/health` | HTTP 200 |
 ## Docker Compose 变更
 ## Alternatives Considered
@@ -374,7 +374,7 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 - [Jenkins systemd 服务管理](https://www.jenkins.io/doc/book/system-administration/systemd-services/) — 配置 Jenkins 服务，HIGH confidence
 - [Pipeline Plugin (workflow-aggregator)](https://plugins.jenkins.io/workflow-aggregator/) — 版本 608.v67378e9d3db_1，89.7% 安装率，HIGH confidence
 - [Docker Pipeline Plugin (docker-workflow)](https://plugins.jenkins.io/docker-workflow/) — 确认不适合本场景，HIGH confidence
-- 项目代码: `docker/docker-compose.app.yml`, `config/nginx/conf.d/default.conf`, `scripts/deploy/deploy-apps-prod.sh` — 现有架构分析
+- 项目代码: `docker/docker-compose.apps-prod.yml`, `config/nginx/conf.d/default.conf`, `scripts/deploy/deploy-apps-prod.sh` — 现有架构分析
 <!-- GSD:stack-end -->
 
 <!-- GSD:conventions-start source:CONVENTIONS.md -->

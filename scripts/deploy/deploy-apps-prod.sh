@@ -144,9 +144,9 @@ docker run -d \
     --read-only \
     --tmpfs /tmp \
     --tmpfs /app/scripts/logs \
-    --tmpfs /app/apps/findclass/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
-    --tmpfs /app/apps/findclass/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
-    --tmpfs /app/apps/findclass/api/crawl-output:uid=1001,gid=1001,mode=0755 \
+    --tmpfs /app/apps/class/scripts/python/cache:uid=1001,gid=1001,mode=0755 \
+    --tmpfs /app/apps/class/scripts/python/logs:uid=1001,gid=1001,mode=0755 \
+    --tmpfs /app/apps/class/api/crawl-output:uid=1001,gid=1001,mode=0755 \
     --memory 1g \
     --memory-reservation 128m \
     --cpus 1 \

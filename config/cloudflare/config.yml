@@ -23,7 +23,7 @@ ingress:
   # 健康检查端点
   - hostname: health.noda.co.nz
     service: http://noda-nginx:81
-  # FindClass 应用
+  # Class 应用
   - hostname: class.noda.co.nz
     service: http://noda-nginx:81
   # Admin Dashboard（内网访问）

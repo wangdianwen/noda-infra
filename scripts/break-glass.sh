@@ -289,7 +289,7 @@ usage()
   log                        查看审计日志
 
 允许的部署脚本 (D-03):
-  deploy-apps-prod.sh        部署应用服务（findclass-ssr, noda-site）
+  deploy-apps-prod.sh        部署应用服务（noda-apps）
   deploy-infrastructure-prod.sh  部署基础设施（PostgreSQL 等）
 
 安全机制:
