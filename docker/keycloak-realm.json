@@ -73,6 +73,25 @@
       "attributes": {
         "post.logout.redirect.uris": "https://auth-preprod.noda.co.nz/*,http://localhost:3004/*"
       }
+    },
+    {
+      "clientId": "noda-www",
+      "name": "Noda WWW (marketing site)",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "https://www-preprod.noda.co.nz/*",
+        "http://localhost:3000/*"
+      ],
+      "webOrigins": [
+        "https://www-preprod.noda.co.nz",
+        "http://localhost:3000"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "https://www-preprod.noda.co.nz/*,http://localhost:3000/*"
+      }
     }
   ],
   "loginTheme": "noda",
