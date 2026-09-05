@@ -30,10 +30,13 @@ services:
     networks:
       - noda-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      # -t 5: pg_isready 自身连接超时；interval/retries 放宽——r4s 上备份/爬虫批量写入
+      # 期间 pg_isready 偶发抖动，10s×5 次会瞬间打 unhealthy 造成误报（已自愈但污染告警）
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -t 5"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   # ----------------------------------------
   # Nginx 反向代理
@@ -117,10 +120,12 @@ services:
     depends_on:
       - postgres
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h noda-infra-postgres-prod -U ${POSTGRES_USER:-postgres} || exit 1"]
+      # -t 5: pg_isready 自身连接超时；retries 放宽——爬虫运行窗口内容器内存顶格，
+      # 探测偶发超时属正常，不应立即判 unhealthy
+      test: ["CMD-SHELL", "pg_isready -h noda-infra-postgres-prod -U ${POSTGRES_USER:-postgres} -t 5 || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
       start_period: 30s
 
   # ----------------------------------------

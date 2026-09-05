@@ -1474,27 +1474,29 @@ pipeline_deploy_noda_ops()
 # ============================================
 # 函数: pipeline_deploy_postgres
 # ============================================
-# Postgres compose restart（需要备份+人工确认已完成）
-# 无需保存镜像（restart 不更换镜像）
+# Postgres compose 重建（需要备份+人工确认已完成）
+# 无需保存镜像（不更换镜像）
 # 返回: 0=成功，1=失败
 pipeline_deploy_postgres()
 {
+    # up -d --force-recreate 而非 restart：healthcheck 配置变更（interval/retries/start_period）
+    # 只有重建容器才生效，restart 会沿用旧容器已固化的检查配置
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         # r4s 远程部署模式
-        log_info "PostgreSQL 重启部署（r4s 远程 docker compose restart）"
-        
-        remote_compose "restart postgres" \
+        log_info "PostgreSQL 重建部署（r4s 远程 docker compose up -d --force-recreate）"
+
+        remote_compose "up -d --force-recreate postgres" \
             "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml"
-        
-        log_success "PostgreSQL 重启完成（r4s）"
+
+        log_success "PostgreSQL 重建完成（r4s）"
     else
         # 本地模式：保持现有逻辑
-        log_info "PostgreSQL 重启部署（docker compose restart）"
+        log_info "PostgreSQL 重建部署（docker compose up -d --force-recreate）"
 
         docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
-            restart postgres
+            up -d --force-recreate postgres
 
-        log_success "PostgreSQL 重启完成"
+        log_success "PostgreSQL 重建完成"
     fi
 }
 
