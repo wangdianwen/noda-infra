@@ -1127,7 +1127,7 @@ pipeline_deploy_keycloak_prod()
             --stop-timeout 30 \
             --security-opt no-new-privileges \
             --cap-drop ALL \
-            -v /opt/noda/noda-infra/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro \
+            -v /opt/noda/noda-infra/docker/services/keycloak/themes:/opt/keycloak/themes:ro \
             -v /opt/noda/noda-infra/docker/services/keycloak/data:/opt/keycloak/data \
             --memory 768m \
             --memory-reservation 512m \
@@ -1180,7 +1180,7 @@ pipeline_deploy_keycloak_prod()
             --stop-timeout 30 \
             --security-opt no-new-privileges \
             --cap-drop ALL \
-            -v "$PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes/noda:ro" \
+            -v "$PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes:ro" \
             -v "$PROJECT_ROOT/docker/services/keycloak/data:/opt/keycloak/data" \
             --memory 768m \
             --memory-reservation 512m \
