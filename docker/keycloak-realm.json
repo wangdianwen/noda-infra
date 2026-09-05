@@ -49,10 +49,14 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "redirectUris": [
-        "*"
+        "https://class.noda.co.nz/*",
+        "https://class-preprod.noda.co.nz/*",
+        "http://localhost:3002/*"
       ],
       "webOrigins": [
-        "+"
+        "https://class.noda.co.nz",
+        "https://class-preprod.noda.co.nz",
+        "http://localhost:3002"
       ]
     },
     {
