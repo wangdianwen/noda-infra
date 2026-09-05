@@ -54,6 +54,25 @@
       "webOrigins": [
         "+"
       ]
+    },
+    {
+      "clientId": "noda-auth",
+      "name": "Noda Auth App",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "https://auth-preprod.noda.co.nz/*",
+        "http://localhost:3004/*"
+      ],
+      "webOrigins": [
+        "https://auth-preprod.noda.co.nz",
+        "http://localhost:3004"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "https://auth-preprod.noda.co.nz/*,http://localhost:3004/*"
+      }
     }
   ],
   "loginTheme": "noda",
