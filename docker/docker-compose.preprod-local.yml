@@ -59,6 +59,8 @@ services:
     command: ["start", "--import-realm"]
     volumes:
       - ./keycloak-realm.json:/opt/keycloak/data/import/noda-realm.json:ro
+      # 自定义 noda 登录主题（Pounamu 绿品牌色，最小覆盖）
+      - ./services/keycloak/themes:/opt/keycloak/themes:ro
     healthcheck:
       # Keycloak 26 镜像（UBI micro）无 curl/wget，且默认未开 health 端点
       # 容器 /bin/sh 即 bash，用 /dev/tcp 探公开端点 /realms/noda
