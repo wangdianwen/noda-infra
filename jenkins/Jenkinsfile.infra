@@ -112,6 +112,30 @@ pipeline {
             }
         }
 
+        stage('CDN Purge') {
+            when {
+                expression { params.SERVICE == 'keycloak' }
+            }
+            steps {
+                script {
+                    try {
+                        withCredentials([
+                            string(credentialsId: 'cf-api-token', variable: 'CF_API_TOKEN'),
+                            string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
+                        ]) {
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                pipeline_purge_cdn
+                            '''
+                        }
+                    } catch (Exception e) {
+                        echo "CDN Purge 跳过: Cloudflare 凭据未配置 (${e.message})"
+                    }
+                }
+            }
+        }
+
         stage('Health Check') {
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
