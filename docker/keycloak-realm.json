@@ -31,12 +31,10 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "redirectUris": [
-        
         "https://liuyao-preprod.noda.co.nz/*",
         "http://localhost:3005/*"
       ],
       "webOrigins": [
-        
         "https://liuyao-preprod.noda.co.nz",
         "http://localhost:3005"
       ],
@@ -50,8 +48,14 @@
       "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,
-      "redirectUris": ["*"],
-      "webOrigins": ["+"]
+      "redirectUris": [
+        "*"
+      ],
+      "webOrigins": [
+        "+"
+      ]
     }
-  ]
+  ],
+  "loginTheme": "noda",
+  "accountTheme": "keycloak"
 }

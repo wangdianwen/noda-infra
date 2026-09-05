@@ -1116,6 +1116,9 @@ pipeline_deploy_keycloak_prod()
         #    每次部署 realm 全丢
         log_info "启动容器（r4s）: $container_name ($image)"
         remote_exec "mkdir -p /opt/noda/noda-infra/docker/services/keycloak/data"
+        # KC 镜像以 uid 1000(keycloak) 运行：root 属主的 data 目录会让主题资源聚合
+        # 写不了 data/tmp，/resources/* 全部 500（登录页裸奔）
+        remote_exec "chown -R 1000:0 /opt/noda/noda-infra/docker/services/keycloak/data"
         remote_exec "docker run -d \
             --name $container_name \
             --network $NETWORK_NAME \
