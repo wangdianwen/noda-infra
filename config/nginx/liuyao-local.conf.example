@@ -1,5 +1,5 @@
 # ============================================
-# 本机 Mac preprod nginx 配（liuyao 专用）
+# 本机 Mac preprod nginx 配（模板：复制为 liuyao-local.conf 后使用）
 # ============================================
 # 独立配置，不依赖 upstream-preprod.conf（那是给 r4s 用的）
 # 直接 proxy_pass 到 compose service name:port
@@ -9,7 +9,9 @@
 # ── HTTP → HTTPS 重定向 ──
 server {
     listen 80;
-    server_name liuyao-preprod.noda.co.nz auth-preprod.noda.co.nz admin-preprod.noda.co.nz localhost;
+    server_name liuyao-preprod.noda.co.nz auth-preprod.noda.co.nz
+                admin-preprod.noda.co.nz class-preprod.noda.co.nz
+                www-preprod.noda.co.nz localhost;
 
     # ACME challenge passthrough (if ever needed)
     location /.well-known/acme-challenge/ {
@@ -44,8 +46,8 @@ server {
         proxy_buffering off;
         proxy_cache off;
         proxy_set_header Connection "";
-        proxy_read_timeout 300s;
-        proxy_send_timeout 300s;
+        proxy_read_timeout 1800s;
+        proxy_send_timeout 1800s;
         chunked_transfer_encoding on;
 
         # WebSocket support (Next.js HMR in dev)
@@ -54,7 +56,8 @@ server {
     }
 }
 
-# ── HTTPS: Keycloak ──
+# ── HTTPS: Auth 服务域名 ──
+# 与 prod 同构：用户页面 → Auth App (3004)，Keycloak 协议端点兜底 → keycloak:8080
 server {
     listen 443 ssl;
     server_name auth-preprod.noda.co.nz;
@@ -64,6 +67,92 @@ server {
 
     client_max_body_size 100M;
 
+    # Auth App 用户页面（Next.js）
+    location = / {
+        proxy_pass http://noda-apps:3004;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+    location ~ ^/(login|register|callback|verify-email|forgot-password|reset-password|profile|settings)(/|$) {
+        proxy_pass http://noda-apps:3004;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+    # locale 前缀路由（next-intl /zh/*、/zh-TW/*、/en/*）
+    location ~ ^/(zh|zh-TW|en)(/(login|register|callback|verify-email|forgot-password|reset-password|profile|settings))?$ {
+        proxy_pass http://noda-apps:3004;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+    location /_next/ {
+        proxy_pass http://noda-apps:3004;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+    location /favicon.ico {
+        proxy_pass http://noda-apps:3004;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    location /api/ {
+        proxy_pass http://noda-apps:3004;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+    # Auth App 静态资源（illustrations 等）
+    location /images/ {
+        proxy_pass http://noda-apps:3004;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Keycloak silent check-sso 回调页：keycloak-js 经 iframe 加载并 postMessage
+    # 回父页（packages/auth AuthProvider 用 silent-check-sso.html，auth 应用
+    # 遗留代码用 silent-sso.html）。必须直达应用根——此前落入下方 Keycloak
+    # 兜底返回 404，auth 应用无法静默恢复 SSO 会话（登录回跳后恒判未认证）。
+    location = /silent-check-sso.html {
+        proxy_pass http://noda-apps:3004;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    location = /silent-sso.html {
+        proxy_pass http://noda-apps:3004;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Keycloak API/协议端点（默认兜底：/realms/*、/js/*、/resources/* 等）
     location / {
         proxy_pass http://keycloak:8080;
         proxy_set_header Host $host;
@@ -98,6 +187,59 @@ server {
     # Admin Next.js 前端
     location / {
         proxy_pass http://noda-apps:3006;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+}
+
+# ── HTTPS: Class（与 prod class.noda.co.nz 同构）──
+server {
+    listen 443 ssl;
+    server_name class-preprod.noda.co.nz;
+
+    ssl_certificate /etc/nginx/ssl/noda.dev.crt;
+    ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
+
+    client_max_body_size 100M;
+
+    # Admin API 不暴露公网（与 prod 一致）
+    location /api/admin/ {
+        return 403 '{"error":"forbidden"}';
+        add_header Content-Type application/json always;
+    }
+
+    location / {
+        proxy_pass http://noda-apps:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+}
+
+# ── HTTPS: Noda 官网 ──
+# preprod 直接代理（不做 prod 的 301 主域跳转——preprod 用于部署验证）
+server {
+    listen 443 ssl;
+    server_name www-preprod.noda.co.nz;
+
+    ssl_certificate /etc/nginx/ssl/noda.dev.crt;
+    ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
+
+    client_max_body_size 10M;
+
+    location / {
+        proxy_pass http://noda-apps:3002;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
