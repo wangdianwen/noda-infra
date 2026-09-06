@@ -992,15 +992,15 @@ pipeline_backup_database()
 
         if [ "$service" = "keycloak" ]; then
             remote_docker_exec "noda-infra-postgres-prod" \
-                "pg_dump -U postgres --clean --if-exists keycloak | gzip > ${backup_file}/${timestamp}.sql.gz"
+                "pg_dump -U postgres --clean --if-exists keycloak | gzip > ${backup_file}"
         elif [ "$service" = "postgres" ]; then
             remote_docker_exec "noda-infra-postgres-prod" \
-                "pg_dumpall -U postgres --clean --if-exists | gzip > ${backup_file}/${timestamp}.sql.gz"
+                "pg_dumpall -U postgres --clean --if-exists | gzip > ${backup_file}"
         fi
 
         # 验证备份文件大小 > 1KB（在 r4s 上检查）
         local file_size
-        file_size=$(remote_exec "stat -c%s ${backup_file}/${timestamp}.sql.gz 2>/dev/null || echo 0")
+        file_size=$(remote_exec "stat -c%s ${backup_file} 2>/dev/null || echo 0")
         if [ "$file_size" -lt 1024 ]; then
             log_error "备份文件异常（${file_size} 字节），中止部署"
             return 1
