@@ -1908,7 +1908,8 @@ set \$preprod_www_upstream ${PREPROD_CONTAINER}:3002;
 set \$preprod_auth_app_upstream ${PREPROD_CONTAINER}:3004;
 set \$preprod_admin_upstream ${PREPROD_CONTAINER}:3006;
 set \$preprod_admin_api_upstream ${PREPROD_CONTAINER}:3011;
-set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;"
+set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;
+set \$preprod_comments_upstream ${PREPROD_CONTAINER}:3012;"
 
         log_info "更新 preprod upstream 配置（r4s）..."
         echo "$upstream_content" | remote_exec "mkdir -p /opt/noda/noda-infra/config/nginx/snippets && cat > /opt/noda/noda-infra/config/nginx/snippets/upstream-preprod.conf"
@@ -2021,7 +2022,8 @@ set \$preprod_www_upstream ${PREPROD_CONTAINER}:3002;
 set \$preprod_auth_app_upstream ${PREPROD_CONTAINER}:3004;
 set \$preprod_admin_upstream ${PREPROD_CONTAINER}:3006;
 set \$preprod_admin_api_upstream ${PREPROD_CONTAINER}:3011;
-set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;"
+set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;
+set \$preprod_comments_upstream ${PREPROD_CONTAINER}:3012;"
 
     local snippets_dir
     snippets_dir=$(get_host_snippets_dir)
