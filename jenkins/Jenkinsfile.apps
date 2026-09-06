@@ -4,6 +4,10 @@
 //       -> Human Approval -> Deploy Prod（停旧启新 + 健康检查） -> Verify -> CDN Purge -> Cleanup
 // Build Once: 镜像构建一次，先后部署到 pre-prod 和 prod
 // 前置: noda-apps 仓库 main 分支
+// DEPLOY_MODE 参数:
+//   normal（默认）: preprod 部署验证 + 人工批准后才发 prod
+//   fast: 紧急修复路径——Test 通过后直接发 prod，跳过 preprod 与人工批准。
+//         仅用于确认无风险的 hotfix；测试挡板（Test 失败不发版）仍然生效
 
 pipeline {
     agent any
@@ -20,6 +24,14 @@ pipeline {
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
+    }
+
+    parameters {
+        choice(
+            name: 'DEPLOY_MODE',
+            choices: ['normal', 'fast'],
+            description: 'normal: preprod 验证 + 人工批准后发 prod；fast: 紧急修复——Test 通过直接发 prod，跳过 preprod 与人工批准（仅限确认无风险的 hotfix）'
+        )
     }
 
     stages {
@@ -72,6 +84,7 @@ pipeline {
         stage('Deploy Pre-prod & Test') {
             parallel {
                 stage('Deploy Pre-prod') {
+                    when { expression { params.DEPLOY_MODE == 'normal' } }
                     steps {
                         withCredentials([
                             sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
@@ -119,6 +132,7 @@ pipeline {
         }
 
         stage('CDN Purge Pre-prod') {
+            when { expression { params.DEPLOY_MODE == 'normal' } }
             steps {
                 script {
                     try {
@@ -140,6 +154,7 @@ pipeline {
         }
 
         stage('Human Approval') {
+            when { expression { params.DEPLOY_MODE == 'normal' } }
             steps {
                 timeout(time: 6, unit: 'HOURS') {
                     script {
@@ -162,7 +177,7 @@ pipeline {
 
         stage('Rebuild Pre-prod') {
             when {
-                expression { env.DEPLOY_ACTION == 'rebuild_preprod' }
+                expression { params.DEPLOY_MODE == 'normal' && env.DEPLOY_ACTION == 'rebuild_preprod' }
             }
             steps {
                 withCredentials([
@@ -185,7 +200,7 @@ pipeline {
 
         stage('Deploy Prod') {
             when {
-                expression { env.DEPLOY_ACTION == 'deploy_prod' }
+                expression { params.DEPLOY_MODE == 'fast' || env.DEPLOY_ACTION == 'deploy_prod' }
             }
             steps {
                 timeout(time: 15, unit: 'MINUTES') {
@@ -259,7 +274,7 @@ pipeline {
 
         stage('Abort') {
             when {
-                expression { env.DEPLOY_ACTION == 'abort' }
+                expression { params.DEPLOY_MODE == 'normal' && env.DEPLOY_ACTION == 'abort' }
             }
             steps {
                 script {

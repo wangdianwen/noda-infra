@@ -342,6 +342,17 @@ pipeline_build()
     local cache_dir="${HOME}/.cache/noda-buildcache"
     mkdir -p "$cache_dir"
 
+    # 缓存目录有界：超过上限整目录重建（local cache 无内建淘汰，旧记录会一直累积；
+    # 清空后下次构建重新导出，仅慢一次）
+    local cache_max_mb="${BUILD_CACHE_MAX_MB:-12288}"
+    local cache_size_mb
+    cache_size_mb=$(du -sk "$cache_dir" 2>/dev/null | cut -f1)
+    if [ "${cache_size_mb:-0}" -gt "$cache_max_mb" ]; then
+        log_info "构建缓存 ${cache_size_mb}MB 超过上限 ${cache_max_mb}MB，清理重建..."
+        rm -rf "$cache_dir"
+        mkdir -p "$cache_dir"
+    fi
+
     # r4s 远程部署模式：镜像将在 Mac 构建后通过 SSH 传输到 r4s（per D-07）
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         log_info "r4s 远程部署模式：镜像将在 Mac 构建后通过 SSH 传输到 r4s（per D-07）"
@@ -454,6 +465,13 @@ _restart_prod_container()
     fi
 }
 
+# _r4s_mem_available_mb - r4s 当前可用内存（MB），读取失败输出空字符串
+# 用 /proc/meminfo 的 MemAvailable（含可回收页缓存），BusyBox awk 兼容
+_r4s_mem_available_mb()
+{
+    remote_exec "awk '/MemAvailable/{print int(\$2/1024)}' /proc/meminfo" 2>/dev/null | tr -d "'" | head -1
+}
+
 # ============================================
 # 函数: pipeline_deploy_prod
 # ============================================
@@ -470,32 +488,57 @@ pipeline_deploy_prod()
     log_info "生产环境部署: $PROD_CONTAINER ($image)"
 
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
-        # r4s 远程部署模式
-        # ⚠️ 安全顺序：先停（不删）旧容器再传镜像，降低 r4s 内存峰值
-        # 旧容器占 ~500MB，镜像传输峰值 ~800MB，同时跑会 OOM
+        # r4s 远程部署模式，两种顺序：
         #
-        # 事故教训（2026-09-02 #200）：旧版先 docker rm 再传镜像，传输中 r4s
-        # 死机重启，旧容器已不存在 → prod 无人接盘，502 约 7 小时。
-        # 现规则：镜像成功落地前绝不删除旧容器。
-        #   - 传输失败     → docker start 秒级回滚（容器配置/env 原样保留）
-        #   - 传输中死机   → 旧容器 Exited 保留在磁盘，配合 --restart always，
-        #                    r4s 重启后 daemon 自动拉起，无需人工介入
+        # TRANSFER_FIRST=1（默认）：先传镜像（旧容器继续服务）→ 镜像落地后停旧换新。
+        #   停机窗口从「传输时长」缩到「停+启+健康检查」≈ 30-60s。
+        #   内存护栏：传输前读 r4s MemAvailable，低于阈值或读取失败自动回退先停模式。
+        # TRANSFER_FIRST=0：先停（不删）旧容器再传镜像，内存紧张设备的保底模式。
+        #
+        # 不变式（2026-09-02 #200 事故教训）：镜像成功落地前绝不删除旧容器。
+        #   - 传输失败（transfer-first）→ 旧容器全程未动，服务不中断
+        #   - 传输失败（先停模式）       → docker start 秒级回滚（env 原样保留）
+        #   - 传输中死机                 → 旧容器保留在磁盘，配合 --restart always，
+        #                                  r4s 重启后 daemon 自动拉起，无需人工介入
 
-        # Step 1: 只停旧容器（释放内存，容器保留用于回滚与死机自愈）
+        # 记录旧容器镜像（供启动失败/健康失败时回滚）
         local old_image=""
         if remote_exec "docker inspect $PROD_CONTAINER >/dev/null 2>&1"; then
             old_image=$(remote_exec "docker inspect -f '{{.Config.Image}}' $PROD_CONTAINER" 2>/dev/null | tr -d "'")
-            if [ "$(remote_exec "docker inspect -f '{{.State.Running}}' $PROD_CONTAINER")" = "true" ]; then
-                log_info "停止旧容器（r4s，不删除）: $PROD_CONTAINER (image: $old_image)"
-                remote_exec "docker stop -t 30 $PROD_CONTAINER || true"
+        fi
+
+        # 模式决策（内存护栏）
+        local transfer_first="${TRANSFER_FIRST:-1}"
+        local min_free_mb="${TRANSFER_FIRST_MIN_FREE_MB:-1024}"
+        if [ "$transfer_first" = "1" ]; then
+            local free_mb
+            free_mb=$(_r4s_mem_available_mb)
+            if [ -z "$free_mb" ]; then
+                log_warn "无法读取 r4s 可用内存，保守起见回退先停后传模式"
+                transfer_first=0
+            elif [ "$free_mb" -lt "$min_free_mb" ]; then
+                log_warn "r4s 可用内存 ${free_mb}MB < ${min_free_mb}MB，回退先停后传模式"
+                transfer_first=0
+            else
+                log_info "transfer-first 模式：r4s 可用内存 ${free_mb}MB ≥ ${min_free_mb}MB，旧容器保持服务，先传镜像"
             fi
         fi
 
-        # Step 2: 传输镜像（旧容器已停，内存峰值降低；旧容器仍在，可回滚）
+        if [ "$transfer_first" != "1" ]; then
+            # 先停模式：只停（不删）旧容器，释放内存峰值，容器保留用于回滚与死机自愈
+            if [ "$(remote_exec "docker inspect -f '{{.State.Running}}' $PROD_CONTAINER" 2>/dev/null)" = "true" ]; then
+                log_info "停止旧容器（r4s，不删除）: $PROD_CONTAINER (image: $old_image)"
+                remote_exec "docker stop -t 10 $PROD_CONTAINER || true"
+            fi
+        fi
+
+        # 传输镜像（transfer-first 模式下旧容器持续服务，r4s 增量拉层落盘）
         log_info "r4s 远程部署模式：传输镜像到 r4s..."
         if ! transfer_image "$image" "$image"; then
             log_error "镜像传输失败"
-            if [ -n "$old_image" ]; then
+            if [ "$transfer_first" = "1" ]; then
+                log_info "transfer-first 模式：旧容器未受影响，线上继续服务"
+            elif [ -n "$old_image" ]; then
                 log_info "尝试回滚：docker start 恢复旧容器 $PROD_CONTAINER..."
                 if remote_exec "docker start $PROD_CONTAINER" >/dev/null 2>&1; then
                     reload_nginx
@@ -516,6 +559,11 @@ pipeline_deploy_prod()
 
         # 启动新容器（远程）
         # 镜像已确认落地，此刻才允许删除旧容器
+        if [ "$transfer_first" = "1" ]; then
+            # 停机窗口从这里开始：停旧容器（容器保留，供启动失败时秒级回滚）
+            log_info "镜像已落地，停旧容器切换新容器（停机窗口开始）..."
+            remote_exec "docker stop -t 10 $PROD_CONTAINER || true"
+        fi
         log_info "删除旧容器并启动新容器（r4s）: $PROD_CONTAINER ($image)"
         remote_exec "docker rm -f $PROD_CONTAINER >/dev/null 2>&1 || true"
         if ! remote_exec "docker run -d \
@@ -565,7 +613,7 @@ pipeline_deploy_prod()
         log_info "等待容器健康检查（r4s 远程）..."
         if ! wait_container_healthy "$PROD_CONTAINER" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))" true true; then
             log_error "健康检查失败 — 回滚到旧镜像"
-            remote_exec "docker stop -t 30 $PROD_CONTAINER || true"
+            remote_exec "docker stop -t 10 $PROD_CONTAINER || true"
             remote_exec "docker rm $PROD_CONTAINER || true"
             _restart_prod_container "$old_image"
             reload_nginx
@@ -578,7 +626,7 @@ pipeline_deploy_prod()
         # 停止并移除旧容器
         if [ "$(is_container_running "$PROD_CONTAINER")" = "true" ]; then
             log_info "停止旧容器: $PROD_CONTAINER"
-            docker stop -t 30 "$PROD_CONTAINER"
+            docker stop -t 10 "$PROD_CONTAINER"
             docker rm "$PROD_CONTAINER"
         elif docker inspect "$PROD_CONTAINER" >/dev/null 2>&1; then
             # 容器存在但未运行
