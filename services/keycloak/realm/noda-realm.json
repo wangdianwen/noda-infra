@@ -8,6 +8,78 @@
   "resetPasswordAllowed": true,
   "editUsernameAllowed": false,
   "bruteForceProtected": true,
+  "clients": [
+    {
+      "clientId": "noda-frontend",
+      "name": "Noda Class",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["*"],
+      "webOrigins": [
+        "https://class.noda.co.nz",
+        "http://localhost:3006",
+        "https://admin.noda.co.nz",
+        "https://admin-preprod.noda.co.nz"
+      ],
+      "attributes": { "post.logout.redirect.uris": "+" }
+    },
+    {
+      "clientId": "noda-auth",
+      "name": "Noda Auth App",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["*"],
+      "webOrigins": ["https://auth.noda.co.nz", "http://localhost:3004"],
+      "attributes": { "post.logout.redirect.uris": "+" }
+    },
+    {
+      "clientId": "noda-liuyao",
+      "name": "Noda Liuyao",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "https://liuyao.noda.test/*",
+        "https://liuyao.noda.co.nz/*",
+        "http://localhost:3005/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3005",
+        "https://liuyao.noda.test",
+        "https://liuyao.noda.co.nz"
+      ],
+      "attributes": { "post.logout.redirect.uris": "+" }
+    },
+    {
+      "clientId": "noda-www",
+      "name": "Noda WWW (marketing site)",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["https://noda.co.nz/*", "http://localhost:3000/*"],
+      "webOrigins": ["https://noda.co.nz", "http://localhost:3000"],
+      "attributes": {
+        "post.logout.redirect.uris": "https://noda.co.nz/*,http://localhost:3000/*"
+      }
+    },
+    {
+      "clientId": "admin-dashboard",
+      "name": "Admin Dashboard",
+      "enabled": true,
+      "publicClient": false,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["https://admin.noda.co.nz/*", "http://localhost:8001/*"],
+      "webOrigins": ["https://admin.noda.co.nz", "http://localhost:8001"],
+      "description": "confidential client：secret 由 Doppler KEYCLOAK_CLIENT_SECRET 管理，勿在此入库"
+    }
+  ],
   "identityProviders": [
     {
       "alias": "google",
