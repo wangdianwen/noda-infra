@@ -1929,13 +1929,14 @@ set \$preprod_comments_upstream ${PREPROD_CONTAINER}:3012;"
         # preprod 禁用任何 prod key——此处从 Doppler prd_pre 覆盖 STRIPE_/ANTHROPIC_ 前缀。
         # 子 shell 内覆盖，不污染父进程（prod 阶段 envsubst 仍取 prd 导出值）。
         # ANTHROPIC 当前 prd_pre 与 prd 同值（共用违规待开发 key 建好后替换 prd_pre 值）
+        # COMMENT_SERVICE_KEY：评论服务间凭据按环境隔离（2026-09 auth/comment 迁移）
         local _preprod_key_override
         local _preprod_doppler_args=""
         # prd_pre 用专用 token（Jenkins 主 token 只授权 prd，读 prd_pre 返回空导出）
         if [ -n "${DOPPLER_TOKEN_PREPROD:-}" ]; then
             _preprod_doppler_args="--token ${DOPPLER_TOKEN_PREPROD}"
         fi
-        _preprod_key_override=$(doppler secrets download ${_preprod_doppler_args} --project noda --config prd_pre --no-file --format=env 2>/dev/null | grep -E '^(STRIPE_|ANTHROPIC_)' || true)
+        _preprod_key_override=$(doppler secrets download ${_preprod_doppler_args} --project noda --config prd_pre --no-file --format=env 2>/dev/null | grep -E '^(STRIPE_|ANTHROPIC_|COMMENT_SERVICE_KEY)' || true)
         if [ -z "$_preprod_key_override" ]; then
             log_warn "prd_pre 密钥导出为空，preprod 将无 Stripe/Anthropic 凭据"
         fi
