@@ -336,12 +336,20 @@ pipeline_build()
 
     log_info "构建镜像..."
 
+    # 显式本地构建缓存：本机 Docker Desktop(containerd) 的内置层缓存记录不可靠
+    # （多次实测大 RUN 层记录丢失、跨构建不命中），local cache 导出/导入绕开该问题。
+    # 目录跨构建持久，首次构建后即热。
+    local cache_dir="${HOME}/.cache/noda-buildcache"
+    mkdir -p "$cache_dir"
+
     # r4s 远程部署模式：镜像将在 Mac 构建后通过 SSH 传输到 r4s（per D-07）
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         log_info "r4s 远程部署模式：镜像将在 Mac 构建后通过 SSH 传输到 r4s（per D-07）"
     fi
     if [ "$service" = "noda-apps" ]; then
-        docker build \
+        docker buildx build --load \
+            --cache-from type=local,src="$cache_dir" \
+            --cache-to type=local,dest="$cache_dir",mode=max \
             -t "${service}:latest" \
             -t "${service}:${git_sha}" \
             -f "$dockerfile" \
@@ -358,7 +366,9 @@ pipeline_build()
             --build-arg NEXT_PUBLIC_GA4_LIUYAO_ID=G-ZXK92PWTEF \
             "$apps_dir"
     else
-        docker build \
+        docker buildx build --load \
+            --cache-from type=local,src="$cache_dir" \
+            --cache-to type=local,dest="$cache_dir",mode=max \
             -t "${service}:latest" \
             -t "${service}:${git_sha}" \
             -f "$dockerfile" \
@@ -1474,7 +1484,7 @@ pipeline_deploy_noda_ops()
 # ============================================
 # 函数: pipeline_deploy_postgres
 # ============================================
-# Postgres compose 重建（需要备份+人工确认已完成）
+# Postgres compose restart（需要备份+人工确认已完成）
 # 无需保存镜像（不更换镜像）
 # 返回: 0=成功，1=失败
 pipeline_deploy_postgres()
@@ -1741,6 +1751,18 @@ pipeline_infra_failure_cleanup()
 
 PREPROD_CONTAINER="noda-apps-preprod"
 
+# _preprod_infra_running - 本地 preprod 基础设施容器（postgres/keycloak/nginx）是否齐全且运行中
+_preprod_infra_running()
+{
+    local cname
+    for cname in preprod-postgres preprod-keycloak preprod-nginx; do
+        if [ "$(docker inspect -f '{{.State.Running}}' "$cname" 2>/dev/null)" != "true" ]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
 # pipeline_deploy_preprod - 部署镜像到 pre-prod 环境
 # 参数: $1 = GIT_SHA
 pipeline_deploy_preprod()
@@ -1839,17 +1861,7 @@ set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;"
         # 包含 nginx + postgres + noda-apps，独立于 prod 基础设施
         local compose_file="$PROJECT_ROOT/docker/docker-compose.preprod-local.yml"
 
-        log_info "启动本地 preprod (docker compose): $image"
-
-        # 先停止并清理旧的 preprod 容器（避免容器名冲突）
-        # 注意：旧容器可能由不同 project name 创建，compose down 无法清理
-        # 因此先按固定容器名 docker rm -f，再 compose down 清理孤儿
-        log_info "清理旧的 preprod 容器..."
-        for cname in preprod-postgres preprod-noda-apps preprod-nginx; do
-            docker rm -f "$cname" 2>/dev/null || true
-        done
-        COMPOSE_PROJECT_NAME=preprod \
-        docker compose -f "$compose_file" down --remove-orphans 2>/dev/null || true
+        log_info "部署本地 preprod (docker compose): $image"
 
         # 密钥源头隔离（环境隔离规则）：顶层 load_secrets 加载 prd（live key），
         # preprod 禁用任何 prod key——此处从 Doppler prd_pre 覆盖 STRIPE_/ANTHROPIC_ 前缀。
@@ -1866,21 +1878,48 @@ set \$preprod_liuyao_upstream ${PREPROD_CONTAINER}:3005;"
             log_warn "prd_pre 密钥导出为空，preprod 将无 Stripe/Anthropic 凭据"
         fi
 
-        (
-            if [ -n "$_preprod_key_override" ]; then
-                eval "export ${_preprod_key_override//$'\n'/ }"
-            fi
+        if _preprod_infra_running; then
+            # 快路径：postgres/keycloak/nginx 保持运行，只重建应用容器。
+            # 省掉整栈 down/up（keycloak 冷启动 30s+ + postgres healthcheck）。
+            # nginx 用 resolver 127.0.0.11 动态解析容器名，容器重建换 IP 自动生效。
+            log_info "基础设施容器运行中，只重建应用容器 preprod-noda-apps..."
+            (
+                if [ -n "$_preprod_key_override" ]; then
+                    eval "export ${_preprod_key_override//$'\n'/ }"
+                fi
+                COMPOSE_PROJECT_NAME=preprod \
+                NORA_APPS_IMAGE="$image" \
+                docker compose -f "$compose_file" up -d --no-deps --force-recreate noda-apps
+            )
+        else
+            # 兜底路径：基础设施容器缺失（首次部署/被手动清理），整栈拉起
+            log_info "基础设施容器缺失，整栈启动本地 preprod..."
+            # 先停止并清理旧的 preprod 容器（避免容器名冲突）
+            # 注意：旧容器可能由不同 project name 创建，compose down 无法清理
+            # 因此先按固定容器名 docker rm -f，再 compose down 清理孤儿
+            log_info "清理旧的 preprod 容器..."
+            for cname in preprod-postgres preprod-keycloak preprod-noda-apps preprod-nginx; do
+                docker rm -f "$cname" 2>/dev/null || true
+            done
             COMPOSE_PROJECT_NAME=preprod \
-            NORA_APPS_IMAGE="$image" \
-            docker compose -f "$compose_file" up -d --force-recreate
-        )
+            docker compose -f "$compose_file" down --remove-orphans 2>/dev/null || true
 
-        # 确保 keycloak 数据库存在（init SQL 可能无法 CREATE DATABASE）
-        docker exec preprod-postgres psql -U postgres -c "CREATE DATABASE keycloak" 2>/dev/null || true
+            (
+                if [ -n "$_preprod_key_override" ]; then
+                    eval "export ${_preprod_key_override//$'\n'/ }"
+                fi
+                COMPOSE_PROJECT_NAME=preprod \
+                NORA_APPS_IMAGE="$image" \
+                docker compose -f "$compose_file" up -d --force-recreate
+            )
 
-        # 等待容器就绪
-        log_info "等待容器启动..."
-        sleep 10
+            # 确保 keycloak 数据库存在（init SQL 可能无法 CREATE DATABASE）
+            docker exec preprod-postgres psql -U postgres -c "CREATE DATABASE keycloak" 2>/dev/null || true
+
+            # 等待容器就绪
+            log_info "等待容器启动..."
+            sleep 10
+        fi
 
         log_success "Pre-prod 部署完成（本地 Mac）: $image"
         log_info "  liuyao:    https://liuyao-preprod.noda.co.nz/"

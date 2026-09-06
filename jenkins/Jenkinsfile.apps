@@ -1,7 +1,7 @@
 #!/usr/bin/env groovy
 // 统一 Apps 部署 Pipeline
-// 10 阶段: Pre-flight -> Build -> Test -> Deploy Pre-prod -> Health Check Pre-prod
-//        -> Human Approval -> Deploy Prod（停旧启新 + 健康检查） -> Verify -> CDN Purge -> Cleanup
+// 阶段: Pre-flight -> Build -> [Deploy Pre-prod ‖ Test] -> CDN Purge Pre-prod
+//       -> Human Approval -> Deploy Prod（停旧启新 + 健康检查） -> Verify -> CDN Purge -> Cleanup
 // Build Once: 镜像构建一次，先后部署到 pre-prod 和 prod
 // 前置: noda-apps 仓库 main 分支
 
@@ -65,55 +65,55 @@ pipeline {
             }
         }
 
-        stage('Test') {
-            steps {
-                dir('noda-apps') {
-                    sh '''
-                        # 设置 PATH 包含 Node.js 和 pnpm
-                        export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
-                        source "$WORKSPACE/scripts/lib/log.sh"
-                        source "$WORKSPACE/scripts/pipeline-stages.sh"
-                        pipeline_test "$PWD"
-                    '''
-                    echo '🧪 运行 Lint 检查...'
-                    sh 'export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH" && pnpm lint'
-                    echo '✅ Lint 通过'
-                    echo '🧪 运行单元测试...'
-                    sh 'export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH" && pnpm test'
-                    echo '✅ 测试通过'
+        // Test 与 Pre-prod 部署并行：Build 阶段 Docker 已吃满 CPU，Test 跟 Build 并行只会互相抢；
+        // Pre-prod 部署以 I/O 等待为主，正好塞入 Test。语义变化：测试失败时镜像可能已进
+        // pre-prod（可接受，pre-prod 本就是验证环境），但 parallel 未全部通过不会进入
+        // Human Approval，prod 始终受测试挡板保护。
+        stage('Deploy Pre-prod & Test') {
+            parallel {
+                stage('Deploy Pre-prod') {
+                    steps {
+                        withCredentials([
+                            sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
+                            // prd_pre 专用 token：主 token 只授权 prd，读 prd_pre 会拿到空导出
+                            // （曾致 preprod 容器继承 prd 的 live key）
+                            string(credentialsId: 'doppler-service-token-preprod', variable: 'DOPPLER_TOKEN_PREPROD')
+                        ]) {
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                export SSH_KEY_FILE
+                                export DEPLOY_TARGET=local
+                                pipeline_deploy_preprod "$GIT_SHA"
+                            '''
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                export SSH_KEY_FILE
+                                export DEPLOY_TARGET=local
+                                pipeline_health_check_preprod
+                            '''
+                        }
+                    }
                 }
-            }
-        }
-
-        stage('Deploy Pre-prod') {
-            steps {
-                withCredentials([
-                    sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
-                    // prd_pre 专用 token：主 token 只授权 prd，读 prd_pre 会拿到空导出
-                    // （曾致 preprod 容器继承 prd 的 live key）
-                    string(credentialsId: 'doppler-service-token-preprod', variable: 'DOPPLER_TOKEN_PREPROD')
-                ]) {
-                    sh '''
-                        source scripts/lib/log.sh
-                        source scripts/pipeline-stages.sh
-                        export SSH_KEY_FILE
-                        export DEPLOY_TARGET=local
-                        pipeline_deploy_preprod "$GIT_SHA"
-                    '''
-                }
-            }
-        }
-
-        stage('Health Check Pre-prod') {
-            steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
-                    sh '''
-                        source scripts/lib/log.sh
-                        source scripts/pipeline-stages.sh
-                        export SSH_KEY_FILE
-                        export DEPLOY_TARGET=local
-                        pipeline_health_check_preprod
-                    '''
+                stage('Test') {
+                    steps {
+                        dir('noda-apps') {
+                            sh '''
+                                # 设置 PATH 包含 Node.js 和 pnpm
+                                export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+                                source "$WORKSPACE/scripts/lib/log.sh"
+                                source "$WORKSPACE/scripts/pipeline-stages.sh"
+                                pipeline_test "$PWD"
+                            '''
+                            echo '🧪 运行 Lint 检查...'
+                            sh 'export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH" && pnpm lint'
+                            echo '✅ Lint 通过'
+                            echo '🧪 运行单元测试...'
+                            sh 'export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH" && pnpm test'
+                            echo '✅ 测试通过'
+                        }
+                    }
                 }
             }
         }
