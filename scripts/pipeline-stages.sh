@@ -346,7 +346,7 @@ pipeline_build()
     # 清空后下次构建重新导出，仅慢一次）
     local cache_max_mb="${BUILD_CACHE_MAX_MB:-12288}"
     local cache_size_mb
-    cache_size_mb=$(du -sk "$cache_dir" 2>/dev/null | cut -f1)
+    cache_size_mb=$(du -sm "$cache_dir" 2>/dev/null | cut -f1)
     if [ "${cache_size_mb:-0}" -gt "$cache_max_mb" ]; then
         log_info "构建缓存 ${cache_size_mb}MB 超过上限 ${cache_max_mb}MB，清理重建..."
         rm -rf "$cache_dir"
@@ -548,6 +548,19 @@ pipeline_deploy_prod()
                     _restart_prod_container "$old_image"
                 fi
             fi
+            return 1
+        fi
+
+        # 切换不变式：pull 必须确认完成、镜像确实落地 r4s，才允许动旧容器。
+        # transfer-first 模式下此处失败旧容器仍在服务，线上零影响。
+        if ! remote_exec "docker image inspect $image >/dev/null 2>&1"; then
+            if [ "$transfer_first" != "1" ]; then
+                # 先停模式下旧容器已被停，必须回滚并重载 nginx
+                log_warn "回滚先停的旧容器..."
+                remote_exec "docker start $PROD_CONTAINER || true"
+                reload_nginx
+            fi
+            log_error "镜像 $image 未在 r4s 落地（pull 未完成），保持旧容器服务，中止切换"
             return 1
         fi
 

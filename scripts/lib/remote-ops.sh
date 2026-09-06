@@ -179,8 +179,13 @@ transfer_image()
         return 1
     fi
 
-    # Step 4: r4s 上打正确的 tag
-    ssh $ssh_opts "$R4S_HOST" "docker tag $registry_image $remote_image && docker rmi $registry_image 2>/dev/null"
+    # Step 4: r4s 上打正确的 tag（失败必须中止——否则后面 docker run 才失败，
+    # 旧容器已被停掉，白白多出一段停机+回滚窗口）
+    if ! ssh $ssh_opts "$R4S_HOST" "docker tag $registry_image $remote_image"; then
+        log_error "r4s 端 docker tag 失败: $registry_image → $remote_image"
+        return 1
+    fi
+    ssh $ssh_opts "$R4S_HOST" "docker rmi $registry_image >/dev/null 2>&1 || true"
 
     log_success "镜像传输完成: $remote_image"
     return 0
