@@ -1915,9 +1915,21 @@ pipeline_publish_static_site()
     local min_objs="${4:-20}"
     local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
     local web_dir="$apps_dir/$2"
-    local relay_name="tmp-s3-relay"
-    local relay_port="9333"
-    local alias_name="noda-prd-relay"
+    # 中继按产品隔离（2026-09-13 并行化）：不同产品的静态发布同时进行时，
+    # 共享的容器名/端口/alias 会互删对方的中继（build 76/77 实证）——
+    # 容器名、端口（9333-9339 固定映射）、mc alias 全部带产品维度。
+    local relay_name="tmp-s3-relay-${product}"
+    case "$product" in
+        class)   local relay_port="9333" ;;
+        www)     local relay_port="9334" ;;
+        admin)   local relay_port="9335" ;;
+        liuyao)  local relay_port="9336" ;;
+        nearby)  local relay_port="9337" ;;
+        auth)    local relay_port="9338" ;;
+        comment) local relay_port="9339" ;;
+        *)       local relay_port="9340" ;;
+    esac
+    local alias_name="noda-prd-relay-${product}"
 
     _publish_class_cleanup()
     {
