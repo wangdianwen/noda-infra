@@ -12,7 +12,14 @@
 //         仅用于确认无风险的 hotfix；测试挡板（Test 失败不发版）仍然生效
 
 pipeline {
-    agent any
+    // 4 槽位轮换 workspace——同 job 并发构建互不踩踏，
+    // 同槽位串行时 node_modules/checkout 缓存仍可复用
+    agent {
+        node {
+            label ''
+            customWorkspace "${env.JOB_NAME}/ws-${env.BUILD_NUMBER.toInteger() % 4}"
+        }
+    }
 
     environment {
         PROJECT_ROOT = "${WORKSPACE}"
@@ -22,8 +29,10 @@ pipeline {
         BACKUP_HOST_DIR = "${HOME}/Project/noda-infra/docker/volumes/backup"
     }
 
+    // 2026-09-13 并行化：去掉 disableConcurrentBuilds——锁已下沉到部署函数
+    // （deploy_preprod 持 apps-preprod、deploy_prod 持 apps-prod，仅在操作
+    // 共享容器时互斥），构建A 的 preprod 验证窗口内构建B 可直接走 prod。
     options {
-        disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
     }
