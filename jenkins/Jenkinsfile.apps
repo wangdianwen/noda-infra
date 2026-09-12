@@ -218,7 +218,10 @@ pipeline {
                                 choice(name: 'ACTION', choices: ['deploy_prod', 'rebuild_preprod', 'abort'], description: '选择操作：\n- deploy_prod: 验证通过，部署到生产环境\n- rebuild_preprod: 重新部署 pre-prod（无需重新构建）\n- abort: 中止部署')
                             ]
                         )
-                        env.DEPLOY_ACTION = userInput
+                        // input 带 parameters 时返回 Map（[ACTION:...]），直接赋给 env
+                        // 会变成 "{ACTION=deploy_prod}"——Deploy Prod/Rebuild/abort 的
+                        // when 条件因此永远不匹配（曾致 normal 模式静默跳过 prod 部署）
+                        env.DEPLOY_ACTION = (userInput instanceof Map) ? userInput['ACTION'] : userInput
                     }
                 }
             }
