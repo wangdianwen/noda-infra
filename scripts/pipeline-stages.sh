@@ -1976,11 +1976,15 @@ pipeline_deploy_seaweedfs()
             log_error "S3 中继启动失败"
             return 1
         }
+        # 匿名读由本部署渲染的 s3.json anonymous identity（Read:<bucket>）授予；
+        # mc anonymous set download 依赖 ACL header，SeaweedFS 未实现（实测 NotImplemented），
+        # 仅作 best-effort，失败不阻塞部署
         local init_ok="false"
         if mc alias set "$alias_name" "http://192.168.100.1:9340" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" --api S3v4 \
-            && mc mb --ignore-existing "$alias_name/$S3_BUCKET" \
-            && mc anonymous set download "$alias_name/$S3_BUCKET"; then
+            && mc mb --ignore-existing "$alias_name/$S3_BUCKET"; then
             init_ok="true"
+            mc anonymous set download "$alias_name/$S3_BUCKET" 2>/dev/null \
+                || log_info "mc anonymous 不被 SeaweedFS 支持，匿名读走 s3.json anonymous identity（已生效）"
         fi
         remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true" || true
         mc alias remove "$alias_name" >/dev/null 2>&1 || true
@@ -2257,8 +2261,10 @@ pipeline_verify_product()
 https://class.noda.co.nz/api/health|class api 链"
             ;;
         www)
-            checks="https://www.noda.co.nz/|www 首页
-https://www.noda.co.nz/api/courses|www api 链"
+            # www.noda.co.nz 301 → noda.co.nz（规范域）；直接探规范域
+            checks="https://noda.co.nz/|www 首页
+https://noda.co.nz/zh/|www 中文页
+https://noda.co.nz/api/courses|www api 链"
             ;;
         admin)
             checks="https://admin.noda.co.nz/login|admin 登录页
