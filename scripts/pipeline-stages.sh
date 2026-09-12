@@ -2049,17 +2049,25 @@ pipeline_publish_static_site()
 
     # 对象级对账（2026-09-13 build 72 实证：mc mirror 曾静默漏传 zh/topic/love.html
     # ——同目录部分对象上传部分跳过且零报错，min_objs 阈值无法发现，verify 探测兜住）。
-    # 源 out/ 文件数必须与桶前缀对象数完全一致；不一致时清空前缀全量重建一次
-    # （mc mirror 增量判定黑盒跳过，全量重传是确定性自愈），仍不一致才判失败。
-    local objs src_objs
+    # ⚠️ 中继（socat→seaweedfs）上的 mc ls --recursive 会随机截断：同一棵树实测
+    # 52/54/55/70 浮动（build 68/71/75）。截断计数曾触发「清空前缀全量重建」，
+    # rm --recursive + 半程重传直接把线上 /zh 打成 nginx 404（build 75 实证）。
+    # 因此对账策略改为：
+    #   1) 列举重试 3 次取最大值——截断只少不多，max 收敛于真值；
+    #   2) 不一致只重跑 mirror --overwrite（幂等补传，安全方向），
+    #      绝不清空前缀（rm --recursive 在列举抖动下是破坏性操作，已移除）；
+    #   3) 哨兵文件 mc stat 单对象 HEAD 兜底（计数巧合对不上单点缺失）。
+    local objs src_objs attempt
     src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
-    objs=$(mc ls --recursive "$alias_name/noda-static/sites/$product/" 2>/dev/null | grep -c . || true)
-    if [ "${objs:-0}" -ne "${src_objs:-0}" ]; then
-        log_warn "对账不一致（源 $src_objs / 桶 $objs）——清空前缀全量重建..."
-        mc rm --recursive --force "$alias_name/noda-static/sites/$product/" >/dev/null 2>&1 || true
-        mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name/noda-static/sites/$product/" || true
+    objs=0
+    for attempt in 1 2 3; do
         objs=$(mc ls --recursive "$alias_name/noda-static/sites/$product/" 2>/dev/null | grep -c . || true)
-    fi
+        if [ "${objs:-0}" -ge "${src_objs:-0}" ]; then
+            break
+        fi
+        log_warn "桶列举 ${objs} < 源 ${src_objs}（中继截断或漏传）——重跑 mirror 补传（第 ${attempt} 次）..."
+        mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name/noda-static/sites/$product/" >/dev/null 2>&1 || true
+    done
     _publish_class_cleanup
     if [ "${objs:-0}" -lt "$min_objs" ]; then
         log_error "桶内对象数异常（${objs} < ${min_objs}），发布疑似不完整"
@@ -2068,6 +2076,13 @@ pipeline_publish_static_site()
     if [ "${objs:-0}" -ne "${src_objs:-0}" ]; then
         log_error "镜像对账失败：源 out/ $src_objs 个文件 ≠ 桶 $objs 个对象——mc mirror 静默漏传，发布不完整"
         return 1
+    fi
+    local sentinel="${3#out/}"
+    if [ -f "$web_dir/out/$sentinel" ]; then
+        if ! mc stat "$alias_name/noda-static/sites/$product/$sentinel" >/dev/null 2>&1; then
+            log_error "哨兵对象缺失：sites/$product/$sentinel（mc mirror 静默漏传）"
+            return 1
+        fi
     fi
 
     log_success "$product 静态站发布完成：noda-static/sites/$product/（$objs 个对象，与源一致，中继已拆除）"
