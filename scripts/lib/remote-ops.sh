@@ -253,7 +253,7 @@ remote_docker_exec()
 #   $1: max_wait - 最大等待秒数（默认 60）
 #   $2: lock_name - 锁名（默认 deploy）。2026-09-13 并行化：项目/服务已分离，
 #       锁按共享资源维度命名，不同维度发布互不阻塞——
-#       apps-deploy（prod/preprod API 容器互斥）/ publish-<product>（桶前缀互斥）
+#       noda-apps（prod/preprod API 容器互斥）/ publish-<product>（桶前缀互斥）
 #       / infra-core（nginx/postgres/seaweedfs 等）/ registry-gc（GC vs GC）
 # 返回: 0=获取成功，1=获取失败
 acquire_deploy_lock()

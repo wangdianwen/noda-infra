@@ -1,14 +1,19 @@
 #!/usr/bin/env groovy
-// 统一基础设施 Jenkins Pipeline
-// 7 阶段: Pre-flight -> Backup -> Human Approval -> Deploy -> Health Check -> Verify -> Cleanup
-// 手动触发（无自动触发配置）
-// 参数化服务选择: nginx / noda-ops / postgres / keycloak
-// 整合说明: keycloak-deploy 已合并到此 Pipeline（2026-05-08）
+// noda-infra —— 公共基础设施镜像发布 Pipeline（2026-09-13 由 infra-deploy 重构更名）
+// 职责：只发布公共 docker image —— nginx(反代镜像) / seaweedfs / noda-ops / postgres
+//       必须单选一个服务，不提供 all（基础设施无"全量一键发布"，逐项可控）
+// 产品前端静态站（class/www/admin/liuyao/nearby/auth/comment）不在此发布——
+// 走 noda-apps Pipeline 的 LAYER=static（前端）路径，桶发布按产品隔离可并行
+// keycloak 已于 2026-09-12 下线；remark42 不经 Pipeline 管理——相关路径全部移除
+// 阶段: Pre-flight -> Backup(postgres) -> Human Approval(postgres) -> Deploy -> Health Check -> Verify
+// 并行化（2026-09-13）：核心服务共用 infra-core 锁互斥（共享 compose 栈与边缘反代），
+// 与 noda-apps（apps-preprod/apps-prod 锁）、静态站发布（publish-<product> 锁）维度
+// 互不重叠——跨 Pipeline 可并行，无互相覆盖
+// 注意：无 triggers 块 — 仅通过 "Build Now" 手动触发
 
 pipeline {
-    // 并行化（2026-09-13）：不同 SERVICE 的发布可同时构建。
-    // 4 个轮换槽位隔离 workspace——同 job 并发互不踩踏，
-    // 同槽位串行时 node_modules 等缓存仍可复用。
+    // 4 槽位轮换 workspace——同 job 并发构建互不踩踏，
+    // 同槽位串行时 node_modules/checkout 缓存仍可复用
     agent {
         node {
             label ''
@@ -28,25 +33,21 @@ pipeline {
     options {
         // Skip automatic checkout
         skipDefaultCheckout(true)
-        // 2026-09-13 去掉 disableConcurrentBuilds——锁已按资源维度拆分
-        // （pipeline_infra_preflight: publish-<product> / infra-core），
-        // 不同 SERVICE 并行安全，同 SERVICE 靠 publish-<product> 锁互斥
+        // 无 disableConcurrentBuilds——并发安全由 infra-core 锁保证（不同 SERVICE 串行、
+        // 跨 Pipeline 并行），4 个 workspace 槽位隔离并发构建
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
     }
 
-    // 注意：无 triggers 块 — 仅通过 "Build Now" 手动触发
-
     parameters {
         choice(
             name: 'SERVICE',
-            choices: ['nginx', 'noda-ops', 'postgres', 'seaweedfs', 'class-static', 'www-static', 'admin-static', 'liuyao-static', 'nearby-static', 'auth-static', 'comment-static'],
-            description: '选择要部署的基础设施服务；*-static = 本地构建该静态站并 mc mirror 到 SeaweedFS 桶 sites/<product>/（S1 class / S2 www+admin / S3 liuyao+nearby / S5 auth+comment）'
-        )
-        string(
-            name: 'KEYCLOAK_IMAGE',
-            defaultValue: 'quay.io/keycloak/keycloak:26.2.3',
-            description: '⚠️ 已废弃（2026-09-12 Keycloak 下线）：仅保留参数兼容，不再有服务消费'
+            choices: ['nginx', 'seaweedfs', 'noda-ops', 'postgres'],
+            description: '''选择要发布的公共基础设施服务（必选其一，无 all）：
+- nginx: 从 noda-apps 源码构建 noda-static 反代镜像 → 传输 r4s → 容器重建（配置经卷挂载即时生效）
+- seaweedfs: 对象存储重建（S3 凭据 Doppler 注入，桶自动自愈）
+- noda-ops: 备份 + Cloudflare Tunnel 容器重建（build 模式）
+- postgres: 数据库容器重建（先备份 + 人工确认）'''
         )
     }
 
@@ -63,9 +64,6 @@ pipeline {
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
-                        if [ "$SERVICE" = "keycloak" ]; then
-                            export SERVICE_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
-                        fi
                         export SSH_KEY_FILE
                         pipeline_infra_preflight "$SERVICE"
                     '''
@@ -97,7 +95,7 @@ pipeline {
                 timeout(time: 30, unit: 'MINUTES') {
                     input message: """确认重启 PostgreSQL?
                     服务: ${params.SERVICE}
-                    影响范围: Keycloak、noda-apps、noda-ops 将短暂断连数据库
+                    影响范围: noda-apps、noda-ops 将短暂断连数据库
                     备份文件: 请查看上方 Backup 阶段日志
                     """.stripIndent(), ok: '确认重启'
                 }
@@ -107,9 +105,11 @@ pipeline {
         stage('Deploy') {
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
-                    // *-static 需要 noda-apps 源码（本地构建静态导出）
+                    // nginx = noda-static 反代镜像发布：镜像源码在 noda-apps 仓
+                    // （Dockerfile.noda-static），构建一次传输 r4s，再由
+                    // pipeline_deploy_nginx 以最新 tag 重建容器
                     script {
-                        if (params.SERVICE.endsWith('-static')) {
+                        if (params.SERVICE == 'nginx') {
                             dir('noda-apps') {
                                 checkout([
                                     $class: 'GitSCM',
@@ -120,41 +120,21 @@ pipeline {
                                     ]]
                                 ])
                             }
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                export SSH_KEY_FILE
+                                APPS_SHA=$(git -C noda-apps rev-parse --short HEAD)
+                                pipeline_build_nginx_image "$WORKSPACE/noda-apps" "$APPS_SHA"
+                            '''
                         }
                     }
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
-                        if [ "$SERVICE" = "keycloak" ]; then
-                            export SERVICE_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
-                        fi
                         export SSH_KEY_FILE
                         pipeline_infra_deploy "$SERVICE"
                     '''
-                }
-            }
-        }
-
-        stage('CDN Purge') {
-            when {
-                expression { params.SERVICE == 'keycloak' }
-            }
-            steps {
-                script {
-                    try {
-                        withCredentials([
-                            string(credentialsId: 'cf-api-token', variable: 'CF_API_TOKEN'),
-                            string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
-                        ]) {
-                            sh '''
-                                source scripts/lib/log.sh
-                                source scripts/pipeline-stages.sh
-                                pipeline_purge_cdn
-                            '''
-                        }
-                    } catch (Exception e) {
-                        echo "CDN Purge 跳过: Cloudflare 凭据未配置 (${e.message})"
-                    }
                 }
             }
         }
@@ -196,11 +176,10 @@ pipeline {
                         source scripts/pipeline-stages.sh
                         export SSH_KEY_FILE
 
-                        # === 1. 释放部署锁（总是执行）===
+                        # === 1. 释放部署锁（总是执行，只放本构建登记的锁）===
                         pipeline_release_lock
 
                         # === 2. 清理旧镜像（总是执行，增强容错）===
-                        # 即使前面步骤失败，也确保清理旧镜像释放磁盘空间
                         echo "🧹 执行基础设施服务清理: $SERVICE"
                         pipeline_infra_cleanup "$SERVICE" || {
                             echo "⚠️ 清理部分失败，尝试至少清理悬空镜像..."
@@ -216,7 +195,7 @@ pipeline {
             }
         }
         success {
-            echo "✅ 基础设施服务 ${params.SERVICE} 部署成功"
+            echo "✅ 公共基础设施服务 ${params.SERVICE} 发布成功"
         }
     }
 }

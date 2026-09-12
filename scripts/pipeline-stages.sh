@@ -287,74 +287,48 @@ pipeline_preflight()
         log_info "本地模式：跳过反代/network 检查（compose 自带）"
     fi
 
-    local service="${SERVICE_NAME:-noda-apps}"
-
-    # noda-apps 目录仅对从源码构建的服务需要（noda-apps）
-    # Keycloak 等使用官方镜像的服务不需要
-    if [ "$service" != "keycloak" ]; then
-        if [ ! -d "$apps_dir" ]; then
-            log_error "noda-apps 目录不存在: $apps_dir"
-            log_error "请检查 Jenkinsfile Pre-flight stage 的 checkout 配置"
-            return 1
-        fi
-        log_info "noda-apps 目录存在: $apps_dir"
+    # noda-apps 源码检出检查
+    if [ ! -d "$apps_dir" ]; then
+        log_error "noda-apps 目录不存在: $apps_dir"
+        log_error "请检查 Jenkinsfile Pre-flight stage 的 checkout 配置"
+        return 1
     fi
+    log_info "noda-apps 目录存在: $apps_dir"
 
-    if [ "$service" = "noda-apps" ]; then
-        # noda-apps 专用检查：Node.js、pnpm、package.json、lint、test、备份
-        if ! command -v node >/dev/null 2>&1; then
-            log_error "Node.js 未安装"
-            return 1
-        fi
-        log_info "Node.js: $(node --version)"
+    # noda-apps 专用检查：Node.js、pnpm、package.json、lint、test、备份
+    if ! command -v node >/dev/null 2>&1; then
+        log_error "Node.js 未安装"
+        return 1
+    fi
+    log_info "Node.js: $(node --version)"
 
-        command -v pnpm >/dev/null 2>&1 || {
-            log_error "pnpm 未安装，Test 阶段需要 pnpm"
-            return 1
-        }
-        log_info "pnpm: $(pnpm --version)"
+    command -v pnpm >/dev/null 2>&1 || {
+        log_error "pnpm 未安装，Test 阶段需要 pnpm"
+        return 1
+    }
+    log_info "pnpm: $(pnpm --version)"
 
-        if [ ! -f "$apps_dir/package.json" ]; then
-            log_error "noda-apps/package.json 不存在: $apps_dir/package.json"
-            return 1
-        fi
-        log_info "noda-apps/package.json 存在"
+    if [ ! -f "$apps_dir/package.json" ]; then
+        log_error "noda-apps/package.json 不存在: $apps_dir/package.json"
+        return 1
+    fi
+    log_info "noda-apps/package.json 存在"
 
-        if ! grep -q '"lint"' "$apps_dir/package.json"; then
-            log_error "noda-apps/package.json 缺少 lint 脚本"
-            return 1
-        fi
-        log_info "package.json lint 脚本存在"
+    if ! grep -q '"lint"' "$apps_dir/package.json"; then
+        log_error "noda-apps/package.json 缺少 lint 脚本"
+        return 1
+    fi
+    log_info "package.json lint 脚本存在"
 
-        if ! grep -q '"test"' "$apps_dir/package.json"; then
-            log_error "noda-apps/package.json 缺少 test 脚本"
-            return 1
-        fi
-        log_info "package.json test 脚本存在"
+    if ! grep -q '"test"' "$apps_dir/package.json"; then
+        log_error "noda-apps/package.json 缺少 test 脚本"
+        return 1
+    fi
+    log_info "package.json test 脚本存在"
 
-        # 备份时效性检查（本地开发环境降级为警告）
-        if ! check_backup_freshness; then
-            log_warn "备份检查未通过，继续部署（生产环境应调查备份状态）"
-        fi
-    else
-        # Keycloak: 检查官方镜像配置
-        if [ "$service" = "keycloak" ]; then
-            local service_image="${SERVICE_IMAGE:-}"
-            if [ -z "$service_image" ]; then
-                log_error "SERVICE_IMAGE 未设置（Keycloak 需要指定官方镜像）"
-                return 1
-            fi
-            log_info "Keycloak 镜像: $service_image"
-            log_info "Keycloak 不需要构建，将使用 docker pull 拉取官方镜像"
-        else
-            # 其他服务：检查 Dockerfile 存在
-            local dockerfile="${DOCKERFILE:-$PROJECT_ROOT/noda-apps/infra/docker/Dockerfile.${service}}"
-            if [ ! -f "$dockerfile" ]; then
-                log_error "Dockerfile 不存在: $dockerfile"
-                return 1
-            fi
-            log_info "Dockerfile 存在: $dockerfile"
-        fi
+    # 备份时效性检查（本地开发环境降级为警告）
+    if ! check_backup_freshness; then
+        log_warn "备份检查未通过，继续部署（生产环境应调查备份状态）"
     fi
 
     log_success "前置检查全部通过"
@@ -363,15 +337,53 @@ pipeline_preflight()
 # pipeline_build - 构建镜像（S5 双镜像：noda-api / noda-static）
 # 参数: $1 = APPS_DIR (noda-apps 目录), $2 = GIT_SHA
 # Dockerfile：noda-apps/infra/docker/Dockerfile.{noda-api,noda-static}
-# 环境变量控制：
-#   SERVICE_NAME - 仅保留兼容（legacy 单容器路径）；三容器拆分后固定构建三镜像
+# 反代镜像（noda-static）的独立构建入口见 pipeline_build_nginx_image（noda-infra SERVICE=nginx）
 # ============================================
-# LAYER 过滤（2026-09-12 PRODUCT×LAYER）
-# api / web 层独立构建与部署：Go 侧靠 Dockerfile GOCACHE 缓存挂载增量编译
-# （改一个产品只重编该产品包）；web 侧 turbo/pnpm 缓存。LAYER 缺省 all。
+# LAYER 过滤（2026-09-13 noda-apps 双轨重构）
+#   api    = 后端：noda-api 镜像构建/容器部署（Go 多模块单镜像，全产品共享容器）
+#   static = 前端：产品静态站桶发布（pipeline_publish_product，无镜像无容器）
+#   all    = 一起：api + noda-static 反代镜像顺带刷新 + 产品静态站
+# 兼容：旧值 web（仅反代镜像）保留为内部别名——反代是公共 nginx 镜像，
+# 常规发布归 noda-infra SERVICE=nginx，apps 侧仅随 all 顺带刷新
+# Go 侧靠 Dockerfile GOCACHE 缓存挂载增量编译（改一个产品只重编该产品包）
 # ============================================
-_layer_want_api() { [ "$LAYER_FILTER" = "all" ] || [ "$LAYER_FILTER" = "api" ]; }
-_layer_want_web() { [ "$LAYER_FILTER" = "all" ] || [ "$LAYER_FILTER" = "web" ]; }
+_layer_want_api()    { [ "$LAYER_FILTER" = "all" ] || [ "$LAYER_FILTER" = "api" ]; }
+_layer_want_web()    { [ "$LAYER_FILTER" = "all" ] || [ "$LAYER_FILTER" = "web" ]; }
+_layer_want_static() { [ "$LAYER_FILTER" = "all" ] || [ "$LAYER_FILTER" = "static" ]; }
+
+# _next_public_build_args - NEXT_PUBLIC_* build-args（逐行输出；noda-static 镜像构建共用）
+# 照抄旧单容器清单；static 仅 www 消费其中 GA4_WWW_ID/Keycloak 等，多余变量无副作用
+_next_public_build_args()
+{
+    cat <<'ARGS'
+--build-arg
+NEXT_PUBLIC_KEYCLOAK_URL=https://auth.noda.co.nz
+--build-arg
+NEXT_PUBLIC_KEYCLOAK_REALM=noda
+--build-arg
+NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=noda-frontend
+--build-arg
+NEXT_PUBLIC_AUTH_APP_URL=https://auth.noda.co.nz
+--build-arg
+NEXT_PUBLIC_AUTH_BYPASS=false
+--build-arg
+NEXT_PUBLIC_AUTH_KEYCLOAK_CLIENT_ID=noda-auth
+--build-arg
+NEXT_PUBLIC_ALLOWED_ORIGINS=https://class.noda.co.nz,https://noda.co.nz
+--build-arg
+NEXT_PUBLIC_SITE_URL=https://class.noda.co.nz
+--build-arg
+NEXT_PUBLIC_REMARK_URL=https://comments.noda.co.nz
+--build-arg
+NEXT_PUBLIC_GA4_WWW_ID=G-FPEF7LXD2F
+--build-arg
+NEXT_PUBLIC_GA4_LIUYAO_ID=G-ZXK92PWTEF
+--build-arg
+NEXT_PUBLIC_GA4_NEARBY_ID=G-58CDREDT81
+--build-arg
+NEXT_PUBLIC_NEARBY_SITE_URL=https://nearby.noda.co.nz
+ARGS
+}
 
 pipeline_build()
 {
@@ -430,23 +442,10 @@ pipeline_build()
         log_info "r4s 远程部署模式：镜像将在 Mac 构建后通过 SSH 传输到 r4s（per D-07）"
     fi
 
-    # NEXT_PUBLIC_* build-args（照抄旧单容器清单；frontend 与 static 共用——
-    # static 仅 www 消费其中 GA4_WWW_ID/Keycloak 等，多余变量无副作用）
-    local next_public_args=(
-        --build-arg NEXT_PUBLIC_KEYCLOAK_URL=https://auth.noda.co.nz
-        --build-arg NEXT_PUBLIC_KEYCLOAK_REALM=noda
-        --build-arg NEXT_PUBLIC_KEYCLOAK_CLIENT_ID=noda-frontend
-        --build-arg NEXT_PUBLIC_AUTH_APP_URL=https://auth.noda.co.nz
-        --build-arg NEXT_PUBLIC_AUTH_BYPASS=false
-        --build-arg NEXT_PUBLIC_AUTH_KEYCLOAK_CLIENT_ID=noda-auth
-        --build-arg "NEXT_PUBLIC_ALLOWED_ORIGINS=https://class.noda.co.nz,https://noda.co.nz"
-        --build-arg NEXT_PUBLIC_SITE_URL=https://class.noda.co.nz
-        --build-arg NEXT_PUBLIC_REMARK_URL=https://comments.noda.co.nz
-        --build-arg NEXT_PUBLIC_GA4_WWW_ID=G-FPEF7LXD2F
-        --build-arg NEXT_PUBLIC_GA4_LIUYAO_ID=G-ZXK92PWTEF
-        --build-arg NEXT_PUBLIC_GA4_NEARBY_ID=G-58CDREDT81
-        --build-arg NEXT_PUBLIC_NEARBY_SITE_URL=https://nearby.noda.co.nz
-    )
+    # NEXT_PUBLIC_* build-args（见 _next_public_build_args）
+    local next_public_args=()
+    local _pa
+    while IFS= read -r _pa; do next_public_args+=("$_pa"); done < <(_next_public_build_args)
 
     # 1/3 Go API（无 build-args；LAYER=web 时跳过——多模块 + GOCACHE 增量，只重编译改动包）
     # 只打 commit tag 不打 latest（2026-09-13）：latest 与 commit tag 指向同一镜像，
@@ -483,13 +482,75 @@ pipeline_build()
 }
 
 # ============================================
+# 函数: pipeline_build_nginx_image
+# ============================================
+# 构建并传输 noda-static 反代镜像（noda-infra SERVICE=nginx 专用）
+# 反代是公共 nginx 镜像，源码在 noda-apps 仓（Dockerfile.noda-static：nginx + www 静态导出）。
+# 构建上下文 = HEAD 提交树的干净导出（git archive，防 WIP 泄入镜像，同 pipeline_build）；
+# 构建后经 registry 增量传输到 r4s，pipeline_deploy_nginx 取 r4s 最新 tag 重建容器
+# 参数: $1 = APPS_DIR（noda-apps 检出目录）  $2 = GIT_SHA（noda-apps HEAD 短 SHA）
+pipeline_build_nginx_image()
+{
+    local apps_dir="$1"
+    local git_sha="$2"
+
+    local ctx_dir
+    ctx_dir=$(mktemp /tmp/noda-nginx-ctx.XXXXXX)
+    rm -rf "$ctx_dir" && mkdir -p "$ctx_dir"
+    git -C "$apps_dir" archive HEAD | tar -x -C "$ctx_dir" || {
+        log_error "git archive 导出构建上下文失败"
+        rm -rf "$ctx_dir"
+        return 1
+    }
+    trap 'rm -rf "$ctx_dir"' RETURN
+
+    docker buildx inspect desktop-linux >/dev/null 2>&1 || {
+        log_error "默认 builder desktop-linux 不存在"
+        return 1
+    }
+
+    # 与 noda-apps Pipeline 共用同一 local cache（层缓存跨构建持久，nginx 发布增量快）
+    local cache_dir="${HOME}/.cache/noda-buildcache"
+    mkdir -p "$cache_dir"
+
+    local next_public_args=()
+    local _pa
+    while IFS= read -r _pa; do next_public_args+=("$_pa"); done < <(_next_public_build_args)
+
+    log_info "构建 noda-static 反代镜像: noda-static:${git_sha} ..."
+    if ! docker buildx build --load \
+        --cache-from type=local,src="$cache_dir" \
+        --cache-to type=local,dest="$cache_dir",mode=max \
+        -t "noda-static:${git_sha}" \
+        -f "$ctx_dir/infra/docker/Dockerfile.noda-static" \
+        "${next_public_args[@]}" \
+        "$ctx_dir"; then
+        log_error "noda-static 镜像构建失败"
+        return 1
+    fi
+    log_success "镜像构建完成: noda-static:${git_sha}"
+
+    # 增量传输到 r4s；落地确认后才允许 pipeline_deploy_nginx 动旧容器
+    if ! transfer_image "noda-static:${git_sha}" "noda-static:${git_sha}"; then
+        log_error "镜像传输失败: noda-static:${git_sha}"
+        return 1
+    fi
+    if ! remote_exec "docker image inspect noda-static:${git_sha} >/dev/null 2>&1"; then
+        log_error "镜像 noda-static:${git_sha} 未在 r4s 落地，中止（旧容器未受影响）"
+        return 1
+    fi
+
+    docker_image_retention noda-static
+}
+
+# ============================================
 # pipeline_post_publish_cleanup - 发布后统一清理（2026-09-13）
 # ============================================
 # 用户要求：每次 Jenkins 发布后自动清理旧资源，preprod 与 prod 均生效：
 #   ① docker 旧镜像——Mac 构建机 + r4s（docker_image_retention：每仓库保留
 #      最新 2 版 = 当前 + 回滚锚点；同 ID 多 tag 折叠）
 #   ② registry 旧镜像——localhost:5001 retention（keep 2）+ blob GC 回收磁盘
-#      （此前仅 Jenkinsfile.cleanup 周一 03:00 cron 跑，发布高峰期一周内可堆积
+#      （cleanup 独立 job 已删除，现随每次发布收敛，不再有周度堆积窗口
 #      数十 tag；现随每次发布收敛）
 #   ③ SeaweedFS 旧对象——apps 发布不写桶；桶收敛在 *-static 发布内经
 #      mc mirror --remove 完成（见 pipeline_publish_static_site，prod+stg 双桶）
@@ -527,8 +588,10 @@ pipeline_test()
     )
 
     # Go 多模块测试（2026-09-12 补齐：此前 CI 只跑 pnpm test，Go 测试从未进流水线）。
-    # LAYER=web 跳过；PRODUCT≠all 只测对应产品模块 + common（保持反馈聚焦）。
-    if [ "${LAYER_FILTER:-all}" != "web" ]; then
+    # LAYER=static/web（纯前端）跳过；PRODUCT 必选单产品，只测对应产品模块 + common。
+    case "${LAYER_FILTER:-all}" in
+        static|web) ;;
+        *)
         local modules="api common common/crawler common/jobs nearby/api class/api liuyao/api admin/api auth/api comment/api"
         case "${PRODUCT_FILTER:-all}" in
             class)            modules="class/api common" ;;
@@ -545,35 +608,9 @@ pipeline_test()
             ( cd "$apps_dir/$m" && go build ./... && go test ./... ) || return 1
         done
         log_success "Go 测试全部通过"
-    fi
+        ;;
+    esac
 }
-
-# ============================================
-# 函数: pipeline_pull_image
-# ============================================
-# 拉取官方镜像（用于不从源码构建的服务如 Keycloak）
-# 环境变量控制：
-#   SERVICE_IMAGE - 官方镜像名（如 quay.io/keycloak/keycloak:26.2.3）
-# 返回：0=成功，1=失败
-pipeline_pull_image()
-{
-    local image="${SERVICE_IMAGE:-}"
-
-    if [ -z "$image" ]; then
-        log_error "SERVICE_IMAGE 未设置，无法拉取镜像"
-        return 1
-    fi
-
-    log_info "拉取镜像: $image"
-
-    if ! docker pull "$image"; then
-        log_error "镜像拉取失败: $image"
-        return 1
-    fi
-
-    log_success "镜像拉取完成: $image"
-}
-
 
 # _r4s_mem_available_mb - r4s 当前可用内存（MB），读取失败输出空字符串
 # 用 /proc/meminfo 的 MemAvailable（含可回收页缓存），BusyBox awk 兼容
@@ -1132,7 +1169,7 @@ pipeline_failure_cleanup()
 # 基础设施服务 Pipeline 函数
 # ============================================
 # 用于 Jenkinsfile.infra 统一基础设施 Pipeline
-# 支持 4 种服务: keycloak, nginx, noda-ops, postgres
+# 仅公共基础设施服务: nginx, seaweedfs, noda-ops, postgres
 # 每种服务使用独立的部署/健康检查策略
 # ============================================
 
@@ -1140,7 +1177,7 @@ pipeline_failure_cleanup()
 # 函数: pipeline_infra_preflight
 # ============================================
 # 基础设施服务前置检查（统一入口）
-# 参数: $1 = SERVICE (keycloak/nginx/noda-ops/postgres)
+# 参数: $1 = SERVICE (nginx/seaweedfs/noda-ops/postgres)
 # 返回: 0=检查通过，1=检查失败
 pipeline_infra_preflight()
 {
@@ -1148,18 +1185,12 @@ pipeline_infra_preflight()
 
     log_info "基础设施前置检查: $service"
 
-    # 并行化锁（2026-09-13）：静态站发布按产品维度加锁（不同产品桶前缀独立、
-    # 可并行）；核心服务（nginx/postgres/seaweedfs/keycloak/noda-ops）共用
-    # infra-core 锁互斥。锁名经 NODA_LOCK_NAME 传给 pipeline_release_lock 兜底释放。
+    # 并行化锁（2026-09-13）：公共基础设施服务（nginx/seaweedfs/noda-ops/postgres）
+    # 共用 infra-core 锁互斥——共享 compose 栈与边缘反代，核心服务间串行防覆盖；
+    # 与 noda-apps（apps-prod/apps-preprod 锁）、产品静态站发布（publish-<product> 锁）
+    # 维度互不重叠，跨 Pipeline 可并行。锁名经 NODA_LOCK_NAME 传给 pipeline_release_lock。
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
-        case "$service" in
-            *-static)
-                NODA_LOCK_NAME="publish-${service%-static}"
-                ;;
-            *)
-                NODA_LOCK_NAME="infra-core"
-                ;;
-        esac
+        NODA_LOCK_NAME="infra-core"
         export NODA_LOCK_NAME
         if ! acquire_deploy_lock 3600 "$NODA_LOCK_NAME"; then
             log_error "无法获取部署锁 [$NODA_LOCK_NAME]，可能有其他部署进行中"
@@ -1223,7 +1254,7 @@ pipeline_infra_preflight()
                     return 1
                 fi
             else
-                log_error "反代容器未运行（请先通过 infra-deploy Pipeline 部署 nginx）"
+                log_error "反代容器未运行（请先通过 noda-infra Pipeline 部署 nginx）"
                 return 1
             fi
         else
@@ -1239,13 +1270,6 @@ pipeline_infra_preflight()
 
         # 服务专属检查（r4s 模式）
         case "$service" in
-            keycloak)
-                if [ -z "${SERVICE_IMAGE:-}" ]; then
-                    log_error "SERVICE_IMAGE 未设置（Keycloak 需要指定官方镜像）"
-                    return 1
-                fi
-                log_info "Keycloak 镜像: $SERVICE_IMAGE"
-                ;;
             nginx)
                 # 无额外检查
                 ;;
@@ -1261,14 +1285,8 @@ pipeline_infra_preflight()
                 fi
                 log_info "noda-infra-postgres-prod 容器运行中（r4s）"
                 ;;
-            remark42)
-                # 无额外检查
-                ;;
             seaweedfs)
                 # 无额外检查（S3 凭据由 Doppler 注入）
-                ;;
-            *-static)
-                # 静态站发布：无容器部署，仅构建 + mc mirror
                 ;;
             *)
                 log_error "未知服务: $service"
@@ -1307,7 +1325,7 @@ pipeline_infra_preflight()
                     return 1
                 fi
             else
-                log_error "反代容器未运行（请先通过 infra-deploy Pipeline 部署 nginx）"
+                log_error "反代容器未运行（请先通过 noda-infra Pipeline 部署 nginx）"
                 return 1
             fi
         else
@@ -1323,13 +1341,6 @@ pipeline_infra_preflight()
 
         # 服务专属检查
         case "$service" in
-            keycloak)
-                if [ -z "${SERVICE_IMAGE:-}" ]; then
-                    log_error "SERVICE_IMAGE 未设置（Keycloak 需要指定官方镜像）"
-                    return 1
-                fi
-                log_info "Keycloak 镜像: $SERVICE_IMAGE"
-                ;;
             nginx)
                 # 无额外检查
                 ;;
@@ -1344,14 +1355,8 @@ pipeline_infra_preflight()
                 fi
                 log_info "noda-infra-postgres-prod 容器运行中"
                 ;;
-            remark42)
-                # 无额外检查
-                ;;
             seaweedfs)
                 # 无额外检查（S3 凭据由 Doppler 注入）
-                ;;
-            *-static)
-                # 静态站发布：无容器部署，仅构建 + mc mirror
                 ;;
             *)
                 log_error "未知服务: $service"
@@ -1368,14 +1373,20 @@ pipeline_infra_preflight()
 # 函数: pipeline_backup_database
 # ============================================
 # 部署前自动备份
-# 参数: $1 = SERVICE (keycloak/postgres)
+# 参数: $1 = SERVICE（仅 postgres 需要备份，其余服务直接跳过）
 # 环境变量: BACKUP_HOST_DIR
 # 返回: 0=备份成功或跳过，1=备份失败
 # 导出: INFRA_BACKUP_FILE（备份文件路径）
 pipeline_backup_database()
 {
     local service="$1"
-    
+
+    # 仅 postgres 有持久化数据需要备份
+    if [ "$service" != "postgres" ]; then
+        log_info "$service 不需要备份（无持久化数据）"
+        return 0
+    fi
+
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         # r4s 远程模式：备份文件存储在 r4s 上
         local backup_dir="/opt/noda/noda-infra/docker/volumes/backup/infra-pipeline/${service}"
@@ -1383,24 +1394,13 @@ pipeline_backup_database()
         timestamp=$(date +"%Y%m%d-%H%M%S")
         local backup_file="${backup_dir}/${timestamp}.sql.gz"
 
-        # nginx/noda-ops 不需要备份
-        if [ "$service" != "keycloak" ] && [ "$service" != "postgres" ]; then
-            log_info "$service 不需要备份（无持久化数据）"
-            return 0
-        fi
-
         # 在 r4s 上创建备份目录
         remote_exec "mkdir -p $backup_dir"
 
         log_info "部署前备份（r4s）: $service -> $backup_file"
 
-        if [ "$service" = "keycloak" ]; then
-            remote_docker_exec "noda-infra-postgres-prod" \
-                "pg_dump -U postgres --clean --if-exists keycloak | gzip > ${backup_file}"
-        elif [ "$service" = "postgres" ]; then
-            remote_docker_exec "noda-infra-postgres-prod" \
-                "pg_dumpall -U postgres --clean --if-exists | gzip > ${backup_file}"
-        fi
+        remote_docker_exec "noda-infra-postgres-prod" \
+            "pg_dumpall -U postgres --clean --if-exists | gzip > ${backup_file}"
 
         # 验证备份文件大小 > 1KB（在 r4s 上检查）
         local file_size
@@ -1420,23 +1420,12 @@ pipeline_backup_database()
         timestamp=$(date +"%Y%m%d-%H%M%S")
         local backup_file="${backup_dir}/${timestamp}.sql.gz"
 
-        # nginx/noda-ops 不需要备份
-        if [ "$service" != "keycloak" ] && [ "$service" != "postgres" ]; then
-            log_info "$service 不需要备份（无持久化数据）"
-            return 0
-        fi
-
         mkdir -p "$backup_dir"
 
         log_info "部署前备份: $service -> $backup_file"
 
-        if [ "$service" = "keycloak" ]; then
-            docker exec noda-infra-postgres-prod pg_dump -U postgres --clean --if-exists keycloak |
-                gzip >"$backup_file"
-        elif [ "$service" = "postgres" ]; then
-            docker exec noda-infra-postgres-prod pg_dumpall -U postgres --clean --if-exists |
-                gzip >"$backup_file"
-        fi
+        docker exec noda-infra-postgres-prod pg_dumpall -U postgres --clean --if-exists |
+            gzip >"$backup_file"
 
         # 验证备份文件大小 > 1KB
         local file_size
@@ -1457,6 +1446,8 @@ pipeline_backup_database()
 # 函数: pipeline_infra_deploy
 # ============================================
 # 部署分发（根据服务类型调用对应部署策略）
+# 仅公共基础设施服务：nginx / seaweedfs / noda-ops / postgres
+# 产品静态站发布已迁往 noda-apps Pipeline（pipeline_publish_product）
 # 参数: $1 = SERVICE
 # 返回: 由子函数决定
 pipeline_infra_deploy()
@@ -1466,9 +1457,6 @@ pipeline_infra_deploy()
     local service="$1"
 
     case "$service" in
-        keycloak)
-            pipeline_deploy_keycloak_prod
-            ;;
         nginx)
             pipeline_deploy_nginx
             ;;
@@ -1478,313 +1466,22 @@ pipeline_infra_deploy()
         postgres)
             pipeline_deploy_postgres
             ;;
-        remark42)
-            pipeline_deploy_remark42
-            ;;
         seaweedfs)
             pipeline_deploy_seaweedfs
             ;;
-        class-static)
-            pipeline_publish_class_static
-            ;;
-        www-static)
-            # 188 对象量级；阈值 50
-            pipeline_publish_static_site www www/web out/index.html 50
-            ;;
-        admin-static)
-            # 77 对象量级；阈值 20
-            pipeline_publish_static_site admin admin/web out/login.html 20
-            ;;
-        liuyao-static)
-            # 71 个 HTML + 资产 ≈ 数百对象；阈值 200。
-            # GA4 分站 property 构建期烤进 bundle（NEXT_PUBLIC_* 静态构建无运行时 env），
-            # 值同 LAYER=web 镜像构建的 --build-arg；SITE_URL/AUTH_APP_URL 代码默认值即生产。
-            export NEXT_PUBLIC_GA4_LIUYAO_ID=G-ZXK92PWTEF
-            pipeline_publish_static_site liuyao liuyao/web out/en.html 200
-            ;;
-        nearby-static)
-            # 9 个 HTML + 图片/字体资产 ≈ 200 对象量级；阈值 60。
-            # GA4 分站 property 构建期烤进 bundle（值同 LAYER=web 的 --build-arg，
-            # 且代码兜底即此值，此处显式 export 防漂移）；sitemap.xml 由 nearbyapi 出。
-            export NEXT_PUBLIC_GA4_NEARBY_ID=G-58CDREDT81
-            pipeline_publish_static_site nearby nearby/web out/en.html 60
-            ;;
-        comment-static)
-            # S5：comment 前端 admin 占位页（阈值 20；API 由 Go commentapi 承接）。
-            pipeline_publish_static_site comment comment out/admin.html 20
-            ;;
-        auth-static)
-            # S5：auth 页面静态壳（~35 HTML + 资产；阈值 60）。
-            # zh 无前缀 canonical（defaultLocale=zh）——哨兵文件用 out/zh/login.html；
-            # API 端点不在静态产物（Go authapi :3004 承接）。
-            pipeline_publish_static_site auth auth out/zh/login.html 60
-            ;;
         *)
-            log_error "未知服务: $service"
+            log_error "未知服务: $service（可选 nginx/seaweedfs/noda-ops/postgres）"
             return 1
             ;;
     esac
 }
 
 # ============================================
-# 函数: pipeline_deploy_keycloak_prod
-# ============================================
-# [2026-09-12 已下线] Keycloak 已退役：Google OAuth 由 auth 应用直连
-# （授权码 + PKCE），会话走 auth_sessions 表；DB 已归档后 drop。
-# 本函数保留仅为防误部署守卫；如需恢复，git revert 下线提交。
-pipeline_deploy_keycloak_prod()
-{
-    log_error "keycloak 已于 2026-09-12 下线，拒绝部署（OAuth 走 auth 应用直连）。"
-    log_error "如确需恢复：git revert 下线提交 + 恢复 backup/2026/decommission/keycloak-final-20260912.dump。"
-    return 1
-}
-
-pipeline_deploy_keycloak_prod_disabled()
-{
-    local container_name="noda-infra-keycloak"
-    local image="${SERVICE_IMAGE:-quay.io/keycloak/keycloak:26.2.3}"
-
-    log_info "Keycloak 直接替换部署: $container_name ($image)"
-
-    if [ "$DEPLOY_TARGET" = "r4s" ]; then
-        # r4s 远程部署模式
-        # 停止并移除旧容器（远程）
-        local running
-        running=$(remote_exec "docker inspect -f '{{.State.Running}}' $container_name 2>/dev/null || echo false")
-        if [ "$running" = "true" ]; then
-            log_info "停止旧容器（r4s）: $container_name"
-            remote_exec "docker stop -t 30 $container_name || true"
-            remote_exec "docker rm $container_name || true"
-        elif remote_exec "docker inspect $container_name >/dev/null 2>&1"; then
-            remote_exec "docker rm $container_name || true"
-        fi
-
-        # 准备 env 文件（本地生成，传输到 r4s）
-        local tmp_env
-        tmp_env=$(prepare_keycloak_env_file)
-        log_info "传输 env 文件到 r4s..."
-        cat "$tmp_env" | remote_exec "cat > /tmp/keycloak.env"
-
-        # 拉取官方镜像（在 r4s 上，per D-07）
-        log_info "拉取 Keycloak 镜像（r4s）: $image"
-        remote_exec "docker pull $image"
-
-        # 启动新容器（远程）
-        # realm 持久化在 postgres（KC_DB），data 目录挂持久卷防 realm 丢失
-        # ⚠️ 2026-09-02 教训：旧版 --tmpfs /opt/keycloak/data + 无 KC_DB，
-        #    每次部署 realm 全丢
-        log_info "启动容器（r4s）: $container_name ($image)"
-        remote_exec "mkdir -p /opt/noda/noda-infra/docker/services/keycloak/data"
-        # KC 镜像以 uid 1000(keycloak) 运行：root 属主的 data 目录会让主题资源聚合
-        # 写不了 data/tmp，/resources/* 全部 500（登录页裸奔）
-        remote_exec "chown -R 1000:0 /opt/noda/noda-infra/docker/services/keycloak/data"
-        remote_exec "docker run -d \
-            --name $container_name \
-            --network $NETWORK_NAME \
-            --network-alias $container_name \
-            --restart always \
-            --stop-timeout 30 \
-            --security-opt no-new-privileges \
-            --cap-drop ALL \
-            -v /opt/noda/noda-infra/docker/services/keycloak/themes:/opt/keycloak/themes:ro \
-            -v /opt/noda/noda-infra/docker/services/keycloak/data:/opt/keycloak/data \
-            --memory 768m \
-            --memory-reservation 512m \
-            --cpus 1 \
-            --log-driver json-file \
-            --log-opt max-size=10m \
-            --log-opt max-file=3 \
-            --env-file /tmp/keycloak.env \
-            --label com.docker.compose.project=noda-infra \
-            --label com.docker.compose.service=keycloak \
-            --label noda.service-group=infra \
-            --label noda.environment=prod \
-            --health-cmd \"echo > /dev/tcp/localhost/8080 2>/dev/null || exit 1\" \
-            --health-interval 10s \
-            --health-timeout 5s \
-            --health-retries 10 \
-            --health-start-period 900s \
-            $image \
-            start --hostname=auth.noda.co.nz --http-enabled=true"
-
-        rm -f "$tmp_env"
-
-        # reload nginx（远程）
-        reload_nginx
-
-        log_success "Keycloak 部署完成（r4s）: $container_name ($image)"
-    else
-        # 本地模式：保持现有逻辑
-        # 停止并移除旧容器
-        if [ "$(is_container_running "$container_name")" = "true" ]; then
-            log_info "停止旧容器: $container_name"
-            docker stop -t 30 "$container_name"
-            docker rm "$container_name"
-        elif docker inspect "$container_name" >/dev/null 2>&1; then
-            docker rm "$container_name"
-        fi
-
-        # 准备 env 文件
-        local tmp_env
-        tmp_env=$(prepare_keycloak_env_file)
-
-        # 启动新容器
-        log_info "启动容器: $container_name ($image)"
-
-        docker run -d \
-            --name "$container_name" \
-            --network "$NETWORK_NAME" \
-            --network-alias "$container_name" \
-            --restart always \
-            --stop-timeout 30 \
-            --security-opt no-new-privileges \
-            --cap-drop ALL \
-            -v "$PROJECT_ROOT/docker/services/keycloak/themes:/opt/keycloak/themes:ro" \
-            -v "$PROJECT_ROOT/docker/services/keycloak/data:/opt/keycloak/data" \
-            --memory 768m \
-            --memory-reservation 512m \
-            --cpus 1 \
-            --log-driver json-file \
-            --log-opt max-size=10m \
-            --log-opt max-file=3 \
-            --env-file "$tmp_env" \
-            --label "com.docker.compose.project=noda-infra" \
-            --label "com.docker.compose.service=keycloak" \
-            --label "noda.service-group=infra" \
-            --label noda.environment=prod \
-            --health-cmd "echo > /dev/tcp/localhost/8080 2>/dev/null || exit 1" \
-            --health-interval 10s \
-            --health-timeout 5s \
-            --health-retries 10 \
-            --health-start-period 900s \
-            "$image" \
-            start --hostname=auth.noda.co.nz --http-enabled=true
-
-        rm -f "$tmp_env"
-
-        # reload nginx 刷新 DNS 缓存（容器重建后 IP 会变）
-        reload_nginx
-
-        log_success "Keycloak 部署完成: $container_name ($image)"
-    fi
-}
-
-
-# ============================================
-# 函数: prepare_keycloak_env_file
-# ============================================
-# 生成 Keycloak 环境变量文件
-# 返回: 临时 env 文件路径（通过 echo 输出）
-prepare_keycloak_env_file()
-{
-    local tmp_file="/tmp/keycloak-prod.env.$$"
-    local env_template="$PROJECT_ROOT/docker/env-keycloak.env"
-
-    if [ ! -f "$env_template" ]; then
-        log_error "Keycloak env 模板文件不存在: $env_template"
-        return 1
-    fi
-
-    local vars='${POSTGRES_USER} ${POSTGRES_PASSWORD} ${KEYCLOAK_ADMIN_USER} ${KEYCLOAK_ADMIN_PASSWORD} ${SMTP_HOST} ${SMTP_PORT} ${SMTP_FROM} ${SMTP_USER} ${SMTP_PASSWORD}'
-    envsubst "$vars" <"$env_template" >"$tmp_file"
-    echo "$tmp_file"
-}
-
-# ============================================
-# 函数: pipeline_deploy_remark42
-# ============================================
-# [2026-09-12 已下线] Remark42 已退役：评论由 comment 应用接管
-# （comments.noda.co.nz → noda-frontend-prod:3012，remark42 兼容 API 形状）。
-# 本函数保留仅为防误部署守卫；如需恢复，git revert 下线提交。
-pipeline_deploy_remark42()
-{
-    log_error "remark42 已于 2026-09 下线，拒绝部署（评论走 comment 应用 :3012）。"
-    log_error "如确需恢复：git revert 下线提交后重跑；下线前的数据卷 remark42-data 已归档。"
-    return 1
-}
-
-pipeline_deploy_remark42_disabled()
-{
-    local compose_file="docker/docker-compose.remark42.yml"
-
-    if [ "$DEPLOY_TARGET" = "r4s" ]; then
-        log_info "Remark42 部署（r4s 远程）"
-
-        # 拉取最新镜像
-        log_info "拉取 Remark42 镜像..."
-        remote_exec "docker pull umputun/remark42:latest"
-
-        # 停止旧容器
-        remote_exec "docker rm -f remark42 2>/dev/null || true"
-
-        # 从 Doppler 下载密钥到临时文件（避免在 SSH 命令中内联展开密钥）
-        local secrets_file
-        secrets_file=$(mktemp /tmp/remark42-secrets.XXXXXX.env)
-        chmod 600 "$secrets_file"
-        # 安全防护：doppler 下载时禁用 trace（避免密钥值打印到 Jenkins 日志）
-        local _restore_trace=""
-        if [[ $- == *x* ]]; then _restore_trace="set -x"; set +x; fi
-        doppler secrets download --project noda --config prd --format env --no-file > "$secrets_file"
-        $_restore_trace
-        log_info "已从 Doppler 拉取 Remark42 密钥"
-
-        # 传输密钥文件到 r4s
-        log_info "传输密钥文件到 r4s..."
-        cat "$secrets_file" | remote_exec "cat > /tmp/remark42-secrets.env"
-        rm -f "$secrets_file"
-
-        # 启动新容器（使用 --env-file 传递密钥，不在命令行中暴露密钥值）
-        remote_exec "cd /opt/noda/noda-infra && docker compose --env-file /tmp/remark42-secrets.env --env-file docker/.env -f ${compose_file} up -d"
-
-        # 等待健康检查
-        log_info "等待 Remark42 就绪..."
-        local _max_wait=30
-        local _elapsed=0
-        while [ $_elapsed -lt $_max_wait ]; do
-            local _healthy
-            _healthy=$(remote_exec "docker inspect --format='{{.State.Health.Status}}' remark42 2>/dev/null || echo unknown")
-            if [ "$_healthy" = "healthy" ]; then
-                log_info "Remark42 已就绪（等待 ${_elapsed} 秒）"
-                break
-            fi
-            sleep 2
-            _elapsed=$((_elapsed + 2))
-        done
-        if [ $_elapsed -ge $_max_wait ]; then
-            log_warn "Remark42 健康检查超时，检查日志..."
-            remote_exec "docker logs remark42 --tail 20 2>/dev/null || true"
-        fi
-        log_success "Remark42 部署完成（r4s）"
-    else
-        # 本地模式
-        log_info "Remark42 部署（本地 docker compose）"
-
-        docker compose --env-file docker/.env -f ${compose_file} up -d
-
-        log_info "等待 Remark42 就绪..."
-        local _max_wait=30
-        local _elapsed=0
-        while [ $_elapsed -lt $_max_wait ]; do
-            local _healthy
-            _healthy=$(docker inspect --format='{{.State.Health.Status}}' remark42 2>/dev/null || echo "unknown")
-            if [ "$_healthy" = "healthy" ]; then
-                log_info "Remark42 已就绪（等待 ${_elapsed} 秒）"
-                break
-            fi
-            sleep 2
-            _elapsed=$((_elapsed + 2))
-        done
-        if [ $_elapsed -ge $_max_wait ]; then
-            log_warn "Remark42 健康检查超时"
-            docker logs remark42 --tail 20 2>/dev/null || true
-        fi
-        log_success "Remark42 部署完成"
-    fi
-}
-
 # 函数: pipeline_deploy_nginx
 # ============================================
 # Nginx docker compose recreate（秒级中断，非零停机）
+# noda-infra SERVICE=nginx：反代镜像（noda-static，源码在 noda-apps 仓）已由
+# pipeline_build_nginx_image 构建并传输到 r4s，此处取 r4s 最新 tag 重建容器
 # 返回: 0=成功，1=失败
 pipeline_deploy_nginx()
 {
@@ -1887,34 +1584,87 @@ pipeline_deploy_nginx()
 
 
 # ============================================
-# 函数: pipeline_publish_class_static / pipeline_publish_static_site
+# 函数: _static_product_config / pipeline_publish_product / pipeline_publish_static_site
 # ============================================
-# 静态站发布（S1 class 沉淀，S2 泛化；Jenkinsfile.infra SERVICE=<product>-static）
+# 产品静态站发布（noda-apps Pipeline LAYER=static 前端路径；原 infra *-static 服务迁入）
 # 流程：本地构建（pnpm build → out/）→ alpine/socat 临时中继
 #   （R4S registry mirror 受限拉不动 minio/mc，复用 prod 种子期同款中继）
 #   → mc mirror 增量同步到 SeaweedFS 桶 noda-static/sites/<product>/ → 中继即拆
-#   （S3 端口不常驻暴露 LAN）→ 桶内对象数验证
+#   （S3 端口不常驻暴露 LAN）→ 桶内对象数验证 + 哨兵文件
 # 凭据：/etc/noda/jobs.env 的 S3_ACCESS_KEY/S3_SECRET_KEY——经 ssh 读入本地 shell
 #   变量后传给 mc，不回显、不落盘、不进日志
 # nginx 侧无需重启：桶内容更新即时生效（HTML no-cache，浏览器与 CF 均不缓存陈旧壳）
-# 参数: $1=产品名（=桶前缀 sites/<product>/） $2=web 目录（相对 noda-apps 根）
-#       $3=发布校验文件（相对 out/） $4=最少对象数阈值（防「整树漏传」类事故）
+# 并行安全：publish-<product> 锁 + 中继容器名/端口（9333-9340 固定映射）/mc alias
+#   全部带产品维度——跨产品并行发布互不覆盖
 # 依赖：本机 mc（brew install minio/stable/mc）、NODA_APPS_DIR（默认 $PROJECT_ROOT/noda-apps）
-pipeline_publish_class_static()
+
+# _static_product_config - 产品发布配置表
+# 设置: STATIC_WEB_DIR（相对 noda-apps 根） STATIC_SENTINEL（相对 out/） STATIC_MIN_OBJS
+# 阈值防「整树漏传」类事故；GA4 分站 property 构建期烤进 bundle（静态构建无运行时 env），
+# 值同 LAYER=all 镜像构建的 --build-arg，此处显式 export 防漂移
+_static_product_config()
 {
-    # 39 个 html + 资产 ≈ 422 对象；阈值 30
-    pipeline_publish_static_site class class/web out/en.html 30
+    case "$1" in
+        class)
+            # 39 个 html + 资产 ≈ 422 对象；阈值 30
+            STATIC_WEB_DIR="class/web";  STATIC_SENTINEL="out/en.html";      STATIC_MIN_OBJS=30 ;;
+        www)
+            # 188 对象量级；阈值 50
+            STATIC_WEB_DIR="www/web";    STATIC_SENTINEL="out/index.html";   STATIC_MIN_OBJS=50 ;;
+        admin)
+            # 77 对象量级；阈值 20
+            STATIC_WEB_DIR="admin/web";  STATIC_SENTINEL="out/login.html";   STATIC_MIN_OBJS=20 ;;
+        liuyao)
+            # 71 个 HTML + 资产 ≈ 数百对象；阈值 200
+            export NEXT_PUBLIC_GA4_LIUYAO_ID=G-ZXK92PWTEF
+            STATIC_WEB_DIR="liuyao/web"; STATIC_SENTINEL="out/en.html";      STATIC_MIN_OBJS=200 ;;
+        nearby)
+            # 9 个 HTML + 图片/字体资产 ≈ 200 对象量级；阈值 60；sitemap.xml 由 nearbyapi 出
+            export NEXT_PUBLIC_GA4_NEARBY_ID=G-58CDREDT81
+            STATIC_WEB_DIR="nearby/web"; STATIC_SENTINEL="out/en.html";      STATIC_MIN_OBJS=60 ;;
+        comment)
+            # admin 占位页（阈值 20；API 由 Go commentapi 承接）
+            STATIC_WEB_DIR="comment";    STATIC_SENTINEL="out/admin.html";   STATIC_MIN_OBJS=20 ;;
+        auth)
+            # 静态壳（~35 HTML + 资产；阈值 60）；zh 无前缀 canonical（defaultLocale=zh）
+            # ——哨兵文件用 out/zh/login.html；API 端点不在静态产物（Go authapi :3004 承接）
+            STATIC_WEB_DIR="auth";       STATIC_SENTINEL="out/zh/login.html"; STATIC_MIN_OBJS=60 ;;
+        *)
+            log_error "未知静态站产品: $1（可选 class/www/admin/liuyao/nearby/auth/comment）"
+            return 1
+            ;;
+    esac
+}
+
+# pipeline_publish_product - 产品静态站发布入口（noda-apps LAYER=static 调用）
+# publish-<product> 锁互斥同产品发布；锁登记到 NODA_LOCK_REGISTRY，
+# post always 的 pipeline_release_lock 兜底释放
+pipeline_publish_product()
+{
+    local product="$1"
+    _static_product_config "$product" || return 1
+    NODA_LOCK_NAME="publish-${product}"
+    export NODA_LOCK_NAME
+    if ! acquire_deploy_lock 3600 "$NODA_LOCK_NAME"; then
+        log_error "无法获取发布锁 [publish-${product}]，可能有同产品发布进行中"
+        return 1
+    fi
+    local rc=0
+    pipeline_publish_static_site "$product" || rc=1
+    release_deploy_lock "$NODA_LOCK_NAME"
+    return $rc
 }
 
 pipeline_publish_static_site()
 {
     local product="$1"
-    local min_objs="${4:-20}"
+    _static_product_config "$product" || return 1
+    local min_objs="$STATIC_MIN_OBJS"
     local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
-    local web_dir="$apps_dir/$2"
+    local web_dir="$apps_dir/$STATIC_WEB_DIR"
     # 中继按产品隔离（2026-09-13 并行化）：不同产品的静态发布同时进行时，
     # 共享的容器名/端口/alias 会互删对方的中继（build 76/77 实证）——
-    # 容器名、端口（9333-9339 固定映射）、mc alias 全部带产品维度。
+    # 容器名、端口（9333-9340 固定映射）、mc alias 全部带产品维度。
     local relay_name="tmp-s3-relay-${product}"
     case "$product" in
         class)   local relay_port="9333" ;;
@@ -1928,7 +1678,7 @@ pipeline_publish_static_site()
     esac
     local alias_name="noda-prd-relay-${product}"
 
-    _publish_class_cleanup()
+    _publish_site_cleanup()
     {
         remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true" || true
         mc alias remove "$alias_name" >/dev/null 2>&1 || true
@@ -1941,7 +1691,7 @@ pipeline_publish_static_site()
     fi
 
     # node/pnpm 就绪：Jenkins launchd 环境 PATH 不含 nvm——显式注入
-    # （apps-deploy 同款 v24.12.0 优先，其次任意 nvm 版本；homebrew node 仅作兜底）
+    # （noda-apps 同款 v24.12.0 优先，其次任意 nvm 版本；homebrew node 仅作兜底）
     local nvm_bin
     if [ -d "$HOME/.nvm/versions/node/v24.12.0/bin" ]; then
         nvm_bin="$HOME/.nvm/versions/node/v24.12.0/bin"
@@ -1962,11 +1712,11 @@ pipeline_publish_static_site()
         return 1
     fi
 
-    # 依赖就绪：fresh checkout 无 node_modules（Jenkins infra-deploy workspace 不持久），
+    # 依赖就绪：fresh checkout 无 node_modules（Jenkins workspace 轮换槽位首次使用时），
     # workspace 安装一次后随目录持久，frozen-lockfile 幂等且快
     if [ ! -d "$web_dir/node_modules" ]; then
         log_info "前端依赖缺失，pnpm install --frozen-lockfile ($apps_dir)..."
-        (cd "$ctx_dir" && pnpm install --frozen-lockfile) || {
+        (cd "$apps_dir" && pnpm install --frozen-lockfile) || {
             log_error "pnpm install 失败: $apps_dir"
             return 1
         }
@@ -1977,16 +1727,16 @@ pipeline_publish_static_site()
         log_error "$product 静态站构建失败: $web_dir"
         return 1
     fi
-    if [ ! -f "$web_dir/$3" ]; then
-        log_error "构建产物缺失 $web_dir/$3（output:export 校验失败）"
+    if [ ! -f "$web_dir/$STATIC_SENTINEL" ]; then
+        log_error "构建产物缺失 $web_dir/$STATIC_SENTINEL（output:export 校验失败）"
         return 1
     fi
 
     # 临时 S3 中继：192.168.100.1:9333 → seaweedfs:8333（noda-network 内）
-    _publish_class_cleanup
+    _publish_site_cleanup
     if ! remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true; docker run -d --name $relay_name --network $NETWORK_NAME -p 192.168.100.1:${relay_port}:8333 alpine/socat tcp-listen:8333,fork,reuseaddr tcp:seaweedfs:8333"; then
         log_error "S3 中继启动失败"
-        _publish_class_cleanup
+        _publish_site_cleanup
         return 1
     fi
 
@@ -1998,7 +1748,7 @@ pipeline_publish_static_site()
     s3s=$(remote_exec "grep -E '^S3_SECRET_KEY=' /etc/noda/jobs.env | head -1 | cut -d= -f2-" 2>/dev/null | tr -d '\r"')
     if [ -z "$s3a" ] || [ -z "$s3s" ]; then
         log_error "S3 凭据读取失败（/etc/noda/jobs.env）"
-        _publish_class_cleanup
+        _publish_site_cleanup
         return 1
     fi
 
@@ -2018,7 +1768,7 @@ pipeline_publish_static_site()
 
     if ! mc alias set "$alias_name" "http://192.168.100.1:${relay_port}" "$s3a" "$s3s" --api S3v4; then
         log_error "mc alias 设置失败"
-        _publish_class_cleanup
+        _publish_site_cleanup
         return 1
     fi
 
@@ -2027,7 +1777,7 @@ pipeline_publish_static_site()
     # 作用域仅 sites/<product>/ 前缀，图片（avatars/ 等）与其它前缀不受影响
     if ! mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name/noda-static/sites/$product/"; then
         log_error "静态站同步失败"
-        _publish_class_cleanup
+        _publish_site_cleanup
         return 1
     fi
 
@@ -2068,7 +1818,7 @@ pipeline_publish_static_site()
         log_warn "桶列举 ${objs} < 源 ${src_objs}（中继截断或漏传）——重跑 mirror 补传（第 ${attempt} 次）..."
         mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name/noda-static/sites/$product/" >/dev/null 2>&1 || true
     done
-    _publish_class_cleanup
+    _publish_site_cleanup
     if [ "${objs:-0}" -lt "$min_objs" ]; then
         log_error "桶内对象数异常（${objs} < ${min_objs}），发布疑似不完整"
         return 1
@@ -2077,7 +1827,7 @@ pipeline_publish_static_site()
         log_error "镜像对账失败：源 out/ $src_objs 个文件 ≠ 桶 $objs 个对象——mc mirror 静默漏传，发布不完整"
         return 1
     fi
-    local sentinel="${3#out/}"
+    local sentinel="${STATIC_SENTINEL#out/}"
     if [ -f "$web_dir/out/$sentinel" ]; then
         if ! mc stat "$alias_name/noda-static/sites/$product/$sentinel" >/dev/null 2>&1; then
             log_error "哨兵对象缺失：sites/$product/$sentinel（mc mirror 静默漏传）"
@@ -2326,14 +2076,6 @@ pipeline_infra_health_check()
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         # r4s 远程健康检查模式
         case "$service" in
-            keycloak)
-                # 900s：Keycloak 在 r4s（ARM）上冷启动实测 ~6-10 分钟；且配置变更（如
-                # JAVA_OPTS_APPEND）会触发 Quarkus 重新增强（实测 +175s）。docker 的
-                # --health-start-period 已同步设为 900s，宽限期内探测失败不计数，
-                # 两者必须保持一致，否则 boot 中途被标记 unhealthy 会误判部署失败
-                #（构建 #41 教训：60s 宽限 + 300s 门槛 → 启动到 ~160s 被误杀）。
-                wait_container_healthy "noda-infra-keycloak" 900 true true
-                ;;
             nginx)
                 # nginx -t 验证配置 + wait_container_healthy（远程；容器名动态解析）
                 remote_docker_exec "$(_resolve_nginx_container_remote)" "nginx -t"
@@ -2348,49 +2090,9 @@ pipeline_infra_health_check()
                 remote_docker_exec "noda-infra-postgres-prod" "pg_isready -h localhost -p 5432"
                 wait_container_healthy "noda-infra-postgres-prod" 90 true true
                 ;;
-            remark42)
-                wait_container_healthy "remark42" 60 true true
-                ;;
             seaweedfs)
                 # healthcheck 探测 master API（9333/cluster/status，容器内）
                 wait_container_healthy "seaweedfs" 60 true true
-                ;;
-            class-static)
-                # 静态壳发布无容器可查：以「nginx class 块可从桶拉到首页」为健康
-                # ⚠️ 必须带 Host: localhost——127.0.0.1 的 Host 不匹配任何 server_name，
-                # 会落进字母序最前的 cdn 默认块（cdn.conf）造成假 404
-                remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: localhost' --spider http://127.0.0.1:81/en"
-                ;;
-            www-static)
-                # www 块桶托管健康：首页可从桶拉取（Host 定位 www 块，同上 Host 教训）
-                remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: noda.co.nz' --spider http://127.0.0.1:81/"
-                ;;
-            admin-static)
-                # admin 块桶托管健康：/dashboard 页可拉取（根路径 / 已 302 到此）
-                remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: admin.noda.co.nz' --spider http://127.0.0.1:81/dashboard"
-                ;;
-            liuyao-static)
-                # liuyao 块桶托管健康：/divine（无前缀 en）经内部改写从桶拉取 +
-                # 带前缀 zh 路径直取（Host 定位 liuyao 块，同上 Host 教训）
-                # ⚠️ 每条探针独立 remote_docker_exec：&& 链会被 r4s 宿主 shell 拆开，
-                # 第二条 wget 落到宿主机执行（81 未绑定 → exit 4 假失败，build 62/63 实证）
-                remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: liuyao.noda.co.nz' --spider http://127.0.0.1:81/divine"
-                remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: liuyao.noda.co.nz' --spider http://127.0.0.1:81/zh/divine"
-                ;;
-            nearby-static)
-                # nearby 块桶托管健康：/（无前缀 en）经内部改写从桶拉取 +
-                # sitemap.xml 反代 nearbyapi（Host 定位 nearby 块，同上 Host 教训；
-                # 探针独立调用，理由同 liuyao-static）
-                remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: nearby.noda.co.nz' --spider http://127.0.0.1:81/"
-                remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: nearby.noda.co.nz' --spider http://127.0.0.1:81/sitemap.xml"
-                ;;
-            auth-static)
-                # S5：auth 块桶托管健康：/login（zh 无前缀，内部改写从桶拉取）
-                remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: auth.noda.co.nz' --spider http://127.0.0.1:81/login"
-                ;;
-            comment-static)
-                # S5：comment 块桶托管健康：/ →302 /admin（占位页从桶拉取）
-                remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: comments.noda.co.nz' --spider http://127.0.0.1:81/admin"
                 ;;
             *)
                 log_error "未知服务: $service"
@@ -2400,9 +2102,6 @@ pipeline_infra_health_check()
     else
         # 本地模式：保持现有逻辑
         case "$service" in
-            keycloak)
-                wait_container_healthy "noda-infra-keycloak" 300
-                ;;
             nginx)
                 # nginx -t 验证配置 + wait_container_healthy（容器名动态解析）
                 docker exec "$(_resolve_nginx_container)" nginx -t
@@ -2417,15 +2116,8 @@ pipeline_infra_health_check()
                 docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
                 wait_container_healthy "noda-infra-postgres-prod" 90
                 ;;
-            remark42)
-                wait_container_healthy "remark42" 60
-                ;;
             seaweedfs)
                 wait_container_healthy "seaweedfs-stg" 60
-                ;;
-            *-static)
-                # 静态站发布即桶同步，无容器可查
-                log_info "静态站本地模式无容器健康检查，跳过"
                 ;;
             *)
                 log_error "未知服务: $service"
@@ -2439,8 +2131,8 @@ pipeline_infra_health_check()
 # ============================================
 # 函数: pipeline_infra_verify
 # ============================================
-# 部署后验证
-# 参数: $1 = SERVICE
+# 部署后验证（公共基础设施服务）
+# 参数: $1 = SERVICE (nginx/seaweedfs/noda-ops/postgres)
 # 返回: 0=验证通过，1=验证失败
 pipeline_infra_verify()
 {
@@ -2448,10 +2140,6 @@ pipeline_infra_verify()
 
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         case "$service" in
-            keycloak)
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --spider http://noda-infra-keycloak:8080/ 2>/dev/null"
-                log_success "Keycloak E2E 验证通过（r4s）"
-                ;;
             nginx)
                 remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --spider http://127.0.0.1:81/ 2>/dev/null"
                 log_success "Nginx E2E 验证通过（r4s）"
@@ -2469,74 +2157,10 @@ pipeline_infra_verify()
                 remote_exec "docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432"
                 log_success "PostgreSQL 验证通过（r4s）"
                 ;;
-            remark42)
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --spider http://remark42:8080/ping 2>/dev/null"
-                log_success "Remark42 E2E 验证通过（r4s）"
-                ;;
             seaweedfs)
                 # E2E：同网络内对桶根发 GET（匿名只读 → 200 ListBucket）
                 remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --spider http://seaweedfs:8333/noda-static/"
                 log_success "SeaweedFS E2E 验证通过（r4s）"
-                ;;
-            class-static)
-                # E2E：首页 /en 静态壳 + 动态段 app-shell 兜底 + /api 直达 Go API
-                # （Host: localhost 定位 class 块，见 health_check 同款注释）
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: localhost' --spider http://127.0.0.1:81/en"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: localhost' --spider http://127.0.0.1:81/en/course/app-shell.html"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: localhost' --spider http://127.0.0.1:81/api/health"
-                log_success "Class 静态壳 E2E 验证通过（r4s）"
-                ;;
-            www-static)
-                # E2E：首页 + 中文页 + API 直连（Host 定位 www 块）
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: noda.co.nz' --spider http://127.0.0.1:81/"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: noda.co.nz' --spider http://127.0.0.1:81/zh/"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: noda.co.nz' --spider http://127.0.0.1:81/api/courses"
-                log_success "www 静态站 E2E 验证通过（r4s）"
-                ;;
-            admin-static)
-                # E2E：登录页 + 动态路由壳文件 + cronjobs 深链兜底（=200 壳）+ Go API 健康
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: admin.noda.co.nz' --spider http://127.0.0.1:81/login"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: admin.noda.co.nz' --spider http://127.0.0.1:81/cronjobs/app-shell.html"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: admin.noda.co.nz' --spider http://127.0.0.1:81/cronjobs/noda-api/backup-db"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: admin.noda.co.nz' --spider http://127.0.0.1:81/api/admin/health"
-                log_success "Admin 静态壳 E2E 验证通过（r4s）"
-                ;;
-            liuyao-static)
-                # E2E：无前缀 en 首页（内部改写）+ zh 前缀页 + 静态 sitemap/robots +
-                # 分享深链壳兜底（=200）+ .txt 净 404（--server-response 断言 404）+ API 直连
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: liuyao.noda.co.nz' --spider http://127.0.0.1:81/divine"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: liuyao.noda.co.nz' --spider http://127.0.0.1:81/zh/topic/love"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: liuyao.noda.co.nz' --spider http://127.0.0.1:81/sitemap.xml"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: liuyao.noda.co.nz' --spider http://127.0.0.1:81/en/s/app-shell.html"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: liuyao.noda.co.nz' --spider http://127.0.0.1:81/en/s/deadbeef-0000-0000-0000-000000000000"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --server-response --spider --header 'Host: liuyao.noda.co.nz' http://127.0.0.1:81/en/s/deadbeef-0000-0000-0000-000000000000.txt 2>&1 | grep -q 'HTTP/1.1 404'"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: liuyao.noda.co.nz' --spider http://127.0.0.1:81/api/health"
-                log_success "Liuyao 静态壳 E2E 验证通过（r4s）"
-                ;;
-            nearby-static)
-                # E2E：无前缀 en 首页（内部改写）+ zh 前缀页 + sitemap 反代 Go + item
-                # 深链壳兜底（=200）+ .txt 净 404 + API 直连
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: nearby.noda.co.nz' --spider http://127.0.0.1:81/"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: nearby.noda.co.nz' --spider http://127.0.0.1:81/zh"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: nearby.noda.co.nz' --spider http://127.0.0.1:81/sitemap.xml"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: nearby.noda.co.nz' --spider http://127.0.0.1:81/en/item/app-shell.html"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: nearby.noda.co.nz' --spider http://127.0.0.1:81/en/item/deadbeef-0000-0000-0000-000000000000"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --server-response --spider --header 'Host: nearby.noda.co.nz' http://127.0.0.1:81/en/item/deadbeef-0000-0000-0000-000000000000.txt 2>&1 | grep -q 'HTTP/1.1 404'"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: nearby.noda.co.nz' --spider 'http://127.0.0.1:81/api/nearby/feed?city=auckland&limit=1'"
-                log_success "Nearby 静态壳 E2E 验证通过（r4s）"
-                ;;
-            auth-static)
-                # E2E：login/register 静态壳（桶）+ Go authapi 健康
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: auth.noda.co.nz' --spider http://127.0.0.1:81/login"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: auth.noda.co.nz' --spider http://127.0.0.1:81/register"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: auth.noda.co.nz' --spider http://127.0.0.1:81/api/health"
-                log_success "Auth 静态壳 E2E 验证通过（r4s）"
-                ;;
-            comment-static)
-                # E2E：admin 占位页（桶）+ Go commentapi 健康
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: comments.noda.co.nz' --spider http://127.0.0.1:81/admin"
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --header 'Host: comments.noda.co.nz' --spider http://127.0.0.1:81/api/health"
-                log_success "Comment 静态壳 E2E 验证通过（r4s）"
                 ;;
             *)
                 log_error "未知服务: $service"
@@ -2545,10 +2169,6 @@ pipeline_infra_verify()
         esac
     else
         case "$service" in
-            keycloak)
-                docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://noda-infra-keycloak:8080/ 2>/dev/null
-                log_success "Keycloak E2E 验证通过"
-                ;;
             nginx)
                 docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://127.0.0.1:81/ 2>/dev/null
                 log_success "Nginx E2E 验证通过"
@@ -2566,16 +2186,9 @@ pipeline_infra_verify()
                 docker exec noda-infra-postgres-prod pg_isready -h localhost -p 5432
                 log_success "PostgreSQL 验证通过"
                 ;;
-            remark42)
-                docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://remark42:8080/ping 2>/dev/null
-                log_success "Remark42 E2E 验证通过"
-                ;;
             seaweedfs)
                 docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://seaweedfs:8333/noda-static-stg/
                 log_success "SeaweedFS E2E 验证通过"
-                ;;
-            *-static)
-                log_info "静态站本地模式无 E2E 容器验证，跳过"
                 ;;
             *)
                 log_error "未知服务: $service"
@@ -2583,6 +2196,87 @@ pipeline_infra_verify()
                 ;;
         esac
     fi
+}
+
+# ============================================
+# 函数: pipeline_verify_product
+# ============================================
+# 产品维度 E2E 验证（noda-apps Pipeline Verify 阶段）
+# 纯公网链路（Cloudflare → 边缘反代 → 桶静态壳 / Go API），与部署目标无关：
+# LAYER=static 验证「桶页面 + API 直达」，LAYER=api/all 验证所选产品的 API 链路
+# 参数: $1 = PRODUCT (class/www/admin/liuyao/nearby/auth/comment)
+# 返回: 0=全部探针 200，1=任一失败
+pipeline_verify_product()
+{
+    local product="$1"
+    local retries="${E2E_MAX_RETRIES:-5}"
+    local interval="${E2E_INTERVAL:-2}"
+    local checks=""
+
+    case "$product" in
+        class)
+            checks="https://class.noda.co.nz/en|class 静态壳
+https://class.noda.co.nz/api/health|class api 链"
+            ;;
+        www)
+            checks="https://www.noda.co.nz/|www 首页
+https://www.noda.co.nz/api/courses|www api 链"
+            ;;
+        admin)
+            checks="https://admin.noda.co.nz/login|admin 登录页
+https://admin.noda.co.nz/api/admin/health|admin api 链"
+            ;;
+        liuyao)
+            checks="https://liuyao.noda.co.nz/divine|liuyao 静态壳
+https://liuyao.noda.co.nz/api/health|liuyao api 链"
+            ;;
+        nearby)
+            checks="https://nearby.noda.co.nz/|nearby 静态壳
+https://nearby.noda.co.nz/sitemap.xml|nearby sitemap（反代 Go）
+https://nearby.noda.co.nz/api/nearby/feed?city=auckland&limit=1|nearby api 链"
+            ;;
+        auth)
+            checks="https://auth.noda.co.nz/login|auth 登录页
+https://auth.noda.co.nz/api/health|auth api 链"
+            ;;
+        comment)
+            checks="https://comments.noda.co.nz/admin|comment 占位页
+https://comments.noda.co.nz/api/health|comment api 链"
+            ;;
+        *)
+            log_error "未知产品: $product（可选 class/www/admin/liuyao/nearby/auth/comment）"
+            return 1
+            ;;
+    esac
+
+    local entry url label code i all_ok="true"
+    while IFS= read -r entry; do
+        [ -z "$entry" ] && continue
+        url="${entry%%|*}"
+        label="${entry#*|}"
+        code="000"
+        for i in $(seq 1 "$retries"); do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "$url" 2>/dev/null || echo "000")
+            if [ "$code" = "200" ]; then
+                break
+            fi
+            log_info "等待 $label → 200 ... (${i}/${retries}, HTTP ${code})"
+            sleep "$interval"
+        done
+        if [ "$code" = "200" ]; then
+            log_success "$label → 200 ($url)"
+        else
+            log_error "E2E 验证失败: $label ($url) 最后状态 HTTP ${code}"
+            all_ok="false"
+        fi
+    done <<EOF
+$checks
+EOF
+
+    if [ "$all_ok" != "true" ]; then
+        return 1
+    fi
+    log_success "产品 $product E2E 验证全部通过"
 }
 
 # ============================================
@@ -2599,9 +2293,6 @@ pipeline_infra_cleanup()
     ls -la "${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}/infra-pipeline/${service}/" 2>/dev/null || true
 
     case "$service" in
-        keycloak)
-            cleanup_dangling
-            ;;
         nginx)
             log_info "$service 无需额外清理（dangling 清理由通用 wrapper 处理）"
             ;;
@@ -2611,8 +2302,8 @@ pipeline_infra_cleanup()
         postgres)
             log_info "PostgreSQL 无需额外清理"
             ;;
-        remark42)
-            cleanup_dangling
+        seaweedfs)
+            log_info "SeaweedFS 无需额外清理"
             ;;
         *)
             log_info "未知服务: ${service}，跳过清理"
@@ -2636,9 +2327,6 @@ pipeline_infra_failure_cleanup()
     # 捕获目标服务容器日志
     local container_name
     case "$service" in
-        keycloak)
-            container_name="noda-infra-keycloak"
-            ;;
         nginx)
             container_name="$(_resolve_nginx_container)"
             ;;
@@ -2648,8 +2336,8 @@ pipeline_infra_failure_cleanup()
         postgres)
             container_name="noda-infra-postgres-prod"
             ;;
-        remark42)
-            container_name="remark42"
+        seaweedfs)
+            container_name="seaweedfs"
             ;;
         *)
             container_name="$service"
@@ -2719,11 +2407,14 @@ pipeline_deploy_preprod_inner()
     log_info "部署 Pre-prod 环境（S5 双容器: api + static）..."
 
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
-        # r4s 远程部署模式
-        # ⚠️ 先传三镜像再动旧容器（如果传失败，旧容器保留服务不断）
-        log_info "r4s 远程部署模式：传输三镜像到 r4s..."
+        # r4s 远程部署模式（休眠路径：noda-apps Pipeline 的 preprod 走 DEPLOY_TARGET=local）
+        # ⚠️ 先传镜像再动旧容器（如果传失败，旧容器保留服务不断）；按 LAYER 裁剪
+        log_info "r4s 远程部署模式：传输镜像到 r4s（LAYER=${LAYER_FILTER:-all}）..."
         local img
-        for img in "$api_image" "$static_image"; do
+        local transfer_list=()
+        if _layer_want_api; then transfer_list+=("$api_image"); fi
+        if _layer_want_web; then transfer_list+=("$static_image"); fi
+        for img in "${transfer_list[@]}"; do
             if ! transfer_image "$img" "$img"; then
                 log_error "Pre-prod 镜像传输失败: ${img}，旧容器保留"
                 return 1
@@ -2734,13 +2425,16 @@ pipeline_deploy_preprod_inner()
         _preprod_cleanup_legacy remote
 
         # 准备 preprod 专用 env 文件（api，本地生成，传输到 r4s）
-        local tmp_api_env
-        tmp_api_env=$(prepare_preprod_api_env_file) || return 1
-        log_info "传输 env 文件到 r4s..."
-        cat "$tmp_api_env" | remote_exec "cat > /tmp/preprod-api.env && chmod 600 /tmp/preprod-api.env"
-        rm -f "$tmp_api_env"
+        local tmp_api_env=""
+        if _layer_want_api; then
+            tmp_api_env=$(prepare_preprod_api_env_file) || return 1
+            log_info "传输 env 文件到 r4s..."
+            cat "$tmp_api_env" | remote_exec "cat > /tmp/preprod-api.env && chmod 600 /tmp/preprod-api.env"
+            rm -f "$tmp_api_env"
+        fi
 
-        # 启动 preprod 双容器（远程）：api → static
+        # 启动 preprod 容器（远程）：仅重建本层容器，未触达层保持原容器不动
+        if _layer_want_web; then
         log_info "启动 preprod 容器（r4s）: $PREPROD_STATIC_CONTAINER ($static_image)"
         remote_exec "docker run -d \
             --name $PREPROD_STATIC_CONTAINER \
@@ -2774,6 +2468,7 @@ pipeline_deploy_preprod_inner()
             --health-retries 3 \
             --health-start-period 10s \
             $static_image"
+        fi
 
         # 更新 preprod upstream 配置（远程）
         local upstream_content

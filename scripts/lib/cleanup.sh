@@ -426,7 +426,7 @@ cleanup_npm_cache()
 # ⚠️ GC 前提：registry 镜像必须是 v3——v2 的 garbage-collect 不跟踪 OCI
 # index→子 manifest 引用链，--delete-untagged 会把 buildx 推送的平台 manifest
 # 判为孤儿删除，存量 tag 全部损坏（2026-09-13 实证并升级 registry:3）。
-# 现已接入每次发布（pipeline_post_publish_cleanup），周 cron（Jenkinsfile.cleanup）保留兜底。
+# 现已接入每次发布（pipeline_post_publish_cleanup），周 cron 兜底由各 pipeline post 阶段承担。
 registry_maintenance()
 {
     # image-cleanup.sh 提供 registry_retention（source guard 幂等）
@@ -438,7 +438,7 @@ registry_maintenance()
         # GC 与 registry push 并发不安全（可能误删上传中的 blob）——registry-gc
         # 名锁串行多次 GC；GC vs push 的竞态窗口极小（GC 秒级），撞上时
         # transfer_image 失败可重试（transfer-first 模式不伤线上容器）。
-        # 无 R4S_HOST（如 Jenkinsfile.cleanup 独立跑）时裸跑，与历史行为一致。
+        # 无 R4S_HOST（独立跑 registry 维护）时裸跑，与历史行为一致。
         local _gc_locked=0
         if [ -n "${R4S_HOST:-}" ]; then
             acquire_deploy_lock 300 "registry-gc" && _gc_locked=1 || true

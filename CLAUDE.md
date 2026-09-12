@@ -36,7 +36,7 @@ Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL
 | 操作 | 脚本 |
 |------|------|
 | 全量部署（基础设施+应用） | `bash scripts/deploy/deploy-infrastructure-prod.sh` |
-| 部署应用（noda-apps 三容器） | Jenkins `apps-deploy` Pipeline（normal: preprod 验证 + 人工批准；fast: hotfix 直发） |
+| 部署应用（后端容器 + 产品静态站） | Jenkins `noda-apps` Pipeline（参数 PRODUCT + LAYER；normal: preprod 验证 + 人工批准；fast: hotfix 直发） |
 
 > legacy 单容器手动回退已于 2026-09-10 全部移除（脚本 + 旧容器均删）。紧急回退：`docker run` 启动保留在 r4s 的 `noda-apps:56fd05aa` 镜像（挂载 noda-network、env 参照 git 历史中 env-noda-apps.env），或用 pipeline 重发上一个 SHA 的三容器镜像。
 
@@ -143,15 +143,18 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 
 | Job | Jenkinsfile | 用途 | 阶段 |
 |-----|-------------|------|------|
-| **apps-deploy** | `Jenkinsfile.apps` | 统一应用部署（pre-prod 验证 + prod 直接替换） | 10 阶段: Pre-flight → Build → Test → Deploy Pre-prod → Health Check Pre-prod → Human Approval → Deploy Prod → Verify → CDN Purge → Cleanup |
-| **infra-deploy** | `Jenkinsfile.infra` | 基础设施部署（nginx/noda-ops/keycloak/postgres） | 7 阶段，参数化服务选择 |
-| **cleanup** | `Jenkinsfile.cleanup` | 定期清理 workspace + 缓存 | 每周一 03:00 自动触发 |
+| **noda-apps** | `jenkins/Jenkinsfile.apps` | 产品应用发布。PRODUCT 必选单产品（class / www / admin / liuyao / nearby / auth / comment，无 all）；LAYER=all（前后端一起，含 noda-static 反代镜像顺带刷新）/ api（仅后端 Go API）/ static（仅前端：静态站构建 + mc mirror 入 SeaweedFS 桶 sites/\<product\>/，prod+stg 双桶）；DEPLOY_MODE=normal（preprod 验证 + 人工批准后发 prod）/ fast（Test 通过直发 prod，仅限 hotfix） | Pre-flight → Build → [Deploy Pre-prod ‖ Test] → Human Approval → Deploy Prod → Publish Static → Verify（产品维度 E2E）→ CDN Purge |
+| **noda-infra** | `jenkins/Jenkinsfile.infra` | 公共基础设施镜像发布。SERVICE 必选其一（无 all）：nginx（构建 noda-static 反代镜像并传输 r4s 后重建容器）/ seaweedfs / noda-ops / postgres（先备份 + 人工确认） | Pre-flight → Backup（仅 postgres）→ Human Approval（仅 postgres）→ Deploy → Health Check → Verify |
 
-**部署流程（Build Once，人工验证后上线）：**
-1. 触发 `apps-deploy` — 自动构建并部署到 pre-prod
+**部署流程（Build Once，人工验证后上线，normal 模式）：**
+1. 触发 `noda-apps`（选择 PRODUCT + LAYER）— 自动构建并部署到 pre-prod
 2. 人工在 pre-prod 环境验证（`http://class.noda.test/`）
 3. 在 Jenkins UI 点击 "Proceed" 确认上线
 4. Pipeline 自动完成 prod 部署（停旧启新）
+
+**并行与清理：**
+- 两个 Pipeline 均允许并行构建：noda-apps 前端桶发布按产品隔离（publish-\<product\> 锁 + 产品维度中继），后端容器切换由 apps-prod/apps-preprod 锁互斥；noda-infra 核心服务共用 infra-core 锁——跨 Pipeline 互不阻塞
+- 旧 cleanup job（每周清理）已删除：构建后清理内建于两个 Pipeline 的 post 阶段（镜像保留、registry retention + GC、桶 mirror --remove 收敛）
 
 **Pre-prod 访问（通过 /etc/hosts）：**
 ```
@@ -180,24 +183,24 @@ curl -sf -c /tmp/jenkins-cookies -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD
   "$JENKINS_URL/crumbIssuer/api/json" > /tmp/crumb.json
 CRUMB=$(python3 -c "import json; print(json.load(open('/tmp/crumb.json'))['crumb'])")
 
-# 触发应用部署（pre-prod 验证 + prod 部署）
+# 触发应用发布（PRODUCT + LAYER 必选；fast 模式追加 &DEPLOY_MODE=fast，仅限 hotfix）
 curl -s -b /tmp/jenkins-cookies -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
   -X POST -H "Jenkins-Crumb: $CRUMB" \
-  "$JENKINS_URL/job/apps-deploy/build"
+  "$JENKINS_URL/job/noda-apps/buildWithParameters?PRODUCT=class&LAYER=api"
 
-# 触发基础设施部署（参数：nginx / noda-ops / keycloak / postgres）
+# 触发基础设施发布（参数：nginx / seaweedfs / noda-ops / postgres）
 curl -s -b /tmp/jenkins-cookies -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
   -X POST -H "Jenkins-Crumb: $CRUMB" \
-  "$JENKINS_URL/job/infra-deploy/build-withParameters?SERVICE=keycloak"
+  "$JENKINS_URL/job/noda-infra/buildWithParameters?SERVICE=seaweedfs"
 
-# 查询构建状态（将 JOB 和 N 替换为实际值）
+# 查询构建状态（将 N 替换为实际构建号）
 curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
-  "$JENKINS_URL/job/apps-deploy/N/api/json" | \
+  "$JENKINS_URL/job/noda-apps/N/api/json" | \
   python3 -c "import sys,json; d=json.load(sys.stdin); print('building:', d['building'], 'result:', d.get('result','running'))"
 
 # 查看构建日志（最后 100 行）
 curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
-  "$JENKINS_URL/job/apps-deploy/N/consoleText" | tail -100
+  "$JENKINS_URL/job/noda-apps/N/consoleText" | tail -100
 
 # 列出所有 Pipeline 任务
 curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
@@ -209,7 +212,7 @@ curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
 - HTTP 201 = 构建已排队（成功）
 - HTTP 200 + `building: True` = 构建进行中
 - 构建号从 `nextBuildNumber` 获取（触发后减 1 即为刚排队的构建号）
-- 参数化构建用 `build-withParameters?PARAM=value`
+- 参数化构建用 `buildWithParameters?PARAM=value`
 
 ### 紧急回退：手动部署脚本
 
@@ -423,9 +426,9 @@ Do not make direct repo edits outside a GSD workflow unless the user explicitly 
 
 | 操作 | 正确方式 |
 |------|----------|
-| 重建 noda-ops | `Jenkins infra-deploy?SERVICE=noda-ops` |
-| 重建 nginx | `Jenkins infra-deploy?SERVICE=nginx` |
-| 部署应用 | `Jenkins apps-deploy` |
+| 重建 noda-ops | `Jenkins noda-infra?SERVICE=noda-ops` |
+| 重建 nginx | `Jenkins noda-infra?SERVICE=nginx` |
+| 部署应用 | `Jenkins noda-apps`（参数 PRODUCT + LAYER） |
 | 爬虫抓取 | noda-api 内置 cron（每天 09:00 tutoring / 周一 10:00 hobby NZST）；`CRON_ENABLED=false` 可关闭。旧 python 爬虫链路（Jenkins run-crawler-temp / noda-ops crawl-skykiwi.py）已于 2026-09 退役 |
 
 **允许的只读操作：** `docker ps`、`docker logs`、`docker exec`（查看状态）、`docker inspect`、`curl` 健康检查。

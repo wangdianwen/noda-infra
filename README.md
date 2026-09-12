@@ -46,11 +46,13 @@ cp config/environments/.env.example config/environments/.env
    docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
    ```
 
-4. **部署应用服务**（三容器：noda-api / noda-frontend / noda-static）：
+4. **部署应用服务**（后端 Go API 容器 + 各产品静态站）：
 
    ```bash
-   # 通过 Jenkins apps-deploy Pipeline 部署（normal: preprod 验证 + 人工批准后发 prod）
-   # 镜像由 noda-apps 仓 infra/docker/Dockerfile.{noda-api,noda-frontend,noda-static} 构建
+   # 通过 Jenkins noda-apps Pipeline 发布（PRODUCT 单选产品 + LAYER=all/api/static；
+   # DEPLOY_MODE=normal: preprod 验证 + 人工批准后发 prod，fast: 仅限 hotfix 直发）
+   # 后端镜像由 noda-apps 仓 infra/docker/Dockerfile.{noda-api,noda-frontend,noda-static} 构建，
+   # 前端静态站经 mc mirror 发布到 SeaweedFS 桶 sites/<product>/（prod+stg 双桶）
    ```
 
 ## 服务概览
@@ -101,7 +103,7 @@ noda-infra/
 ├── services/           # 服务专用配置
 │   ├── postgres/       # PostgreSQL 初始化脚本和配置（init/, conf/）
 │   └── keycloak/       # Keycloak realm 配置和初始化脚本
-└── jenkins/            # Jenkinsfile（apps / infra / cleanup Pipeline）
+└── jenkins/            # Jenkinsfile（noda-apps / noda-infra Pipeline）
 ```
 
 ## 常用命令
@@ -113,8 +115,11 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml ps
 # 查看服务日志
 docker compose -f docker/docker-compose.yml logs <service-name>
 
-# 部署应用（三容器，走 Jenkins Pipeline）
-# Jenkins UI 触发 apps-deploy（normal / fast 模式）
+# 部署应用（走 Jenkins noda-apps Pipeline）
+# Jenkins UI 触发 noda-apps：PRODUCT 单选产品 + LAYER（all/api/static）+ DEPLOY_MODE（normal/fast）
+
+# 重建公共基础设施（走 Jenkins noda-infra Pipeline）
+# Jenkins UI 触发 noda-infra：SERVICE 单选（nginx / seaweedfs / noda-ops / postgres）
 
 # 数据库备份
 scripts/backup/backup-postgres.sh
