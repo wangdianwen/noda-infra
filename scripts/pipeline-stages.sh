@@ -2018,16 +2018,23 @@ pipeline_publish_static_site()
         log_warn "stg S3（127.0.0.1:8333）不可达或凭据缺失，跳过 preprod 桶同步"
     fi
 
-    # 对象数验证（防整树漏传；阈值由调用方按站点规模给）
-    local objs
+    # 对象级对账（2026-09-13 build 72 实证：mc mirror 曾静默漏传 zh/topic/love.html
+    # ——同目录部分对象上传部分跳过且零报错，min_objs 阈值无法发现，verify 探测兜住）。
+    # 源 out/ 文件数必须与桶前缀对象数完全一致，否则判发布不完整并失败。
+    local objs src_objs
+    src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
     objs=$(mc ls --recursive "$alias_name/noda-static/sites/$product/" 2>/dev/null | grep -c . || true)
     _publish_class_cleanup
     if [ "${objs:-0}" -lt "$min_objs" ]; then
         log_error "桶内对象数异常（${objs} < ${min_objs}），发布疑似不完整"
         return 1
     fi
+    if [ "${objs:-0}" -ne "${src_objs:-0}" ]; then
+        log_error "镜像对账失败：源 out/ $src_objs 个文件 ≠ 桶 $objs 个对象——mc mirror 静默漏传，发布不完整"
+        return 1
+    fi
 
-    log_success "$product 静态站发布完成：noda-static/sites/$product/（$objs 个对象，中继已拆除）"
+    log_success "$product 静态站发布完成：noda-static/sites/$product/（$objs 个对象，与源一致，中继已拆除）"
 }
 
 # ============================================
