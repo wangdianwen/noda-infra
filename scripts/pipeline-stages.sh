@@ -1826,21 +1826,29 @@ pipeline_publish_static_site()
         log_warn "桶列举 ${objs} < 源 ${src_objs}（中继截断或漏传）——重跑 mirror 补传（第 ${attempt} 次）..."
         mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name/noda-static/sites/$product/" >/dev/null 2>&1 || true
     done
-    _publish_site_cleanup
+
+    # 全部校验（对象数/对账/哨兵）都依赖 mc alias 在位——中继拆除必须放在最后。
+    # （旧写法先 cleanup 再 mc stat，哨兵检查必然失败——旧 infra-deploy #80 的 FAILURE 根因）
+    local publish_ok="true"
     if [ "${objs:-0}" -lt "$min_objs" ]; then
         log_error "桶内对象数异常（${objs} < ${min_objs}），发布疑似不完整"
-        return 1
+        publish_ok="false"
     fi
     if [ "${objs:-0}" -ne "${src_objs:-0}" ]; then
         log_error "镜像对账失败：源 out/ $src_objs 个文件 ≠ 桶 $objs 个对象——mc mirror 静默漏传，发布不完整"
-        return 1
+        publish_ok="false"
     fi
     local sentinel="${STATIC_SENTINEL#out/}"
     if [ -f "$web_dir/out/$sentinel" ]; then
         if ! mc stat "$alias_name/noda-static/sites/$product/$sentinel" >/dev/null 2>&1; then
             log_error "哨兵对象缺失：sites/$product/$sentinel（mc mirror 静默漏传）"
-            return 1
+            publish_ok="false"
         fi
+    fi
+
+    _publish_site_cleanup
+    if [ "$publish_ok" != "true" ]; then
+        return 1
     fi
 
     log_success "$product 静态站发布完成：noda-static/sites/$product/（$objs 个对象，与源一致，中继已拆除）"
@@ -1953,11 +1961,33 @@ pipeline_deploy_seaweedfs()
     rm -f "$s3json"
 
     # ③ mc 初始化桶 + 匿名只读（幂等）
+    # r4s registry mirror 拉不动 minio/mc（publish 同款已知限制，实测 pull denied）——
+    # r4s 模式改走「本地 mc + 临时 socat 中继」，9340 端口与产品发布端口池隔离，中继即拆
     log_info "初始化 S3 桶 ${S3_BUCKET}（mb --ignore-existing + anonymous download）..."
     local mc_sh="mc mb --ignore-existing seaweedfs/${S3_BUCKET} && mc anonymous set download seaweedfs/${S3_BUCKET}"
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
-        remote_exec "docker image inspect minio/mc:latest >/dev/null 2>&1 || docker pull minio/mc:latest" 60
-        remote_exec "docker run --rm --network noda-network -e MC_HOST_seaweed=\"http://${S3_ACCESS_KEY}:${S3_SECRET_KEY}@seaweedfs:8333\" minio/mc:latest sh -c 'mc ready seaweedfs && ${mc_sh}'" 120
+        if ! command -v mc >/dev/null 2>&1; then
+            log_error "本机未安装 minio client（brew install minio/stable/mc）"
+            return 1
+        fi
+        local relay_name="tmp-s3-relay-seaweedfs"
+        local alias_name="noda-prd-relay-seaweedfs"
+        remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true; docker run -d --name $relay_name --network $NETWORK_NAME -p 192.168.100.1:9340:8333 alpine/socat tcp-listen:8333,fork,reuseaddr tcp:seaweedfs:8333" || {
+            log_error "S3 中继启动失败"
+            return 1
+        }
+        local init_ok="false"
+        if mc alias set "$alias_name" "http://192.168.100.1:9340" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" --api S3v4 \
+            && mc mb --ignore-existing "$alias_name/$S3_BUCKET" \
+            && mc anonymous set download "$alias_name/$S3_BUCKET"; then
+            init_ok="true"
+        fi
+        remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true" || true
+        mc alias remove "$alias_name" >/dev/null 2>&1 || true
+        if [ "$init_ok" != "true" ]; then
+            log_error "S3 桶初始化失败（$S3_BUCKET）"
+            return 1
+        fi
     else
         local net
         net=$(docker inspect seaweedfs-stg --format '{{range $k,$_ := .NetworkSettings.Networks}}{{$k}}{{end}}')
