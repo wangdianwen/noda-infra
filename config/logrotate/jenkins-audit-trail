@@ -1,0 +1,13 @@
+# /etc/logrotate.d/jenkins-audit-trail
+# Jenkins Audit Trail 日志轮转配置（per AUDIT-03, D-01）
+# 保留 14 天，单文件最大 50MB
+/var/lib/jenkins/audit-trail/*.log {
+    daily
+    rotate 14
+    maxsize 50M
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 jenkins jenkins
+}

@@ -1,0 +1,2 @@
+# 排除实际凭据文件（仅保留 .example 模板）
+jenkins-admin.env

@@ -1,0 +1,172 @@
+# ============================================
+# Noda Apps Prod（S5 双容器：api / static；frontend Node 容器 2026-09-12 退役）
+# ============================================
+# 项目名: noda-apps-prod（参考定义；r4s 生产实际由 pipeline_deploy_prod 以 docker run 管理）
+# 部署: Jenkins apps-deploy Pipeline（scripts/pipeline-stages.sh）
+# 容器名: noda-api-prod / noda-static-prod
+#   1. noda-api-prod      Go 七 listener API（class 3001 / auth 3004 / liuyao 3007 / email 3010
+#                          / admin 3011 / comment 3012 / nearby 3014），启动时执行迁移
+#   2. noda-static-prod   nginx 反代（六个站点由 SeaweedFS 桶伺服；r4s 栈内合并原
+#                          noda-infra-nginx 反代角色，保留网络别名 noda-infra-nginx）
+# 兼容: noda-api-prod 保留网络别名 noda-apps-prod（残留引用平滑过渡）
+#
+# 旧三容器版本可在 git 历史中找回本文件前一版
+
+name: noda-apps-prod
+
+services:
+  # ----------------------------------------
+  # Go API — 256M（三容器拆分 D-06）
+  # class-api 3001 / liuyao-api 3007 / email-service 3010 / admin-api 3011
+  # 健康检查使用 127.0.0.1 避免 IPv6 解析问题（r4s Alpine）
+  # ----------------------------------------
+  noda-api-prod:
+    # ⚠️ 参考文件：prod 实际部署由 pipeline docker run noda-api:<commit tag> 完成，
+    # 不经本 compose（latest 不存在，手动 up 需自行 docker tag 提供）
+    image: noda-api:latest
+    container_name: noda-api-prod
+    labels:
+      - "noda.service-group=apps-prod"
+      - "noda.environment=prod"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 30s
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod
+      DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod
+      # Go API 会话/CORS（与退役 frontend 容器同名变量，各容器独立注入）
+      NEXT_PUBLIC_SESSION_COOKIE_NAME: noda_session
+      NEXT_PUBLIC_ALLOWED_ORIGINS: https://class.noda.co.nz,https://auth.noda.co.nz,https://www.noda.co.nz,https://admin.noda.co.nz,https://liuyao.noda.co.nz,https://comments.noda.co.nz
+      # Keycloak 内网端点（token introspection / admin）；noda-infra-nginx 别名由 static 容器承载
+      KEYCLOAK_INTERNAL_URL: http://noda-infra-nginx
+      # LLM（liuyao 起卦解卦）
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MAX_TOKENS: ${ANTHROPIC_MAX_TOKENS:-24000}
+      # Stripe（liuyao 支付）
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_DEEP_READ: ${STRIPE_PRICE_DEEP_READ:-}
+      LIUYAO_WEB_BASE_URL: ${LIUYAO_WEB_BASE_URL:-https://liuyao.noda.co.nz}
+      # Email（email-service 3010）
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: Noda <noreply@email.noda.co.nz>
+      EMAIL_SERVICE_API_KEY: ${EMAIL_SERVICE_API_KEY:-}
+      TOKEN_SECRET: ${TOKEN_SECRET:-}
+      # 内置 cron（爬虫/维护任务，Go 版；每天 09:00 tutoring / 周一 10:00 hobby NZST）。
+      # 旧 noda-ops python crawler 任务已删除（2026-09）；CRON_ENABLED=false 可临时关闭做对照
+      CRON_ENABLED: "true"
+      CRAWL_OUTPUT_DIR: /app/crawl-output
+      # S5 去 Node 化（2026-09-12）：:3004 authapi + :3012 commentapi listener。
+      # 密钥与原 frontend 容器同源（Doppler prd 经部署 shell 导出）
+      AUTH_API_PORT: "3004"
+      COMMENT_API_PORT: "3012"
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      AUTH_STATE_SECRET: ${AUTH_STATE_SECRET:-}
+      ALLOWED_ORIGINS: https://noda.co.nz,https://class.noda.co.nz,https://auth.noda.co.nz,https://www.noda.co.nz,https://admin.noda.co.nz,https://liuyao.noda.co.nz,https://comments.noda.co.nz
+      ADMIN_ALLOWED_EMAILS: wangdw2012@gmail.com
+      COMMENT_SERVICE_KEY: ${COMMENT_SERVICE_KEY:-}
+      # 头像桶（authapi avatar 写 SeaweedFS；blobstore 同款变量名）
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_BUCKET: noda-static
+    networks:
+      noda-network:
+        aliases:
+          - noda-api-prod
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:3001/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/crawl-output:uid=1001,gid=1001,mode=0755
+      - /app/crawler-logs:uid=1001,gid=1001,mode=0755
+
+  noda-static-prod:
+    # ⚠️ 参考文件：prod 实际部署由 pipeline docker run noda-static:<commit tag> 完成，
+    # 不经本 compose（latest 不存在，手动 up 需自行 docker tag 提供）
+    image: noda-static:latest
+    container_name: noda-static-prod
+    labels:
+      - "noda.service-group=apps-prod"
+      - "noda.environment=prod"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 30s
+    ports:
+      - "80:80"
+      - "81:81"
+      - "443:443"
+    volumes:
+      - ../config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../config/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ../config/nginx/snippets:/etc/nginx/snippets:ro
+      - ../config/nginx/ssl:/etc/nginx/ssl:ro
+      - ../config/nginx/errors:/etc/nginx/errors:ro
+    networks:
+      noda-network:
+        aliases:
+          - noda-static-prod
+          # 合并原 noda-infra-nginx 反代角色（cloudflared / KEYCLOAK_INTERNAL_URL 引用）
+          - noda-infra-nginx
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:81/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETGID
+      - SETUID
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+
+networks:
+  noda-network:
+    external: true
+    name: noda-network

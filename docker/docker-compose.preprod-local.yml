@@ -1,0 +1,192 @@
+# ============================================
+# 本机 Mac Preprod 环境（含 liuyao + Keycloak）
+# ============================================
+# 轻量级 preprod：postgres + 应用三容器（keycloak 已随 Keycloak 下线移除，2026-09-12）
+# 三容器拆分（2026-09）：原 noda-apps 单容器拆为
+#   preprod-noda-api（Go API 七 listener）/ preprod-noda-static（nginx 静态+反代）——S5 零 Node
+# 原 preprod-nginx 容器删除——static 容器顶替（监听 80/443，挂载 liuyao-local.conf）
+#
+# 使用：
+#   NORA_API_IMAGE=noda-api:<sha> NORA_FRONTEND_IMAGE=noda-frontend:<sha> \
+#   NORA_STATIC_IMAGE=noda-static:<sha> \
+#   docker compose -f docker/docker-compose.preprod-local.yml up -d
+#
+# 访问（需 /etc/hosts 加 127.0.0.1 liuyao-preprod.noda.co.nz auth-preprod.noda.co.nz）：
+#   liuyao:   https://liuyao-preprod.noda.co.nz/
+#
+# 也可直接用 localhost:端口：
+#   liuyao-web:  http://localhost:3005
+#   liuyao-api:  http://localhost:3007/api/health（跨容器经 static 反代 /api/）
+
+name: preprod
+
+services:
+  postgres:
+    image: postgres:17.9
+    container_name: preprod-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_password_change_me
+      POSTGRES_DB: noda_preprod
+    ports:
+      - "5433:5432"
+    volumes:
+      - preprod-pgdata:/var/lib/postgresql/data
+      - ./init-preprod.sql:/docker-entrypoint-initdb.d/03-init-preprod.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------
+  # Go API（聚合单二进制，五 listener：class 3001 / liuyao 3007 / email 3010 /
+  #   admin 3011 / nearby 3014）
+  # 镜像 = noda-apps Wave 3/4 新形态：Go 多模块聚合单容器（构建见
+  #   noda-apps/infra/docker/Dockerfile.noda-api，BuildKit GOCACHE 缓存挂载只重编改动包），
+  #   附带 noda-crawler 子进程二进制（NODA_CRAWLER_BIN=/usr/local/bin/noda-crawler 不变）
+  # ----------------------------------------
+  preprod-noda-api:
+    # 流水线恒传 NORA_API_IMAGE（commit tag）；构建机不再打 latest（2026-09-13）——
+    # 手动 compose 需先 docker tag noda-api:<sha> noda-api:latest
+    image: ${NORA_API_IMAGE:-noda-api:latest}
+    container_name: preprod-noda-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NODA_ENV: "preprod"
+      DATABASE_URL: "postgresql://postgres:postgres_password_change_me@postgres:5432/noda_preprod"
+      DIRECT_URL: "postgresql://postgres:postgres_password_change_me@postgres:5432/noda_preprod"
+      AUTH_BYPASS: "false"
+      # 会话 cookie 名（Go API 校验 cookie 用；preprod 独立名避免污染 prod 会话）
+      NEXT_PUBLIC_SESSION_COOKIE_NAME: "noda_session_preprod"
+      NEXT_PUBLIC_ALLOWED_ORIGINS: "https://class-preprod.noda.co.nz,https://auth-preprod.noda.co.nz,https://www-preprod.noda.co.nz,https://admin-preprod.noda.co.nz,https://liuyao-preprod.noda.co.nz,https://comments-preprod.noda.co.nz"
+      TOKEN_SECRET: "${TOKEN_SECRET:-}"
+      EMAIL_SERVICE_API_KEY: "${EMAIL_SERVICE_API_KEY:-}"
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      # Go emailapi 发件地址（必须用已验证域名 email.noda.co.nz，缺省会回退
+      # 未验证的 noda.co.nz 被 Resend 拒绝 → send-* 全部 500）
+      RESEND_FROM_EMAIL: "Noda <noreply@email.noda.co.nz>"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      ANTHROPIC_AUTH_TOKEN: "${ANTHROPIC_AUTH_TOKEN:-}"
+      ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
+      # 注意：ANTHROPIC_MODEL 不在此透传——宿主 shell 可能残留旧值（如 sonnet），
+      # 留缺走 Go 端代码默认（glm-5.3-flash），与 ZAI 网关匹配
+      ANTHROPIC_MAX_TOKENS: "24000"
+      CRAWL_POST_LIMIT: "10"
+      # Stripe test key 源头隔离：preprod 部署脚本从 Doppler config=prd_pre 导出
+      # （prd_pre 只存 test mode 值），与 prod（config=prd，live key）天然隔离，
+      # 变量名保持 STRIPE_* 与导出侧一致
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:-}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:-}"
+      STRIPE_PRICE_DEEP_READ: "${STRIPE_PRICE_DEEP_READ:-}"
+      LIUYAO_WEB_BASE_URL: "${LIUYAO_WEB_BASE_URL:-https://liuyao-preprod.noda.co.nz}"
+      # Nearby（2026-09 M1）：:3014 listener + Eventfinda 凭证（prd_pre 经 pipeline 导出）
+      NEARBY_API_PORT: "3014"
+      EVENTFINDA_API_HOST: "${EVENTFINDA_API_HOST:-}"
+      EVENTFINDA_API_USERNAME: "${EVENTFINDA_API_USERNAME:-}"
+      EVENTFINDA_API_PASSWORD: "${EVENTFINDA_API_PASSWORD:-}"
+      NEARBY_OSM_ENABLED: "${NEARBY_OSM_ENABLED:-true}"
+      NEARBY_NEWS_ENABLED: "${NEARBY_NEWS_ENABLED:-true}"
+      # S5 去 Node 化（2026-09-12）：:3004 authapi + :3012 commentapi listener。
+      # 密钥与 frontend 容器同源（Doppler prd_pre 经部署 shell 导出）
+      AUTH_API_PORT: "3004"
+      COMMENT_API_PORT: "3012"
+      GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
+      GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
+      AUTH_STATE_SECRET: "${AUTH_STATE_SECRET:-}"
+      ALLOWED_ORIGINS: "https://class-preprod.noda.co.nz,https://auth-preprod.noda.co.nz,https://www-preprod.noda.co.nz,https://admin-preprod.noda.co.nz,https://liuyao-preprod.noda.co.nz,https://comments-preprod.noda.co.nz"
+      ADMIN_ALLOWED_EMAILS: "wangdw2012@gmail.com,dryrun-admin@noda.test"
+      COMMENT_SERVICE_KEY: "${COMMENT_SERVICE_KEY:-}"
+      REMARK_WORDS_BAN_LIST: "赌博,代开发票,casino-spam"
+      # 头像桶（authapi avatar 写 SeaweedFS stg；blobstore 同款变量名）
+      S3_ENDPOINT: "http://seaweedfs:8333"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-}"
+      S3_BUCKET: "noda-static"
+    tmpfs:
+      - /tmp
+      - /app/crawl-output:uid=1001,gid=1001,mode=0755
+      - /app/crawler-logs:uid=1001,gid=1001,mode=0755
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  # ----------------------------------------
+  # Static（nginx）：www 静态站 + preprod 反代（顶替原 preprod-nginx）
+  # S5：配置内 preprod upstream 指向 preprod-noda-api（auth/comment API）+ 桶伺服静态站
+  # ----------------------------------------
+  preprod-noda-static:
+    # 流水线恒传 NORA_STATIC_IMAGE（commit tag 或本地最新 tag）；手动 compose 同上
+    image: ${NORA_STATIC_IMAGE:-noda-static:latest}
+    container_name: preprod-noda-static
+    restart: unless-stopped
+    # ⚠️ 不声明 depends_on: preprod-noda-api——compose 重建依赖目标（api）时会把
+    # dependent（static）一并 kill+destroy，配合 --no-deps 又不会重新拉起，
+    # 造成每次 api 发版后 static 消失（2026-09-13 build 343-349 实证）。
+    # static 的 nginx 对 api 走 resolver 运行时解析，无启动顺序需求；
+    # 自身 /health 为本地直答，健康检查亦不依赖 api。
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /Users/dianwenwang/Project/noda-infra/config/nginx/liuyao-local.conf:/etc/nginx/conf.d/default.conf:ro
+      - /Users/dianwenwang/Project/noda-infra/config/nginx/snippets:/etc/nginx/snippets:ro
+      - /Users/dianwenwang/Project/noda-infra/config/nginx/ssl:/etc/nginx/ssl:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:80/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ----------------------------------------
+  # SeaweedFS（stg 实例，Phase 1, 2026-09-12）
+  # 与 prod（R4S 实例）完全隔离：不同机器、不同数据卷、不同密钥、不同桶
+  # （noda-static-stg）。服务名同为 seaweedfs——S3_ENDPOINT 在各自网络内同名可达。
+  # s3.json 由 pipeline/脚本从 Doppler stg 渲染（gitignored）。
+  # ----------------------------------------
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.80
+    container_name: seaweedfs-stg
+    # hostname 必须与 -ip=seaweedfs 一致：master/volume/s3 组件间用该名字自连
+    # （container_name=seaweedfs-stg 时 /etc/hosts 无 seaweedfs → 自连 refused 崩溃循环）
+    hostname: seaweedfs
+    restart: unless-stopped
+    # ⚠️ command 折叠块内不可写 # 注释（会被并进命令吞掉后续参数——实测 -s3 整段丢失）
+    # S3 preprod 同步（2026-09-12）：每 bucket = 独立 collection 需独立 writable
+    # volume，原 -volume.max=12 被图片桶耗尽后新桶写入全失败（No writable volumes）；
+    # 磁盘 /data 223G 富余，上限放宽到 96
+    command: >-
+      server -dir=/data -ip=seaweedfs
+      -master.volumeSizeLimitMB=1024
+      -master.volumePreallocate=false
+      -volume.max=96
+      -s3 -s3.port=8333
+      -s3.config=/etc/seaweedfs/s3.json
+    volumes:
+      - seaweedfs-data:/data
+      - ../config/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    ports:
+      # S3 仅按需暴露：STG_S3_BIND=本机局域网 IP 时供 R4S nginx 公网 cdn-preprod 代理；
+      # 缺省只绑本机回环（本地 mc/调试用），不对局域网暴露
+      - "${STG_S3_BIND:-127.0.0.1}:8333:8333"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:9333/cluster/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  preprod-pgdata:
+  seaweedfs-data:

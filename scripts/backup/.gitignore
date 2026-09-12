@@ -1,0 +1,26 @@
+# 环境配置文件
+.env
+.env.*
+!.env.example
+.env.backup
+
+# 敏感信息
+*.key
+*.pem
+*.secret
+credentials.json
+secrets.yaml
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+.DS_Store
+
+# 测试文件
+test_*.db
+*.dump
+*.sql

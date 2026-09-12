@@ -1,0 +1,733 @@
+# ============================================================
+# liuyao-local.conf.example —— preprod(Mac) nginx 模板
+# 用法：cp 为 liuyao-local.conf 后由 docker-compose.preprod-local.yml
+#       挂载为 preprod-noda-static 的 /etc/nginx/conf.d/default.conf
+# 形态（2026-09-12 S5 后，运行时零 Node）：
+#   - 五站 + auth/comment 前端 = SeaweedFS 桶 sites/<product>/ 伺服
+#   - /api/* → preprod-noda-api（Go 七 listener：class 3001 / auth 3004 /
+#     liuyao 3007 / email 3010 / admin 3011 / comment 3012 / nearby 3014）
+#   - 桶 upstream：seaweedfs:8333（匿名只读，s3.json 授权）
+# 注意：顶部 map 块内联自 conf.d/*.map.conf（本机单文件形态）；
+#       修改后需 force-recreate preprod-noda-static（macOS 单文件 bind mount
+#       在文件被重写后 inode 失联，reload 会读不到配置）。
+# ============================================================
+
+# ============================================
+# 本机 Mac preprod nginx 配（与 prod 同构）
+# ============================================
+# 独立配置，不依赖 upstream-preprod.conf（那是给 r4s 用的）
+# 直接 proxy_pass 到 compose container/service name:port
+# 三容器拆分（2026-09）：本文件挂载于 preprod-noda-static（顶替原 preprod-nginx）；
+#   upstream 指向 preprod-noda-frontend（Next.js standalone）/ preprod-noda-api（Go 多端口）
+#
+# S3 preprod 同步（2026-09-12）：class/liuyao/nearby/admin/www 五站页面路由切换为
+#   SeaweedFS stg 桶（noda-static-stg/sites/<product>/）伺服——与 prod 完全同构；
+#   静态产物 = 同一份 output:'export' out/（mc mirror 到 stg 桶）。
+#   本容器需挂载 config/nginx/snippets（seaweedfs-* snippet + security-headers +
+#   upstream-seaweedfs 均为共享文件）。三个 map 文件（class/liuyao/nearby.map.conf）
+#   内联于下方 http 上下文（本文件即 conf.d/default.conf，http 级合法）。
+#   auth :3004 / comment :3012 仍为 SSR 反代（S5 去 Node 化时处理）；keycloak/cdn 不动。
+#
+# resolver：主 nginx.conf 已声明 resolver 127.0.0.11，conf.d 内重复声明会 emerg 且阻止 nginx 启动
+# （注意：preprod 容器换纯官方 nginx 镜像后 nginx.conf 无 resolver——桶代理的
+#   server 块按 prod 同款在 server 级自行声明 resolver）
+
+# ────────────────────────────────────────────
+# locale 协商 map（内联自 conf.d/class.map.conf + liuyao.map.conf + nearby.map.conf；
+# 与 prod 保持同步——prod 侧更新时三处同改）
+# ────────────────────────────────────────────
+
+# class：localePrefix:'always'（无前缀一律 302 到带前缀等价路径）
+map $cookie_noda_locale $class_cookie_locale {
+    ~*^zh-TW$   zh-TW;
+    ~*^zh$      zh;
+    default     "";
+}
+map $http_accept_language $class_al_zhtw {
+    default     0;
+    "~*zh-TW"   1;
+}
+map $http_accept_language $class_al_zh {
+    default     0;
+    "~*zh"      1;
+}
+map "$class_cookie_locale:$class_al_zhtw:$class_al_zh" $class_locale {
+    "~^zh-TW:"  zh-TW;
+    "~^zh:"     zh;
+    "~^:1"      zh-TW;
+    "~^:0:1"    zh;
+    default     en;
+}
+map $uri $class_needs_locale_redirect {
+    default                        1;
+    "~^/(en|zh|zh-TW)(/|$)"        0;
+    "~^/(_next|api|images)(/|$)"   0;
+    "~^/unknown-host"              0;
+    "~\.[A-Za-z0-9]+(/|$)"         0;
+}
+map $request_uri $class_loc {
+    default         en;
+    "~^/zh-TW(/|\?|$)" zh-TW;
+    "~^/zh(/|\?|$)"    zh;
+    "~^/en(/|\?|$)"    en;
+}
+map $request_uri $class_cache_control {
+    "~^/_next/"   "public, max-age=31536000, immutable";
+    default       "no-cache";
+}
+
+# liuyao：localePrefix:'as-needed'（en 无前缀 canonical，内部改写保 URL，仅 zh/zh-TW 302）
+map $cookie_noda_locale $liuyao_cookie_locale {
+    ~*^zh-TW$   zh-TW;
+    ~*^zh$      zh;
+    default     "";
+}
+map $http_accept_language $liuyao_al_zhtw {
+    default     0;
+    "~*zh-TW"   1;
+}
+map $http_accept_language $liuyao_al_zh {
+    default     0;
+    "~*zh"      1;
+}
+# ⚠️ 只依赖请求头——nginx map 的值在请求生命周期内缓存，rewrite last 内部重入
+# location 不会重算；凡依赖 $uri 的判定不能进 map（死循环 500，prod 首版踩坑）
+map "$liuyao_cookie_locale:$liuyao_al_zhtw:$liuyao_al_zh" $liuyao_locale {
+    "~^zh-TW:"  zh-TW;
+    "~^zh:"     zh;
+    "~^:1"      zh-TW;
+    "~^:0:1"    zh;
+    default     en;
+}
+map $request_uri $liuyao_loc {
+    default            en;
+    "~^/zh-TW(/|\?|$)" zh-TW;
+    "~^/zh(/|\?|$)"    zh;
+    "~^/en(/|\?|$)"    en;
+}
+map $request_uri $liuyao_cache_control {
+    "~^/_next/"   "public, max-age=31536000, immutable";
+    default       "no-cache";
+}
+
+# nearby：同 liuyao（as-needed）
+map $cookie_noda_locale $nearby_cookie_locale {
+    ~*^zh-TW$   zh-TW;
+    ~*^zh$      zh;
+    default     "";
+}
+map $http_accept_language $nearby_al_zhtw {
+    default     0;
+    "~*zh-TW"   1;
+}
+map $http_accept_language $nearby_al_zh {
+    default     0;
+    "~*zh"      1;
+}
+map "$nearby_cookie_locale:$nearby_al_zhtw:$nearby_al_zh" $nearby_locale {
+    "~^zh-TW:"  zh-TW;
+    "~^zh:"     zh;
+    "~^:1"      zh-TW;
+    "~^:0:1"    zh;
+    default     en;
+}
+map $request_uri $nearby_loc {
+    default            en;
+    "~^/zh-TW(/|\?|$)" zh-TW;
+    "~^/zh(/|\?|$)"    zh;
+    "~^/en(/|\?|$)"    en;
+}
+map $request_uri $nearby_cache_control {
+    "~^/_next/"   "public, max-age=31536000, immutable";
+    "~^/images/"  "public, max-age=31536000, immutable";
+    default       "no-cache";
+}
+
+# auth（S5 静态壳，内联自 conf.d/auth.map.conf）：as-needed 且 defaultLocale=**zh**
+# ——无前缀 canonical 是 zh，默认内部改写 /zh 前缀；协商命中 en/zh-TW 才 302
+map $cookie_noda_locale $auth_cookie_locale {
+    ~*^zh-TW$   zh-TW;
+    ~*^zh$      zh;
+    ~*^en$      en;
+    default     "";
+}
+map $http_accept_language $auth_al_zhtw {
+    default     0;
+    "~*zh-TW"   1;
+}
+map $http_accept_language $auth_al_zh {
+    default     0;
+    "~*zh"      1;
+}
+map "$auth_cookie_locale:$auth_al_zhtw:$auth_al_zh" $auth_locale {
+    "~^zh-TW:"  zh-TW;
+    "~^zh:"     zh;
+    "~^en:"     en;
+    "~^:1"      zh-TW;
+    "~^:0:1"    zh;
+    default     zh;
+}
+map $request_uri $auth_loc {
+    default            zh;
+    "~^/zh-TW(/|\?|$)" zh-TW;
+    "~^/zh(/|\?|$)"    zh;
+    "~^/en(/|\?|$)"    en;
+}
+map $request_uri $auth_cache_control {
+    "~^/_next/"      "public, max-age=31536000, immutable";
+    "~^/images/"     "public, max-age=31536000, immutable";
+    "~^/favicon"     "public, max-age=31536000, immutable";
+    "~^/icon"        "public, max-age=31536000, immutable";
+    "~^/apple-icon"  "public, max-age=31536000, immutable";
+    "~^/avatars/"    "public, max-age=604800";
+    default          "no-cache";
+}
+# comment 静态前端（admin 占位页）缓存注入
+map $request_uri $comment_cache_control {
+    "~^/_next/"      "public, max-age=31536000, immutable";
+    default          "no-cache";
+}
+
+# ── HTTP → HTTPS 重定向 ──
+server {
+    listen 80;
+    server_name liuyao-preprod.noda.co.nz auth-preprod.noda.co.nz
+                admin-preprod.noda.co.nz class-preprod.noda.co.nz
+                www-preprod.noda.co.nz nearby-preprod.noda.co.nz localhost;
+
+    # ACME challenge passthrough (if ever needed)
+    location /.well-known/acme-challenge/ {
+        root /etc/nginx/ssl;
+    }
+
+    # 容器健康检查端点（preprod-noda-static healthcheck 探测，不依赖 upstream）
+    location /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ── HTTPS: liuyao（S3 静态桶版，与 prod liuyao 块同构）──
+server {
+    listen 443 ssl;
+    server_name liuyao-preprod.noda.co.nz;
+
+    ssl_certificate /etc/nginx/ssl/noda.dev.crt;
+    ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
+
+    include /etc/nginx/snippets/upstream-seaweedfs.conf;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    absolute_redirect off;
+    client_max_body_size 10M;
+
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # Go API（preprod-noda-api:3007）— /api/ 分流（起卦 SSE 流式 + share-cards）
+    location /api/ {
+        proxy_pass http://preprod-noda-api:3007;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # SSE 流式：关闭 buffering，长超时
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 1800s;
+        proxy_send_timeout 1800s;
+        chunked_transfer_encoding on;
+    }
+
+    # RSC 载荷 .txt：桶内缺（未预渲染 token 段）必须净 404（先于 s/[token] 深链壳）
+    location ~ \.txt$ {
+        include /etc/nginx/snippets/seaweedfs-liuyao-static.conf;
+    }
+
+    # 分享落地页深链 /<loc>/s/<token> → app-shell 占位壳 + client 取数
+    location ~ ^/(en|zh|zh-TW)/s/[^/]+(/|$) {
+        include /etc/nginx/snippets/seaweedfs-liuyao-static.conf;
+        error_page 403 404 =200 /$liuyao_loc/s/app-shell.html;
+    }
+
+    # 静态站入口：locale 协商（as-needed：en 内部改写保 URL，zh/zh-TW 302）
+    location / {
+        set $loc $liuyao_locale;
+        if ($uri ~ "^/(en|zh|zh-TW)(/|$)") { set $loc ""; }
+        if ($uri ~ "^/(_next|api|images|fonts)(/|$)") { set $loc ""; }
+        if ($uri ~ "\.[A-Za-z0-9]+(/|$)") { set $loc ""; }
+        if ($loc = zh-TW) { return 302 /zh-TW$request_uri; }
+        if ($loc = zh) { return 302 /zh$request_uri; }
+        if ($loc = en) { rewrite ^(.*)$ /en$1 last; }
+        include /etc/nginx/snippets/seaweedfs-liuyao-static.conf;
+        error_page 403 404 /404.html;
+    }
+}
+
+# ── HTTPS: Auth 服务域名（S5 静态壳，与 prod auth 块同构）──
+# 页面 = 桶 sites/auth/；/api/ 双跑期仍 → preprod-noda-frontend:3004（Node），
+# S5.4 切 preprod-noda-api:3004（Go authapi）
+server {
+    listen 443 ssl;
+    server_name auth-preprod.noda.co.nz;
+
+    ssl_certificate /etc/nginx/ssl/noda.dev.crt;
+    ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
+
+    include /etc/nginx/snippets/upstream-seaweedfs.conf;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    # 302 Location 不绝对化（prod :81 教训同款防御）
+    absolute_redirect off;
+
+    client_max_body_size 100M;
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # 根页：export 烤不出服务端跳转，nginx 承担
+    location = / {
+        return 302 /login;
+    }
+
+    # 无前缀页面（zh canonical）：协商 en/zh-TW → 302；默认内部改写 /zh
+    location ~ ^/(login|register|callback|verify-email|forgot-password|reset-password|profile|settings)(/.*)?$ {
+        if ($auth_locale = en) {
+            return 302 /en$uri$is_args$args;
+        }
+        if ($auth_locale = zh-TW) {
+            return 302 /zh-TW$uri$is_args$args;
+        }
+        rewrite ^(.*)$ /zh$1 last;
+    }
+
+    # 静态资产
+    location /_next/ {
+        include /etc/nginx/snippets/seaweedfs-auth-static.conf;
+    }
+    location /images/ {
+        include /etc/nginx/snippets/seaweedfs-auth-static.conf;
+    }
+    location = /favicon.ico {
+        include /etc/nginx/snippets/seaweedfs-auth-static.conf;
+    }
+    location = /icon.svg {
+        include /etc/nginx/snippets/seaweedfs-auth-static.conf;
+    }
+    location = /apple-icon.png {
+        include /etc/nginx/snippets/seaweedfs-auth-static.conf;
+    }
+
+    # 头像（Go authapi 写桶 avatars/ 前缀，nginx 直读）
+    location /avatars/ {
+        add_header Cache-Control $auth_cache_control always;
+        include /etc/nginx/snippets/security-headers.conf;
+        rewrite ^/avatars/(.*)$ /noda-static/avatars/$1 break;
+        proxy_pass http://$seaweedfs_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host "seaweedfs:8333";
+        proxy_set_header Connection "";
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
+    }
+
+    # 其余全部（带前缀页面、/404.html、/zh/* 302 规整、RSC .txt）
+    location / {
+        # as-needed：/zh 前缀直达请求 302 回 canonical（$request_uri 判定防内部改写重入）
+        if ($request_uri ~ ^/zh(/.+)$) {
+            return 302 $1;
+        }
+        add_header Cache-Control $auth_cache_control always;
+        include /etc/nginx/snippets/seaweedfs-auth-static.conf;
+        error_page 403 404 /404.html;
+    }
+
+    # /api/* → Go authapi（S5.4 切换：影子对比通过后切 noda-api；回滚改回
+    # preprod-noda-frontend:3004 即回 Node）
+    location /api/ {
+        proxy_pass http://preprod-noda-api:3004;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+}
+
+# ── HTTPS: Admin Dashboard（S3 静态桶版，与 prod admin 块同构）──
+# /api/admin/ → preprod-noda-api:3011；页面 = 桶 sites/admin/
+server {
+    listen 443 ssl;
+    server_name admin-preprod.noda.co.nz;
+
+    ssl_certificate /etc/nginx/ssl/noda.dev.crt;
+    ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
+
+    include /etc/nginx/snippets/upstream-seaweedfs.conf;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    absolute_redirect off;
+    client_max_body_size 100M;
+
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # Admin Hono API
+    location /api/admin/ {
+        proxy_pass http://preprod-noda-api:3011;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+
+    # .txt（RSC 载荷）净 404（未预渲染 cronjobs 深链路由触发硬导航兜底）
+    location ~ \.txt$ {
+        include /etc/nginx/snippets/seaweedfs-admin-static.conf;
+    }
+
+    # regex 顺序敏感：.txt > 两级 cronjobs 深链 > 单级 cronjobs
+    location ~ ^/cronjobs/[^/]+/[^/]+(/|$) {
+        add_header Cache-Control "no-cache" always;
+        include /etc/nginx/snippets/seaweedfs-admin-static.conf;
+        error_page 403 404 =200 /cronjobs/app-shell/app-shell.html;
+    }
+
+    location ~ ^/cronjobs/ {
+        add_header Cache-Control "no-cache" always;
+        include /etc/nginx/snippets/seaweedfs-admin-static.conf;
+        error_page 403 404 =200 /cronjobs/app-shell.html;
+    }
+
+    # 根页 302（原 SSR redirect('/dashboard') 由 nginx 承担）
+    location = / {
+        return 302 /dashboard;
+    }
+
+    # 静态资产：一年 immutable
+    location /_next/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        include /etc/nginx/snippets/seaweedfs-admin-static.conf;
+    }
+
+    # HTML 与其余文件
+    location / {
+        add_header Cache-Control "no-cache" always;
+        include /etc/nginx/snippets/seaweedfs-admin-static.conf;
+        error_page 403 404 /404.html;
+    }
+}
+
+# ── HTTPS: Class（S3 静态桶版，与 prod class 块同构）──
+# localePrefix:'always'：无前缀一律 302 到带前缀等价路径
+server {
+    listen 443 ssl;
+    server_name class-preprod.noda.co.nz;
+
+    ssl_certificate /etc/nginx/ssl/noda.dev.crt;
+    ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
+
+    include /etc/nginx/snippets/upstream-seaweedfs.conf;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    absolute_redirect off;
+    client_max_body_size 100M;
+
+    include /etc/nginx/snippets/security-headers-class.conf;
+
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript
+               application/x-javascript application/xml+rss
+               application/json application/javascript
+               image/svg+xml;
+
+    # 管理 API 不暴露公网（前缀最长匹配优先于 /api/）
+    location /api/admin/ {
+        return 403 '{"error":"forbidden"}';
+        add_header Content-Type application/json always;
+    }
+
+    # sitemap 由 Go API 生成
+    location = /sitemap.xml {
+        proxy_pass http://preprod-noda-api:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Go API（preprod-noda-api:3001）— /api/ 分流
+    location /api/ {
+        proxy_pass http://preprod-noda-api:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+
+    # .txt（RSC 载荷）净 404（先于 course/category 深链壳，regex 顺序敏感）
+    location ~ \.txt$ {
+        include /etc/nginx/snippets/seaweedfs-class-static.conf;
+    }
+
+    # 受保护路径：课程编辑（cookie 门槛 → auth-preprod 登录）
+    location ~ ^/(en|zh|zh-TW)/course/[^/]+/edit(/|$) {
+        if ($cookie_noda_session = "") {
+            return 302 "https://auth-preprod.noda.co.nz/$1/login?from=https://class-preprod.noda.co.nz$request_uri";
+        }
+        include /etc/nginx/snippets/seaweedfs-class-static.conf;
+        error_page 403 404 =200 /$class_loc/course/app-shell/edit.html;
+    }
+
+    # 受保护路径：publish / dashboard / admin
+    location ~ ^/(en|zh|zh-TW)/(publish|dashboard|admin)(/|$) {
+        if ($cookie_noda_session = "") {
+            return 302 "https://auth-preprod.noda.co.nz/$1/login?from=https://class-preprod.noda.co.nz$request_uri";
+        }
+        include /etc/nginx/snippets/seaweedfs-class-static.conf;
+        error_page 403 404 /404.html;
+    }
+
+    # 课程详情（动态段 [id]）→ app-shell 壳页
+    location ~ ^/(en|zh|zh-TW)/course/ {
+        include /etc/nginx/snippets/seaweedfs-class-static.conf;
+        error_page 403 404 =200 /$class_loc/course/app-shell.html;
+    }
+
+    # 分类页（动态段 [...slug]）→ app-shell 壳页
+    location ~ ^/(en|zh|zh-TW)/category/ {
+        include /etc/nginx/snippets/seaweedfs-class-static.conf;
+        error_page 403 404 =200 /$class_loc/category/app-shell.html;
+    }
+
+    # 其余全部（locale 页面 / _next 资产 / robots / 兜底）
+    location / {
+        if ($class_needs_locale_redirect) {
+            return 302 /$class_locale$request_uri;
+        }
+        include /etc/nginx/snippets/seaweedfs-class-static.conf;
+        error_page 403 404 /404.html;
+    }
+
+    location = /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+}
+
+# ── HTTPS: Noda 官网（S3 桶伺服版，与 prod www 块同构）──
+# 原 root /var/www/noda.co.nz（镜像内烘焙）随纯 nginx 镜像退役——桶 sites/www/
+server {
+    listen 443 ssl;
+    server_name www-preprod.noda.co.nz;
+
+    ssl_certificate /etc/nginx/ssl/noda.dev.crt;
+    ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
+
+    include /etc/nginx/snippets/upstream-seaweedfs.conf;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # Nearby 快捷入口卡：静态 www 同域直连 preprod API
+    location /api/nearby/ {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+    location /api/user/ {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+    location /api/courses {
+        proxy_pass http://preprod-noda-api:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+    location /api/recommendations/ {
+        proxy_pass http://preprod-noda-api:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+
+    # 带内容哈希的静态资源：一年 immutable（SeaweedFS 桶 sites/www/）
+    location /_next/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        include /etc/nginx/snippets/seaweedfs-www-static.conf;
+    }
+
+    # HTML：no-cache 强制 revalidate
+    location / {
+        add_header Cache-Control "no-cache" always;
+        include /etc/nginx/snippets/seaweedfs-www-static.conf;
+        error_page 403 404 /404.html;
+    }
+}
+
+# ── HTTPS: Nearby（S3 静态桶版，与 prod nearby 块同构）──
+server {
+    listen 443 ssl;
+    server_name nearby-preprod.noda.co.nz;
+
+    ssl_certificate /etc/nginx/ssl/noda.dev.crt;
+    ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
+
+    include /etc/nginx/snippets/upstream-seaweedfs.conf;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    absolute_redirect off;
+    client_max_body_size 5M;
+
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # Nearby API（preprod-noda-api:3014）
+    location /api/nearby/ {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+    }
+    location /api/user/ {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+    }
+
+    # sitemap 由 Go API 动态生成（需 preprod-noda-api ≥ 0bb01b69 镜像）
+    location = /sitemap.xml {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # RSC 载荷 .txt 净 404（先于 item 深链壳，regex 顺序敏感）
+    location ~ \.txt$ {
+        include /etc/nginx/snippets/seaweedfs-nearby-static.conf;
+    }
+
+    # 条目详情深链 /<loc>/item/<id> → app-shell 占位壳 + client 取数
+    location ~ ^/(en|zh|zh-TW)/item/[^/]+(/|$) {
+        include /etc/nginx/snippets/seaweedfs-nearby-static.conf;
+        error_page 403 404 =200 /$nearby_loc/item/app-shell.html;
+    }
+
+    # 静态站入口：locale 协商（as-needed 同 liuyao）
+    location / {
+        set $loc $nearby_locale;
+        if ($uri ~ "^/(en|zh|zh-TW)(/|$)") { set $loc ""; }
+        if ($uri ~ "^/(_next|api|images|fonts)(/|$)") { set $loc ""; }
+        if ($uri ~ "\.[A-Za-z0-9]+(/|$)") { set $loc ""; }
+        if ($loc = zh-TW) { return 302 /zh-TW$request_uri; }
+        if ($loc = zh) { return 302 /zh$request_uri; }
+        if ($loc = en) { rewrite ^(.*)$ /en$1 last; }
+        include /etc/nginx/snippets/seaweedfs-nearby-static.conf;
+        error_page 403 404 /404.html;
+    }
+
+    location /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+}
+
+# ── HTTPS: Comments（S5：前端 = 桶 sites/comment/；API 双跑期仍指 Node :3012）──
+server {
+    listen 443 ssl;
+    server_name comments-preprod.noda.co.nz;
+
+    ssl_certificate /etc/nginx/ssl/noda.dev.crt;
+    ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
+
+    include /etc/nginx/snippets/upstream-seaweedfs.conf;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    # 302 Location 不绝对化（prod :81 教训同款防御）
+    absolute_redirect off;
+
+    client_max_body_size 10M;
+
+    include /etc/nginx/snippets/security-headers.conf;
+    add_header X-Robots-Tag "noindex" always;
+
+    # admin 占位页入口（桶内无根 index）
+    location = / {
+        return 302 /admin;
+    }
+
+    # RSC .txt：桶内缺对象必须净 404（Next 软导航兜底）
+    location ~ \.txt$ {
+        include /etc/nginx/snippets/seaweedfs-comment-static.conf;
+    }
+
+    location /_next/ {
+        include /etc/nginx/snippets/seaweedfs-comment-static.conf;
+    }
+
+    location / {
+        include /etc/nginx/snippets/seaweedfs-comment-static.conf;
+        error_page 403 404 /404.html;
+    }
+
+    # API：Go commentapi（S5.4 切换；回滚改回 preprod-noda-frontend:3012 即回 Node）
+    location /api/ {
+        proxy_pass http://preprod-noda-api:3012;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# ── HTTPS: CDN（stg 桶图片，不变）──
+server {
+    listen 443 ssl;
+    server_name cdn-preprod.noda.co.nz;
+
+    ssl_certificate /etc/nginx/ssl/noda.dev.crt;
+    ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
+
+    location / {
+        proxy_pass http://seaweedfs:8333;
+        proxy_set_header Host seaweedfs:8333;
+    }
+}

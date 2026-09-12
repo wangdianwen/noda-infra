@@ -1,0 +1,211 @@
+# ============================================
+# Noda Monorepo - Docker Compose r4s Overlay
+# ============================================
+# r4s (iStoreOS) 特有配置：内存限制、端口映射、日志策略
+# 使用方法：
+#   docker compose -f docker/docker-compose.yml \
+#     -f docker/docker-compose.prod.yml \
+#     -f docker/docker-compose.r4s.yml up -d
+#
+# 覆盖内容：
+#   - 所有服务内存限制（r4s 仅 3.77 GiB RAM）
+#   - Static（反代）高端口映射（8080/8081/8443，避免与 iStoreOS 冲突）
+#   - 紧凑日志配置（5m×2，r4s 存储空间有限）
+#   - Apps 双容器（api / static；S5 frontend Node 容器退役）拆分定义
+#
+# ⚠️ 三容器拆分（2026-09）：原单容器 noda-apps-prod 拆为
+#   noda-api-prod（Go API 七 listener）/ noda-static-prod（nginx 反代+桶伺服静态站）
+#   生产容器由 pipeline_deploy_prod 以 docker run 管理（env 经 --env-file 注入），
+#   此处定义用于 infra 栈统一 up -d 拉起与配置参考（不含 env，直接 up 会因缺
+#   DATABASE_URL 启动失败——与旧 noda-apps-prod 段行为一致）。
+#   nginx 服务键保留：r4s 上反代容器已由 noda-static-prod 取代（合并原
+#   noda-infra-nginx 角色，别名保留，infra pipeline 的 compose 服务名不变）。
+# ⚠️ Wave 4 收敛（2026-09-12）：keycloak 服务块物理移除（已下线，证据见
+#   git 历史 + backup/2026/decommission/keycloak-final-20260912.dump）；
+#   noda-api 服务键改 noda-api（container_name/alias 保持 noda-api-prod，
+#   nginx upstream 与 env 引用零改动），镜像 = Go 多模块聚合单二进制新形态。
+
+name: noda-infra
+
+# r4s 紧凑日志配置（D-30: max-size=5m, max-file=2，8 容器共 ~80MB）
+x-r4s-logging: &r4s-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "5m"
+      max-file: "2"
+
+services:
+  # ----------------------------------------
+  # PostgreSQL — 768M (D-01)
+  # noda 数据库体积小，从 Mac 2G 压缩
+  # ----------------------------------------
+  postgres:
+    <<: *r4s-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 768M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ----------------------------------------
+  # Static（原 nginx 服务键）— 128M (D-03)
+  # 三容器拆分：noda-static-prod 取代 noda-infra-nginx（nginx:1.25 反代容器），
+  # 镜像内烘焙 www 静态站，卷挂载继续沿用 base/prod 的 config/nginx/* 与 errors
+  # 服务键保持 nginx：infra pipeline（up -d --no-deps nginx）无需改动即可管理本容器
+  # 端口映射到高端口（D-28: 避免与 iStoreOS 管理界面冲突）
+  # 别名 noda-infra-nginx 必须保留：cloudflared 与 KEYCLOAK_INTERNAL_URL 引用该 DNS 名
+  # ----------------------------------------
+  nginx:
+    <<: *r4s-logging
+    # !override 替换 base 的官方镜像为静态站镜像
+    # apps 流水线只发 commit tag（不打 latest）——SERVICE=nginx 部署经 remote_compose
+    # env_prefix 传 NODA_STATIC_IMAGE=noda-static:<commit>；latest 仅手动兜底
+    image: ${NODA_STATIC_IMAGE:-noda-static:latest}
+    # !override 容器名更替：noda-infra-nginx → noda-static-prod
+    container_name: noda-static-prod
+    # !override 完全替换 base 文件的端口列表为 r4s 高端口（D-28）
+    ports: !override
+      - "8080:80"
+      - "8081:81"
+      - "8443:443"
+    # !override 长格式网络配置：补齐新旧两个 DNS 别名（容器改名后旧名靠 alias 保活）
+    networks: !override
+      noda-network:
+        aliases:
+          - noda-infra-nginx
+          - noda-static-prod
+    healthcheck:
+      # class 块 /health 由 nginx 静态返回（不依赖 upstream）
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:81/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.1'
+          memory: 32M
+
+  # ----------------------------------------
+  # Noda Ops — 256M (D-04)
+  # 备份脚本 + Cloudflare Tunnel
+  # ----------------------------------------
+  noda-ops:
+    <<: *r4s-logging
+    volumes:
+      - /opt/noda/noda-infra/docker/volumes/backup/config.sh:/app/backup/lib/config.sh:ro
+      - /opt/noda/noda-infra/docker/volumes/backup/test-verify.sh:/app/backup/lib/test-verify.sh:ro
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+
+  # ----------------------------------------
+  # Noda API（Go 聚合单容器）— 256M / 0.5cpu
+  # 服务键 noda-api（Wave 4 compose 收敛）；container_name / 网络 alias 仍为
+  # noda-api-prod——env-noda-frontend.env 与 nginx upstream 按 DNS 名引用，零改动
+  # 镜像 = noda-apps 新形态（Wave 3 Go 多模块聚合单二进制：class 3001 / liuyao 3007 /
+  #   email 3010 / admin 3011 / nearby 3014 五 listener + 附加 noda-crawler 子进程二进制，
+  #   构建见 noda-apps/infra/docker/Dockerfile.noda-api，BuildKit GOCACHE 缓存挂载增量编译）
+  # 生产由 pipeline docker run 注入 env（--env-file /tmp/prod-api.env）；
+  # 运行时目录为 tmpfs（read_only 容器）
+  # ----------------------------------------
+  noda-api:
+    <<: *r4s-logging
+    # apps 流水线只发 commit tag——prod 实际部署走 docker run noda-api:<commit>；
+    # 此引用仅供手动 compose 场景，latest 需自行 docker tag 提供
+    image: ${NODA_API_IMAGE:-noda-api:latest}
+    # 构建上下文 = 同级检出的 noda-apps 仓库根（多模块 Dockerfile 按仓库相对路径 COPY 各模块）。
+    # 本机/Jenkins 布局：noda-infra 与 noda-apps 同层。r4s 上不执行 compose build——
+    # 镜像由 apps pipeline 在 Mac 构建后传输，此处 build 块仅供本地构建/文档参考
+    build:
+      context: ../../noda-apps
+      dockerfile: infra/docker/Dockerfile.noda-api
+    container_name: noda-api-prod
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/crawl-output:uid=1001,gid=1001,mode=0755
+      - /app/crawler-logs:uid=1001,gid=1001,mode=0755
+    networks:
+      noda-network:
+        aliases:
+          - noda-api-prod
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:3001/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  # ----------------------------------------
+  # SeaweedFS — 256M（静态对象存储，Phase 1, 2026-09-12）
+  # server 一体模式（master+volume+S3）；8333/9333 一律不映射宿主机端口（评审补遗 #3），
+  # 仅 noda-network 内可达：nginx cdn.conf 反代 / Jenkins 经 docker run --network 上传
+  # 数据卷挂数据盘 /mnt/mmc1-4（预检 ≥5GB 余量 ✓）；S3 凭据由 pipeline 渲染
+  # config/seaweedfs/s3.json（gitignored，不入库）
+  # ----------------------------------------
+  seaweedfs:
+    <<: *r4s-logging
+    image: chrislusf/seaweedfs:3.80
+    container_name: seaweedfs
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    command: >-
+      server -dir=/data -ip=seaweedfs
+      -master.volumeSizeLimitMB=1024
+      -master.volumePreallocate=false
+      -volume.max=96
+      -s3 -s3.port=8333
+      -s3.config=/etc/seaweedfs/s3.json
+    volumes:
+      - /mnt/mmc1-4/noda/seaweedfs:/data
+      - /opt/noda/noda-infra/config/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    networks:
+      noda-network:
+        aliases:
+          - seaweedfs
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:9333/cluster/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          # 384M（2026-09-12 class 静态壳托管后上调）：S3 读流量成为站点主链路，
+          # 实测 RSS 217M/256M（85%+），Go 不主动归还页缓存——留 OOM 余量
+          memory: 384M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  # Apps Pre-prod — 512M (D-06)
+  # Pre-prod 使用 docker run 启动，不通过 compose 管理
+  # 内存限制在 docker run --memory 中指定

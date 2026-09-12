@@ -1,0 +1,98 @@
+# ============================================
+# Noda Ops - 运维工具集容器（多阶段构建）
+# ============================================
+# 功能：数据库备份 + Cloudflare Tunnel（二合一）
+# 替代：opdev + cloudflared 两个独立容器
+# 多阶段构建：构建工具不泄漏到运行时
+# ============================================
+
+# --- Stage 1: 构建阶段 - 下载外部二进制 ---
+FROM alpine:3.21 AS builder
+
+# 安装构建时下载工具
+RUN apk add --no-cache wget gnupg
+
+# 下载 cloudflared 二进制
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then CLOUDFLARED_ARCH="amd64"; \
+    elif [ "$ARCH" = "aarch64" ]; then CLOUDFLARED_ARCH="arm64"; \
+    else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
+    wget -q "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CLOUDFLARED_ARCH}" \
+         -O /usr/local/bin/cloudflared && \
+    chmod +x /usr/local/bin/cloudflared && \
+    cloudflared --version
+
+# 下载 Doppler CLI（通过官方 apk 仓库 + GPG key 验证）
+RUN wget -q -t3 'https://packages.doppler.com/public/cli/rsa.8004D9FF50437357.key' \
+       -O /etc/apk/keys/cli@doppler-8004D9FF50437357.rsa.pub && \
+    echo 'https://packages.doppler.com/public/cli/alpine/any-version/main' | \
+      tee -a /etc/apk/repositories && \
+    apk add doppler
+
+# 验证二进制路径（确保 COPY 目标正确）
+RUN ls -la /usr/local/bin/cloudflared /usr/bin/doppler
+
+# --- Stage 2: 运行时阶段 - 最小依赖 ---
+FROM alpine:3.21
+
+# 仅安装运行时必需的包（无 wget/gnupg/curl，per D-03, D-04）
+# 备份/隧道/密钥备份脚本均为纯 bash，无需 python（爬虫退役前曾装 python3/py3-pip）
+RUN apk add --no-cache \
+    bash \
+    jq \
+    coreutils \
+    rclone \
+    dcron \
+    supervisor \
+    ca-certificates \
+    postgresql17-client \
+    age \
+    tzdata
+
+# 设置时区为新西兰（Pacific/Auckland = NZST/NZDT）
+ENV TZ=Pacific/Auckland
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# 从构建阶段传递二进制文件（per D-02）
+COPY --from=builder /usr/local/bin/cloudflared /usr/local/bin/cloudflared
+COPY --from=builder /usr/bin/doppler /usr/bin/doppler
+
+# 设置工作目录
+WORKDIR /app
+
+# 创建非 root 用户（设置正确的 shell 以支持 cron 任务）
+RUN addgroup -S nodaops && adduser -S -G nodaops -s /bin/sh nodaops
+
+# 修复 crond 权限：dcron 安装后 crond 仅 root 可执行，nodaops 用户需要执行权限
+RUN chmod 755 /usr/sbin/crond
+
+# 复制备份脚本
+COPY --chown=nodaops:nodaops scripts/backup/ /app/backup/
+RUN find /app/backup -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
+
+# 复制 crontab 配置到 /etc/cron.d/（dcron 的 -s 目录）
+# dcron /etc/cron.d/ 格式：无 user 字段（用户由文件 owner 决定）
+# 不同于标准 cron 的 /etc/cron.d/ 格式，dcron 不解析第 6 字段的 user
+COPY deploy/crontab /etc/cron.d/nodaops
+RUN chmod 644 /etc/cron.d/nodaops
+
+# 复制 supervisord 配置
+COPY --chown=nodaops:nodaops deploy/supervisord.conf /etc/supervisord.conf
+
+# 复制启动脚本
+COPY --chown=nodaops:nodaops deploy/entrypoint-ops.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# 创建日志、运行和配置目录
+RUN mkdir -p /var/log/supervisor /var/log/noda-backup /app/history /run/supervisor /home/nodaops/.config/rclone && \
+    chown -R nodaops:nodaops /var/log/supervisor /var/log/noda-backup /app/history /run/supervisor /home/nodaops
+
+# 暴露端口（健康检查用）
+EXPOSE 8080
+
+# 健康检查
+HEALTHCHECK --interval=1h --timeout=10s --start-period=30s --retries=3 \
+    CMD pg_isready -h "${POSTGRES_HOST:-noda-infra-postgres-prod}" -U "${POSTGRES_USER:-postgres}" || exit 1
+
+# 使用 entrypoint 启动（初始化目录 + 配置 + supervisord）
+CMD ["/app/entrypoint.sh"]

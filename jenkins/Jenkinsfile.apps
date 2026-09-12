@@ -1,0 +1,378 @@
+#!/usr/bin/env groovy
+// 统一 Apps 部署 Pipeline（S5 双容器：noda-api / noda-static；frontend Node 容器 2026-09-12 退役）
+// 阶段: Pre-flight -> Build(双镜像) -> [Deploy Pre-prod ‖ Test] -> CDN Purge Pre-prod
+//       -> Human Approval -> Deploy Prod（双容器依序替换 + 健康检查 + 停旧单容器） -> Verify -> CDN Purge -> Cleanup
+// Build Once: 双镜像构建一次，先后部署到 pre-prod 和 prod
+// 静态站（class/www/admin/liuyao/nearby/auth/comment 前端）不在此发布——
+// 走 infra-deploy 的 SERVICE=<product>-static（构建 + mc mirror 入桶）
+// 前置: noda-apps 仓库 main 分支
+// DEPLOY_MODE 参数:
+//   normal（默认）: preprod 部署验证 + 人工批准后才发 prod
+//   fast: 紧急修复路径——Test 通过后直接发 prod，跳过 preprod 与人工批准。
+//         仅用于确认无风险的 hotfix；测试挡板（Test 失败不发版）仍然生效
+
+pipeline {
+    agent any
+
+    environment {
+        PROJECT_ROOT = "${WORKSPACE}"
+        DOPPLER_TOKEN = credentials('doppler-service-token')
+        // 备份文件实际路径（Jenkins workspace 中无备份文件，需指向项目部署目录）
+        // 按实际部署路径配置，本地开发: ~/Project/noda-infra/docker/volumes/backup
+        BACKUP_HOST_DIR = "${HOME}/Project/noda-infra/docker/volumes/backup"
+    }
+
+    options {
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+    }
+
+    parameters {
+        choice(
+            name: 'DEPLOY_MODE',
+            choices: ['normal', 'fast'],
+            description: 'normal: preprod 验证 + 人工批准后发 prod；fast: 紧急修复——Test 通过直接发 prod，跳过 preprod 与人工批准（仅限确认无风险的 hotfix）'
+        )
+        choice(
+            name: 'LAYER',
+            choices: ['all', 'api', 'web'],
+            description: 'LAYER=api: 只构建/部署 Go API（多模块 + GOCACHE 增量，只重编译改动包，典型秒级）；web: 只构建/部署 noda-static（nginx 反代，S5 后静态站经 infra-deploy 入桶，本层仅在 nginx 配置/镜像变更时需要）；all: 全部（默认）'
+        )
+        choice(
+            name: 'PRODUCT',
+            choices: ['all', 'www', 'class', 'liuyao', 'nearby', 'admin', 'auth', 'comment'],
+            description: 'PRODUCT≠all 时只跑对应产品的 Go 测试 + common（auth/comment 为 S5 Go 模块）'
+        )
+    }
+
+    stages {
+        stage('Pre-flight') {
+            steps {
+                // CI 防线：workspace 内的 noda-apps 若是指向本地工作区的符号链接，
+                // 会构建未提交代码且 cleanup 误删本地 node_modules——必须用真实 checkout
+                sh 'if [ -L noda-apps ]; then rm -f noda-apps && echo "⚠️ 已移除 noda-apps 符号链接（CI 禁用本地工作区直连）"; fi'
+                dir('noda-apps') {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: '*/main']],
+                        extensions: [[$class: 'CleanBeforeCheckout']],
+                        userRemoteConfigs: [[
+                            url: 'git@github.com:wangdianwen/noda-apps.git',
+                            credentialsId: 'noda-apps-git-credentials'
+                        ]]
+                    ])
+                }
+                script {
+                    env.GIT_SHA = sh(
+                        script: 'git -C noda-apps rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+                }
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export LAYER_FILTER="${LAYER:-all}"
+                        export PRODUCT_FILTER="${PRODUCT:-all}"
+                        export SSH_KEY_FILE
+                        pipeline_preflight "$WORKSPACE/noda-apps"
+                    '''
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export LAYER_FILTER="${LAYER:-all}"
+                        export PRODUCT_FILTER="${PRODUCT:-all}"
+                        export SSH_KEY_FILE
+                        pipeline_build "$WORKSPACE/noda-apps" "$GIT_SHA"
+                    '''
+                }
+            }
+        }
+
+        // Test 与 Pre-prod 部署并行：Build 阶段 Docker 已吃满 CPU，Test 跟 Build 并行只会互相抢；
+        // Pre-prod 部署以 I/O 等待为主，正好塞入 Test。语义变化：测试失败时镜像可能已进
+        // pre-prod（可接受，pre-prod 本就是验证环境），但 parallel 未全部通过不会进入
+        // Human Approval，prod 始终受测试挡板保护。
+        stage('Deploy Pre-prod & Test') {
+            parallel {
+                stage('Deploy Pre-prod') {
+                    when { expression { params.DEPLOY_MODE == 'normal' } }
+                    steps {
+                        withCredentials([
+                            sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
+                            // prd_pre 专用 token：主 token 只授权 prd，读 prd_pre 会拿到空导出
+                            // （曾致 preprod 容器继承 prd 的 live key）
+                            string(credentialsId: 'doppler-service-token-preprod', variable: 'DOPPLER_TOKEN_PREPROD')
+                        ]) {
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                export LAYER_FILTER="${LAYER:-all}"
+                                export PRODUCT_FILTER="${PRODUCT:-all}"
+                                export SSH_KEY_FILE
+                                export DEPLOY_TARGET=local
+                                pipeline_deploy_preprod "$GIT_SHA"
+                            '''
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                export LAYER_FILTER="${LAYER:-all}"
+                                export PRODUCT_FILTER="${PRODUCT:-all}"
+                                export SSH_KEY_FILE
+                                export DEPLOY_TARGET=local
+                                pipeline_health_check_preprod
+                            '''
+                        }
+                    }
+                }
+                stage('Test') {
+                    steps {
+                        dir('noda-apps') {
+                            sh '''
+                                # 设置 PATH 包含 Node.js 和 pnpm
+                                export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+                                source "$WORKSPACE/scripts/lib/log.sh"
+                                source "$WORKSPACE/scripts/pipeline-stages.sh"
+                                pipeline_test "$PWD"
+                            '''
+                            echo '🧪 运行 Lint 检查...'
+                            sh 'export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH" && pnpm lint'
+                            echo '✅ Lint 通过'
+                            echo '🧪 运行单元测试...'
+                            sh 'export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH" && pnpm test'
+                            echo '✅ 测试通过'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('CDN Purge Pre-prod') {
+            when { expression { params.DEPLOY_MODE == 'normal' } }
+            steps {
+                script {
+                    try {
+                        withCredentials([
+                            string(credentialsId: 'cf-api-token', variable: 'CF_API_TOKEN'),
+                            string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
+                        ]) {
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                export LAYER_FILTER="${LAYER:-all}"
+                                export PRODUCT_FILTER="${PRODUCT:-all}"
+                                pipeline_purge_cdn
+                            '''
+                        }
+                    } catch (Exception e) {
+                        echo "CDN Purge 跳过: Cloudflare 凭据未配置 (${e.message})"
+                    }
+                }
+            }
+        }
+
+        stage('Human Approval') {
+            when { expression { params.DEPLOY_MODE == 'normal' } }
+            steps {
+                timeout(time: 6, unit: 'HOURS') {
+                    script {
+                        def userInput = input(
+                            message: """Pre-prod 部署完成（本机 Mac，双容器 api+static），请验证：
+  - 六爻算卦: https://liuyao-preprod.noda.co.nz/
+  - 主应用: https://class-preprod.noda.co.nz/
+  - 官网静态: https://www-preprod.noda.co.nz/
+  镜像: noda-api:${env.GIT_SHA} / noda-static:${env.GIT_SHA}
+
+  请选择下一步操作：""",
+                            parameters: [
+                                choice(name: 'ACTION', choices: ['deploy_prod', 'rebuild_preprod', 'abort'], description: '选择操作：\n- deploy_prod: 验证通过，部署到生产环境\n- rebuild_preprod: 重新部署 pre-prod（无需重新构建）\n- abort: 中止部署')
+                            ]
+                        )
+                        env.DEPLOY_ACTION = userInput
+                    }
+                }
+            }
+        }
+
+        stage('Rebuild Pre-prod') {
+            when {
+                expression { params.DEPLOY_MODE == 'normal' && env.DEPLOY_ACTION == 'rebuild_preprod' }
+            }
+            steps {
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
+                    string(credentialsId: 'doppler-service-token-preprod', variable: 'DOPPLER_TOKEN_PREPROD')
+                ]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export LAYER_FILTER="${LAYER:-all}"
+                        export PRODUCT_FILTER="${PRODUCT:-all}"
+                        export SSH_KEY_FILE
+                        export DEPLOY_TARGET=local
+                        echo "🔄 重新部署 Pre-prod（本机 Mac）..."
+                        pipeline_deploy_preprod "$GIT_SHA"
+                        pipeline_health_check_preprod
+                        echo "✅ Pre-prod 重新部署完成，请验证 https://liuyao-preprod.noda.co.nz/ 后再次选择 deploy_prod"
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy Prod') {
+            when {
+                expression { params.DEPLOY_MODE == 'fast' || env.DEPLOY_ACTION == 'deploy_prod' }
+            }
+            steps {
+                timeout(time: 15, unit: 'MINUTES') {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export LAYER_FILTER="${LAYER:-all}"
+                        export PRODUCT_FILTER="${PRODUCT:-all}"
+                        export SSH_KEY_FILE
+                        export DEPLOY_TARGET=r4s
+                        pipeline_deploy_prod "$GIT_SHA"
+                    '''
+                }
+                }
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                sh '''
+                    source scripts/lib/log.sh
+                    source scripts/pipeline-stages.sh
+                    export LAYER_FILTER="${LAYER:-all}"
+                    export PRODUCT_FILTER="${PRODUCT:-all}"
+                    # E2E 验证：通过反代容器访问生产环境（api 链 / 静态桶链 / liuyao api 链）
+                    # api 链：Cloudflare → static(反代) → noda-api-prod:3001
+                    for i in $(seq 1 5); do
+                        if curl -sf --connect-timeout 5 --max-time 10 https://class.noda.co.nz/api/health; then
+                            echo "api 链 E2E 验证通过 (attempt $i)"
+                            break
+                        fi
+                        if [ "$i" = 5 ]; then
+                            echo "E2E 验证失败: class.noda.co.nz/api/health 不可达"
+                            exit 1
+                        fi
+                        sleep 2
+                    done
+                    # static 链：官网静态站（noda-static-prod 本地伺服）
+                    for i in $(seq 1 5); do
+                        code=$(curl -skL -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 https://www.noda.co.nz/)
+                        if [ "$code" = 200 ]; then
+                            echo "static 链 E2E 验证通过 (attempt $i)"
+                            break
+                        fi
+                        if [ "$i" = 5 ]; then
+                            echo "E2E 验证失败: www.noda.co.nz/ 不可达"
+                            exit 1
+                        fi
+                        sleep 2
+                    done
+                    # liuyao 链：S5 后 = static 反代 → noda-api-prod:3007（liuyaoapi）
+                    for i in $(seq 1 5); do
+                        code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 https://liuyao.noda.co.nz/api/health)
+                        if [ "$code" = 200 ]; then
+                            echo "liuyao api 链 E2E 验证通过 (attempt $i)"
+                            exit 0
+                        fi
+                        sleep 2
+                    done
+                    echo "E2E 验证失败: liuyao.noda.co.nz/api/health 不可达"
+                    exit 1
+                '''
+                }
+            }
+        }
+
+        stage('CDN Purge') {
+            steps {
+                script {
+                    try {
+                        withCredentials([
+                            string(credentialsId: 'cf-api-token', variable: 'CF_API_TOKEN'),
+                            string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
+                        ]) {
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                export LAYER_FILTER="${LAYER:-all}"
+                                export PRODUCT_FILTER="${PRODUCT:-all}"
+                                pipeline_purge_cdn
+                            '''
+                        }
+                    } catch (Exception e) {
+                        echo "CDN Purge 跳过: Cloudflare 凭据未配置 (${e.message})"
+                    }
+                }
+            }
+        }
+
+        stage('Abort') {
+            when {
+                expression { params.DEPLOY_MODE == 'normal' && env.DEPLOY_ACTION == 'abort' }
+            }
+            steps {
+                script {
+                    currentBuild.result = 'ABORTED'
+                    echo "❌ 用户中止部署。Pre-prod 环境保持运行，可重新触发 Pipeline 验证后继续部署。"
+                    error("用户中止部署")
+                }
+            }
+        }
+
+    }
+
+    post {
+        always {
+            script {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export LAYER_FILTER="${LAYER:-all}"
+                        export PRODUCT_FILTER="${PRODUCT:-all}"
+                        export SSH_KEY_FILE
+
+                        # === 1. 释放部署锁（总是执行）===
+                        pipeline_release_lock
+
+                        # === 2. 清理旧镜像（总是执行，增强容错）===
+                        # 即使前面步骤失败，也确保清理旧镜像释放磁盘空间
+                        if [ "${DEPLOY_ACTION:-}" != "abort" ]; then
+                            echo "🧹 执行镜像清理..."
+                            pipeline_cleanup || {
+                                echo "⚠️ 镜像清理部分失败，继续执行..."
+                                # 至少清理悬空镜像
+                                cleanup_dangling || true
+                            }
+                        else
+                            echo "⏭️ 部署已中止，跳过镜像清理"
+                        fi
+                    '''
+                }
+            }
+        }
+        failure {
+            script {
+                archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
+            }
+        }
+        success {
+            echo "✅ 部署成功: noda-api-prod + noda-static-prod (镜像: noda-api:${env.GIT_SHA} / noda-static:${env.GIT_SHA})"
+        }
+    }
+}

@@ -1,0 +1,81 @@
+# ============================================
+# Remark42 评论服务 —— ⛔ 已下线（2026-09），勿部署
+# ============================================
+# 评论已由 comment 应用接管（comments.noda.co.nz → noda-frontend-prod:3012，
+# remark42 兼容 API 形状）；nginx upstream-remark42.conf 仅为回滚参考保留。
+# 本文件保留用于记录历史配置；infra 流水线已移除 remark42 选项且部署函数有守卫。
+# 下线动作（R4S 手动执行一次）：docker compose -f docker/docker-compose.remark42.yml down
+#   数据卷 remark42-data 先做最终归档备份后再删除。
+# 原部署: docker compose -f docker/docker-compose.remark42.yml up -d
+# 网络: 加入 noda-network 与其他服务通信
+
+name: remark42
+
+services:
+  remark42:
+    image: umputun/remark42:v1.16.1
+    container_name: remark42
+    labels:
+      - "noda.service-group=apps"
+      - "noda.environment=prod"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      REMARK_URL: https://comments.noda.co.nz
+      SITE: class
+      SECRET: ${REMARK42_SECRET:-change-me-in-doppler}
+      REMARK_PORT: "8080"
+      # Keycloak OAuth2 (custom provider)
+      AUTH_CUSTOM_NAME: keycloak
+      AUTH_CUSTOM_CID: remark42
+      AUTH_CUSTOM_CSEC: ${REMARK42_KEYCLOAK_SECRET:-change-me-in-doppler}
+      AUTH_CUSTOM_AUTH_URL: https://auth.noda.co.nz/realms/noda/protocol/openid-connect/auth
+      AUTH_CUSTOM_TOKEN_URL: https://auth.noda.co.nz/realms/noda/protocol/openid-connect/token
+      AUTH_CUSTOM_INFO_URL: https://auth.noda.co.nz/realms/noda/protocol/openid-connect/userinfo
+      AUTH_CUSTOM_SCOPES: "openid profile email"
+      # 管理
+      REMARK_ADMIN_PASSWD: ${REMARK42_ADMIN_PASSWORD:-change-me-in-doppler}
+      REMARK_ADMIN_TYPE: role
+      REMARK_ADMIN_ROLE: remark42-admin
+      # 审核
+      REMARK_MAX_COMMENT_SIZE: "2000"
+      REMARK_EDIT_TIME: "300"
+      REMARK_SIMPLE_VIEW: "true"
+      REMARK_WORDS_BAN_LIST: ${REMARK42_WORDS_BAN_LIST:-}
+      # 通知（暂关闭，后续可接 email）
+      REMARK_NOTIFY_TYPE: none
+      # 图片
+      REMARK_IMAGE_PROXY: "true"
+      REMARK_EMOJI: "true"
+    volumes:
+      - remark42-data:/srv/var
+    networks:
+      - noda-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8080/ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+volumes:
+  remark42-data:
+
+networks:
+  noda-network:
+    external: true
+    name: noda-network

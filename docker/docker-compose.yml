@@ -1,0 +1,146 @@
+# ============================================
+# Noda Monorepo - Docker Compose 基础配置
+# ============================================
+# 此文件定义所有共享的服务配置
+# 环境特定配置在 docker-compose.prod.yml（生产）与 docker-compose.r4s.yml（r4s 宿主机）中覆盖
+
+name: noda-infra
+
+services:
+  # ----------------------------------------
+  # PostgreSQL 数据库
+  # ----------------------------------------
+  postgres:
+    image: postgres:17.9
+    container_name: noda-infra-postgres-prod
+    labels:
+      - "noda.service-group=infra"
+      - "noda.environment=prod"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./services/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - noda-network
+    healthcheck:
+      # -t 5: pg_isready 自身连接超时；interval/retries 放宽——r4s 上备份批量写入
+      # 期间 pg_isready 偶发抖动，10s×5 次会瞬间打 unhealthy 造成误报（已自愈但污染告警）
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -t 5"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ----------------------------------------
+  # Nginx 反向代理
+  # ----------------------------------------
+  nginx:
+    container_name: noda-infra-nginx
+    image: nginx:1.25-alpine
+    labels:
+      - "noda.service-group=infra"
+      - "noda.environment=prod"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80"
+      - "81:81"
+      - "443:443"
+    volumes:
+      - ../config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../config/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ../config/nginx/snippets:/etc/nginx/snippets:ro
+      - ../config/nginx/ssl:/etc/nginx/ssl:ro
+    networks:
+      - noda-network
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/ || curl -sf http://localhost:80/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ----------------------------------------
+  # Noda Ops - 运维工具集（备份 + Cloudflare Tunnel）
+  # 合并了旧的 opdev 和 cloudflared 容器
+  # ----------------------------------------
+  noda-ops:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.noda-ops
+    image: noda-ops:latest
+    container_name: noda-ops
+    labels:
+      - "noda.service-group=infra"
+      - "noda.environment=prod"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # 备份系统配置
+      POSTGRES_HOST: noda-infra-postgres-prod
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_DIR: /tmp/postgres_backups
+      HISTORY_DIR: /app/history
+      # B2 云存储配置
+      B2_ACCOUNT_ID: ${B2_ACCOUNT_ID}
+      B2_APPLICATION_KEY: ${B2_APPLICATION_KEY}
+      B2_BUCKET_NAME: ${B2_BUCKET_NAME:-noda-backups}
+      B2_PATH: ${B2_PATH:-backups/postgres/}
+      ALERT_EMAIL: ${ALERT_EMAIL:-}
+      # SSL 配置（Docker 内部网络无需 SSL）
+      PGSSLMODE: disable
+      # Cloudflare Tunnel 配置
+      CLOUDFLARE_TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+      # Doppler 密钥备份配置
+      DOPPLER_TOKEN: ${DOPPLER_TOKEN}
+    volumes:
+      - ./volumes/backup:/tmp/postgres_backups
+      - ./volumes/history:/app/history
+      - ./volumes/logs:/var/log/noda-backup
+    networks:
+      - noda-network
+    depends_on:
+      - postgres
+    healthcheck:
+      # -t 5: pg_isready 自身连接超时；retries 放宽——备份任务运行窗口内容器负载高，
+      # 探测偶发超时属正常，不应立即判 unhealthy
+      test: ["CMD-SHELL", "pg_isready -h noda-infra-postgres-prod -U ${POSTGRES_USER:-postgres} -t 5 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ----------------------------------------
+  # [2026-09-12 Wave 4] Keycloak 服务块已物理移除。
+  # ⛔ 下线背景：OAuth 走 auth 应用直连 Google（PKCE）；≥3 天零 /realms/* 访问，
+  # DB 已归档（backup/2026/decommission/keycloak-final-20260912.dump）后 drop。
+  # 历史定义见 git 历史；env 模板 docker/env-keycloak.env 已同步删除。
+  # ----------------------------------------
+
+# ============================================
+# Volumes（数据持久化）
+# ============================================
+volumes:
+  postgres_data:
+    driver: local
+
+# ============================================
+# Networks（网络隔离）
+# ============================================
+networks:
+  noda-network:
+    external: true
+    name: noda-network

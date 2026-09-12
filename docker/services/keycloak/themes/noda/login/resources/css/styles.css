@@ -1,0 +1,39 @@
+/* ============================================
+   Noda Login Theme - Brand Color Overrides
+   ============================================
+   品牌色：Pounamu Green #0D9B6A（主色）
+   适配 Keycloak 26 登录页（keycloak.v2 + PatternFly v5）
+   策略：最小覆盖，仅修改关键颜色变量与选择器（D-05, D-06）
+   ============================================ */
+
+/* --- PatternFly v5 全局变量覆盖 --- */
+:root {
+    --pf-v5-global--primary-color--100: #0D9B6A;
+    --pf-v5-global--primary-color--200: #0a7d55;
+    --pf-v5-global--primary-color--dark-100: #0a7d55;
+    --pf-v5-global--active-color--100: #0D9B6A;
+    --pf-v5-global--link--Color: #0D9B6A;
+    --pf-v5-global--link--Color--hover: #0a7d55;
+
+    /* keycloak.v2 登录卡顶部色条 */
+    --keycloak-card-top-color: #0D9B6A;
+}
+
+/* --- 主按钮与链接 --- */
+.pf-v5-c-button.pf-m-primary {
+    background-color: #0D9B6A;
+}
+.pf-v5-c-button.pf-m-primary:hover {
+    background-color: #0a7d55;
+}
+.pf-v5-c-button.pf-m-primary.pf-m-disabled {
+    background-color: #0D9B6A;
+    opacity: 0.6;
+}
+.pf-v5-c-login__main-header {
+    border-top: 4px solid #0D9B6A;
+}
+.pf-v5-c-login__main-footer-band a,
+#kc-info-wrapper a {
+    color: #0D9B6A;
+}

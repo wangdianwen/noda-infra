@@ -1,0 +1,23 @@
+<?xml version='1.1'?>
+<!--
+Jenkins Lockable Resources 定义（Phase 56-03）
+用途：防止并发部署操作导致冲突
+资源：
+  - preprod-deploy: Pre-prod 部署锁
+  - prod-deploy: Prod 部署锁
+  - nginx-reload: Nginx 重载锁（防止并发重载）
+-->
+<resources>
+    <org.jenkinsci.plugins.lockableresources.LockableResource>
+        <name>preprod-deploy</name>
+        <description>Pre-prod 部署锁（防止并发部署）</description>
+    </org.jenkinsci.plugins.lockableresources.LockableResource>
+    <org.jenkinsci.plugins.lockableresources.LockableResource>
+        <name>prod-deploy</name>
+        <description>Prod 部署锁（防止并发部署）</description>
+    </org.jenkinsci.plugins.lockableresources.LockableResource>
+    <org.jenkinsci.plugins.lockableresources.LockableResource>
+        <name>nginx-reload</name>
+        <description>Nginx 重载锁（防止并发重载导致配置冲突）</description>
+    </org.jenkinsci.plugins.lockableresources.LockableResource>
+</resources>
