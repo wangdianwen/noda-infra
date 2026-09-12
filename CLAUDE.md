@@ -156,6 +156,18 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 跳过——Test 通过即执行 Publish Static（桶发布即时生效，stg 桶同步提供 preprod 验证），
 随后产品维度 E2E + CDN Purge，全程无人工卡点。DEPLOY_MODE 参数对 static 不生效。
 
+**双 Pipeline 验收记录（2026-09-13，job 全新重建从 #1 起）：**
+
+| 测试 | 构建 | 结果 | 备注 |
+|------|------|------|------|
+| noda-infra 全骨架（seaweedfs） | infra #4 | ✅ | #1-3 失败为修复过程：POSIX 进替换语法 → minio/mc 拉取 → 匿名策略，均已修 |
+| noda-apps 前端全链路（class/static） | apps #5 | ✅ | Go 测试 → 桶发布（prod+stg）→ 哨兵 → 产品 E2E，全程无人值守 |
+| 同 Pipeline 不同参数并发 | apps #5 ∥ #6 | ✅ | 两构建重叠执行互不干扰（ws-1/ws-2 槽位 + publish-<product> 锁） |
+| www 前端（修正探针后复测） | apps #7 | ✅ | www.noda.co.nz 是 301 域，探针改探规范域 noda.co.nz |
+| noda-apps 后端全链路（class/api） | apps #8 | ⛔ 被上游阻塞 | noda-apps main 的 snagme 迁移漏改 api/go.mod（镜像构建失败）；**构建挡板生效**——不部署、线上未动。apps 仓修复 go.mod 后重跑即可 |
+
+重构期间修掉的三个存量 bug：① Jenkins sh=POSIX 模式 bash 不支持进程替换 `<(...)`；② 静态发布哨兵校验在 mc alias 删除之后执行，必然失败（旧 infra-deploy #80 FAILURE 根因）；③ seaweedfs 桶初始化远程拉 minio/mc 被 r4s registry mirror 拒绝（改本地 mc + 中继）。
+
 **并行与清理：**
 - 两个 Pipeline 均允许并行构建：noda-apps 前端桶发布按产品隔离（publish-\<product\> 锁 + 产品维度中继），后端容器切换由 apps-prod/apps-preprod 锁互斥；noda-infra 核心服务共用 infra-core 锁——跨 Pipeline 互不阻塞
 - 旧 cleanup job（每周清理）已删除：构建后清理内建于两个 Pipeline 的 post 阶段（镜像保留、registry retention + GC、桶 mirror --remove 收敛）
