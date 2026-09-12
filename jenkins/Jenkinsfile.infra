@@ -6,7 +6,15 @@
 // 整合说明: keycloak-deploy 已合并到此 Pipeline（2026-05-08）
 
 pipeline {
-    agent any
+    // 并行化（2026-09-13）：不同 SERVICE 的发布可同时构建。
+    // 4 个轮换槽位隔离 workspace——同 job 并发互不踩踏，
+    // 同槽位串行时 node_modules 等缓存仍可复用。
+    agent {
+        node {
+            label ''
+            customWorkspace "${env.JOB_NAME}/ws-${env.BUILD_NUMBER.toInteger() % 4}"
+        }
+    }
 
     environment {
         PATH = "/usr/local/bin:/opt/homebrew/bin:${env.PATH}"
@@ -20,9 +28,9 @@ pipeline {
     options {
         // Skip automatic checkout
         skipDefaultCheckout(true)
-        // 禁止并发构建，防止两个 Pipeline 同时操作基础设施服务
-        disableConcurrentBuilds()
-        // 保留最近 10 次构建日志
+        // 2026-09-13 去掉 disableConcurrentBuilds——锁已按资源维度拆分
+        // （pipeline_infra_preflight: publish-<product> / infra-core），
+        // 不同 SERVICE 并行安全，同 SERVICE 靠 publish-<product> 锁互斥
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
     }

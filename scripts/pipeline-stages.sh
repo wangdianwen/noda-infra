@@ -248,9 +248,10 @@ pipeline_preflight()
         setup_remote "$SSH_KEY_FILE" "$R4S_HOST"
         log_info "远程部署模式: $R4S_HOST"
 
-        # 获取部署锁（per D-19/D-20）
-        if ! acquire_deploy_lock 3600; then
-            log_error "无法获取部署锁，可能有其他部署进行中"
+        # 获取部署锁（per D-19/D-20；并行化 2026-09-13：apps 维度单锁，
+        # 与 infra 的 publish-<product>/infra-core 锁互不阻塞）
+        if ! acquire_deploy_lock 3600 apps-deploy; then
+            log_error "无法获取部署锁，可能有其他 apps 部署进行中"
             return 1
         fi
         log_info "部署锁获取成功"
@@ -1150,6 +1151,25 @@ pipeline_infra_preflight()
 
     log_info "基础设施前置检查: $service"
 
+    # 并行化锁（2026-09-13）：静态站发布按产品维度加锁（不同产品桶前缀独立、
+    # 可并行）；核心服务（nginx/postgres/seaweedfs/keycloak/noda-ops）共用
+    # infra-core 锁互斥。锁名经 NODA_LOCK_NAME 传给 pipeline_release_lock 兜底释放。
+    if [ "$DEPLOY_TARGET" = "r4s" ]; then
+        case "$service" in
+            *-static)
+                NODA_LOCK_NAME="publish-${service%-static}"
+                ;;
+            *)
+                NODA_LOCK_NAME="infra-core"
+                ;;
+        esac
+        export NODA_LOCK_NAME
+        if ! acquire_deploy_lock 3600 "$NODA_LOCK_NAME"; then
+            log_error "无法获取部署锁 [$NODA_LOCK_NAME]，可能有其他部署进行中"
+            return 1
+        fi
+    fi
+
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         # r4s 远程模式：同步仓库 + 检查远程 Docker daemon
         log_info "r4s 远程模式前置检查..."
@@ -2020,10 +2040,17 @@ pipeline_publish_static_site()
 
     # 对象级对账（2026-09-13 build 72 实证：mc mirror 曾静默漏传 zh/topic/love.html
     # ——同目录部分对象上传部分跳过且零报错，min_objs 阈值无法发现，verify 探测兜住）。
-    # 源 out/ 文件数必须与桶前缀对象数完全一致，否则判发布不完整并失败。
+    # 源 out/ 文件数必须与桶前缀对象数完全一致；不一致时清空前缀全量重建一次
+    # （mc mirror 增量判定黑盒跳过，全量重传是确定性自愈），仍不一致才判失败。
     local objs src_objs
     src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
     objs=$(mc ls --recursive "$alias_name/noda-static/sites/$product/" 2>/dev/null | grep -c . || true)
+    if [ "${objs:-0}" -ne "${src_objs:-0}" ]; then
+        log_warn "对账不一致（源 $src_objs / 桶 $objs）——清空前缀全量重建..."
+        mc rm --recursive --force "$alias_name/noda-static/sites/$product/" >/dev/null 2>&1 || true
+        mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name/noda-static/sites/$product/" || true
+        objs=$(mc ls --recursive "$alias_name/noda-static/sites/$product/" 2>/dev/null | grep -c . || true)
+    fi
     _publish_class_cleanup
     if [ "${objs:-0}" -lt "$min_objs" ]; then
         log_error "桶内对象数异常（${objs} < ${min_objs}），发布疑似不完整"
@@ -2957,7 +2984,13 @@ pipeline_release_lock()
     # 无条件释放：preprod 本地部署（DEPLOY_TARGET=local）同样在 preflight 获取了
     # r4s 部署锁——按 TARGET 过滤曾导致 normal 模式每次发版泄漏锁，
     # 后续构建无限等待（2026-09-13 build 335 实证）
-    release_deploy_lock
+    #
+    # 并行化（2026-09-13）：锁已按资源维度命名——
+    #   apps 流水线固定释放 apps-deploy；infra 流水线经 NODA_LOCK_NAME 释放
+    #   （publish-<product> / infra-core）。两把都释放、幂等（不存在即 no-op），
+    #   跨 job 的 post 兜底不会误删其他流水线的锁。
+    release_deploy_lock "${NODA_LOCK_NAME:-apps-deploy}"
+    release_deploy_lock "apps-deploy"
     log_info "部署锁已释放"
 }
 
