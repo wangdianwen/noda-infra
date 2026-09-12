@@ -248,13 +248,10 @@ pipeline_preflight()
         setup_remote "$SSH_KEY_FILE" "$R4S_HOST"
         log_info "远程部署模式: $R4S_HOST"
 
-        # 获取部署锁（per D-19/D-20；并行化 2026-09-13：apps 维度单锁，
-        # 与 infra 的 publish-<product>/infra-core 锁互不阻塞）
-        if ! acquire_deploy_lock 3600 apps-deploy; then
-            log_error "无法获取部署锁，可能有其他 apps 部署进行中"
-            return 1
-        fi
-        log_info "部署锁获取成功"
+        # 并行化（2026-09-13）：preflight 不再全程持有单把锁——锁下沉到各
+        # 部署函数（deploy_preprod 持 apps-preprod、deploy_prod 持 apps-prod），
+        # 构建 A 在 preprod 验证时构建 B 可直接走 prod。本函数只做仓库同步与检查
+        # （r4s 仓库 sync 的目标是同一 ref，并行构建重复执行幂等无害）。
         # 在 r4s 上同步最新代码（per D-08/D-10）
         log_info "同步 r4s 仓库..."
         # 使用 fetch + reset --hard origin 替代 git pull，确保即使远程历史被重写（force push）
@@ -799,7 +796,7 @@ _stop_new_prod_containers()
 #     （旧容器此刻仍在运行或可 docker start 秒级恢复——因此切换期间无需旧镜像重建）
 #   - 三个新容器全部 healthy 后才停旧容器（只停不删，供秒级回滚）
 # 参数: $1 = GIT_SHA
-pipeline_deploy_prod()
+pipeline_deploy_prod_inner()
 {
     local git_sha="$1"
     LAYER_FILTER="${LAYER_FILTER:-all}"
@@ -2694,9 +2691,9 @@ _preprod_cleanup_legacy()
     done
 }
 
-# pipeline_deploy_preprod - 部署三容器到 pre-prod 环境
+# pipeline_deploy_preprod_inner - preprod 部署主体（锁由外层包装持有）
 # 参数: $1 = GIT_SHA
-pipeline_deploy_preprod()
+pipeline_deploy_preprod_inner()
 {
     local git_sha="$1"
     local api_image="noda-api:${git_sha}"
@@ -2997,13 +2994,52 @@ pipeline_release_lock()
     # r4s 部署锁——按 TARGET 过滤曾导致 normal 模式每次发版泄漏锁，
     # 后续构建无限等待（2026-09-13 build 335 实证）
     #
-    # 并行化（2026-09-13）：锁已按资源维度命名——
-    #   apps 流水线固定释放 apps-deploy；infra 流水线经 NODA_LOCK_NAME 释放
-    #   （publish-<product> / infra-core）。两把都释放、幂等（不存在即 no-op），
-    #   跨 job 的 post 兜底不会误删其他流水线的锁。
-    release_deploy_lock "${NODA_LOCK_NAME:-apps-deploy}"
-    release_deploy_lock "apps-deploy"
-    log_info "部署锁已释放"
+    # 并行化（2026-09-13）：锁按资源维度命名，且并行构建可能同时持有不同锁——
+    # 只释放「本构建」登记在 NODA_LOCK_REGISTRY 的锁（mkdir 锁无属主语义，
+    # 盲放全局锁名会拆掉别的并行构建正持有的锁）。构建硬杀后 30 分钟由
+    # acquire 的陈旧锁自愈兜底。
+    if [ -n "${NODA_LOCK_REGISTRY:-}" ] && [ -f "$NODA_LOCK_REGISTRY" ]; then
+        # 先读全再循环——release 内部会重写 registry 文件，流式读会错乱
+        local lk
+        for lk in $(cat "$NODA_LOCK_REGISTRY" 2>/dev/null); do
+            [ -n "$lk" ] && release_deploy_lock "$lk"
+        done
+        rm -f "$NODA_LOCK_REGISTRY"
+    fi
+    log_info "部署锁已释放（本构建登记的全部锁）"
+}
+
+# ============================================
+# 并行化包装（2026-09-13）：锁只在实际操作共享容器时持有——
+#   preprod 部署持 apps-preprod（preprod-noda-api/static 容器）
+#   prod 部署持 apps-prod（noda-api-prod/static 容器 + upstream 切流）
+# 构建A 的 preprod 验证窗口内，构建B 可直接执行 prod 部署。
+# 锁获取成功即登记到 NODA_LOCK_REGISTRY（按构建隔离），post always 兜底
+# 只释放本构建持有的锁；部署函数内所有 return 路径由包装统一 release。
+NODA_LOCK_REGISTRY="${NODA_LOCK_REGISTRY:-${WORKSPACE:-/tmp}/.noda-locks-${BUILD_NUMBER:-$$}}"
+
+pipeline_deploy_preprod()
+{
+    if ! acquire_deploy_lock 3600 apps-preprod; then
+        log_error "preprod 部署锁获取失败（apps-preprod），中止"
+        return 1
+    fi
+    local rc=0
+    pipeline_deploy_preprod_inner "$@" || rc=1
+    release_deploy_lock apps-preprod
+    return $rc
+}
+
+pipeline_deploy_prod()
+{
+    if ! acquire_deploy_lock 3600 apps-prod; then
+        log_error "prod 部署锁获取失败（apps-prod），中止"
+        return 1
+    fi
+    local rc=0
+    pipeline_deploy_prod_inner "$@" || rc=1
+    release_deploy_lock apps-prod
+    return $rc
 }
 
 # ============================================

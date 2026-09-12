@@ -269,12 +269,22 @@ acquire_deploy_lock()
 
     log_info "尝试获取部署锁 [$lock_name]（最多等待 ${max_wait} 秒）..."
 
-    # mkdir 是原子操作，兼容 BusyBox（r4s/iStoreOS）
+    # mkdir 是原子操作，兼容 BusyBox（r4s/iStoreOS）。
+    # 陈旧锁自愈：构建被硬杀（Jenkins abort 杀 bash）时 post 兜底仍会释放，
+    # 但兜底也失效（如 executor 宕机）则 30 分钟后允许抢破——部署远短于该阈值。
     local elapsed=0
     while [ $elapsed -lt $max_wait ]; do
         if remote_exec "mkdir $lock_file 2>/dev/null"; then
             log_success "部署锁获取成功 [$lock_name]"
+            # 按构建登记持有的锁（registry 文件由调用方经 NODA_LOCK_REGISTRY 指定），
+            # 供 post always 的 pipeline_release_lock 只释放本构建持有的锁——
+            # 并行构建互不误删（mkdir 锁无属主语义，全局释放会拆别的构建的锁）
+            [ -n "${NODA_LOCK_REGISTRY:-}" ] && echo "$lock_name" >>"$NODA_LOCK_REGISTRY"
             return 0
+        fi
+        if remote_exec "test -d $lock_file && test \$(find $lock_file -mmin +30 2>/dev/null | grep -c .) -gt 0 2>/dev/null"; then
+            log_warn "部署锁 [$lock_name] 已滞留超 30 分钟（疑似硬杀泄漏），强制抢占"
+            remote_exec "rmdir $lock_file 2>/dev/null || true"
         fi
         sleep 5
         elapsed=$((elapsed + 5))
@@ -304,6 +314,13 @@ release_deploy_lock()
     log_info "释放部署锁 [$lock_name]..."
 
     remote_exec "rmdir $lock_file 2>/dev/null || true"
+
+    # 从本构建的持有登记中移除（若启用 registry）
+    if [ -n "${NODA_LOCK_REGISTRY:-}" ] && [ -f "$NODA_LOCK_REGISTRY" ]; then
+        grep -Fvx "$lock_name" "$NODA_LOCK_REGISTRY" >"$NODA_LOCK_REGISTRY.tmp" 2>/dev/null ||
+            : >"$NODA_LOCK_REGISTRY.tmp"
+        mv "$NODA_LOCK_REGISTRY.tmp" "$NODA_LOCK_REGISTRY" 2>/dev/null || true
+    fi
 
     log_success "部署锁已释放 [$lock_name]"
     return 0
