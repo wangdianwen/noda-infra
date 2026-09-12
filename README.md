@@ -60,20 +60,25 @@ cp config/environments/.env.example config/environments/.env
 | 服务 | 镜像/版本 | 端口 | 说明 |
 |------|-----------|------|------|
 | PostgreSQL | `postgres:17.9` | 5432（内部） | 数据库，数据持久化在 `postgres_data` 卷 |
-| Keycloak | `quay.io/keycloak/keycloak:26.2.3` | 8080（内部） | 认证服务，通过 Cloudflare Tunnel 暴露为 `auth.noda.co.nz` |
-| noda-api-prod | `noda-api:latest` | 3001/3007/3010/3011 | Go API 四服务（class/liuyao/email/admin），内置 crawl 调度 cron |
-| noda-frontend-prod | `noda-frontend:latest` | 3000/3004/3005/3006/3012 | Next.js SSR 5 应用（class/auth/liuyao/admin/comment） |
-| noda-static-prod | `noda-static:latest` | 80/81/443 | nginx 静态站（www）+ 反向代理（网络别名 noda-infra-nginx） |
+| noda-api-prod | `noda-api:<commit-sha>` | 3001/3007/3010/3011 | Go API 多模块（class/liuyao/email/admin + auth/comment API），内置 crawl 调度 cron |
+| noda-static-prod | `noda-static:<commit-sha>` | 80/81/443 | nginx 边缘路由（反代 Go API + 从 SeaweedFS 桶伺服各产品静态站，网络别名 noda-infra-nginx） |
+| SeaweedFS | r4s 数据盘 | 8333（内部） | 对象存储，桶 `noda-static`（prod）/ `noda-static-stg`（本机 preprod），匿名只读 |
 | noda-ops | 自构建 | - | 运维工具集（PostgreSQL 备份 + Doppler 密钥备份 + Cloudflare Tunnel） |
+
+> 已退役：Keycloak（2026-09-12 下线，OAuth 走 auth 应用直连）、noda-frontend Node 容器（2026-09-12 退役，五站页面静态化入桶）、Remark42（评论由 comment 应用接管，`docker-compose.remark42.yml` 仅存档）。
 
 ## 流量架构
 
 ```
-浏览器 → Cloudflare CDN → Cloudflare Tunnel (noda-ops 容器) → noda-static-prod (nginx)
-  class.noda.co.nz/api/*   → noda-api-prod:3001      (Go API)
-  class.noda.co.nz/*       → noda-frontend-prod:3000 (Next.js SSR)
-  noda.co.nz               → noda-static-prod 镜像内静态文件
-  auth.noda.co.nz          → noda-frontend-prod:3004 / keycloak:8080
+浏览器 → Cloudflare CDN → Cloudflare Tunnel (noda-ops 容器) → noda-static-prod (nginx 边缘)
+  class.noda.co.nz/api/*   → noda-api-prod:3001            (Go API)
+  class.noda.co.nz/*       → SeaweedFS 桶 sites/class/     (静态壳 + app-shell 兜底)
+  liuyao.noda.co.nz/api/*  → noda-api-prod:3007
+  liuyao.noda.co.nz/*      → SeaweedFS 桶 sites/liuyao/
+  noda.co.nz               → SeaweedFS 桶 sites/www/
+  admin.noda.co.nz         → SeaweedFS 桶 sites/admin/ + noda-api-prod:3011
+  auth.noda.co.nz          → SeaweedFS 桶 sites/auth/      (Go authapi 承接 API)
+  comments.noda.co.nz      → SeaweedFS 桶 sites/comment/   (Go commentapi 承接 API)
 ```
 
 ## 目录结构
@@ -92,9 +97,9 @@ noda-infra/
 │   ├── docker-compose.yml              # 基础服务定义
 │   ├── docker-compose.prod.yml         # 生产环境覆盖
 │   ├── docker-compose.r4s.yml          # r4s 宿主机覆盖
-│   ├── docker-compose.apps-prod.yml    # 应用三容器参考定义
-│   ├── docker-compose.preprod-local.yml# 本地 preprod 栈
-│   └── docker-compose.remark42.yml     # Remark42 评论服务
+│   ├── docker-compose.apps-prod.yml    # 应用容器参考定义
+│   ├── docker-compose.preprod-local.yml# 本地 preprod 栈（postgres + api + static + seaweedfs-stg）
+│   └── docker-compose.remark42.yml     # （已退役存档）Remark42 评论服务
 ├── scripts/            # 运维脚本
 │   ├── backup/         # 备份与恢复脚本（backup-postgres.sh, restore-postgres.sh）
 │   ├── deploy/         # 部署脚本（deploy-infrastructure-prod.sh；三容器部署入口）
@@ -102,7 +107,7 @@ noda-infra/
 │   └── lib/            # 共享库（log.sh, health.sh, secrets.sh）
 ├── services/           # 服务专用配置
 │   ├── postgres/       # PostgreSQL 初始化脚本和配置（init/, conf/）
-│   └── keycloak/       # Keycloak realm 配置和初始化脚本
+│   └── keycloak/       # （已退役存档）Keycloak realm 配置
 └── jenkins/            # Jenkinsfile（noda-apps / noda-infra Pipeline）
 ```
 
@@ -124,6 +129,19 @@ docker compose -f docker/docker-compose.yml logs <service-name>
 # 数据库备份
 scripts/backup/backup-postgres.sh
 ```
+
+## CI/CD（Jenkins Pipeline）
+
+Jenkins 运行在本机 `http://localhost:8080`，仅两个手动触发的 Pipeline：
+
+| Job | Jenkinsfile | 职责 | 参数 |
+|-----|-------------|------|------|
+| **noda-apps** | `jenkins/Jenkinsfile.apps` | 产品应用发布 | `PRODUCT` 必选单产品（class/www/admin/liuyao/nearby/auth/comment）；`LAYER` = all（一起）/ api（后端）/ static（前端）；`DEPLOY_MODE` = normal（preprod 验证 + 人工批准）/ fast（hotfix 直发） |
+| **noda-infra** | `jenkins/Jenkinsfile.infra` | 公共基础设施镜像发布 | `SERVICE` 必选其一：nginx（构建反代镜像并重建容器）/ seaweedfs / noda-ops / postgres（备份 + 人工确认） |
+
+- 前端静态站发布 = 构建 `out/` 后 `mc mirror` 入 SeaweedFS 桶 `sites/<product>/`（prod + stg 双桶同步收敛）。
+- 允许并行构建：前端按产品隔离（`publish-<product>` 锁 + 产品维度中继），后端容器切换按 `apps-prod`/`apps-preprod` 锁互斥，noda-infra 核心服务按 `infra-core` 锁串行——跨 Pipeline 互不阻塞。
+- 完整触发示例见 `CLAUDE.md` 的「Jenkins API 远程触发（curl Runbook）」。
 
 ## 重要注意事项
 

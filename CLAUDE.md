@@ -148,9 +148,13 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 
 **部署流程（Build Once，人工验证后上线，normal 模式）：**
 1. 触发 `noda-apps`（选择 PRODUCT + LAYER）— 自动构建并部署到 pre-prod
-2. 人工在 pre-prod 环境验证（`http://class.noda.test/`）
-3. 在 Jenkins UI 点击 "Proceed" 确认上线
+2. 人工在 pre-prod 环境验证（如 `https://class-preprod.noda.co.nz/`）
+3. 在 Jenkins UI 点击 "deploy_prod" 确认上线（其余选项：rebuild_preprod / abort）
 4. Pipeline 自动完成 prod 部署（停旧启新）
+
+**LAYER=static（仅前端）行为：** 容器阶段（Build/Pre-prod/Approval/Deploy Prod）全部
+跳过——Test 通过即执行 Publish Static（桶发布即时生效，stg 桶同步提供 preprod 验证），
+随后产品维度 E2E + CDN Purge，全程无人工卡点。DEPLOY_MODE 参数对 static 不生效。
 
 **并行与清理：**
 - 两个 Pipeline 均允许并行构建：noda-apps 前端桶发布按产品隔离（publish-\<product\> 锁 + 产品维度中继），后端容器切换由 apps-prod/apps-preprod 锁互斥；noda-infra 核心服务共用 infra-core 锁——跨 Pipeline 互不阻塞
@@ -206,6 +210,14 @@ curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
 curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
   "$JENKINS_URL/api/json" | \
   python3 -c "import sys,json; [print(j['name']) for j in json.load(sys.stdin)['jobs']]"
+
+# 人工批准 Human Approval（normal 模式停在这里；ACTION 可选 deploy_prod/rebuild_preprod/abort）
+curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  "$JENKINS_URL/job/noda-apps/N/wfapi/describe" | \
+  python3 -c "import sys,json; [print(s['name'], s['status']) for s in json.load(sys.stdin)['stages']]"
+curl -s -b /tmp/jenkins-cookies -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
+  -X POST -H "Jenkins-Crumb: $CRUMB" \
+  "$JENKINS_URL/job/noda-apps/N/input/Human Approval/proceedEmpty"
 ```
 
 **注意事项：**
