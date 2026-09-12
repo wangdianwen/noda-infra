@@ -251,30 +251,36 @@ remote_docker_exec()
 # 获取部署锁（mkdir 原子操作，兼容 BusyBox）
 # 参数:
 #   $1: max_wait - 最大等待秒数（默认 60）
+#   $2: lock_name - 锁名（默认 deploy）。2026-09-13 并行化：项目/服务已分离，
+#       锁按共享资源维度命名，不同维度发布互不阻塞——
+#       apps-deploy（prod/preprod API 容器互斥）/ publish-<product>（桶前缀互斥）
+#       / infra-core（nginx/postgres/seaweedfs 等）/ registry-gc（GC vs GC）
 # 返回: 0=获取成功，1=获取失败
 acquire_deploy_lock()
 {
     local max_wait="${1:-60}"
+    local lock_name="${2:-${NODA_LOCK_NAME:-deploy}}"
+    local lock_file="/tmp/noda-deploy-${lock_name}.lock"
 
     if [ -z "$R4S_HOST" ]; then
         log_error "R4S_HOST 未初始化，请先调用 setup_remote"
         return 1
     fi
 
-    log_info "尝试获取部署锁（最多等待 ${max_wait} 秒）..."
+    log_info "尝试获取部署锁 [$lock_name]（最多等待 ${max_wait} 秒）..."
 
     # mkdir 是原子操作，兼容 BusyBox（r4s/iStoreOS）
     local elapsed=0
     while [ $elapsed -lt $max_wait ]; do
-        if remote_exec "mkdir /tmp/noda-deploy.lock 2>/dev/null"; then
-            log_success "部署锁获取成功"
+        if remote_exec "mkdir $lock_file 2>/dev/null"; then
+            log_success "部署锁获取成功 [$lock_name]"
             return 0
         fi
         sleep 5
         elapsed=$((elapsed + 5))
     done
 
-    log_error "无法获取部署锁，可能有其他部署进行中"
+    log_error "无法获取部署锁 [$lock_name]，可能有其他部署进行中"
     return 1
 }
 
@@ -282,19 +288,24 @@ acquire_deploy_lock()
 # 函数: release_deploy_lock
 # ============================================
 # 释放部署锁（rmdir，兼容 BusyBox）
+# 参数:
+#   $1: lock_name - 与 acquire 相同的锁名（默认跟随 NODA_LOCK_NAME）
 # 返回: 0=释放成功
 release_deploy_lock()
 {
+    local lock_name="${1:-${NODA_LOCK_NAME:-deploy}}"
+    local lock_file="/tmp/noda-deploy-${lock_name}.lock"
+
     if [ -z "$R4S_HOST" ]; then
         log_error "R4S_HOST 未初始化，请先调用 setup_remote"
         return 1
     fi
 
-    log_info "释放部署锁..."
+    log_info "释放部署锁 [$lock_name]..."
 
-    remote_exec "rmdir /tmp/noda-deploy.lock 2>/dev/null || true"
+    remote_exec "rmdir $lock_file 2>/dev/null || true"
 
-    log_success "部署锁已释放"
+    log_success "部署锁已释放 [$lock_name]"
     return 0
 }
 

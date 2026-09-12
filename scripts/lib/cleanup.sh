@@ -435,12 +435,21 @@ registry_maintenance()
     registry_retention || true
 
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx noda-registry; then
+        # GC 与 registry push 并发不安全（可能误删上传中的 blob）——registry-gc
+        # 名锁串行多次 GC；GC vs push 的竞态窗口极小（GC 秒级），撞上时
+        # transfer_image 失败可重试（transfer-first 模式不伤线上容器）。
+        # 无 R4S_HOST（如 Jenkinsfile.cleanup 独立跑）时裸跑，与历史行为一致。
+        local _gc_locked=0
+        if [ -n "${R4S_HOST:-}" ]; then
+            acquire_deploy_lock 300 "registry-gc" && _gc_locked=1 || true
+        fi
         log_info "registry garbage-collect..."
         # v3 配置在 /etc/distribution/，v2 在 /etc/docker/registry/——双路径兼容
         docker exec noda-registry registry garbage-collect --delete-untagged \
             /etc/distribution/config.yml >/dev/null 2>&1 ||
         docker exec noda-registry registry garbage-collect --delete-untagged \
             /etc/docker/registry/config.yml >/dev/null 2>&1 || true
+        [ "$_gc_locked" = "1" ] && release_deploy_lock "registry-gc" || true
         log_success "registry GC 完成"
     else
         log_info "noda-registry 容器不在运行，跳过 GC"
