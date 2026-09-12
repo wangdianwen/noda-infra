@@ -2007,6 +2007,9 @@ pipeline_publish_static_site()
     # prod/stg 双桶同步且各自收敛旧对象（用户要求：清理对 preprod+prod 都生效）。
     # stg S3 只绑 127.0.0.1:8333（Jenkins 同机可直连）；不可达/凭据缺失仅告警不阻塞
     if [ -n "$stg_a" ] && [ -n "$stg_s" ] && mc alias set "$alias_name-stg" "http://127.0.0.1:8333" "$stg_a" "$stg_s" --api S3v4 >/dev/null 2>&1; then
+        # 桶自愈（2026-09-13 实证：seaweedfs-stg 崩溃重建后桶元数据丢失，
+        # preprod 全站 404）——mc mb 幂等确保桶在位，任何环境桶丢失随发布自动重建
+        mc mb --ignore-existing "$alias_name-stg/noda-static-stg" >/dev/null 2>&1 || true
         log_info "mc mirror 增量同步（含删除） out/ → noda-static-stg/sites/$product/ ..."
         if ! mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name-stg/noda-static-stg/sites/$product/"; then
             log_warn "preprod 桶（noda-static-stg）同步失败——preprod 静态内容可能滞后（不影响 prod）"
