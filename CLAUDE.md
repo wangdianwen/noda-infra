@@ -19,7 +19,7 @@ Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL
 |------|------|------|
 | PostgreSQL | 5432 | 数据持久化在 `noda-infra_postgres_data` 卷 |
 | Keycloak | 8080 (内部) | 不暴露外部端口，通过 nginx 反向代理访问 |
-| noda-api-prod | 3001/3007/3010/3011 | Go API 四服务（gin） |
+| noda-api-prod | 3001/3004/3007/3010/3011/3012/3014/3015 | Go API 多服务（gin；3015 = snagme-api） |
 | noda-frontend-prod | 3000/3004/3005/3006/3012 | Next.js SSR 5 应用 |
 | noda-static-prod | 80/81/443 | nginx 边缘路由 + www 静态（网络别名 noda-infra-nginx） |
 | noda-ops | - | 备份 + Cloudflare Tunnel |
@@ -143,7 +143,7 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 
 | Job | Jenkinsfile | 用途 | 阶段 |
 |-----|-------------|------|------|
-| **noda-apps** | `jenkins/Jenkinsfile.apps` | 产品应用发布。PRODUCT 必选单产品（class / www / admin / liuyao / nearby / auth / comment，无 all）；LAYER=all（前后端一起，含 noda-static 反代镜像顺带刷新）/ api（仅后端 Go API）/ static（仅前端：静态站构建 + mc mirror 入 SeaweedFS 桶 sites/\<product\>/，prod+stg 双桶）；DEPLOY_MODE=normal（preprod 验证 + 人工批准后发 prod）/ fast（Test 通过直发 prod，仅限 hotfix） | Pre-flight → Build → [Deploy Pre-prod ‖ Test] → Human Approval → Deploy Prod → Publish Static → Verify（产品维度 E2E）→ CDN Purge |
+| **noda-apps** | `jenkins/Jenkinsfile.apps` | 产品应用发布。PRODUCT 必选单产品（class / www / admin / liuyao / nearby / auth / comment / snagme，无 all；snagme 仅 LAYER=api）；LAYER=all（前后端一起，含 noda-static 反代镜像顺带刷新）/ api（仅后端 Go API）/ static（仅前端：静态站构建 + mc mirror 入 SeaweedFS 桶 sites/\<product\>/，prod+stg 双桶）；DEPLOY_MODE=normal（preprod 验证 + 人工批准后发 prod）/ fast（Test 通过直发 prod，仅限 hotfix） | Pre-flight → Build → [Deploy Pre-prod ‖ Test] → Human Approval → Deploy Prod → Publish Static → Verify（产品维度 E2E）→ CDN Purge |
 | **noda-infra** | `jenkins/Jenkinsfile.infra` | 公共基础设施镜像发布。SERVICE 必选其一（无 all）：nginx（构建 noda-static 反代镜像并传输 r4s 后重建容器）/ seaweedfs / noda-ops / postgres（先备份 + 人工确认） | Pre-flight → Backup（仅 postgres）→ Human Approval（仅 postgres）→ Deploy → Health Check → Verify |
 
 **部署流程（Build Once，人工验证后上线，normal 模式）：**
@@ -167,6 +167,16 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 | noda-apps 后端全链路（class/api） | apps #8 | ⛔ 被上游阻塞 | noda-apps main 的 snagme 迁移漏改 api/go.mod（镜像构建失败）；**构建挡板生效**——不部署、线上未动。apps 仓修复 go.mod 后重跑即可 |
 
 重构期间修掉的三个存量 bug：① Jenkins sh=POSIX 模式 bash 不支持进程替换 `<(...)`；② 静态发布哨兵校验在 mc alias 删除之后执行，必然失败（旧 infra-deploy #80 FAILURE 根因）；③ seaweedfs 桶初始化远程拉 minio/mc 被 r4s registry mirror 拒绝（改本地 mc + 中继）。
+
+**Snagme 接入说明（2026-09-13，Trade Me 捡漏监控）：**
+- 后端：`snagme/api` Go 模块经 noda-api 组合根接入（`:3015`，`SNAGME_API_PORT`），
+  `PRODUCT=snagme&LAYER=api` 全流程发布；nginx `snagme.noda.co.nz` 块 `/api/*` 反代
+  ：3015、`/health` 直通上游（pipeline verify 走 r4s 边缘内探，不依赖公网 DNS）。
+- 前端：dashboard 是 better-sqlite3 Node 应用（运行时依赖 scanner 库），**不支持桶
+  发布**——`LAYER=static/all` 在 Pre-flight 即拒绝；独立部署形态待定（当前 launchd
+  本机运行）。
+- 域名生效前置（一次性，外部动作）：① CF DNS `snagme.noda.co.nz` CNAME → tunnel；
+  ② `noda-infra?SERVICE=noda-ops` 重建（ingress 已加 `config/cloudflare/config.yml`）。
 
 **并行与清理：**
 - 两个 Pipeline 均允许并行构建：noda-apps 前端桶发布按产品隔离（publish-\<product\> 锁 + 产品维度中继），后端容器切换由 apps-prod/apps-preprod 锁互斥；noda-infra 核心服务共用 infra-core 锁——跨 Pipeline 互不阻塞

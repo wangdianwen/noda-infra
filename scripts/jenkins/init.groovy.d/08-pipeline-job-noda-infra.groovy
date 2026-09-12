@@ -58,7 +58,7 @@ def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
 def existingJob = instance.getItem(jobName)
 
 if (existingJob != null) {
-    existingJob.updateByXml(new ByteArrayInputStream(configXml.getBytes('UTF-8')))
+    existingJob.updateByXml(new javax.xml.transform.stream.StreamSource(new ByteArrayInputStream(configXml.getBytes('UTF-8'))))
     println "Pipeline job '${jobName}' updated to SCM mode."
 } else {
     instance.createProjectFromXML(jobName, new ByteArrayInputStream(configXml.getBytes('UTF-8')))

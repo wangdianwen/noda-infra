@@ -331,6 +331,13 @@ pipeline_preflight()
         log_warn "备份检查未通过，继续部署（生产环境应调查备份状态）"
     fi
 
+    # snagme 形态守卫：dashboard 是 better-sqlite3 Node 应用（运行时依赖 scanner
+    # 库），不能静态化入桶——发布层仅支持 api，static/all 在 Pre-flight 即拒绝
+    if [ "${PRODUCT_FILTER:-}" = "snagme" ] && [ "${LAYER_FILTER:-all}" != "api" ]; then
+        log_error "snagme 仅支持 LAYER=api（dashboard 为 Node 应用，桶发布不适用）"
+        return 1
+    fi
+
     log_success "前置检查全部通过"
 }
 
@@ -600,7 +607,7 @@ pipeline_test()
     case "${LAYER_FILTER:-all}" in
         static|web) ;;
         *)
-        local modules="api common common/crawler common/jobs nearby/api class/api liuyao/api admin/api auth/api comment/api"
+        local modules="api common common/crawler common/jobs nearby/api class/api liuyao/api admin/api auth/api comment/api snagme/api"
         case "${PRODUCT_FILTER:-all}" in
             class)            modules="class/api common" ;;
             liuyao)           modules="liuyao/api common" ;;
@@ -608,6 +615,7 @@ pipeline_test()
             admin)            modules="admin/api common" ;;
             auth)             modules="auth/api common" ;;
             comment)          modules="comment/api common" ;;
+            snagme)           modules="snagme/api common" ;;
             www)              modules="" ;;
         esac
         local m
@@ -1068,7 +1076,7 @@ prepare_prod_api_env_file()
     _prepare_env_file \
         "$PROJECT_ROOT/docker/env-noda-api.env" \
         "$tmp_file" \
-        '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${ANTHROPIC_MAX_TOKENS} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY} ${STRIPE_SECRET_KEY} ${STRIPE_WEBHOOK_SECRET} ${STRIPE_PRICE_DEEP_READ} ${LIUYAO_WEB_BASE_URL} ${EVENTFINDA_API_HOST} ${EVENTFINDA_API_USERNAME} ${EVENTFINDA_API_PASSWORD}' \
+        '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${ANTHROPIC_MAX_TOKENS} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY} ${STRIPE_SECRET_KEY} ${STRIPE_WEBHOOK_SECRET} ${STRIPE_PRICE_DEEP_READ} ${LIUYAO_WEB_BASE_URL} ${EVENTFINDA_API_HOST} ${EVENTFINDA_API_USERNAME} ${EVENTFINDA_API_PASSWORD} ${SNAGME_API_PORT}' \
         || return 1
     echo "$tmp_file"
 }
@@ -1633,6 +1641,10 @@ _static_product_config()
         comment)
             # admin 占位页（阈值 20；API 由 Go commentapi 承接）
             STATIC_WEB_DIR="comment";    STATIC_SENTINEL="out/admin.html";   STATIC_MIN_OBJS=20 ;;
+        snagme)
+            log_error "snagme 前端是 better-sqlite3 Node 应用（运行时依赖 scanner 库），不支持桶发布——请用 LAYER=api 只发后端"
+            return 1
+            ;;
         auth)
             # 静态壳（~35 HTML + 资产；阈值 60）；zh 无前缀 canonical（defaultLocale=zh）
             # ——哨兵文件用 out/zh/login.html；API 端点不在静态产物（Go authapi :3004 承接）
@@ -2287,8 +2299,23 @@ https://auth.noda.co.nz/api/health|auth api 链"
             checks="https://comments.noda.co.nz/admin|comment 占位页
 https://comments.noda.co.nz/api/health|comment api 链"
             ;;
+        snagme)
+            # 前端为 Node 应用未静态化，无公网页面探针；API 链走 r4s 边缘内探
+            # （Host 头定位 snagme 块 /health → 直通 :3015，CF DNS/tunnel 生效前即可验证）
+            if [ "$DEPLOY_TARGET" = "r4s" ] && [ -n "${SSH_KEY_FILE:-}" ]; then
+                if remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: snagme.noda.co.nz' --spider http://127.0.0.1:81/health"; then
+                    log_success "snagme api 链 E2E 验证通过（r4s 边缘内探）"
+                else
+                    log_error "E2E 验证失败: snagme api 链（边缘 /health → :3015）"
+                    return 1
+                fi
+            else
+                log_info "snagme 验证需 r4s 模式（DEPLOY_TARGET=r4s + SSH 凭据），跳过"
+            fi
+            return 0
+            ;;
         *)
-            log_error "未知产品: $product（可选 class/www/admin/liuyao/nearby/auth/comment）"
+            log_error "未知产品: $product（可选 class/www/admin/liuyao/nearby/auth/comment/snagme）"
             return 1
             ;;
     esac
@@ -2664,7 +2691,7 @@ prepare_preprod_api_env_file()
     _prepare_env_file \
         "$PROJECT_ROOT/docker/env-noda-api-preprod.env" \
         "$tmp_file" \
-        '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${ANTHROPIC_MAX_TOKENS} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY} ${STRIPE_SECRET_KEY} ${STRIPE_WEBHOOK_SECRET} ${STRIPE_PRICE_DEEP_READ} ${LIUYAO_WEB_BASE_URL} ${EVENTFINDA_API_HOST} ${EVENTFINDA_API_USERNAME} ${EVENTFINDA_API_PASSWORD}' \
+        '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${ANTHROPIC_MAX_TOKENS} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY} ${STRIPE_SECRET_KEY} ${STRIPE_WEBHOOK_SECRET} ${STRIPE_PRICE_DEEP_READ} ${LIUYAO_WEB_BASE_URL} ${EVENTFINDA_API_HOST} ${EVENTFINDA_API_USERNAME} ${EVENTFINDA_API_PASSWORD} ${SNAGME_API_PORT}' \
         || return 1
     echo "$tmp_file"
 }

@@ -45,8 +45,8 @@ pipeline {
     parameters {
         choice(
             name: 'PRODUCT',
-            choices: ['class', 'www', 'admin', 'liuyao', 'nearby', 'auth', 'comment'],
-            description: '选择要发布的产品（必选其一，无 all）：class 主应用 / www 官网 / admin 管理后台 / liuyao 六爻 / nearby 附近 / auth 认证 / comment 评论。后端 Go 测试只跑对应产品模块 + common'
+            choices: ['class', 'www', 'admin', 'liuyao', 'nearby', 'auth', 'comment', 'snagme'],
+            description: '选择要发布的产品（必选其一，无 all）：class 主应用 / www 官网 / admin 管理后台 / liuyao 六爻 / nearby 附近 / auth 认证 / comment 评论 / snagme 捡露监控（仅后端，dashboard 为 Node 应用不支持静态发布）。后端 Go 测试只跑对应产品模块 + common'
         )
         choice(
             name: 'LAYER',
@@ -292,12 +292,17 @@ pipeline {
         stage('Verify') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
-                        # 产品维度 E2E：纯公网链路（Cloudflare → 边缘反代 → 桶/Go API），无需远端凭据
+                        export SSH_KEY_FILE
+                        export DEPLOY_TARGET=r4s
+                        # 产品维度 E2E：公网链路（Cloudflare → 边缘 → 桶/Go API）；
+                        # snagme 走 r4s 边缘内探（不依赖公网 DNS）
                         pipeline_verify_product "$PRODUCT"
                     '''
+                }
                 }
             }
         }
