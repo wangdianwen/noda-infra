@@ -443,9 +443,13 @@ pipeline_build()
     fi
 
     # NEXT_PUBLIC_* build-args（见 _next_public_build_args）
+    # POSIX 安全：Jenkins sh 在 macOS 是 POSIX 模式 bash，不支持进程替换 <(...)
     local next_public_args=()
-    local _pa
-    while IFS= read -r _pa; do next_public_args+=("$_pa"); done < <(_next_public_build_args)
+    local _pa _pa_file
+    _pa_file=$(mktemp /tmp/noda-buildargs.XXXXXX)
+    _next_public_build_args >"$_pa_file"
+    while IFS= read -r _pa; do next_public_args+=("$_pa"); done <"$_pa_file"
+    rm -f "$_pa_file"
 
     # 1/3 Go API（无 build-args；LAYER=web 时跳过——多模块 + GOCACHE 增量，只重编译改动包）
     # 只打 commit tag 不打 latest（2026-09-13）：latest 与 commit tag 指向同一镜像，
@@ -513,9 +517,13 @@ pipeline_build_nginx_image()
     local cache_dir="${HOME}/.cache/noda-buildcache"
     mkdir -p "$cache_dir"
 
+    # POSIX 安全：Jenkins sh 在 macOS 是 POSIX 模式 bash，不支持进程替换 <(...)
     local next_public_args=()
-    local _pa
-    while IFS= read -r _pa; do next_public_args+=("$_pa"); done < <(_next_public_build_args)
+    local _pa _pa_file
+    _pa_file=$(mktemp /tmp/noda-buildargs.XXXXXX)
+    _next_public_build_args >"$_pa_file"
+    while IFS= read -r _pa; do next_public_args+=("$_pa"); done <"$_pa_file"
+    rm -f "$_pa_file"
 
     log_info "构建 noda-static 反代镜像: noda-static:${git_sha} ..."
     if ! docker buildx build --load \
