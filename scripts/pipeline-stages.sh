@@ -662,6 +662,11 @@ pipeline_test()
     local node_pkg
     node_pkg=$(_node_pkg_for_product "${PRODUCT_FILTER:-}")
     (
+        # ⚠️ 必须显式 set -e：`( ... ) || return 1` 上下文会让子 shell 内部忽略
+        # 全局 errexit（bash 对被检测退出码的复合命令关闭 -e），turbo 失败会被
+        # 吞掉继续打 ✅——实证 #45 带坏 typecheck 直达 prod 批准门（#42 静态
+        # 发布挡板同样失效）。Go 段用 && 链不受影响。
+        set -euo pipefail
         cd "$apps_dir"
         if [ -z "$node_pkg" ]; then
             if [ "${PRODUCT_FILTER:-}" = "snagme" ]; then
