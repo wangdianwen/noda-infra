@@ -1287,6 +1287,54 @@ https://snagme.noda.co.nz/radar"
             ;;
     esac
 
+    # 自动派生（2026-09-13）：扫描本构建产物 out/ 顶层 HTML 入口并入列表——
+    # 产品新增 locale/入口页时不再需要手动同步上面的基线表。
+    # 规则：out/*.html 与 out/<dir>/index.html（depth<=2）→ URL（index.html → /，
+    # <dir>/index.html → /<dir>/，其余去 .html）；去重、cap 30（CF 单请求上限）。
+    _static_product_config "$product" 2>/dev/null || true
+    local out_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}/${STATIC_WEB_DIR:-}/out"
+    if [ -d "$out_dir" ]; then
+        local base_host=""
+        case "$product" in
+            class)   base_host="https://class.noda.co.nz" ;;
+            www)     base_host="https://noda.co.nz" ;;
+            admin)   base_host="https://admin.noda.co.nz" ;;
+            liuyao)  base_host="https://liuyao.noda.co.nz" ;;
+            nearby)  base_host="https://nearby.noda.co.nz" ;;
+            auth)    base_host="https://auth.noda.co.nz" ;;
+            comment) base_host="https://comments.noda.co.nz" ;;
+            snagme)  base_host="https://snagme.noda.co.nz" ;;
+        esac
+        if [ -n "$base_host" ]; then
+            local f rel url _purge_list
+            _purge_list=$(mktemp /tmp/noda-purge-urls.XXXXXX)
+            find "$out_dir" -maxdepth 2 -name '*.html' -type f | sort >"$_purge_list"
+            while IFS= read -r f; do
+                rel="${f#"$out_dir"/}"
+                case "$rel" in
+                    index.html)      url="$base_host/" ;;
+                    */index.html)    url="$base_host/${rel%/index.html}/" ;;
+                    *.html)          url="$base_host/${rel%.html}" ;;
+                    *)               continue ;;
+                esac
+                case "
+$urls
+" in *"
+$url
+"*) continue ;; esac
+                urls="$urls
+$url"
+            done <"$_purge_list"
+            rm -f "$_purge_list"
+            # （find 结果经临时文件读取——POSIX 模式禁进程替换，同 build-args 教训）
+            # cap 30（CF purge files 单请求上限），超出时优先保留基线表 + 字序靠前的入口
+            urls=$(printf '%s\n' "$urls" | grep . | head -30)
+            log_info "purge URL 列表（基线表 + 产物派生）: $(printf '%s\n' "$urls" | grep -c .) 个"
+        fi
+    else
+        log_info "产物 out/ 不存在（本机无本次构建产物?），仅用基线 URL 表"
+    fi
+
     # 凭据缺失时跳过（D-11，同 pipeline_purge_cdn）
     if [ -z "${CF_API_TOKEN:-}" ] || [ -z "${CF_ZONE_ID:-}" ]; then
         log_warn "Cloudflare 凭据未配置，跳过 CDN 入口 URL 清除 ($product)"
@@ -2008,6 +2056,19 @@ pipeline_publish_static_site()
         return 1
     fi
 
+    # 发布前快照当前桶内容到 sites/<product>-prev/（单份滚动快照，每次发布覆盖）——
+    # mirror --remove 会让旧内容立即消失，发布失误时 pipeline_rollback_static_site
+    # 可一次 mirror 回滚。-prev 前缀不在 nginx 改写映射内，公网不可达。
+    if mc ls --recursive "$alias_name/noda-static/sites/$product/" >/dev/null 2>&1; then
+        log_info "快照当前发布 → noda-static/sites/${product}-prev/ ..."
+        mc mirror --overwrite --remove --quiet \
+            "$alias_name/noda-static/sites/$product/" \
+            "$alias_name/noda-static/sites/${product}-prev/" || \
+            log_warn "快照失败（不影响本次发布，仅失去回滚锚点）"
+    else
+        log_info "首次发布（桶内无 $product 前缀），跳过快照"
+    fi
+
     log_info "mc mirror 增量同步（含删除） out/ → noda-static/sites/$product/ ..."
     # --remove：桶内该前缀收敛为当前 out/（旧构建 hash 资产/已删页面对象随之清理）；
     # 作用域仅 sites/<product>/ 前缀，图片（avatars/ 等）与其它前缀不受影响
@@ -2025,6 +2086,11 @@ pipeline_publish_static_site()
         # 桶自愈（2026-09-13 实证：seaweedfs-stg 崩溃重建后桶元数据丢失，
         # preprod 全站 404）——mc mb 幂等确保桶在位，任何环境桶丢失随发布自动重建
         mc mb --ignore-existing "$alias_name-stg/noda-static-stg" >/dev/null 2>&1 || true
+        if mc ls --recursive "$alias_name-stg/noda-static-stg/sites/$product/" >/dev/null 2>&1; then
+            mc mirror --overwrite --remove --quiet \
+                "$alias_name-stg/noda-static-stg/sites/$product/" \
+                "$alias_name-stg/noda-static-stg/sites/${product}-prev/" || true
+        fi
         log_info "mc mirror 增量同步（含删除） out/ → noda-static-stg/sites/$product/ ..."
         if ! mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name-stg/noda-static-stg/sites/$product/"; then
             log_warn "preprod 桶（noda-static-stg）同步失败——preprod 静态内容可能滞后（不影响 prod）"
@@ -2080,6 +2146,110 @@ pipeline_publish_static_site()
     fi
 
     log_success "$product 静态站发布完成：noda-static/sites/$product/（$objs 个对象，与源一致，中继已拆除）"
+}
+
+# ============================================
+# 函数: pipeline_rollback_static_site
+# ============================================
+# 静态站发布回滚：把 sites/<product>-prev/ 快照 mirror 回主前缀（prod+stg 双桶）。
+# 用于发布失误（内容错误/产物异常）——mirror --remove 让旧内容立即消失，
+# 本函数以发布时自动打的快照为回滚源，一次 mirror 即回上一版本。
+# 用法（noda-apps 构建机）：
+#   SKIP_LOAD_SECRETS=1 DEPLOY_TARGET=r4s SSH_KEY_FILE=<key> \
+#     source scripts/pipeline-stages.sh && pipeline_rollback_static_site <product>
+# 注意：快照为单份滚动（每次发布覆盖），只能回滚到「上一次发布」。
+pipeline_rollback_static_site()
+{
+    local product="$1"
+    if [ -z "$product" ]; then
+        log_error "用法: pipeline_rollback_static_site <product>"
+        return 1
+    fi
+    if ! command -v mc >/dev/null 2>&1; then
+        log_error "本机未安装 minio client（brew install minio/stable/mc）"
+        return 1
+    fi
+
+    local relay_name="tmp-s3-relay-${product}"
+    local relay_port
+    case "$product" in
+        class)   relay_port="9333" ;;
+        www)     relay_port="9334" ;;
+        admin)   relay_port="9335" ;;
+        liuyao)  relay_port="9336" ;;
+        nearby)  relay_port="9337" ;;
+        auth)    relay_port="9338" ;;
+        comment) relay_port="9339" ;;
+        snagme)  relay_port="9340" ;;
+        *)       relay_port="9341" ;;
+    esac
+    local alias_name="noda-prd-relay-${product}"
+    _rollback_cleanup()
+    {
+        remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true" || true
+        mc alias remove "$alias_name" >/dev/null 2>&1 || true
+    }
+
+    if ! remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true; docker run -d --name $relay_name --network $NETWORK_NAME -p 192.168.100.1:${relay_port}:8333 alpine/socat tcp-listen:8333,fork,reuseaddr tcp:seaweedfs:8333"; then
+        log_error "S3 中继启动失败"
+        return 1
+    fi
+
+    local s3a s3s
+    s3a=$(remote_exec "grep -E '^S3_ACCESS_KEY=' /etc/noda/jobs.env | head -1 | cut -d= -f2-" 2>/dev/null | tr -d '\r"')
+    s3s=$(remote_exec "grep -E '^S3_SECRET_KEY=' /etc/noda/jobs.env | head -1 | cut -d= -f2-" 2>/dev/null | tr -d '\r"')
+    if [ -z "$s3a" ] || [ -z "$s3s" ]; then
+        log_error "S3 凭据读取失败（/etc/noda/jobs.env）"
+        _rollback_cleanup
+        return 1
+    fi
+    if ! mc alias set "$alias_name" "http://192.168.100.1:${relay_port}" "$s3a" "$s3s" --api S3v4; then
+        log_error "mc alias 设置失败"
+        _rollback_cleanup
+        return 1
+    fi
+
+    local prev_objs
+    prev_objs=$(mc ls --recursive "$alias_name/noda-static/sites/${product}-prev/" 2>/dev/null | grep -c . || true)
+    if [ "${prev_objs:-0}" -eq 0 ]; then
+        log_error "回滚快照为空：sites/${product}-prev/ 不存在或无对象（该产品尚无快照）"
+        _rollback_cleanup
+        return 1
+    fi
+
+    log_info "回滚: sites/${product}-prev/（$prev_objs 对象）→ sites/$product/ ..."
+    if ! mc mirror --overwrite --remove --quiet \
+        "$alias_name/noda-static/sites/${product}-prev/" \
+        "$alias_name/noda-static/sites/$product/"; then
+        log_error "prod 桶回滚失败"
+        _rollback_cleanup
+        return 1
+    fi
+
+    # stg 桶同步回滚（失败仅告警——preprod 非关键路径）
+    local stg_json="$PROJECT_ROOT/config/seaweedfs/s3.json"
+    if [ -f "$stg_json" ]; then
+        if mc alias set "$alias_name-stg" "http://127.0.0.1:8333" \
+            "$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['accessKey'])" 2>/dev/null)" \
+            "$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['secretKey'])" 2>/dev/null)" \
+            --api S3v4 >/dev/null 2>&1; then
+            mc mirror --overwrite --remove --quiet \
+                "$alias_name-stg/noda-static-stg/sites/${product}-prev/" \
+                "$alias_name-stg/noda-static-stg/sites/$product/" \
+                && log_info "stg 桶已同步回滚" || log_warn "stg 桶回滚失败（不影响 prod）"
+        fi
+    fi
+
+    # 对象数校验须在拆 alias 之前
+    local now_objs
+    now_objs=$(mc ls --recursive "$alias_name/noda-static/sites/$product/" 2>/dev/null | grep -c . || true)
+    _rollback_cleanup
+    log_info "回滚后主前缀对象数: $now_objs（快照 $prev_objs）"
+    if [ "$now_objs" != "$prev_objs" ]; then
+        log_warn "回滚后对象数与快照不一致（$now_objs vs $prev_objs）——请人工核对"
+    fi
+    log_success "$product 静态站已回滚到上一次发布（$now_objs 对象）；确认恢复后下次发布会重新快照"
+    return 0
 }
 
 # ============================================
