@@ -218,10 +218,11 @@ pipeline {
                                 choice(name: 'ACTION', choices: ['deploy_prod', 'rebuild_preprod', 'abort'], description: '选择操作：\n- deploy_prod: 验证通过，部署到生产环境\n- rebuild_preprod: 重新部署 pre-prod（无需重新构建）\n- abort: 中止部署')
                             ]
                         )
-                        // input 带 parameters 时返回 Map（[ACTION:...]），直接赋给 env
-                        // 会变成 "{ACTION=deploy_prod}"——Deploy Prod/Rebuild/abort 的
-                        // when 条件因此永远不匹配（曾致 normal 模式静默跳过 prod 部署）
-                        env.DEPLOY_ACTION = (userInput instanceof Map) ? userInput['ACTION'] : userInput
+                        // input 带 parameters 时正常提交返回 Map（[ACTION:...]）；
+                        // 但 proceedEmpty（空参批准）返回 null——两者直接赋 env 都会让
+                        // Deploy Prod/Rebuild/abort 的 when 恒 false（normal 模式曾静默
+                        // 跳过 prod 部署且显示 SUCCESS）。解包 + null 回落默认批准项。
+                        env.DEPLOY_ACTION = (userInput instanceof Map) ? userInput['ACTION'] : (userInput ?: 'deploy_prod')
                     }
                 }
             }
