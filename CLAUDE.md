@@ -173,6 +173,7 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 | 同服务互斥（两个 class 并发触发） | apps #19 ∥ #20 | ✅ | #20 在 build-class 锁上等待 72s，#19 结束后自动接棒；不同产品并发不受影响 |
 | prod 实际收敛 | — | ✅ | #18（nearby/api，≥0ef8d69 镜像）落地后，边缘 /api/snagme/status 返回真实 scanner 数据——snagme 链路正式在线 |
 | 发布快照 + 静态站一键回滚 | apps #31 + 本地演练 | ✅ | #31 发布产生 sites/snagme-prev/（51 对象）→ 实跑 `pipeline_rollback_static_site snagme`：prod 回滚 51=51 对象数一致、stg 同步回滚、中继容器/alias 全部清理、公网 200。演练后线上内容与回滚前一致（同 commit 重发布） |
+| UI 一键回滚任务（noda-rollback） | rollback #1 snagme/static | ✅ | Jenkins CPS 解析通过 → seed 幂等建 job → REST 触发+批准 → 门禁 5s → 桶回滚 51=51 → E2E 通过 → CDN 清除 → 公网 200 → r4s 无残留锁。api/all 路径同引擎（锚点镜像 + apps-prod 锁），审批页明示全产品影响 |
 | 锁属主语义 + 全 stage 超时 | infra #6/#7/#8 + apps #31 | ✅ | #6 自锁/#7 复活锁双实证后定稿：锁内 owner(BUILD_URL) 三态判定（自锁幂等通过/死属主抢破/无主孤儿 3min 抢破）+ 每 stage options.timeout（卡死自动失败走 post 释放）；#8 全绿复验 |
 
 **Snagme 接入说明（2026-09-13 上线，Trade Me 捡漏监控）：**
@@ -358,6 +359,18 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 | 新容器健康检查失败 | 保留旧容器，停新容器 | `wait_container_healthy` 超时 |
 | E2E HTTP 检查失败 | 保留旧容器，停新容器 | curl 返回非 200 或超时 |
 | 部署后人工确认回滚 | Pipeline `input` 步骤等待确认 | 手动触发 |
+
+### 人工一键回滚：noda-rollback 任务（2026-09-13，UI 可点）
+- 入口：Jenkins UI（或 curl）`noda-rollback`，参数 PRODUCT（8 产品）+ SCOPE
+  - `static`：桶回滚 `sites/<product>-prev/` 快照 → 主前缀，**只影响本产品**（`pipeline_rollback_static_site`）
+  - `api`：noda-api 容器回到 `rollback` 锚点镜像——⚠️ 后端全产品单体，**影响所有产品**
+  - `all`：两者；边缘反代镜像不在此回滚（走 noda-infra SERVICE=nginx）
+- 安全：与发布共用 `build-<product>` 队列锁（同产品排队互斥）；桶回滚持 `publish-<product>`、
+  容器回滚持 `apps-prod`；审批前释放队列锁；post 兜底全释放；回滚后自动公网探针 + CDN 清除
+- api env 自愈：r4s `/tmp` 为 tmpfs（重启即清 `/tmp/prod-api.env`），缺失时从 Doppler 重建
+- 首次发布前无锚点/快照时任务会明确报错（不会盲目动线上）；确认恢复后下次发布会重新快照
+- 实测：#1 snagme/static 走 UI 任务全绿（门禁 5s → 批准 → 回滚 51=51 对象 → E2E 通过 → 公网 200）
+
 ### E2E 健康检查
 | Check | Method | URL | Expected |
 |-------|--------|-----|----------|
