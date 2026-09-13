@@ -1,15 +1,16 @@
 # Noda 数据库备份系统 - Crontab 配置
 # dcron /etc/cron.d/ 格式: 分 时 日 月 周 命令（无 user 字段，用户由文件 owner 决定）
-# ⚠️ BusyBox crond 只读 /etc/crontabs/root——镜像内本文件由 entrypoint-ops.sh
-#    启动时复制到 /etc/crontabs/root（直接放 /etc/cron.d 不会被读取，
-#    2026-09-13 事故：每日备份静默失败 + 周日 verify 与 daily 撞车的教训）
+# 注：supervisord 启动的 /usr/sbin/crond 是 dcron 4.5，默认读 /etc/cron.d（-s）
+#     + /etc/crontabs（-c）两处——本文件烤入 /etc/cron.d/nodaops 即生效；
+#     勿把内容复制到 /etc/crontabs，两处同读会双跑（2026-09-13 排查留档）
 
 # 每天凌晨 3:00 执行备份
 # 日志统一写 /var/log/noda-backup（卷挂载 docker/volumes/logs，持久化到宿主机）
 0 3 * * * /app/backup/backup-postgres.sh >> /var/log/noda-backup/backup.log 2>&1
 
 # 每周日凌晨 4:30 执行验证测试（2026-09-13 从 3:00 挪出：与每日备份同点撞车，
-# verify 的 test_restore_* 清理与 discover_databases 并发竞争导致双方互踩失败）
+# verify 的 test_restore_* 库清理与 discover_databases 并发竞争导致双方互踩失败，
+# 且遗留 test_restore_* 空库混入 discover 清单致每日备份整轮失败）
 30 4 * * 0 /app/backup/test-verify-weekly.sh >> /var/log/noda-backup/test.log 2>&1
 
 # 每 6 小时清理旧历史记录

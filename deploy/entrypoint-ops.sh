@@ -15,15 +15,10 @@ echo "=========================================="
 mkdir -p /tmp/supervisor /var/log/noda-backup /app/history
 touch /var/log/noda-backup/cron.log /var/log/noda-backup/cloudflared.log
 
-# 安装备份 crontab（2026-09-13 修复）：Dockerfile 把 deploy/crontab 烤在
-# /etc/cron.d/nodaops，但 supervisord 启动的 BusyBox crond 只读
-# /etc/crontabs/root——/etc/cron.d 从未被读取，每日备份静默不执行。
-# 启动时复制到 BusyBox crond 的读取位置（覆盖 Alpine 默认 run-parts 条目，
-# 那些周期目录本就是空的）
-if [ -f /etc/cron.d/nodaops ]; then
-  cp /etc/cron.d/nodaops /etc/crontabs/root
-  echo "✓ 备份 crontab 已安装到 /etc/crontabs/root（BusyBox crond 读取位置）"
-fi
+# 注：定时调度由 dcron 承担——/usr/sbin/crond（dillon's cron 4.5）默认读
+# /etc/cron.d（-s 目录，含镜像烤入的 nodaops 备份任务）+ /etc/crontabs
+# （Alpine 默认 run-parts）。勿把 /etc/cron.d 内容复制到 /etc/crontabs：
+# 两处同读，复制会造成任务双跑（2026-09-13 排查备份链路时的误判，留档）
 
 # 加载环境变量
 if [ -f /app/.env.ops ]; then
