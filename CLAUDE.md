@@ -143,7 +143,7 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 
 | Job | Jenkinsfile | 用途 | 阶段 |
 |-----|-------------|------|------|
-| **noda-apps** | `jenkins/Jenkinsfile.apps` | 产品应用发布。PRODUCT 必选单产品（class / www / admin / liuyao / nearby / auth / comment / snagme，无 all；snagme 仅 LAYER=api）；LAYER=all（前后端一起，含 noda-static 反代镜像顺带刷新）/ api（仅后端 Go API）/ static（仅前端：静态站构建 + mc mirror 入 SeaweedFS 桶 sites/\<product\>/，prod+stg 双桶）；DEPLOY_MODE=normal（preprod 验证 + 人工批准后发 prod）/ fast（Test 通过直发 prod，仅限 hotfix） | Pre-flight → Build → [Deploy Pre-prod ‖ Test] → Human Approval → Deploy Prod → Publish Static → Verify（产品维度 E2E）→ CDN Purge |
+| **noda-apps** | `jenkins/Jenkinsfile.apps` | 产品应用发布。PRODUCT 必选单产品（class / www / admin / liuyao / nearby / auth / comment / snagme，无 all）；LAYER=all（前后端一起，含 noda-static 反代镜像顺带刷新）/ api（仅后端 Go API）/ static（仅前端：静态站构建 + mc mirror 入 SeaweedFS 桶 sites/\<product\>/，prod+stg 双桶）；DEPLOY_MODE=normal（preprod 验证 + 人工批准后发 prod）/ fast（Test 通过直发 prod，仅限 hotfix） | Pre-flight → Build → [Deploy Pre-prod ‖ Test] → Human Approval → Deploy Prod → Publish Static → Verify（产品维度 E2E）→ CDN Purge |
 | **noda-infra** | `jenkins/Jenkinsfile.infra` | 公共基础设施镜像发布。SERVICE 必选其一（无 all）：nginx（构建 noda-static 反代镜像并传输 r4s 后重建容器）/ seaweedfs / noda-ops / postgres（先备份 + 人工确认） | Pre-flight → Backup（仅 postgres）→ Human Approval（仅 postgres）→ Deploy → Health Check → Verify |
 
 **部署流程（Build Once，人工验证后上线，normal 模式）：**
@@ -183,9 +183,11 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
   snagme/deploy/README.md）。
 - 后端：`snagme/api` Go 模块经 noda-api 组合根接入（`:3015`），`PRODUCT=snagme
   &LAYER=api` 发布；nginx `/api/*` 反代 :3015。
-- 前端：dashboard 为 Next.js `output:'export'` 静态导出（数据全部客户端同源 fetch
-  Go API），`LAYER=static` 桶发布 sites/snagme/，`/listing/<id>` 深链 404=200 回
-  app-shell 壳。**https://snagme.noda.co.nz/ 已上线**（公网 E2E 全绿）。
+- 前端：`snagme/web` 公开产品站（2026-09-14 重写自 snagme/dashboard 看板，后者降级
+  本地 dev 工具）——Next.js `output:'export'` 三语（en 落根 + /zh /zh-TW，locale 协商
+  见 snagme.map.conf），`LAYER=static` 桶发布 sites/snagme/，`/deals/<id>`
+  `/report/<id>` 深链 404=200 回 app-shell 壳。**https://snagme.noda.co.nz/ 已上线**
+  （公网 E2E 全绿）。
 - 发布入口：`noda-apps?PRODUCT=snagme&LAYER=static`（前端）/ `LAYER=api`（后端）。
 
 **并行与清理：**
