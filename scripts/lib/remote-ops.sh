@@ -298,6 +298,14 @@ acquire_deploy_lock()
             remote_exec "rm -rf $lock_file 2>/dev/null || true"
             continue
         fi
+        # 无属主孤儿（#8 实证）：旧代码在途裸 mkdir 复活出的锁无 owner 文件，
+        # 属主判定失效只能干等 30min stale。复合获取命令下 owner 在 mkdir 后
+        # 毫秒级落地——无主超 3 分钟即孤儿，立即抢破（3min 宽限防误抢新锁）
+        if [ -z "$owner" ] && remote_exec "test -d $lock_file && test \$(find $lock_file -mmin +3 2>/dev/null | grep -c .) -gt 0 2>/dev/null"; then
+            log_warn "部署锁 [$lock_name] 无属主且滞留超 3 分钟（裸 mkdir 孤儿锁），强制抢占"
+            remote_exec "rm -rf $lock_file 2>/dev/null || true"
+            continue
+        fi
         if remote_exec "test -d $lock_file && test \$(find $lock_file -mmin +30 2>/dev/null | grep -c .) -gt 0 2>/dev/null"; then
             log_warn "部署锁 [$lock_name] 已滞留超 30 分钟（疑似硬杀泄漏），强制抢占"
             remote_exec "rm -rf $lock_file 2>/dev/null || true"
