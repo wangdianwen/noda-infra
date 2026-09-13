@@ -338,6 +338,19 @@ pipeline_preflight()
         return 1
     fi
 
+    # 同服务互斥（构建级）：同一 PRODUCT 的两条 Pipeline 不允许并行——
+    # build-<product> 锁从 Pre-flight 持有到 post 兜底释放（registry 登记）。
+    # 不同产品各持各的锁互不影响；等待 15 分钟后明确失败（防占用 executor 空等）。
+    if [ -n "${PRODUCT_FILTER:-}" ]; then
+        local build_lock="build-${PRODUCT_FILTER}"
+        NODA_LOCK_NAME="${build_lock}"
+        export NODA_LOCK_NAME
+        if ! acquire_deploy_lock 900 "${build_lock}"; then
+            log_error "产品 ${PRODUCT_FILTER} 已有发布进行中（持有 ${build_lock}），本次终止——同服务不允许并行发布，请稍后重试"
+            return 1
+        fi
+    fi
+
     log_success "前置检查全部通过"
 }
 
@@ -1201,15 +1214,16 @@ pipeline_infra_preflight()
 
     log_info "基础设施前置检查: $service"
 
-    # 并行化锁（2026-09-13）：公共基础设施服务（nginx/seaweedfs/noda-ops/postgres）
-    # 共用 infra-core 锁互斥——共享 compose 栈与边缘反代，核心服务间串行防覆盖；
-    # 与 noda-apps（apps-prod/apps-preprod 锁）、产品静态站发布（publish-<product> 锁）
-    # 维度互不重叠，跨 Pipeline 可并行。锁名经 NODA_LOCK_NAME 传给 pipeline_release_lock。
+    # 并行化锁（2026-09-13 二次收紧）：构建级 build-infra-<service> 锁持有到 post
+    # 兜底释放——同服务两条 Pipeline 不允许并行；不同服务可并行构建。
+    # 真正动共享设施（compose 栈/边缘反代）时由 pipeline_infra_core_enter 另持
+    # infra-core（Deploy 起持有到 post）。锁名经 NODA_LOCK_NAME 传给 pipeline_release_lock。
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
-        NODA_LOCK_NAME="infra-core"
+        local build_lock="build-infra-${service}"
+        NODA_LOCK_NAME="${build_lock}"
         export NODA_LOCK_NAME
-        if ! acquire_deploy_lock 3600 "$NODA_LOCK_NAME"; then
-            log_error "无法获取部署锁 [$NODA_LOCK_NAME]，可能有其他部署进行中"
+        if ! acquire_deploy_lock 900 "${build_lock}"; then
+            log_error "服务 ${service} 已有发布进行中（持有 ${build_lock}），本次终止——同服务不允许并行发布"
             return 1
         fi
     fi
@@ -1457,6 +1471,19 @@ pipeline_backup_database()
     fi
 }
 
+
+# pipeline_infra_core_enter - 进入共享设施互斥区（infra-core 锁）
+# Deploy 阶段起持有（Health/Verify 延续持有），post always 的
+# pipeline_release_lock 统一释放；防止 nginx 重建窗口内其它核心服务并发操作
+pipeline_infra_core_enter()
+{
+    NODA_LOCK_NAME="infra-core"
+    export NODA_LOCK_NAME
+    if ! acquire_deploy_lock 3600 "infra-core"; then
+        log_error "无法获取部署锁 [infra-core]，可能有其他基础设施部署进行中"
+        return 1
+    fi
+}
 
 # ============================================
 # 函数: pipeline_infra_deploy

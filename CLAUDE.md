@@ -181,7 +181,11 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
   ② `noda-infra?SERVICE=noda-ops` 重建（ingress 已加 `config/cloudflare/config.yml`）。
 
 **并行与清理：**
-- 两个 Pipeline 均允许并行构建：noda-apps 前端桶发布按产品隔离（publish-\<product\> 锁 + 产品维度中继），后端容器切换由 apps-prod/apps-preprod 锁互斥；noda-infra 核心服务共用 infra-core 锁——跨 Pipeline 互不阻塞
+- 并行规则（2026-09-13 收紧）：**同一服务不允许并行**——noda-apps 持 `build-<product>`、
+  noda-infra 持 `build-infra-<service>` 构建级锁（Pre-flight 起到 post 释放，等待上限
+  15 分钟，超时明确失败）；不同服务并行互不影响。跨 Pipeline 维度（apps-prod /
+  apps-preprod / publish-\<product\> / infra-core / build-*）互不阻塞。
+  infra-core 收窄为 noda-infra Deploy→post 持有（仅动共享设施时互斥）
 - 旧 cleanup job（每周清理）已删除：构建后清理内建于两个 Pipeline 的 post 阶段（镜像保留、registry retention + GC、桶 mirror --remove 收敛）
 
 **Pre-prod 访问（通过 /etc/hosts）：**

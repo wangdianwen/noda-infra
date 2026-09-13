@@ -133,6 +133,9 @@ pipeline {
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
                         export SSH_KEY_FILE
+                        # infra-core 从 Deploy 起持有到 post 释放：动共享设施
+                        # （compose 栈/边缘反代）期间其它核心服务互斥
+                        pipeline_infra_core_enter
                         pipeline_infra_deploy "$SERVICE"
                     '''
                 }
