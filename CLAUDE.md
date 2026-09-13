@@ -165,7 +165,8 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 | 同 Pipeline 不同参数并发 | apps #5 ∥ #6 | ✅ | 两构建重叠执行互不干扰（ws-1/ws-2 槽位 + publish-<product> 锁） |
 | www 前端（修正探针后复测） | apps #7 | ✅ | www.noda.co.nz 是 301 域，探针改探规范域 noda.co.nz |
 | noda-apps 后端全链路（class/api） | apps #8 → #11 | ✅（以 snagme 复验） | #8 被 apps 仓 snagme go.mod 遗漏阻塞（挡板生效，未动线上）；go.mod 修复后以 #11 走通完整路径：Build → 产品级 Go 测试 → preprod → API 批准 → prod → E2E |
-| snagme 首次接入（PRODUCT=snagme, LAYER=api） | apps #11 | ✅ | 3.4min 全流程；verify「snagme api 链 E2E 验证通过（r4s 边缘内探）」——nginx snagme 块 → :3015 真实可用 |
+| snagme 接入全链路（PRODUCT=snagme, LAYER=api） | apps #11→#13→#15→#17 | ✅ | 连续迭代修复三个问题后全流程贯通：#17 真实完成 prod 切换（传输 0ef8d69 → 容器重建 → nginx 重载）；严格探针（/api/snagme/status）如实报告了并发 nearby 发布覆盖导致的 502——**api 为全产品单体容器，并发 normal 发布最后部署者通吃**（锁保证过程不损坏），待并发窗口关闭后重跑一次即收敛 |
+| ⚠️ input 批准返回形状漂移 | apps #9/#11/#12/#15 | 已修复 | UI=Map / 空参批准=null / API submit 无 submit 字段=Rejected——归一化为「显式 abort/rebuild 外一律视为批准」（9815fd6），abort 语义不变 |
 
 重构期间修掉的三个存量 bug：① Jenkins sh=POSIX 模式 bash 不支持进程替换 `<(...)`；② 静态发布哨兵校验在 mc alias 删除之后执行，必然失败（旧 infra-deploy #80 FAILURE 根因）；③ seaweedfs 桶初始化远程拉 minio/mc 被 r4s registry mirror 拒绝（改本地 mc + 中继）。
 
