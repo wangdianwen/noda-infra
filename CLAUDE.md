@@ -238,9 +238,12 @@ curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
 curl -sf -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
   "$JENKINS_URL/job/noda-apps/N/wfapi/describe" | \
   python3 -c "import sys,json; [print(s['name'], s['status']) for s in json.load(sys.stdin)['stages']]"
+# ⚠️ 批准必须用 /submit 并带 ACTION 参数——/proceedEmpty 不提交 choice，
+# DEPLOY_ACTION 为空会静默跳过 Deploy Prod（构建仍显示完成但 prod 未切换）
 curl -s -b /tmp/jenkins-cookies -u "$JENKINS_ADMIN_USER:$JENKINS_ADMIN_PASSWORD" \
   -X POST -H "Jenkins-Crumb: $CRUMB" \
-  "$JENKINS_URL/job/noda-apps/N/input/Human Approval/proceedEmpty"
+  -d "ACTION=deploy_prod" \
+  "$JENKINS_URL/job/noda-apps/N/input/<inputId>/submit"
 ```
 
 **注意事项：**
