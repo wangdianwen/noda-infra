@@ -53,6 +53,10 @@ services:
     image: ${NORA_API_IMAGE:-noda-api:latest}
     container_name: preprod-noda-api
     restart: unless-stopped
+    ports:
+      # snagme 看板数据 API（:3015，2026-09-13）：仅绑回环，宿主 Next 看板（:3300）调用；
+      # 缺省不对局域网暴露（同 seaweedfs-stg 模式）
+      - "${SNAGME_API_BIND:-127.0.0.1}:3015:3015"
     depends_on:
       postgres:
         condition: service_healthy
