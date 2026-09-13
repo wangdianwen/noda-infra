@@ -170,6 +170,9 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 
 重构期间修掉的三个存量 bug：① Jenkins sh=POSIX 模式 bash 不支持进程替换 `<(...)`；② 静态发布哨兵校验在 mc alias 删除之后执行，必然失败（旧 infra-deploy #80 FAILURE 根因）；③ seaweedfs 桶初始化远程拉 minio/mc 被 r4s registry mirror 拒绝（改本地 mc + 中继）。
 
+| 同服务互斥（两个 class 并发触发） | apps #19 ∥ #20 | ✅ | #20 在 build-class 锁上等待 72s，#19 结束后自动接棒；不同产品并发不受影响 |
+| prod 实际收敛 | — | ✅ | #18（nearby/api，≥0ef8d69 镜像）落地后，边缘 /api/snagme/status 返回真实 scanner 数据——snagme 链路正式在线 |
+
 **Snagme 接入说明（2026-09-13，Trade Me 捡漏监控）：**
 - 后端：`snagme/api` Go 模块经 noda-api 组合根接入（`:3015`，`SNAGME_API_PORT`），
   `PRODUCT=snagme&LAYER=api` 全流程发布；nginx `snagme.noda.co.nz` 块 `/api/*` 反代
