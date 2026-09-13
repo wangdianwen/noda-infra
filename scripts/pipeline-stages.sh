@@ -850,17 +850,112 @@ _stop_new_prod_containers()
     done
 }
 
+# _tag_rollback_anchors - 切换前给当前 prod 容器在用镜像打 rollback 锚点（2026-09-13）
+# 容器替换是破坏性的（docker rm -f 旧容器 → 启新容器），旧版回滚依赖的 legacy
+# 单容器已被停止容器清理（24h 保留）吃掉——健康检查失败曾致 prod 502 需手工救火。
+# 现在切换前对每个触达层 docker tag 当前镜像为 <repo>:rollback（镜像不复制只贴标签），
+# 失败路径 _rollback_prod_containers 用锚点镜像原地重建。首次部署无锚点 → 降级为仅清理。
+# 参数: $1 = mode(remote|local)
+_tag_rollback_anchors()
+{
+    local mode="$1"
+    local container repo image
+    for repo in noda-api noda-static; do
+        case "$repo" in
+            noda-api)    _layer_want_api || continue ; container="$PROD_API_CONTAINER" ;;
+            noda-static) _layer_want_web || continue ; container="$PROD_STATIC_CONTAINER" ;;
+        esac
+        if [ "$mode" = "remote" ]; then
+            image=$(remote_exec "docker inspect -f '{{.Config.Image}}' $container 2>/dev/null" 2>/dev/null | tr -d '\r' | head -1)
+            if [ -n "$image" ] && remote_exec "docker image inspect $image >/dev/null 2>&1"; then
+                if remote_exec "docker tag $image ${repo}:rollback"; then
+                    log_info "回滚锚点已打: ${repo}:rollback <- $image"
+                fi
+            else
+                log_warn "无回滚锚点可打: $container 不在运行（首次部署?）"
+            fi
+        else
+            image=$(docker inspect -f '{{.Config.Image}}' "$container" 2>/dev/null || true)
+            if [ -n "$image" ] && docker image inspect "$image" >/dev/null 2>&1; then
+                docker tag "$image" "${repo}:rollback" && log_info "回滚锚点已打: ${repo}:rollback <- $image"
+            else
+                log_warn "无回滚锚点可打: $container 不在运行（首次部署?）"
+            fi
+        fi
+    done
+}
+
+# _rollback_prod_containers - 部署失败时回滚到 rollback 锚点镜像（2026-09-13）
+# 先清掉本层新容器，再对每个触达层用锚点镜像原地重建（api 回滚复用本次写入
+# r4s 的 /tmp/prod-api.env——env 模板同构，新旧版本兼容），任一层无锚点则该层
+# 保持清理后状态（首次部署场景）。最后 reload nginx；回滚容器 healthy 为尽力
+# 等待——锚点镜像都起不来属环境级故障，保留现场交人工。
+# 参数: $1 = mode(remote|local)
+_rollback_prod_containers()
+{
+    local mode="$1"
+    local health_timeout="$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))"
+    local repo container
+    _stop_new_prod_containers "$mode"
+    for repo in noda-api noda-static; do
+        case "$repo" in
+            noda-api)    _layer_want_api || continue ; container="$PROD_API_CONTAINER" ;;
+            noda-static) _layer_want_web || continue ; container="$PROD_STATIC_CONTAINER" ;;
+        esac
+        if [ "$mode" = "remote" ]; then
+            if remote_exec "docker image inspect ${repo}:rollback >/dev/null 2>&1"; then
+                log_warn "回滚 ${container} -> ${repo}:rollback"
+                case "$repo" in
+                    noda-api)    _start_prod_api remote "${repo}:rollback" "/tmp/prod-api.env" || true ;;
+                    noda-static) _start_prod_static remote "${repo}:rollback" || true ;;
+                esac
+            else
+                log_warn "无 ${repo}:rollback 锚点（首次部署?），该层保持清理后状态"
+            fi
+        else
+            if docker image inspect "${repo}:rollback" >/dev/null 2>&1; then
+                log_warn "回滚 ${container} -> ${repo}:rollback"
+                case "$repo" in
+                    noda-api)
+                        # 本地模式 env 临时文件可能已随失败路径清理——重新生成
+                        local env_file
+                        if env_file=$(prepare_prod_api_env_file); then
+                            _start_prod_api local "${repo}:rollback" "$env_file" || true
+                            rm -f "$env_file"
+                        else
+                            log_warn "env 生成失败，跳过 api 回滚"
+                        fi
+                        ;;
+                    noda-static) _start_prod_static local "${repo}:rollback" || true ;;
+                esac
+            else
+                log_warn "无 ${repo}:rollback 锚点（首次部署?），该层保持清理后状态"
+            fi
+        fi
+    done
+    # 尽力等待回滚容器 healthy（失败不阻塞返回——日志可见，人工兜底）
+    if [ "$mode" = "remote" ]; then
+        _layer_want_api && { wait_container_healthy "$PROD_API_CONTAINER" "$health_timeout" true true || log_warn "回滚 api 容器未 healthy，请人工检查"; } || true
+        _layer_want_web && { wait_container_healthy "$PROD_STATIC_CONTAINER" "$health_timeout" true true || log_warn "回滚 static 容器未 healthy，请人工检查"; } || true
+    else
+        _layer_want_api && { wait_container_healthy "$PROD_API_CONTAINER" "$health_timeout" || log_warn "回滚 api 容器未 healthy，请人工检查"; } || true
+        _layer_want_web && { wait_container_healthy "$PROD_STATIC_CONTAINER" "$health_timeout" || log_warn "回滚 static 容器未 healthy，请人工检查"; } || true
+    fi
+    reload_nginx || true
+    log_warn "已回滚到 rollback 锚点镜像（上一发布版本）"
+}
+
 # ============================================
 # 函数: pipeline_deploy_prod
 # ============================================
 # 生产环境双容器部署（三容器拆分 2026-09 → S5 frontend 退役 2026-09-12）：
-#   传镜像（api/static 按 LAYER）→ 依序启新容器 → 各自健康检查
-#   → reload nginx 切流 → 停旧 legacy 单容器（KEEP_LEGACY_APPS=1 跳过，灰度用）
-# 安全措施（沿用 transfer-first 内存护栏与回滚语义）：
-#   - 镜像成功落地 r4s 前绝不动旧容器（传输失败旧容器全程未动/秒级 docker start 回滚）
-#   - 任一新容器启动/健康检查失败 → 停止并删除全部新容器，旧 noda-apps-prod 不受影响
-#     （旧容器此刻仍在运行或可 docker start 秒级恢复——因此切换期间无需旧镜像重建）
-#   - 三个新容器全部 healthy 后才停旧容器（只停不删，供秒级回滚）
+#   传镜像（api/static 按 LAYER）→ 打 rollback 锚点 → 依序启新容器 → 各自健康检查
+#   → reload nginx 切流
+# 安全措施：
+#   - 镜像成功落地 r4s 前绝不动旧容器（传输失败旧容器全程未动）
+#   - 切换前 docker tag 当前镜像为 <repo>:rollback（legacy 容器已被 24h 清理吃掉，
+#     旧版"docker start legacy"回滚路径死亡——2026-09-13 改为锚点镜像原地重建）
+#   - 任一新容器启动/健康检查失败 → _rollback_prod_containers 自动回上一版本
 # 参数: $1 = GIT_SHA
 pipeline_deploy_prod_inner()
 {
@@ -874,55 +969,23 @@ pipeline_deploy_prod_inner()
     log_info "生产环境部署（LAYER=${LAYER_FILTER}）: $PROD_API_CONTAINER + $PROD_STATIC_CONTAINER ($git_sha)"
 
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
-        # r4s 远程部署模式，两种顺序（沿用单容器时代不变式，2026-09-02 #200 事故教训）：
-        #
-        # TRANSFER_FIRST=1（默认）：先传三镜像（旧容器继续服务）→ 落地后启新容器切换。
-        #   内存护栏：传输前读 r4s MemAvailable，低于阈值或读取失败自动回退先停模式。
-        # TRANSFER_FIRST=0：先停（不删）旧容器再传镜像，内存紧张设备的保底模式。
-        local legacy_running="false"
-        if [ "$(remote_exec "docker inspect -f '{{.State.Running}}' $PROD_CONTAINER" 2>/dev/null)" = "true" ]; then
-            legacy_running="true"
+        # r4s 远程部署模式：registry 增量传输（流式，内存占用低）——旧容器全程
+        # 保持服务直到新容器 healthy。内存护栏保留为观测项（低于阈值仅告警）。
+        local free_mb
+        free_mb=$(_r4s_mem_available_mb)
+        if [ -n "$free_mb" ] && [ "$free_mb" -lt "${TRANSFER_FIRST_MIN_FREE_MB:-1024}" ]; then
+            log_warn "r4s 可用内存 ${free_mb}MB 偏低——传输与容器重建可能变慢，请关注"
         fi
 
-        # 模式决策（内存护栏）
-        local transfer_first="${TRANSFER_FIRST:-1}"
-        local min_free_mb="${TRANSFER_FIRST_MIN_FREE_MB:-1024}"
-        if [ "$transfer_first" = "1" ]; then
-            local free_mb
-            free_mb=$(_r4s_mem_available_mb)
-            if [ -z "$free_mb" ]; then
-                log_warn "无法读取 r4s 可用内存，保守起见回退先停后传模式"
-                transfer_first=0
-            elif [ "$free_mb" -lt "$min_free_mb" ]; then
-                log_warn "r4s 可用内存 ${free_mb}MB < ${min_free_mb}MB，回退先停后传模式"
-                transfer_first=0
-            else
-                log_info "transfer-first 模式：r4s 可用内存 ${free_mb}MB ≥ ${min_free_mb}MB，旧容器保持服务，先传镜像"
-            fi
-        fi
-
-        if [ "$transfer_first" != "1" ] && [ "$legacy_running" = "true" ]; then
-            # 先停模式：只停（不删）旧容器，释放内存峰值，容器保留用于回滚
-            log_info "停止旧容器（r4s，不删除）: $PROD_CONTAINER"
-            remote_exec "docker stop -t 10 $PROD_CONTAINER || true"
-        fi
-
-        # 传输镜像（按 LAYER 裁剪；transfer-first 模式下旧容器持续服务，r4s 增量拉层落盘）
+        # 传输镜像（按 LAYER 裁剪；r4s 增量拉层落盘）
         log_info "r4s 远程部署模式：传输镜像到 r4s（LAYER=${LAYER_FILTER:-all}）..."
         local img
         local transfer_list=()
         if _layer_want_api; then transfer_list+=("$api_image"); fi
-        if _layer_want_web; then transfer_list+=("$static_image"); fi  # S5：frontend 镜像退役
+        if _layer_want_web; then transfer_list+=("$static_image"); fi
         for img in "${transfer_list[@]}"; do
             if ! transfer_image "$img" "$img"; then
-                log_error "镜像传输失败: $img"
-                if [ "$transfer_first" = "1" ]; then
-                    log_info "transfer-first 模式：旧容器未受影响，线上继续服务"
-                elif [ "$legacy_running" = "true" ]; then
-                    log_info "尝试回滚：docker start 恢复旧容器 $PROD_CONTAINER..."
-                    remote_exec "docker start $PROD_CONTAINER" >/dev/null 2>&1 || true
-                    reload_nginx || true
-                fi
+                log_error "镜像传输失败: $img（旧容器未受影响，线上继续服务）"
                 return 1
             fi
         done
@@ -930,11 +993,6 @@ pipeline_deploy_prod_inner()
         # 切换不变式：本次部署的镜像必须确认落地 r4s，才允许动旧容器
         for img in "${transfer_list[@]}"; do
             if ! remote_exec "docker image inspect $img >/dev/null 2>&1"; then
-                if [ "$transfer_first" != "1" ] && [ "$legacy_running" = "true" ]; then
-                    log_warn "回滚先停的旧容器..."
-                    remote_exec "docker start $PROD_CONTAINER || true"
-                    reload_nginx || true
-                fi
                 log_error "镜像 $img 未在 r4s 落地（pull 未完成），保持旧容器服务，中止切换"
                 return 1
             fi
@@ -951,52 +1009,38 @@ pipeline_deploy_prod_inner()
         fi
         rm -f "$tmp_api_env"
 
+        # 切换前打回滚锚点（破坏性替换的最后退路，见 _tag_rollback_anchors）
+        _tag_rollback_anchors remote
+
         # 依序启动本层容器（api → static；未触达层保持原容器不动）
-        # 任一失败：清理本层新容器 + 恢复旧容器（transfer-first 下旧容器一直在跑）
+        # 任一失败：_rollback_prod_containers 用锚点镜像原地重建上一版本
         if _layer_want_api && ! _start_prod_api remote "$api_image" "/tmp/prod-api.env"; then
-            log_error "api 容器启动失败"
-            _stop_new_prod_containers remote
-            [ "$legacy_running" = "true" ] && remote_exec "docker start $PROD_CONTAINER" >/dev/null 2>&1 || true
-            reload_nginx || true
+            log_error "api 容器启动失败 — 自动回滚"
+            _rollback_prod_containers remote
             return 1
         fi
-        # S5 退役：frontend Node 容器不再部署（运行时零 Node）
         if _layer_want_web && ! _start_prod_static remote "$static_image"; then
-            log_error "static 容器启动失败"
-            _stop_new_prod_containers remote
-            [ "$legacy_running" = "true" ] && remote_exec "docker start $PROD_CONTAINER" >/dev/null 2>&1 || true
-            reload_nginx || true
+            log_error "static 容器启动失败 — 自动回滚"
+            _rollback_prod_containers remote
             return 1
         fi
 
         # 健康检查（各自容器内探测，远程）
-        log_info "等待三容器健康检查（r4s 远程）..."
+        log_info "等待容器健康检查（r4s 远程）..."
         local health_timeout="$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))"
         if _layer_want_api && ! wait_container_healthy "$PROD_API_CONTAINER" "$health_timeout" true true; then
-            log_error "api 容器健康检查失败 — 清理新容器，回滚"
-            _stop_new_prod_containers remote
-            [ "$legacy_running" = "true" ] && remote_exec "docker start $PROD_CONTAINER" >/dev/null 2>&1 || true
-            reload_nginx || true
+            log_error "api 容器健康检查失败 — 自动回滚"
+            _rollback_prod_containers remote
             return 1
         fi
         if _layer_want_web && ! wait_container_healthy "$PROD_STATIC_CONTAINER" "$health_timeout" true true; then
-            log_error "static 容器健康检查失败 — 清理新容器，回滚"
-            _stop_new_prod_containers remote
-            [ "$legacy_running" = "true" ] && remote_exec "docker start $PROD_CONTAINER" >/dev/null 2>&1 || true
-            reload_nginx || true
+            log_error "static 容器健康检查失败 — 自动回滚"
+            _rollback_prod_containers remote
             return 1
         fi
 
-        # 三个新容器全部 healthy：reload nginx 切流（upstream 指向新容器）
+        # 全部 healthy：reload nginx 切流（upstream 指向新容器）
         reload_nginx
-
-        # 停旧 legacy 单容器（只停不删，供秒级回滚）；KEEP_LEGACY_APPS=1 跳过（灰度对照）
-        if [ "${KEEP_LEGACY_APPS:-0}" = "1" ]; then
-            log_warn "KEEP_LEGACY_APPS=1 — 保留旧容器 $PROD_CONTAINER 运行（灰度模式，请人工确认后停用）"
-        elif [ "$legacy_running" = "true" ]; then
-            log_info "三个新容器已全部 healthy，停止旧容器（不删除）: $PROD_CONTAINER"
-            remote_exec "docker stop -t 10 $PROD_CONTAINER || true"
-        fi
 
         # 发布后统一清理：Mac+r4s 镜像保留、registry retention+GC（失败不回滚部署）
         pipeline_post_publish_cleanup
@@ -1004,10 +1048,6 @@ pipeline_deploy_prod_inner()
         log_success "生产环境部署完成（r4s）: $PROD_API_CONTAINER + $PROD_STATIC_CONTAINER ($git_sha)"
     else
         # 本地模式（Mac）
-        local legacy_running="false"
-        if [ "$(is_container_running "$PROD_CONTAINER")" = "true" ] || docker inspect "$PROD_CONTAINER" >/dev/null 2>&1; then
-            legacy_running="true"
-        fi
 
         # 准备 env 文件（api）
         local tmp_api_env=""
@@ -1015,16 +1055,19 @@ pipeline_deploy_prod_inner()
             tmp_api_env=$(prepare_prod_api_env_file) || return 1
         fi
 
+        # 切换前打回滚锚点
+        _tag_rollback_anchors local
+
         # 依序启动本层容器
         if _layer_want_api && ! _start_prod_api local "$api_image" "$tmp_api_env"; then
-            log_error "api 容器启动失败（本地模式）"
+            log_error "api 容器启动失败（本地模式）— 自动回滚"
+            _rollback_prod_containers local
             rm -f "$tmp_api_env"
             return 1
         fi
-        # S5 退役：frontend Node 容器不再部署（运行时零 Node）
         if _layer_want_web && ! _start_prod_static local "$static_image"; then
-            log_error "static 容器启动失败（本地模式）"
-            _stop_new_prod_containers local
+            log_error "static 容器启动失败（本地模式）— 自动回滚"
+            _rollback_prod_containers local
             rm -f "$tmp_api_env"
             return 1
         fi
@@ -1035,23 +1078,17 @@ pipeline_deploy_prod_inner()
         reload_nginx || true
 
         # 健康检查
-        log_info "等待三容器健康检查（本地模式）..."
+        log_info "等待容器健康检查（本地模式）..."
         local health_timeout="$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))"
         if _layer_want_api && ! wait_container_healthy "$PROD_API_CONTAINER" "$health_timeout"; then
-            log_error "api 容器健康检查失败（本地模式）"
+            log_error "api 容器健康检查失败（本地模式）— 自动回滚"
+            _rollback_prod_containers local
             return 1
         fi
         if _layer_want_web && ! wait_container_healthy "$PROD_STATIC_CONTAINER" "$health_timeout"; then
-            log_error "static 容器健康检查失败（本地模式）"
+            log_error "static 容器健康检查失败（本地模式）— 自动回滚"
+            _rollback_prod_containers local
             return 1
-        fi
-
-        # 停旧 legacy 单容器（KEEP_LEGACY_APPS=1 跳过）
-        if [ "${KEEP_LEGACY_APPS:-0}" = "1" ]; then
-            log_warn "KEEP_LEGACY_APPS=1 — 保留旧容器 $PROD_CONTAINER (灰度模式)"
-        elif [ "$legacy_running" = "true" ]; then
-            log_info "三个新容器已全部 healthy，停止旧容器（不删除）: $PROD_CONTAINER"
-            docker stop -t 10 "$PROD_CONTAINER" || true
         fi
 
         # 发布后统一清理（本地模式：Mac 镜像保留 + registry；失败不回滚部署）
