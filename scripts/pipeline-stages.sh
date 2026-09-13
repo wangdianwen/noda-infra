@@ -3178,7 +3178,7 @@ NODA_LOCK_REGISTRY="${NODA_LOCK_REGISTRY:-${WORKSPACE:-/tmp}/.noda-locks-${BUILD
 # pipeline_queue_gate - 同服务队列门禁（Jenkinsfile 首阶段调用，2026-09-13）
 # 语义：同一服务的多条 Pipeline 不允许同时构建——后触发者在门禁处等待
 # （不做 checkout/测试/传输等任何实际工作），先到者完成后自动接棒；
-# 等待超过 GATE_WAIT_SECONDS（默认 3600s）则明确失败。
+# 等待超过 GATE_WAIT_SECONDS（默认 900s）则明确失败并释放 executor。
 # 锁登记 NODA_LOCK_REGISTRY，post always 兜底释放；normal 模式在 Human
 # Approval 前主动释放（避免审批挂起阻塞同服务后续发布），Deploy Prod
 # /Rebuild 前经本函数重新获取。
@@ -3191,9 +3191,9 @@ pipeline_queue_gate()
     fi
     NODA_LOCK_NAME="build-${svc}"
     export NODA_LOCK_NAME
-    log_info "队列门禁 [$svc]：同服务互斥——如有同服务发布进行中，本构建在此等待（最长 ${GATE_WAIT_SECONDS:-3600}s）..."
-    if ! acquire_deploy_lock "${GATE_WAIT_SECONDS:-3600}" "build-${svc}"; then
-        log_error "同服务 $svc 的发布等待超时（${GATE_WAIT_SECONDS:-3600}s 未获得锁）——本构建终止，请稍后重试"
+    log_info "队列门禁 [$svc]：同服务互斥——如有同服务发布进行中，本构建在此等待（最长 ${GATE_WAIT_SECONDS:-900}s）..."
+    if ! acquire_deploy_lock "${GATE_WAIT_SECONDS:-900}" "build-${svc}"; then
+        log_error "同服务 $svc 的发布等待超时（${GATE_WAIT_SECONDS:-900}s 未获得锁）——本构建终止，请稍后重试"
         return 1
     fi
     log_success "队列门禁通过 [$svc]"

@@ -54,6 +54,14 @@ pipeline {
     stages {
         stage('Queue Gate') {
             steps {
+                // ⚠️ 必须先 checkout：本 pipeline skipDefaultCheckout，工作区可能是
+                // 任意旧提交——门禁 source 旧 pipeline-stages.sh 会用缺失/带病的
+                // 函数集（#5 实证：ws-1 停在 a43a0cf，POSIX bug 触发语法错误）
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[url: 'git@github.com:wangdianwen/noda-infra.git', credentialsId: 'noda-infra-git-credentials']]
+                ])
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
