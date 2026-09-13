@@ -1,12 +1,16 @@
 # Noda 数据库备份系统 - Crontab 配置
 # dcron /etc/cron.d/ 格式: 分 时 日 月 周 命令（无 user 字段，用户由文件 owner 决定）
+# ⚠️ BusyBox crond 只读 /etc/crontabs/root——镜像内本文件由 entrypoint-ops.sh
+#    启动时复制到 /etc/crontabs/root（直接放 /etc/cron.d 不会被读取，
+#    2026-09-13 事故：每日备份静默失败 + 周日 verify 与 daily 撞车的教训）
 
 # 每天凌晨 3:00 执行备份
 # 日志统一写 /var/log/noda-backup（卷挂载 docker/volumes/logs，持久化到宿主机）
 0 3 * * * /app/backup/backup-postgres.sh >> /var/log/noda-backup/backup.log 2>&1
 
-# 每周日凌晨 3:00 执行验证测试
-0 3 * * 0 /app/backup/test-verify-weekly.sh >> /var/log/noda-backup/test.log 2>&1
+# 每周日凌晨 4:30 执行验证测试（2026-09-13 从 3:00 挪出：与每日备份同点撞车，
+# verify 的 test_restore_* 清理与 discover_databases 并发竞争导致双方互踩失败）
+30 4 * * 0 /app/backup/test-verify-weekly.sh >> /var/log/noda-backup/test.log 2>&1
 
 # 每 6 小时清理旧历史记录
 0 */6 * * * /app/backup/lib/metrics.sh cleanup 2>/dev/null || true
@@ -16,6 +20,12 @@
 
 # 每天凌晨 3:30 执行 Doppler 密钥备份（错开数据库备份 3:00）
 30 3 * * * /app/backup/backup-doppler-secrets.sh --project noda --config prd >> /var/log/noda-backup/doppler-backup.log 2>&1
+
+# 文件系统备份（SeaweedFS 数据）：默认在 r4s 宿主机 crontab 以 docker run 一次性
+# 容器执行（源目录 /mnt/mmc1-4/noda/seaweedfs 以只读挂载进容器，脚本流式直传 B2，
+# 不占容器盘）。NZ 04:30，错开 3:00 DB 备份 / 3:30 Doppler。若容器已挂载源目录，
+# 也可启用下行改为容器内执行：
+# 30 4 * * * /app/backup/backup-filesystem.sh >> /var/log/noda-backup/filesystem.log 2>&1
 
 # 爬虫任务已退役（2026-09）：抓取调度由 Go 版 noda-api 容器内置 cron 接管
 # （每天 09:00 tutoring / 周一 10:00 hobby NZST，CRON_ENABLED=false 可关闭），
