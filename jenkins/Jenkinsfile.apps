@@ -6,8 +6,9 @@
 //            （prod+stg 双桶同步收敛；publish-<product> 锁 + 产品维度中继/端口，跨产品可并行）
 //   all    = 一起：api + noda-static 反代镜像顺带刷新 + 产品静态站
 // 流程（保留原 apps-deploy 流程骨架）:
-//   Pre-flight -> Build -> [Deploy Pre-prod ‖ Test] -> CDN Purge Pre-prod
-//   -> Human Approval -> Deploy Prod -> Publish Static -> Verify -> CDN Purge -> Cleanup
+//   Pre-flight -> Build -> [Deploy Pre-prod ‖ Test] -> Human Approval
+//   -> Deploy Prod -> Publish Static -> Verify -> CDN Purge -> Cleanup
+//   （CDN 全域 Purge 收敛为发布尾部一次；Rebuild Pre-prod 循环回审批）
 //   （LAYER=static 时容器阶段全部跳过：Test 通过即桶发布，preprod 桶即为验证环境）
 // DEPLOY_MODE 参数:
 //   normal（默认）: preprod 部署验证 + 人工批准后才发 prod
@@ -61,6 +62,15 @@ pipeline {
     }
 
     stages {
+        stage('Build Info') {
+            steps {
+                script {
+                    // Stage View / Job 页一眼看出这次发布是什么
+                    currentBuild.displayName = "#${env.BUILD_NUMBER} ${params.PRODUCT}/${params.LAYER}" + (params.DEPLOY_MODE == 'fast' ? ' ⚡fast' : '')
+                    currentBuild.description = "产品 <b>${params.PRODUCT}</b> · 层 <b>${params.LAYER}</b>（api=后端 / static=前端 / all=一起） · 模式 ${params.DEPLOY_MODE}"
+                }
+            }
+        }
         stage('Pre-flight') {
             steps {
                 // CI 防线：workspace 内的 noda-apps 若是指向本地工作区的符号链接，
@@ -175,30 +185,6 @@ pipeline {
             }
         }
 
-        stage('CDN Purge Pre-prod') {
-            when {
-                expression { params.LAYER != 'static' && params.DEPLOY_MODE == 'normal' }
-            }
-            steps {
-                script {
-                    try {
-                        withCredentials([
-                            string(credentialsId: 'cf-api-token', variable: 'CF_API_TOKEN'),
-                            string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
-                        ]) {
-                            sh '''
-                                source scripts/lib/log.sh
-                                source scripts/pipeline-stages.sh
-                                pipeline_purge_cdn
-                            '''
-                        }
-                    } catch (Exception e) {
-                        echo "CDN Purge 跳过: Cloudflare 凭据未配置 (${e.message})"
-                    }
-                }
-            }
-        }
-
         stage('Human Approval') {
             when {
                 expression { params.LAYER != 'static' && params.DEPLOY_MODE == 'normal' }
@@ -240,22 +226,39 @@ pipeline {
                 expression { params.LAYER != 'static' && params.DEPLOY_MODE == 'normal' && env.DEPLOY_ACTION == 'rebuild_preprod' }
             }
             steps {
-                withCredentials([
-                    sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
-                    string(credentialsId: 'doppler-service-token-preprod', variable: 'DOPPLER_TOKEN_PREPROD')
-                ]) {
-                    sh '''
-                        source scripts/lib/log.sh
-                        source scripts/pipeline-stages.sh
-                        export LAYER_FILTER="${LAYER}"
-                        export PRODUCT_FILTER="${PRODUCT}"
-                        export SSH_KEY_FILE
-                        export DEPLOY_TARGET=local
-                        echo "🔄 重新部署 Pre-prod（本机 Mac）..."
-                        pipeline_deploy_preprod "$GIT_SHA"
-                        pipeline_health_check_preprod
-                        echo "✅ Pre-prod 重新部署完成，请验证后再次选择 deploy_prod"
-                    '''
+                script {
+                    // 重建 → 回到审批继续选（循环），不再是死胡同——
+                    // 旧行为 rebuild 后整条流水线直接结束，要发 prod 得重跑全部构建
+                    int round = 0
+                    while (env.DEPLOY_ACTION == 'rebuild_preprod' && round < 5) {
+                        round++
+                        withCredentials([
+                            sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
+                            string(credentialsId: 'doppler-service-token-preprod', variable: 'DOPPLER_TOKEN_PREPROD')
+                        ]) {
+                            sh """
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                export LAYER_FILTER="\${LAYER}"
+                                export PRODUCT_FILTER="\${PRODUCT}"
+                                export SSH_KEY_FILE
+                                export DEPLOY_TARGET=local
+                                echo "🔄 重新部署 Pre-prod（第 ${round} 轮，本机 Mac）..."
+                                pipeline_deploy_preprod "$GIT_SHA"
+                                pipeline_health_check_preprod
+                            """
+                        }
+                        def again = input(
+                            message: "Pre-prod 已重建（第 ${round} 轮），请验证后选择下一步：",
+                            parameters: [
+                                choice(name: 'ACTION', choices: ['deploy_prod', 'rebuild_preprod', 'abort'], description: 'deploy_prod: 部署生产 / rebuild_preprod: 再重建一次 / abort: 中止')
+                            ]
+                        )
+                        env.DEPLOY_ACTION = (again instanceof Map) ? again['ACTION'] : (again ?: 'deploy_prod')
+                    }
+                    if (env.DEPLOY_ACTION == 'rebuild_preprod') {
+                        error("Rebuild Pre-prod 连续超过 5 轮，中止——请检查 preprod 环境后重新触发")
+                    }
                 }
             }
         }

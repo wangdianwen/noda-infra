@@ -52,6 +52,14 @@ pipeline {
     }
 
     stages {
+        stage('Build Info') {
+            steps {
+                script {
+                    currentBuild.displayName = "#${env.BUILD_NUMBER} ${params.SERVICE}"
+                    currentBuild.description = "公共基础设施服务 <b>${params.SERVICE}</b>（nginx / seaweedfs / noda-ops / postgres）"
+                }
+            }
+        }
         stage('Pre-flight') {
             steps {
                 // Simple checkout (no extensions to avoid git show-ref --tags -d hang)
