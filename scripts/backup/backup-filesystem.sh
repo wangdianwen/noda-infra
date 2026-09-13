@@ -180,6 +180,8 @@ main()
     fi
 
     # 记录指标（时长 + 最后一个源的上传大小）
+    # 一次性容器（宿主 crontab docker run）里 history 目录不存在，先建
+    mkdir -p "$HISTORY_DIR" 2>/dev/null || true
     local duration=$(( $(date +%s) - start_time ))
     record_metric "backup" "filesystem" "$duration" "${size:-0}"
 
