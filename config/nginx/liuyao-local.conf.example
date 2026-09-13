@@ -649,13 +649,13 @@ server {
     # 带内容哈希的静态资源：一年 immutable（SeaweedFS 桶 sites/www/）
     location /_next/ {
         add_header Cache-Control "public, max-age=31536000, immutable" always;
-        include /etc/nginx/snippets/seaweedfs-www-static.conf;
+        include /etc/nginx/snippets/seaweedfs-www-static-stg.conf;
     }
 
     # HTML：no-cache 强制 revalidate
     location / {
         add_header Cache-Control "no-cache" always;
-        include /etc/nginx/snippets/seaweedfs-www-static.conf;
+        include /etc/nginx/snippets/seaweedfs-www-static-stg.conf;
         error_page 403 404 /404.html;
     }
 }
