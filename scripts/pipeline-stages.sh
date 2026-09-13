@@ -2194,6 +2194,19 @@ pipeline_publish_static_site()
         }
     fi
 
+    # workspace 共享包构建产物（gitignore 不入库：database/auth/shared tsc dist +
+    # design-tokens style-dictionary build）——fresh checkout 必需；auth 依赖 database，
+    # 经 turbo 依赖图按序构建，增量幂等（本命令早于站点 pnpm build，全部产品受益）
+    log_info "构建 workspace 共享包（turbo: database/auth/shared/design-tokens）..."
+    if ! (cd "$apps_dir" && pnpm exec turbo run build \
+        --filter=@noda-apps/database \
+        --filter=@noda-apps/auth \
+        --filter=@noda-apps/shared \
+        --filter=@noda-apps/design-tokens); then
+        log_error "workspace 共享包构建失败: $apps_dir"
+        return 1
+    fi
+
     log_info "构建 $product 静态站（pnpm build → out/）..."
     if ! (cd "$web_dir" && pnpm build); then
         log_error "$product 静态站构建失败: $web_dir"
