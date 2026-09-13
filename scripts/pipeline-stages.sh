@@ -393,6 +393,8 @@ NEXT_PUBLIC_GA4_LIUYAO_ID=G-ZXK92PWTEF
 --build-arg
 NEXT_PUBLIC_GA4_NEARBY_ID=G-58CDREDT81
 --build-arg
+NEXT_PUBLIC_GA4_SNAGME_ID=G-0617E1CMQY
+--build-arg
 NEXT_PUBLIC_NEARBY_SITE_URL=https://nearby.noda.co.nz
 ARGS
 }
@@ -1452,10 +1454,14 @@ https://auth.noda.co.nz/register"
             urls="https://comments.noda.co.nz/admin"
             ;;
         snagme)
-            # 看板三壳：首页/历史/雷达（单语言无 locale 前缀，数据全客户端 fetch）
+            # 产品站关键入口（三语 en 落根；价值页 + 数据页 + zh 壳；
+            # 其余 out/*.html 由下方自动派生逻辑补齐）
             urls="https://snagme.noda.co.nz/
-https://snagme.noda.co.nz/history
-https://snagme.noda.co.nz/radar"
+https://snagme.noda.co.nz/pricing
+https://snagme.noda.co.nz/value
+https://snagme.noda.co.nz/deals
+https://snagme.noda.co.nz/tail
+https://snagme.noda.co.nz/zh"
             ;;
         *)
             # D-09: 未知产品不阻止部署（打错日志提示修正 _static_product_config 同款清单）
@@ -2085,9 +2091,11 @@ _static_product_config()
             # admin 占位页（阈值 20；API 由 Go commentapi 承接）
             STATIC_WEB_DIR="comment";    STATIC_SENTINEL="out/admin.html";   STATIC_MIN_OBJS=20 ;;
         snagme)
-            # 静态看板（Next.js output:'export'，单语言无 locale 前缀；数据全客户端
-            # fetch Go API :3015）；out/ 51 对象量级；阈值 30
-            STATIC_WEB_DIR="snagme/dashboard"; STATIC_SENTINEL="out/index.html"; STATIC_MIN_OBJS=30 ;;
+            # 产品站（Next.js output:'export'，三语 en 落根 + /zh /zh-TW；数据全客户端
+            # fetch Go API :3015，深链 /deals/[id] /report/[id] 走 nginx 壳页回退）；
+            # 44 HTML + _next 资产 ≈ 200+ 对象量级；阈值 60
+            export NEXT_PUBLIC_GA4_SNAGME_ID=G-0617E1CMQY
+            STATIC_WEB_DIR="snagme/web"; STATIC_SENTINEL="out/en.html"; STATIC_MIN_OBJS=60 ;;
         auth)
             # 静态壳（~35 HTML + 资产；阈值 60）；zh 无前缀 canonical（defaultLocale=zh）
             # ——哨兵文件用 out/zh/login.html；API 端点不在静态产物（Go authapi :3004 承接）
@@ -3192,7 +3200,7 @@ pipeline_deploy_preprod_inner()
         if [ -n "${DOPPLER_TOKEN_PREPROD:-}" ]; then
             _preprod_doppler_args="--token ${DOPPLER_TOKEN_PREPROD}"
         fi
-        _preprod_key_override=$(doppler secrets download ${_preprod_doppler_args} --project noda --config prd_pre --no-file --format=env 2>/dev/null | grep -E '^(STRIPE_|ANTHROPIC_|COMMENT_SERVICE_KEY|GOOGLE_OAUTH_|TOKEN_SECRET|AUTH_STATE_SECRET|EMAIL_SERVICE_API_KEY|EVENTFINDA_)' || true)
+        _preprod_key_override=$(doppler secrets download ${_preprod_doppler_args} --project noda --config prd_pre --no-file --format=env 2>/dev/null | grep -E '^(STRIPE_|ANTHROPIC_|COMMENT_SERVICE_KEY|GOOGLE_OAUTH_|TOKEN_SECRET|AUTH_STATE_SECRET|EMAIL_SERVICE_API_KEY|EVENTFINDA_|SNAGME_)' || true)
         if [ -z "$_preprod_key_override" ]; then
             log_warn "prd_pre 密钥导出为空，preprod 将无 Stripe/Anthropic 凭据"
         fi

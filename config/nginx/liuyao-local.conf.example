@@ -190,11 +190,44 @@ map $request_uri $comment_cache_control {
 }
 
 # ── HTTP → HTTPS 重定向 ──
+# ── snagme locale 协商（内联自 conf.d/snagme.map.conf，2026-09-14 产品站化；
+# 与 prod 保持同步——prod 侧更新时两处同改）──
+map $cookie_noda_locale $snagme_cookie_locale {
+    ~*^zh-TW$   zh-TW;
+    ~*^zh$      zh;
+    default     "";
+}
+map $http_accept_language $snagme_al_zhtw {
+    default     0;
+    "~*zh-TW"   1;
+}
+map $http_accept_language $snagme_al_zh {
+    default     0;
+    "~*zh"      1;
+}
+map "$snagme_cookie_locale:$snagme_al_zhtw:$snagme_al_zh" $snagme_locale {
+    "~^zh-TW:"  zh-TW;
+    "~^zh:"     zh;
+    "~^:1"      zh-TW;
+    "~^:0:1"    zh;
+    default     en;
+}
+map $request_uri $snagme_loc {
+    default            en;
+    "~^/zh-TW(/|\?|$)" zh-TW;
+    "~^/zh(/|\?|$)"    zh;
+    "~^/en(/|\?|$)"    en;
+}
+map $request_uri $snagme_cache_control {
+    "~^/_next/"   "public, max-age=31536000, immutable";
+    default       "no-cache";
+}
+
 server {
     listen 80;
     server_name liuyao-preprod.noda.co.nz auth-preprod.noda.co.nz
                 admin-preprod.noda.co.nz class-preprod.noda.co.nz
-                www-preprod.noda.co.nz nearby-preprod.noda.co.nz localhost;
+                www-preprod.noda.co.nz nearby-preprod.noda.co.nz snagme-preprod.noda.co.nz localhost;
 
     # ACME challenge passthrough (if ever needed)
     location /.well-known/acme-challenge/ {
@@ -747,5 +780,73 @@ server {
     location / {
         proxy_pass http://seaweedfs:8333;
         proxy_set_header Host seaweedfs:8333;
+    }
+}
+
+# ── HTTPS: snagme（2026-09-14 产品站化；S3 stg 桶版，与 prod snagme 块同构）──
+# 页面 = stg 桶 sites/snagme/（snagme/web 三语静态导出 mc mirror）；深链壳
+# /deals/<id> /report/<id> 回 app-shell；locale 协商用上方内联 snagme map。
+server {
+    listen 443 ssl;
+    server_name snagme-preprod.noda.co.nz;
+
+    ssl_certificate /etc/nginx/ssl/noda.dev.crt;
+    ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
+
+    include /etc/nginx/snippets/upstream-seaweedfs.conf;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    absolute_redirect off;
+    client_max_body_size 10M;
+
+    include /etc/nginx/snippets/security-headers.conf;
+
+    # preprod 不参与 SEO（静态 location 由 -stg snippet 内逐 location 注入）
+    add_header X-Robots-Tag "noindex" always;
+
+    # Go API（preprod-noda-api:3015 snagmeapi）— /api/ 分流
+    location /api/ {
+        proxy_pass http://preprod-noda-api:3015;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+
+    # RSC 载荷 .txt：净 404 触发硬导航（先于深链壳，regex 顺序敏感）
+    location ~ \.txt$ {
+        include /etc/nginx/snippets/seaweedfs-snagme-static-stg.conf;
+    }
+
+    # 深链壳 /<loc>/(deals|report)/<id> → app-shell 占位壳 + client 取数
+    location ~ ^/(en|zh|zh-TW)/(deals|report)/[^/]+(/|$) {
+        include /etc/nginx/snippets/seaweedfs-snagme-static-stg.conf;
+        error_page 403 404 =200 /$snagme_loc/deals/app-shell.html;
+    }
+
+    # 无前缀深链（en canonical）：内部补 /en 前缀后重入上方深链壳
+    location ~ ^/(deals|report)/[^/]+(/|$) {
+        rewrite ^/(.*)$ /en/$1 last;
+    }
+
+    # 静态站入口：locale 协商（as-needed：en 内部改写保 URL，zh/zh-TW 302）
+    location / {
+        set $loc $snagme_locale;
+        if ($uri ~ "^/(en|zh|zh-TW)(/|$)") { set $loc ""; }
+        if ($uri ~ "^/(_next|api|images|fonts)(/|$)") { set $loc ""; }
+        if ($uri ~ "\.[A-Za-z0-9]+(/|$)") { set $loc ""; }
+        if ($loc = zh-TW) { return 302 /zh-TW$request_uri; }
+        if ($loc = zh) { return 302 /zh$request_uri; }
+        if ($loc = en) { rewrite ^(.*)$ /en$1 last; }
+        include /etc/nginx/snippets/seaweedfs-snagme-static-stg.conf;
+        error_page 403 404 /404.html;
+    }
+
+    # 容器健康检查端点
+    location /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
     }
 }
