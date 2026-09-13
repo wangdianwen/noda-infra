@@ -1,0 +1,230 @@
+#!/usr/bin/env groovy
+// noda-rollback —— 产品级一键回滚 Pipeline（2026-09-13）
+// 职责：把指定产品回滚到上一次发布（前端=桶快照 sites/<product>-prev/；
+//       后端=noda-api:rollback 锚点镜像）。独立入口，不经过构建/测试阶段。
+// 参数：PRODUCT 必选其一；SCOPE 选回滚层级（static=前端桶 / api=后端容器 / all=两者）
+// 边界：
+//   - api 为全产品单体容器——SCOPE=api/all 影响**所有产品**的后端（审批页明示）
+//   - 边缘反代镜像（noda-static-prod）不在此回滚——走 noda-infra SERVICE=nginx
+//   - api 回滚锚点 = 最近一次 api/all 发布前的镜像；首次发布前无锚点
+// 安全：Queue Gate 与发布共用 build-<product> 锁（同产品排队互斥）；桶回滚持
+//       publish-<product>；容器回滚持 apps-prod；审批前释放队列锁；post 兜底全释放
+// 阶段: Queue Gate -> Build Info -> Human Approval -> Rollback -> Verify -> CDN Purge
+
+pipeline {
+    // 与另两个任务同款 4 槽位轮换 workspace
+    agent {
+        node {
+            label ''
+            customWorkspace "${env.JOB_NAME}/ws-${env.BUILD_NUMBER.toInteger() % 4}"
+        }
+    }
+
+    environment {
+        PATH = "/usr/local/bin:/opt/homebrew/bin:${env.PATH}"
+        PROJECT_ROOT = "${WORKSPACE}"
+        // Doppler Service Token（prod）：api 回滚 env 自愈（r4s /tmp 为 tmpfs，
+        // 重启清空 /tmp/prod-api.env 后由本 pipeline 从 Doppler 重建）
+        DOPPLER_TOKEN = credentials('doppler-service-token')
+    }
+
+    options {
+        skipDefaultCheckout(true)
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+    }
+
+    parameters {
+        choice(
+            name: 'PRODUCT',
+            choices: ['class', 'www', 'admin', 'liuyao', 'nearby', 'auth', 'comment', 'snagme'],
+            description: '选择要回滚的产品（必选其一，与 noda-apps 的产品清单一致）'
+        )
+        choice(
+            name: 'SCOPE',
+            choices: ['static', 'api', 'all'],
+            description: '''选择回滚层级：
+- static: 前端桶回滚（sites/<product>-prev/ 快照 → 主前缀），只影响本产品
+- api: 后端容器回滚（noda-api:rollback 锚点），⚠️ 影响**所有产品**的后端
+- all: 前端桶 + 后端容器一起回滚'''
+        )
+    }
+
+    stages {
+        stage('Queue Gate') {
+            options {
+                // 门禁自身最长等 900s；超时即失败，等锁不占 executor 干等
+                timeout(time: 20, unit: 'MINUTES')
+            }
+            steps {
+                // ⚠️ 必须先 checkout：本 pipeline skipDefaultCheckout，工作区可能是
+                // 任意旧提交——门禁 source 旧 pipeline-stages.sh 会用缺失/带病的函数集
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[url: 'git@github.com:wangdianwen/noda-infra.git', credentialsId: 'noda-infra-git-credentials']]
+                ])
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        # 与发布共用产品级队列锁：同产品有发布进行中时在此排队
+                        pipeline_queue_gate "$PRODUCT"
+                    '''
+                }
+            }
+        }
+        stage('Build Info') {
+            options { timeout(time: 2, unit: 'MINUTES') }
+            steps {
+                script {
+                    currentBuild.displayName = "#${env.BUILD_NUMBER} ${params.PRODUCT}/${params.SCOPE} ↩rollback"
+                    currentBuild.description = "回滚 <b>${params.PRODUCT}</b> · 层 <b>${params.SCOPE}</b>（回到上一次发布）"
+                }
+            }
+        }
+        stage('Human Approval') {
+            options { timeout(time: 60, unit: 'MINUTES') }
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        # 审批窗口释放队列锁（与发布同款语义：挂起审批不阻塞同产品后续发布）
+                        pipeline_release_build_lock "$PRODUCT"
+                    '''
+                }
+                input message: """确认回滚 ${params.PRODUCT}（${params.SCOPE}）到上一次发布？
+  - static: 桶回滚 sites/${params.PRODUCT}-prev/ → sites/${params.PRODUCT}/（只影响本产品前端）
+  - api: noda-api 容器回到 rollback 锚点镜像——⚠️ 后端为全产品单体，影响所有产品
+  - all: 以上两者
+  回滚后本任务自动执行公网探针验证 + CDN 清除。""".stripIndent(), ok: '确认回滚'
+            }
+        }
+        stage('Rollback') {
+            options {
+                // 桶回滚（双桶 mirror）+ api 容器重建与健康等待，均远小于此上限
+                timeout(time: 30, unit: 'MINUTES')
+            }
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export LAYER_FILTER="${SCOPE}"
+                        export PRODUCT_FILTER="${PRODUCT}"
+                        export SSH_KEY_FILE
+                        export DEPLOY_TARGET=r4s
+
+                        # 审批窗口已释放队列锁——执行前重新获取
+                        pipeline_queue_gate "$PRODUCT"
+
+                        if [ "${SCOPE}" != "api" ]; then
+                            # 前端：桶回滚持 publish-<product>（与同产品发布互斥）
+                            if acquire_deploy_lock 600 "publish-${PRODUCT}"; then
+                                pipeline_rollback_static_site "$PRODUCT"
+                                rc=$?
+                                release_deploy_lock "publish-${PRODUCT}"
+                                [ $rc -eq 0 ] || exit 1
+                            else
+                                echo "❌ 无法获取 publish-${PRODUCT} 锁（同产品发布进行中?）"
+                                exit 1
+                            fi
+                        fi
+
+                        if [ "${SCOPE}" != "static" ]; then
+                            # 后端：容器操作持 apps-prod（与所有产品的 prod 部署互斥）
+                            if acquire_deploy_lock 900 "apps-prod"; then
+                                # /tmp/prod-api.env 自愈：r4s /tmp 为 tmpfs，重启即清；
+                                # 缺失时从 Doppler 重新生成（load_secrets 已在 source 时执行）
+                                if ! remote_exec "test -f /tmp/prod-api.env"; then
+                                    echo "ℹ️ r4s 缺 /tmp/prod-api.env（重启清空?），从 Doppler 重新生成..."
+                                    env_file=$(prepare_prod_api_env_file)
+                                    cat "$env_file" | remote_exec "cat > /tmp/prod-api.env && chmod 600 /tmp/prod-api.env"
+                                    rm -f "$env_file"
+                                fi
+                                _rollback_prod_containers remote
+                                rc=$?
+                                release_deploy_lock "apps-prod"
+                                [ $rc -eq 0 ] || exit 1
+                            else
+                                echo "❌ 无法获取 apps-prod 锁（有 prod 部署进行中?）"
+                                exit 1
+                            fi
+                        fi
+                    '''
+                }
+            }
+        }
+        stage('Verify') {
+            options { timeout(time: 5, unit: 'MINUTES') }
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export PRODUCT_FILTER="${PRODUCT}"
+                        export SSH_KEY_FILE
+                        export DEPLOY_TARGET=r4s
+                        # 产品维度 E2E：公网链路（Cloudflare → 边缘 → 桶/Go API）
+                        pipeline_verify_product "$PRODUCT"
+                    '''
+                }
+            }
+        }
+        stage('CDN Purge') {
+            options { timeout(time: 5, unit: 'MINUTES') }
+            steps {
+                script {
+                    try {
+                        withCredentials([
+                            string(credentialsId: 'cf-api-token', variable: 'CF_API_TOKEN'),
+                            string(credentialsId: 'cf-zone-id', variable: 'CF_ZONE_ID')
+                        ]) {
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                export LAYER_FILTER="${SCOPE}"
+                                export PRODUCT_FILTER="${PRODUCT}"
+                                # static/all：精准清除本产品入口 URL；api：容器镜像全产品共享，全域 purge
+                                if [ "${SCOPE}" = "api" ]; then
+                                    pipeline_purge_cdn
+                                else
+                                    pipeline_purge_cdn_urls "$PRODUCT"
+                                fi
+                            '''
+                        }
+                    } catch (Exception e) {
+                        echo "CDN Purge 跳过: Cloudflare 凭据未配置 (${e.message})"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        # 兜底释放本构建登记的全部锁（含中止场景）
+                        pipeline_release_lock
+                        echo "🧹 清理悬空镜像..."
+                        cleanup_dangling || true
+                    '''
+                }
+            }
+        }
+        success {
+            echo "✅ ${params.PRODUCT}（${params.SCOPE}）已回滚到上一次发布并通过公网验证"
+        }
+        failure {
+            echo "❌ 回滚未完成——锁已由 post 兜底释放；桶内容/容器可能处于中间态，请查看日志后重试或人工介入"
+        }
+    }
+}
