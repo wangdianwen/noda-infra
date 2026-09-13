@@ -52,6 +52,9 @@ NGINX_CONTAINER_LEGACY="noda-infra-nginx"
 # 旧单容器名保留为 legacy 停旧/回滚引用）
 PROD_API_CONTAINER="noda-api-prod"
 PROD_STATIC_CONTAINER="noda-static-prod"
+# 2026-09-13 cronjob 集中收口：产品定时 job 守护进程（与 api 同镜像不同 entrypoint，
+# LAYER=api 时随 api 一起部署/回滚；见 _start_prod_jobs）
+PROD_JOBS_CONTAINER="noda-jobs-prod"
 PROD_CONTAINER="noda-apps-prod"  # legacy 单容器（全部新容器 healthy 后由停旧逻辑处理）
 
 # ============================================
@@ -775,6 +778,95 @@ _start_prod_api()
     fi
 }
 
+# _start_prod_jobs - 启动 cronjob 调度守护进程容器（2026-09-13 cronjob 集中收口）
+# 与 api 同镜像（noda-api:<sha>，含 noda-jobs / noda-crawler / crawl-snagme 二进制），
+# 仅 entrypoint 不同。env 同 api 的 /tmp/prod-api.env（DATABASE_URL/ANTHROPIC/EVENTFINDA/NEARBY_*
+# 一应俱全）；snagme 专属配置经 /etc/noda/snagme.env 只读挂载 + SNAGME_ENV_FILE 由
+# 守护进程在 spawn 子进程时隔离注入（不进容器全局 env，避免覆盖 skykiwi 侧同名键）。
+# 资源配额：192m/0.25cpu（常驻轻载；抓取子进程短时峰值由 scheduler 互斥串行化）。
+# 参数: $1 = mode(remote|local)  $2 = image  $3 = env_file
+_start_prod_jobs()
+{
+    local mode="$1" image="$2" env_file="$3"
+    log_info "启动容器: $PROD_JOBS_CONTAINER ($image)"
+    # snagme env 挂载仅在源文件存在时追加（本地模式通常无 /etc/noda/snagme.env）
+    local snagme_mount=""
+    if [ "$mode" = "remote" ]; then
+        if remote_exec "test -f /etc/noda/snagme.env"; then
+            snagme_mount="-v /etc/noda/snagme.env:/etc/noda/snagme.env:ro"
+        fi
+    elif [ -f /etc/noda/snagme.env ]; then
+        snagme_mount="-v /etc/noda/snagme.env:/etc/noda/snagme.env:ro"
+    fi
+    if [ "$mode" = "remote" ]; then
+        remote_exec "docker rm -f $PROD_JOBS_CONTAINER >/dev/null 2>&1 || true"
+        remote_exec "docker run -d \
+            --name $PROD_JOBS_CONTAINER \
+            --network $NETWORK_NAME \
+            --network-alias $PROD_JOBS_CONTAINER \
+            --restart always \
+            --stop-timeout 30 \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            --read-only \
+            --tmpfs /tmp \
+            --tmpfs /app/crawl-output:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/crawler-logs:uid=1001,gid=1001,mode=0755 \
+            --memory 192m \
+            --memory-reservation 64m \
+            --cpus 0.25 \
+            --log-driver json-file \
+            --log-opt max-size=5m \
+            --log-opt max-file=2 \
+            --env-file $env_file \
+            $snagme_mount \
+            --entrypoint /usr/local/bin/noda-jobs \
+            --label com.docker.compose.project=noda-infra \
+            --label com.docker.compose.service=noda-jobs \
+            --label noda.service-group=apps \
+            --label noda.environment=prod \
+            --health-cmd \"wget --quiet --tries=1 --spider http://127.0.0.1:3016/healthz || exit 1\" \
+            --health-interval 30s \
+            --health-timeout 10s \
+            --health-retries 3 \
+            --health-start-period 60s \
+            $image"
+    else
+        docker rm -f "$PROD_JOBS_CONTAINER" >/dev/null 2>&1 || true
+        docker run -d \
+            --name "$PROD_JOBS_CONTAINER" \
+            --network "$NETWORK_NAME" \
+            --network-alias "$PROD_JOBS_CONTAINER" \
+            --restart unless-stopped \
+            --stop-timeout 30 \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            --read-only \
+            --tmpfs /tmp \
+            --tmpfs /app/crawl-output:uid=1001,gid=1001,mode=0755 \
+            --tmpfs /app/crawler-logs:uid=1001,gid=1001,mode=0755 \
+            --memory 192m \
+            --memory-reservation 64m \
+            --cpus 0.25 \
+            --log-driver json-file \
+            --log-opt max-size=5m \
+            --log-opt max-file=2 \
+            --env-file "$env_file" \
+            $snagme_mount \
+            --entrypoint /usr/local/bin/noda-jobs \
+            --label "com.docker.compose.project=noda-infra" \
+            --label "com.docker.compose.service=noda-jobs-prod" \
+            --label "noda.service-group=apps" \
+            --label noda.environment=prod \
+            --health-cmd "wget --quiet --tries=1 --spider http://127.0.0.1:3016/healthz || exit 1" \
+            --health-interval 30s \
+            --health-timeout 10s \
+            --health-retries 3 \
+            --health-start-period 60s \
+            "$image"
+    fi
+}
+
 # static：镜像内烘焙 www 静态站；反代配置由卷挂载覆盖
 # r4s 高端口 8080/8081/8443 与 compose 定义一致；别名 noda-infra-nginx 必须保留
 # （cloudflared 与 KEYCLOAK_INTERNAL_URL 引用）；compose 服务键为 nginx（infra 栈合并管理）
@@ -879,15 +971,16 @@ _start_prod_static()
 }
 
 # _stop_new_prod_containers - 失败时清理本次触达的新容器（mode: remote|local）
-# S5：容器只剩 api + static（frontend Node 容器 2026-09-12 退役）
+# S5：容器只剩 api + static + jobs（jobs 与 api 同镜像，随 api 层触达）
 _stop_new_prod_containers()
 {
     local mode="$1"
     local name
-    for name in "$PROD_STATIC_CONTAINER" "$PROD_API_CONTAINER"; do
+    for name in "$PROD_STATIC_CONTAINER" "$PROD_API_CONTAINER" "$PROD_JOBS_CONTAINER"; do
         # LAYER 过滤：只清理本次部署触达的层（LAYER=api 时不得误杀在线 web 容器）
         case "$name" in
             "$PROD_API_CONTAINER") _layer_want_api || continue ;;
+            "$PROD_JOBS_CONTAINER") _layer_want_api || continue ;;
             *)                     _layer_want_web || continue ;;
         esac
         if [ "$mode" = "remote" ]; then
@@ -898,6 +991,36 @@ _stop_new_prod_containers()
             docker rm -f "$name" >/dev/null 2>&1 || true
         fi
     done
+}
+
+# _rollback_jobs_container - 仅回滚 jobs 调度守护进程容器（api/static 完全不动）
+# 复用 noda-api:rollback 锚点镜像（与 _tag_rollback_anchors 同源——jobs 与 api
+# 同镜像）。返回 0 = 回滚容器已启动；1 = 无锚点/启动失败（容器缺失，需人工拉起）。
+# 参数: $1 = mode(remote|local)
+_rollback_jobs_container()
+{
+    local mode="$1"
+    if [ "$mode" = "remote" ]; then
+        if ! remote_exec "docker image inspect noda-api:rollback >/dev/null 2>&1"; then
+            log_warn "无 noda-api:rollback 锚点，jobs 容器保持清理状态（需人工拉起）"
+            return 1
+        fi
+        _start_prod_jobs remote "noda-api:rollback" "/tmp/prod-api.env"
+    else
+        if ! docker image inspect "noda-api:rollback" >/dev/null 2>&1; then
+            log_warn "无 noda-api:rollback 锚点，jobs 容器保持清理状态（需人工拉起）"
+            return 1
+        fi
+        local env_file rc
+        if env_file=$(prepare_prod_api_env_file); then
+            _start_prod_jobs local "noda-api:rollback" "$env_file"
+            rc=$?
+            rm -f "$env_file"
+            return $rc
+        fi
+        log_warn "env 生成失败，跳过 jobs 回滚"
+        return 1
+    fi
 }
 
 # _tag_rollback_anchors - 切换前给当前 prod 容器在用镜像打 rollback 锚点（2026-09-13）
@@ -956,7 +1079,10 @@ _rollback_prod_containers()
             if remote_exec "docker image inspect ${repo}:rollback >/dev/null 2>&1"; then
                 log_warn "回滚 ${container} -> ${repo}:rollback"
                 case "$repo" in
-                    noda-api)    _start_prod_api remote "${repo}:rollback" "/tmp/prod-api.env" || true ;;
+                    noda-api)
+                        _start_prod_api remote "${repo}:rollback" "/tmp/prod-api.env" || true
+                        # jobs 守护进程与 api 同镜像同 env，随锚点一并回滚
+                        _start_prod_jobs remote "${repo}:rollback" "/tmp/prod-api.env" || true ;;
                     noda-static) _start_prod_static remote "${repo}:rollback" || true ;;
                 esac
             else
@@ -971,6 +1097,7 @@ _rollback_prod_containers()
                         local env_file
                         if env_file=$(prepare_prod_api_env_file); then
                             _start_prod_api local "${repo}:rollback" "$env_file" || true
+                            _start_prod_jobs local "${repo}:rollback" "$env_file" || true
                             rm -f "$env_file"
                         else
                             log_warn "env 生成失败，跳过 api 回滚"
@@ -986,9 +1113,11 @@ _rollback_prod_containers()
     # 尽力等待回滚容器 healthy（失败不阻塞返回——日志可见，人工兜底）
     if [ "$mode" = "remote" ]; then
         _layer_want_api && { wait_container_healthy "$PROD_API_CONTAINER" "$health_timeout" true true || log_warn "回滚 api 容器未 healthy，请人工检查"; } || true
+        _layer_want_api && { wait_container_healthy "$PROD_JOBS_CONTAINER" "$health_timeout" true true || log_warn "回滚 jobs 容器未 healthy，请人工检查（cronjob 不可用）"; } || true
         _layer_want_web && { wait_container_healthy "$PROD_STATIC_CONTAINER" "$health_timeout" true true || log_warn "回滚 static 容器未 healthy，请人工检查"; } || true
     else
         _layer_want_api && { wait_container_healthy "$PROD_API_CONTAINER" "$health_timeout" || log_warn "回滚 api 容器未 healthy，请人工检查"; } || true
+        _layer_want_api && { wait_container_healthy "$PROD_JOBS_CONTAINER" "$health_timeout" || log_warn "回滚 jobs 容器未 healthy，请人工检查（cronjob 不可用）"; } || true
         _layer_want_web && { wait_container_healthy "$PROD_STATIC_CONTAINER" "$health_timeout" || log_warn "回滚 static 容器未 healthy，请人工检查"; } || true
     fi
     reload_nginx || true
@@ -1075,6 +1204,16 @@ pipeline_deploy_prod_inner()
             return 1
         fi
 
+        # jobs 调度守护进程（cronjob 集中收口，2026-09-13）：与 api 同镜像不同
+        # entrypoint。非用户面服务——启动/健康失败只回滚自身并判发版失败，
+        # 不拖累已切换的 api/static（cronjob 可用性是硬要求，静默缺失不可接受）
+        local jobs_failed=0
+        if _layer_want_api && ! _start_prod_jobs remote "$api_image" "/tmp/prod-api.env"; then
+            log_error "jobs 容器启动失败 — 仅回滚 jobs 容器（api/static 不受影响）"
+            _rollback_jobs_container remote || true
+            jobs_failed=1
+        fi
+
         # 健康检查（各自容器内探测，远程）
         log_info "等待容器健康检查（r4s 远程）..."
         local health_timeout="$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))"
@@ -1088,6 +1227,11 @@ pipeline_deploy_prod_inner()
             _rollback_prod_containers remote
             return 1
         fi
+        if [ "$jobs_failed" = 0 ] && _layer_want_api && ! wait_container_healthy "$PROD_JOBS_CONTAINER" "$health_timeout" true true; then
+            log_error "jobs 容器健康检查失败 — 仅回滚 jobs 容器（api/static 不受影响）"
+            _rollback_jobs_container remote || true
+            jobs_failed=1
+        fi
 
         # 全部 healthy：reload nginx 切流（upstream 指向新容器）
         reload_nginx
@@ -1095,7 +1239,11 @@ pipeline_deploy_prod_inner()
         # 发布后统一清理：Mac+r4s 镜像保留、registry retention+GC（失败不回滚部署）
         pipeline_post_publish_cleanup
 
-        log_success "生产环境部署完成（r4s）: $PROD_API_CONTAINER + $PROD_STATIC_CONTAINER ($git_sha)"
+        if [ "$jobs_failed" = 1 ]; then
+            log_error "生产部署完成但 jobs 容器未能拉起（已回滚上一版本镜像）——cronjob 不可用，请人工检查"
+            return 1
+        fi
+        log_success "生产环境部署完成（r4s）: $PROD_API_CONTAINER + $PROD_JOBS_CONTAINER + $PROD_STATIC_CONTAINER ($git_sha)"
     else
         # 本地模式（Mac）
 
@@ -1122,6 +1270,15 @@ pipeline_deploy_prod_inner()
             return 1
         fi
 
+        # jobs 调度守护进程（同 api 镜像；本地模式 snagme env 通常不存在，
+        # _start_prod_jobs 内部按文件存在性决定挂载）
+        local jobs_failed=0
+        if _layer_want_api && ! _start_prod_jobs local "$api_image" "$tmp_api_env"; then
+            log_error "jobs 容器启动失败（本地模式）— 仅回滚 jobs 容器"
+            _rollback_jobs_container local || true
+            jobs_failed=1
+        fi
+
         rm -f "$tmp_api_env"
 
         # reload 反代刷新 DNS 缓存（容器重建后 IP 会变）
@@ -1140,11 +1297,20 @@ pipeline_deploy_prod_inner()
             _rollback_prod_containers local
             return 1
         fi
+        if [ "$jobs_failed" = 0 ] && _layer_want_api && ! wait_container_healthy "$PROD_JOBS_CONTAINER" "$health_timeout"; then
+            log_error "jobs 容器健康检查失败（本地模式）— 仅回滚 jobs 容器"
+            _rollback_jobs_container local || true
+            jobs_failed=1
+        fi
 
         # 发布后统一清理（本地模式：Mac 镜像保留 + registry；失败不回滚部署）
         pipeline_post_publish_cleanup
 
-        log_success "生产环境部署完成: $PROD_API_CONTAINER + $PROD_STATIC_CONTAINER ($git_sha)"
+        if [ "$jobs_failed" = 1 ]; then
+            log_error "生产部署完成但 jobs 容器未能拉起（已回滚上一版本镜像）——cronjob 不可用，请人工检查"
+            return 1
+        fi
+        log_success "生产环境部署完成: $PROD_API_CONTAINER + $PROD_JOBS_CONTAINER + $PROD_STATIC_CONTAINER ($git_sha)"
     fi
 }
 

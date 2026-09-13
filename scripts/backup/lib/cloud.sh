@@ -54,6 +54,19 @@ account = $b2_account_id
 key = $b2_application_key
 EOF
 
+    # SeaweedFS S3 remote（文件系统备份用；未配置时不写入，FS 备份自会显式报错）
+    if [[ -n "${SEAWEED_S3_ACCESS_KEY:-}" && -n "${SEAWEED_S3_SECRET_KEY:-}" ]]; then
+        cat >>"$rclone_config" <<EOF
+
+[s3weed]
+type = s3
+provider = Other
+access_key_id = ${SEAWEED_S3_ACCESS_KEY}
+secret_access_key = ${SEAWEED_S3_SECRET_KEY}
+endpoint = ${SEAWEED_S3_ENDPOINT:-http://seaweedfs:8333}
+EOF
+    fi
+
     # 验证配置
     if ! rclone listremotes --config "$rclone_config" | grep -q "b2remote:"; then
         log_error "rclone 配置验证失败"

@@ -41,6 +41,18 @@ DEFAULT_B2_APPLICATION_KEY="${DEFAULT_B2_APPLICATION_KEY:-}"
 DEFAULT_B2_BUCKET_NAME="${DEFAULT_B2_BUCKET_NAME:-noda-backups}"
 DEFAULT_B2_PATH="${DEFAULT_B2_PATH:-backups/postgres/}"
 
+# 文件系统备份配置（2026-09-13 S3 逻辑备份改版）
+# 源：rclone 路径列表（冒号分隔）——只备真实素材（头像/nearby 爬取图片），
+#     sites/（前端编译产物）可经 Jenkins infra-deploy 重建，不备份
+DEFAULT_BACKUP_FS_SOURCES="${DEFAULT_BACKUP_FS_SOURCES:-s3weed:noda-static/avatars:s3weed:noda-static/nearby}"
+DEFAULT_FS_B2_PATH="${DEFAULT_FS_B2_PATH:-backups/filesystem/}"
+DEFAULT_FS_RETENTION_DAYS="${DEFAULT_FS_RETENTION_DAYS:-3}"
+
+# SeaweedFS S3 API（s3weed rclone remote；FS 备份经它做对象级逻辑备份）
+DEFAULT_SEAWEED_S3_ENDPOINT="${DEFAULT_SEAWEED_S3_ENDPOINT:-http://seaweedfs:8333}"
+DEFAULT_SEAWEED_S3_ACCESS_KEY="${DEFAULT_SEAWEED_S3_ACCESS_KEY:-}"
+DEFAULT_SEAWEED_S3_SECRET_KEY="${DEFAULT_SEAWEED_S3_SECRET_KEY:-}"
+
 # ============================================
 # 保存 docker-compose 注入的原始环境变量（必须在默认值覆盖之前）
 # ============================================
@@ -53,6 +65,12 @@ _ORIG_ENV_B2_ACCOUNT_ID="${B2_ACCOUNT_ID:-}"
 _ORIG_ENV_B2_APPLICATION_KEY="${B2_APPLICATION_KEY:-}"
 _ORIG_ENV_B2_BUCKET_NAME="${B2_BUCKET_NAME:-}"
 _ORIG_ENV_B2_PATH="${B2_PATH:-}"
+_ORIG_ENV_BACKUP_FS_SOURCES="${BACKUP_FS_SOURCES:-}"
+_ORIG_ENV_FS_B2_PATH="${FS_B2_PATH:-}"
+_ORIG_ENV_FS_RETENTION_DAYS="${FS_RETENTION_DAYS:-}"
+_ORIG_ENV_SEAWEED_S3_ENDPOINT="${SEAWEED_S3_ENDPOINT:-}"
+_ORIG_ENV_SEAWEED_S3_ACCESS_KEY="${SEAWEED_S3_ACCESS_KEY:-}"
+_ORIG_ENV_SEAWEED_S3_SECRET_KEY="${SEAWEED_S3_SECRET_KEY:-}"
 
 # ============================================
 # 全局配置变量（可被外部修改）
@@ -73,6 +91,14 @@ B2_ACCOUNT_ID="${B2_ACCOUNT_ID:-${DEFAULT_B2_ACCOUNT_ID}}"
 B2_APPLICATION_KEY="${B2_APPLICATION_KEY:-${DEFAULT_B2_APPLICATION_KEY}}"
 B2_BUCKET_NAME="${B2_BUCKET_NAME:-${DEFAULT_B2_BUCKET_NAME}}"
 B2_PATH="${B2_PATH:-${DEFAULT_B2_PATH}}"
+
+# 文件系统备份配置变量
+BACKUP_FS_SOURCES="${BACKUP_FS_SOURCES:-${DEFAULT_BACKUP_FS_SOURCES}}"
+FS_B2_PATH="${FS_B2_PATH:-${DEFAULT_FS_B2_PATH}}"
+FS_RETENTION_DAYS="${FS_RETENTION_DAYS:-${DEFAULT_FS_RETENTION_DAYS}}"
+SEAWEED_S3_ENDPOINT="${SEAWEED_S3_ENDPOINT:-${DEFAULT_SEAWEED_S3_ENDPOINT}}"
+SEAWEED_S3_ACCESS_KEY="${SEAWEED_S3_ACCESS_KEY:-${DEFAULT_SEAWEED_S3_ACCESS_KEY}}"
+SEAWEED_S3_SECRET_KEY="${SEAWEED_S3_SECRET_KEY:-${DEFAULT_SEAWEED_S3_SECRET_KEY}}"
 
 # ============================================
 # 配置加载函数
@@ -154,6 +180,24 @@ load_config()
                     B2_PATH)
                         B2_PATH="$value"
                         ;;
+                    BACKUP_FS_SOURCES)
+                        BACKUP_FS_SOURCES="$value"
+                        ;;
+                    FS_B2_PATH)
+                        FS_B2_PATH="$value"
+                        ;;
+                    FS_RETENTION_DAYS)
+                        FS_RETENTION_DAYS="$value"
+                        ;;
+                    SEAWEED_S3_ENDPOINT)
+                        SEAWEED_S3_ENDPOINT="$value"
+                        ;;
+                    SEAWEED_S3_ACCESS_KEY)
+                        SEAWEED_S3_ACCESS_KEY="$value"
+                        ;;
+                    SEAWEED_S3_SECRET_KEY)
+                        SEAWEED_S3_SECRET_KEY="$value"
+                        ;;
                 esac
             fi
         done <"$config_file"
@@ -171,6 +215,12 @@ load_config()
     [[ -n "${_ORIG_ENV_B2_APPLICATION_KEY:-}" ]] && B2_APPLICATION_KEY="$_ORIG_ENV_B2_APPLICATION_KEY"
     [[ -n "${_ORIG_ENV_B2_BUCKET_NAME:-}" ]] && B2_BUCKET_NAME="$_ORIG_ENV_B2_BUCKET_NAME"
     [[ -n "${_ORIG_ENV_B2_PATH:-}" ]] && B2_PATH="$_ORIG_ENV_B2_PATH"
+    [[ -n "${_ORIG_ENV_BACKUP_FS_SOURCES:-}" ]] && BACKUP_FS_SOURCES="$_ORIG_ENV_BACKUP_FS_SOURCES"
+    [[ -n "${_ORIG_ENV_FS_B2_PATH:-}" ]] && FS_B2_PATH="$_ORIG_ENV_FS_B2_PATH"
+    [[ -n "${_ORIG_ENV_FS_RETENTION_DAYS:-}" ]] && FS_RETENTION_DAYS="$_ORIG_ENV_FS_RETENTION_DAYS"
+    [[ -n "${_ORIG_ENV_SEAWEED_S3_ENDPOINT:-}" ]] && SEAWEED_S3_ENDPOINT="$_ORIG_ENV_SEAWEED_S3_ENDPOINT"
+    [[ -n "${_ORIG_ENV_SEAWEED_S3_ACCESS_KEY:-}" ]] && SEAWEED_S3_ACCESS_KEY="$_ORIG_ENV_SEAWEED_S3_ACCESS_KEY"
+    [[ -n "${_ORIG_ENV_SEAWEED_S3_SECRET_KEY:-}" ]] && SEAWEED_S3_SECRET_KEY="$_ORIG_ENV_SEAWEED_S3_SECRET_KEY"
 
     return 0
 }
@@ -324,6 +374,18 @@ get_b2_bucket_name()
 get_b2_path()
 {
     echo "$B2_PATH"
+}
+
+# get_fs_b2_path - 返回文件系统备份的 B2 路径前缀
+get_fs_b2_path()
+{
+    echo "$FS_B2_PATH"
+}
+
+# get_fs_sources - 返回文件系统备份源列表（rclone 路径，冒号分隔）
+get_fs_sources()
+{
+    echo "$BACKUP_FS_SOURCES"
 }
 
 # validate_b2_credentials - 验证 B2 凭证配置

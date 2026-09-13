@@ -1,0 +1,20 @@
+# R4S 宿主机 crontab（iStoreOS，root）
+# 2026-09-13 cronjob 集中收口后的最终形态：
+#   - 全部产品 cronjob（skykiwi 抓取 / nearby / snagme / lifecycle / vitals）
+#     由 noda-api 镜像的 noda-jobs 守护进程容器承载（Jenkins apps-deploy 部署，
+#     Pacific/Auckland 时区 DST 自适应，本机时区不再需要 NZDT 手工 +1h）
+#   - 文件系统备份收编进 noda-ops 容器内 crond（deploy/crontab，rclone S3 逻辑备份）
+#   - 本文件只剩宿主机职责项：docker 镜像清理 + noda 日志收敛
+#
+# 安装：scp 本文件到 r4s 后执行 `crontab deploy/crontab-r4s-host`
+# 注意：iStoreOS 无 logrotate，日志收敛用 find + truncate；BusyBox crond
+
+# ===== Docker 镜像清理（每周日 05:00，防止 / 1.9G 分区被旧镜像吃满）=====
+0 5 * * 0 /opt/noda/cleanup-docker-images.sh >> /var/log/noda-cleanup-docker.log 2>&1
+
+# ===== noda 日志收敛（每天 04:45；>5MB 截到 1MB，30 天前的删除）=====
+45 4 * * * find /var/log -name "noda-*.log" -size +5000k -exec truncate -s 1M {} \; 2>/dev/null; find /var/log -name "noda-*.log" -mtime +30 -delete 2>/dev/null
+
+# ===== （已移除，2026-09-13 集中化）=====
+# snagme tick / nearby 五 job / skykiwi 四 job → noda-jobs 守护进程容器
+# SeaweedFS tar 备份（04:30 docker run 一次性容器）→ noda-ops 容器内 crond
