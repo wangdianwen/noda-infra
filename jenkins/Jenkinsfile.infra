@@ -53,6 +53,11 @@ pipeline {
 
     stages {
         stage('Queue Gate') {
+            options {
+                // 门禁自身最长等 900s，加上 checkout 余量；超时即失败，
+                // 不占用 executor 干等（等锁期间不 checkout 前的无限阻塞）
+                timeout(time: 20, unit: 'MINUTES')
+            }
             steps {
                 // ⚠️ 必须先 checkout：本 pipeline skipDefaultCheckout，工作区可能是
                 // 任意旧提交——门禁 source 旧 pipeline-stages.sh 会用缺失/带病的
@@ -73,6 +78,7 @@ pipeline {
             }
         }
         stage('Build Info') {
+            options { timeout(time: 2, unit: 'MINUTES') }
             steps {
                 script {
                     currentBuild.displayName = "#${env.BUILD_NUMBER} ${params.SERVICE}"
@@ -81,6 +87,7 @@ pipeline {
             }
         }
         stage('Pre-flight') {
+            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 // Simple checkout (no extensions to avoid git show-ref --tags -d hang)
                 checkout([
@@ -103,6 +110,7 @@ pipeline {
             when {
                 expression { params.SERVICE == 'postgres' }
             }
+            options { timeout(time: 30, unit: 'MINUTES') }
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
@@ -139,6 +147,11 @@ pipeline {
         }
 
         stage('Deploy') {
+            options {
+                // nginx 路径含 docker build + registry 传输 + 容器重建；
+                // postgres 路径含审批后门禁重取（最长 900s）——45m 覆盖全部
+                timeout(time: 45, unit: 'MINUTES')
+            }
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     // nginx = noda-static 反代镜像发布：镜像源码在 noda-apps 仓
@@ -181,6 +194,7 @@ pipeline {
         }
 
         stage('Health Check') {
+            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
@@ -194,6 +208,7 @@ pipeline {
         }
 
         stage('Verify') {
+            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''

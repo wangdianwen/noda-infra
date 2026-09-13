@@ -187,11 +187,19 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 **并行与清理：**
 - 并行规则（2026-09-13 定稿，Queue Gate 队列门禁）：**同一服务不允许并行**——
   两个 Pipeline 首阶段 `Queue Gate` 经 `pipeline_queue_gate` 取 `build-<service>` 锁
-  （最长等 1h），后触发者在门禁处**排队、不做任何实际构建工作**，先到者完成自动接棒
+  （最长等 900s），后触发者在门禁处**排队、不做任何实际构建工作**，先到者完成自动接棒
   （实测 #24/#26 零空窗接棒）；不同服务并行互不影响（实测 class ∥ snagme 同时跑）。
   normal 模式在 Human Approval **前主动释放**队列锁（审批挂起不阻塞后续发布），
   Deploy Prod/Rebuild 前重新获取。跨维度锁（apps-prod / apps-preprod /
-  publish-\<product\> / infra-core）互不阻塞；硬杀泄漏由 30min 陈旧锁自愈兜底。
+  publish-\<product\> / infra-core）互不阻塞。
+- 锁属主语义（2026-09-13，#6/#7 双实证后定稿）：mkdir 锁目录内写 `owner`（BUILD_URL），
+  `acquire_deploy_lock` 三态判定——属主=本构建→幂等通过（跨阶段重取不再自锁 #6）；
+  属主构建已结束（查 Jenkins API building:false）→立即抢破（中止瞬间在途 mkdir
+  "复活"的锁一个轮询周期自愈，#7 门禁空等 15min 根治）；属主在跑→正常等待。
+  API 不可达时不误抢，30min 陈旧自愈仍为最后兜底。注意锁目录非空，释放必须 rm -rf。
+- 全 stage 超时（2026-09-13）：两 Pipeline 每个 stage 设 declarative `options.timeout`
+  （门禁 20m / 构建 45m / 部署 30m / 审批 6h / Rebuild Pre-prod 60m 等）——
+  卡死构建在 stage 边界自动失败并走 post 释放锁，不再无限占用 workspace 槽位
   infra-core 仅在 noda-infra Deploy→post 持有（动共享设施时互斥）
 - 旧 cleanup job（每周清理）已删除：构建后清理内建于两个 Pipeline 的 post 阶段（镜像保留、registry retention + GC、桶 mirror --remove 收敛）
 

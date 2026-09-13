@@ -270,21 +270,37 @@ acquire_deploy_lock()
     log_info "尝试获取部署锁 [$lock_name]（最多等待 ${max_wait} 秒）..."
 
     # mkdir 是原子操作，兼容 BusyBox（r4s/iStoreOS）。
-    # 陈旧锁自愈：构建被硬杀（Jenkins abort 杀 bash）时 post 兜底仍会释放，
-    # 但兜底也失效（如 executor 宕机）则 30 分钟后允许抢破——部署远短于该阈值。
-    local elapsed=0
+    # 属主语义（2026-09-13 #6/#7 实证）：mkdir 锁本身无属主——同构建跨阶段重取
+    # 会撞自己（#6 自锁 15min）；构建被中止瞬间在途的 mkdir 落在 post 释放之后
+    # 会"复活"锁（#7 门禁空等 15min）。锁内写 BUILD_URL 作为属主，获取方据此：
+    #   (a) 属主=本构建 → 幂等通过（跨阶段重取）
+    #   (b) 属主构建已结束 → 立即抢破（复活锁/泄漏，一个轮询周期内自愈）
+    #   (c) 属主在跑 → 正常等待（真正的互斥）
+    # 30 分钟陈旧自愈保留为 Jenkins API 不可达时的最后兜底。
+    local elapsed=0 owner owner_url="${BUILD_URL:-}"
     while [ $elapsed -lt $max_wait ]; do
-        if remote_exec "mkdir $lock_file 2>/dev/null"; then
+        if remote_exec "mkdir $lock_file 2>/dev/null || exit 1; echo '${owner_url:-noda-local}' > $lock_file/owner 2>/dev/null; true"; then
             log_success "部署锁获取成功 [$lock_name]"
             # 按构建登记持有的锁（registry 文件由调用方经 NODA_LOCK_REGISTRY 指定），
             # 供 post always 的 pipeline_release_lock 只释放本构建持有的锁——
-            # 并行构建互不误删（mkdir 锁无属主语义，全局释放会拆别的构建的锁）
+            # 并行构建互不误删（全局释放会拆别的构建的锁）
             [ -n "${NODA_LOCK_REGISTRY:-}" ] && echo "$lock_name" >>"$NODA_LOCK_REGISTRY"
             return 0
         fi
+        owner=$(remote_exec "cat $lock_file/owner 2>/dev/null" | tail -n 1)
+        if [ -n "$owner_url" ] && [ "$owner" = "$owner_url" ]; then
+            log_info "部署锁 [$lock_name] 属主是本构建（重取幂等通过）"
+            [ -n "${NODA_LOCK_REGISTRY:-}" ] && echo "$lock_name" >>"$NODA_LOCK_REGISTRY"
+            return 0
+        fi
+        if [ -n "$owner" ] && [ "$owner" != "$owner_url" ] && _lock_owner_dead "$owner"; then
+            log_warn "部署锁 [$lock_name] 属主构建已结束（中止泄漏/复活锁），强制抢占"
+            remote_exec "rm -rf $lock_file 2>/dev/null || true"
+            continue
+        fi
         if remote_exec "test -d $lock_file && test \$(find $lock_file -mmin +30 2>/dev/null | grep -c .) -gt 0 2>/dev/null"; then
             log_warn "部署锁 [$lock_name] 已滞留超 30 分钟（疑似硬杀泄漏），强制抢占"
-            remote_exec "rmdir $lock_file 2>/dev/null || true"
+            remote_exec "rm -rf $lock_file 2>/dev/null || true"
         fi
         sleep 5
         elapsed=$((elapsed + 5))
@@ -295,9 +311,27 @@ acquire_deploy_lock()
 }
 
 # ============================================
+# 函数: _lock_owner_dead
+# ============================================
+# 判断锁属主构建是否已结束（属主为 BUILD_URL，Jenkins 注入到 agent=本机，
+# API 可达）。API 不可达/无 Jenkins 上下文时返回 1（当作活着，交给 30min
+# 陈旧自愈兜底）——绝不因检查失败而误抢活构建的锁。
+# 参数:
+#   $1: 属主 BUILD_URL（如 http://localhost:8080/job/noda-infra/6/）
+# 返回: 0=属主已结束，1=活着或无法判定
+_lock_owner_dead()
+{
+    [ -n "${BUILD_URL:-}" ] || return 1
+    local st
+    st=$(curl -sf --connect-timeout 5 --max-time 10 "$1/api/json" 2>/dev/null |
+        grep -o '"building":[a-z]*' | head -n 1)
+    [ "$st" = '"building":false' ]
+}
+
+# ============================================
 # 函数: release_deploy_lock
 # ============================================
-# 释放部署锁（rmdir，兼容 BusyBox）
+# 释放部署锁（rm -rf，兼容 BusyBox）
 # 参数:
 #   $1: lock_name - 与 acquire 相同的锁名（默认跟随 NODA_LOCK_NAME）
 # 返回: 0=释放成功
@@ -313,7 +347,9 @@ release_deploy_lock()
 
     log_info "释放部署锁 [$lock_name]..."
 
-    remote_exec "rmdir $lock_file 2>/dev/null || true"
+    # rm -rf 而非 rmdir：锁目录内有 owner 文件（属主语义，2026-09-13），
+    # rmdir 遇非空目录会静默失败导致锁泄漏
+    remote_exec "rm -rf $lock_file 2>/dev/null || true"
 
     # 从本构建的持有登记中移除（若启用 registry）
     if [ -n "${NODA_LOCK_REGISTRY:-}" ] && [ -f "$NODA_LOCK_REGISTRY" ]; then

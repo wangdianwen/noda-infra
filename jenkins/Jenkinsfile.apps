@@ -63,6 +63,10 @@ pipeline {
 
     stages {
         stage('Queue Gate') {
+            options {
+                // 门禁自身最长等 900s；超时即失败，等锁不占 executor 干等
+                timeout(time: 20, unit: 'MINUTES')
+            }
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
@@ -77,6 +81,7 @@ pipeline {
             }
         }
         stage('Build Info') {
+            options { timeout(time: 2, unit: 'MINUTES') }
             steps {
                 script {
                     // Stage View / Job 页一眼看出这次发布是什么
@@ -86,6 +91,7 @@ pipeline {
             }
         }
         stage('Pre-flight') {
+            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 // CI 防线：workspace 内的 noda-apps 若是指向本地工作区的符号链接，
                 // 会构建未提交代码且 cleanup 误删本地 node_modules——必须用真实 checkout
@@ -122,6 +128,10 @@ pipeline {
 
         stage('Build') {
             when { expression { params.LAYER != 'static' } }
+            options {
+                // docker build（Mac）+ registry 增量传输，常规 ~15m，45m 封顶
+                timeout(time: 45, unit: 'MINUTES')
+            }
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
@@ -142,6 +152,10 @@ pipeline {
         // Human Approval，prod 始终受测试挡板保护。
         // LAYER=static 时无容器可部署——只跑 Test（发布挡板）。
         stage('Deploy Pre-prod & Test') {
+            options {
+                // 并行臂：pre-prod 部署 ~5m / Test（pnpm install + turbo + go）可达 ~30m
+                timeout(time: 40, unit: 'MINUTES')
+            }
             parallel {
                 stage('Deploy Pre-prod') {
                     when {
@@ -245,6 +259,11 @@ pipeline {
             when {
                 expression { params.LAYER != 'static' && params.DEPLOY_MODE == 'normal' && env.DEPLOY_ACTION == 'rebuild_preprod' }
             }
+            options {
+                // 最多 5 轮（重建+健康检查+input）；stage 内 input 原本无超时，
+                // 人离开会无限占用 workspace 槽位——60m 封顶
+                timeout(time: 60, unit: 'MINUTES')
+            }
             steps {
                 script {
                     // 重建 → 回到审批继续选（循环），不再是死胡同——
@@ -303,8 +322,12 @@ pipeline {
             when {
                 expression { params.LAYER != 'static' && (params.DEPLOY_MODE == 'fast' || env.DEPLOY_ACTION == 'deploy_prod') }
             }
+            options {
+                // 含门禁重取（其他构建持有队列锁时最长等 900s）+ prod 部署；
+                // 15m 会被等锁独占导致部署没开始就被杀——30m
+                timeout(time: 30, unit: 'MINUTES')
+            }
             steps {
-                timeout(time: 15, unit: 'MINUTES') {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
@@ -318,7 +341,6 @@ pipeline {
                         pipeline_deploy_prod "$GIT_SHA"
                     '''
                 }
-                }
             }
         }
 
@@ -327,6 +349,10 @@ pipeline {
         // publish-<product> 锁 + 产品维度中继容器/端口/alias——跨产品并行互不覆盖
         stage('Publish Static') {
             when { expression { params.LAYER != 'api' } }
+            options {
+                // 双桶 mirror --remove + 对象对账 + 哨兵校验，常规 <10m
+                timeout(time: 20, unit: 'MINUTES')
+            }
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
@@ -360,6 +386,7 @@ pipeline {
         }
 
         stage('CDN Purge') {
+            options { timeout(time: 5, unit: 'MINUTES') }
             steps {
                 script {
                     try {
@@ -393,6 +420,7 @@ pipeline {
             when {
                 expression { params.LAYER != 'static' && params.DEPLOY_MODE == 'normal' && env.DEPLOY_ACTION == 'abort' }
             }
+            options { timeout(time: 2, unit: 'MINUTES') }
             steps {
                 script {
                     currentBuild.result = 'ABORTED'
