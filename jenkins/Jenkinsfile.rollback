@@ -48,6 +48,11 @@ pipeline {
 - api: 后端容器回滚（noda-api:rollback 锚点），⚠️ 影响**所有产品**的后端
 - all: 前端桶 + 后端容器一起回滚'''
         )
+        choice(
+            name: 'ROLLBACK_DEPTH',
+            choices: ['1', '2'],
+            description: '回滚深度（static/all 生效）：1=上一次发布（默认），2=上两次。快照层数由发布侧 MAX_STATIC_SNAPSHOTS 决定（当前 2 层）'
+        )
     }
 
     stages {
@@ -79,8 +84,8 @@ pipeline {
             options { timeout(time: 2, unit: 'MINUTES') }
             steps {
                 script {
-                    currentBuild.displayName = "#${env.BUILD_NUMBER} ${params.PRODUCT}/${params.SCOPE} ↩rollback"
-                    currentBuild.description = "回滚 <b>${params.PRODUCT}</b> · 层 <b>${params.SCOPE}</b>（回到上一次发布）"
+                    currentBuild.displayName = "#${env.BUILD_NUMBER} ${params.PRODUCT}/${params.SCOPE} ↩rollback" + (params.SCOPE != 'api' ? " d${params.ROLLBACK_DEPTH}" : '')
+                    currentBuild.description = "回滚 <b>${params.PRODUCT}</b> · 层 <b>${params.SCOPE}</b>" + (params.SCOPE != 'api' ? " · 深度 <b>${params.ROLLBACK_DEPTH}</b>" : "") + "（回到历史发布）"
                 }
             }
         }
@@ -124,7 +129,7 @@ pipeline {
                         if [ "${SCOPE}" != "api" ]; then
                             # 前端：桶回滚持 publish-<product>（与同产品发布互斥）
                             if acquire_deploy_lock 600 "publish-${PRODUCT}"; then
-                                pipeline_rollback_static_site "$PRODUCT"
+                                pipeline_rollback_static_site "$PRODUCT" "${ROLLBACK_DEPTH:-1}"
                                 rc=$?
                                 release_deploy_lock "publish-${PRODUCT}"
                                 [ $rc -eq 0 ] || exit 1

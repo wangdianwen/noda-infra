@@ -46,6 +46,16 @@ def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
             </a>
           </choices>
         </hudson.model.ChoiceParameterDefinition>
+        <hudson.model.ChoiceParameterDefinition>
+          <name>ROLLBACK_DEPTH</name>
+          <description>回滚深度（static/all 生效）：1=上一次发布（默认），2=上两次</description>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>1</string>
+              <string>2</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
       </parameterDefinitions>
     </hudson.model.ParametersDefinitionProperty>
   </properties>

@@ -2058,18 +2058,9 @@ pipeline_publish_static_site()
         return 1
     fi
 
-    # 发布前快照当前桶内容到 sites/<product>-prev/（单份滚动快照，每次发布覆盖）——
-    # mirror --remove 会让旧内容立即消失，发布失误时 pipeline_rollback_static_site
-    # 可一次 mirror 回滚。-prev 前缀不在 nginx 改写映射内，公网不可达。
-    if mc ls --recursive "$alias_name/noda-static/sites/$product/" >/dev/null 2>&1; then
-        log_info "快照当前发布 → noda-static/sites/${product}-prev/ ..."
-        mc mirror --overwrite --remove --quiet \
-            "$alias_name/noda-static/sites/$product/" \
-            "$alias_name/noda-static/sites/${product}-prev/" || \
-            log_warn "快照失败（不影响本次发布，仅失去回滚锚点）"
-    else
-        log_info "首次发布（桶内无 $product 前缀），跳过快照"
-    fi
+    # 发布前快照轮转（N 层滚动，2026-09-13 打磨）：snap(max)←snap(max-1)←...←snap(1)←主前缀
+    # -prev/-prev2 前缀不在 nginx 改写映射内，公网不可达；层数 MAX_STATIC_SNAPSHOTS（默认 2）
+    _static_snapshot_rotate "$alias_name" "noda-static" "$product"
 
     log_info "mc mirror 增量同步（含删除） out/ → noda-static/sites/$product/ ..."
     # --remove：桶内该前缀收敛为当前 out/（旧构建 hash 资产/已删页面对象随之清理）；
@@ -2089,9 +2080,7 @@ pipeline_publish_static_site()
         # preprod 全站 404）——mc mb 幂等确保桶在位，任何环境桶丢失随发布自动重建
         mc mb --ignore-existing "$alias_name-stg/noda-static-stg" >/dev/null 2>&1 || true
         if mc ls --recursive "$alias_name-stg/noda-static-stg/sites/$product/" >/dev/null 2>&1; then
-            mc mirror --overwrite --remove --quiet \
-                "$alias_name-stg/noda-static-stg/sites/$product/" \
-                "$alias_name-stg/noda-static-stg/sites/${product}-prev/" || true
+            _static_snapshot_rotate "$alias_name-stg" "noda-static-stg" "$product"
         fi
         log_info "mc mirror 增量同步（含删除） out/ → noda-static-stg/sites/$product/ ..."
         if ! mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name-stg/noda-static-stg/sites/$product/"; then
@@ -2151,20 +2140,76 @@ pipeline_publish_static_site()
 }
 
 # ============================================
+# 静态站多层快照（2026-09-13 打磨：单份 -prev 只能回滚一步 → N 层滚动）
+# ============================================
+# 深度 i 对应的桶前缀：i=1 → <product>-prev（兼容既有命名），i≥2 → <product>-prev<i>
+_static_snapshot_dir()
+{
+    local product="$1" depth="${2:-1}"
+    if [ "$depth" -le 1 ]; then
+        echo "${product}-prev"
+    else
+        echo "${product}-prev${depth}"
+    fi
+}
+
+# 发布前快照轮转（深→浅逐层外移，最浅层吃掉当前主前缀）：
+#   snap(max) ← snap(max-1) ← ... ← snap(1) ← sites/<product>/
+# MAX_STATIC_SNAPSHOTS 控制层数（默认 2：-prev 可回滚一步 / -prev2 可回滚两步）。
+# 任一层轮转失败仅告警——快照是回滚锚点，但绝不能阻塞发布本身。
+# 快照前缀不在 nginx 改写映射内，公网不可达。
+_static_snapshot_rotate()
+{
+    local alias_name="$1" bucket_root="$2" product="$3"
+    local max_snap="${MAX_STATIC_SNAPSHOTS:-2}"
+    local i src dst
+    if ! mc ls --recursive "$alias_name/$bucket_root/sites/$product/" >/dev/null 2>&1; then
+        log_info "首次发布（桶内无 $product 前缀），跳过快照"
+        return 0
+    fi
+    i=$((max_snap - 1))
+    while [ "$i" -ge 1 ]; do
+        src=$(_static_snapshot_dir "$product" "$i")
+        dst=$(_static_snapshot_dir "$product" "$((i + 1))")
+        if mc ls --recursive "$alias_name/$bucket_root/sites/$src/" >/dev/null 2>&1; then
+            log_info "快照轮转 $src → $dst ..."
+            mc mirror --overwrite --remove --quiet \
+                "$alias_name/$bucket_root/sites/$src/" \
+                "$alias_name/$bucket_root/sites/$dst/" || \
+                log_warn "快照轮转 $src → $dst 失败（该层快照可能过期）"
+        fi
+        i=$((i - 1))
+    done
+    log_info "快照当前发布 → $bucket_root/sites/$(_static_snapshot_dir "$product" 1)/ ..."
+    mc mirror --overwrite --remove --quiet \
+        "$alias_name/$bucket_root/sites/$product/" \
+        "$alias_name/$bucket_root/sites/$(_static_snapshot_dir "$product" 1)/" || \
+        log_warn "快照失败（不影响本次发布，仅失去回滚锚点）"
+}
+
+# ============================================
 # 函数: pipeline_rollback_static_site
 # ============================================
-# 静态站发布回滚：把 sites/<product>-prev/ 快照 mirror 回主前缀（prod+stg 双桶）。
+# 静态站发布回滚：把指定层的快照 mirror 回主前缀（prod+stg 双桶）。
 # 用于发布失误（内容错误/产物异常）——mirror --remove 让旧内容立即消失，
-# 本函数以发布时自动打的快照为回滚源，一次 mirror 即回上一版本。
+# 本函数以发布时自动打的快照为回滚源，一次 mirror 即回上一/上二版本。
 # 用法（noda-apps 构建机）：
 #   SKIP_LOAD_SECRETS=1 DEPLOY_TARGET=r4s SSH_KEY_FILE=<key> \
-#     source scripts/pipeline-stages.sh && pipeline_rollback_static_site <product>
-# 注意：快照为单份滚动（每次发布覆盖），只能回滚到「上一次发布」。
+#     source scripts/pipeline-stages.sh && pipeline_rollback_static_site <product> [depth]
+# 参数：depth=1 回滚到上一次发布（默认）；depth=2 上两次；上限 MAX_STATIC_SNAPSHOTS。
+# 注意：快照为 N 层滚动（每次发布深→浅轮转），可回滚窗口 = 层数。
 pipeline_rollback_static_site()
 {
     local product="$1"
+    local depth="${2:-1}"
+    local max_snap="${MAX_STATIC_SNAPSHOTS:-2}"
+    case "$depth" in ''|*[!0-9]*) depth=1 ;; esac
+    [ "$depth" -lt 1 ] && depth=1
+    [ "$depth" -gt "$max_snap" ] && depth=$max_snap
+    local snap_dir
+    snap_dir=$(_static_snapshot_dir "$product" "$depth")
     if [ -z "$product" ]; then
-        log_error "用法: pipeline_rollback_static_site <product>"
+        log_error "用法: pipeline_rollback_static_site <product> [depth=1..${MAX_STATIC_SNAPSHOTS:-2}]"
         return 1
     fi
     if ! command -v mc >/dev/null 2>&1; then
@@ -2212,14 +2257,14 @@ pipeline_rollback_static_site()
     fi
 
     local prev_objs
-    prev_objs=$(mc ls --recursive "$alias_name/noda-static/sites/${product}-prev/" 2>/dev/null | grep -c . || true)
+    prev_objs=$(mc ls --recursive "$alias_name/noda-static/sites/${snap_dir}/" 2>/dev/null | grep -c . || true)
     if [ "${prev_objs:-0}" -eq 0 ]; then
-        log_error "回滚快照为空：sites/${product}-prev/ 不存在或无对象（该产品尚无快照）"
+        log_error "回滚快照为空：sites/${snap_dir}/ 不存在或无对象（该层快照尚未产生/无此深度历史）"
         _rollback_cleanup
         return 1
     fi
 
-    log_info "回滚: sites/${product}-prev/（$prev_objs 对象）→ sites/$product/ ..."
+    log_info "回滚: sites/${snap_dir}/（$prev_objs 对象）→ sites/$product/ ..."
     if ! mc mirror --overwrite --remove --quiet \
         "$alias_name/noda-static/sites/${product}-prev/" \
         "$alias_name/noda-static/sites/$product/"; then
@@ -2236,7 +2281,7 @@ pipeline_rollback_static_site()
             "$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['secretKey'])" 2>/dev/null)" \
             --api S3v4 >/dev/null 2>&1; then
             mc mirror --overwrite --remove --quiet \
-                "$alias_name-stg/noda-static-stg/sites/${product}-prev/" \
+                "$alias_name-stg/noda-static-stg/sites/${snap_dir}/" \
                 "$alias_name-stg/noda-static-stg/sites/$product/" \
                 && log_info "stg 桶已同步回滚" || log_warn "stg 桶回滚失败（不影响 prod）"
         fi
@@ -2250,7 +2295,7 @@ pipeline_rollback_static_site()
     if [ "$now_objs" != "$prev_objs" ]; then
         log_warn "回滚后对象数与快照不一致（$now_objs vs $prev_objs）——请人工核对"
     fi
-    log_success "$product 静态站已回滚到上一次发布（$now_objs 对象）；确认恢复后下次发布会重新快照"
+    log_success "$product 静态站已回滚到第 ${depth} 层快照（$now_objs 对象）；确认恢复后下次发布会重新快照"
     return 0
 }
 

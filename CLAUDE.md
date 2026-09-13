@@ -205,6 +205,7 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
   卡死构建在 stage 边界自动失败并走 post 释放锁，不再无限占用 workspace 槽位
   infra-core 仅在 noda-infra Deploy→post 持有（动共享设施时互斥）
 - 旧 cleanup job（每周清理）已删除：构建后清理内建于两个 Pipeline 的 post 阶段（镜像保留、registry retention + GC、桶 mirror --remove 收敛）
+- Lockable Resources 插件未安装（重构时已从 init 脚本移除创建逻辑）——互斥完全由 r4s mkdir 锁承担，插件层面无残留资源
 
 **Pre-prod 访问（通过 /etc/hosts）：**
 ```
@@ -352,16 +353,25 @@ Noda 项目基础设施仓库，通过 Docker Compose 管理生产环境的数�
 | Kubernetes | 单服务器部署，无 K8s |
 | GitHub Integration | 手动触发部署，不需要 PR hook |
 ### Pipeline as Code: Jenkinsfile
-### 自动回滚机制
+### 自动回滚机制（2026-09-13 现行架构）
 | 场景 | 回滚动作 | 触发条件 |
 |------|---------|---------|
-| 构建失败 | 不启动新容器，一切不变 | `docker compose build` 返回非零 |
-| 新容器健康检查失败 | 保留旧容器，停新容器 | `wait_container_healthy` 超时 |
-| E2E HTTP 检查失败 | 保留旧容器，停新容器 | curl 返回非 200 或超时 |
-| 部署后人工确认回滚 | Pipeline `input` 步骤等待确认 | 手动触发 |
+| 构建失败/中止 | post 兜底释放全部锁 + 清理镜像，线上不动 | 构建结果非 SUCCESS |
+| prod 容器健康检查失败 | `_rollback_prod_containers` 自动回到 `:rollback` 锚点镜像并 reload nginx | `wait_container_healthy` 超时 |
+| 桶发布不完整 | 对账重试补传（幂等 mirror），绝不 rm --recursive | 对象计数/哨兵校验不符 |
+| 人工回滚前端 | `noda-rollback` 任务 SCOPE=static（桶快照，N 层深度可选） | 手动触发 |
+| 人工回滚后端 | `noda-rollback` 任务 SCOPE=api（rollback 锚点，全产品生效） | 手动触发 |
+| 边缘反代镜像回滚 | 重新触发 `noda-infra SERVICE=nginx` | 手动触发 |
+
+### 静态站多层快照（2026-09-13 打磨）
+- 发布时自动轮转：`snap(N)←snap(N-1)←...←snap(1)←主前缀`（prod+stg 双桶同步）
+- 层数 `MAX_STATIC_SNAPSHOTS`（默认 2）：`sites/<product>-prev/`=上一次发布，`-prev2/`=上两次
+- 快照前缀不在 nginx 改写映射内，公网不可达；轮转失败仅告警不阻塞发布
+- 回滚深度在 `noda-rollback` 任务以 ROLLBACK_DEPTH 参数暴露（1/2）
+- 确认恢复后下次发布会重新快照（回滚本身不产生新快照层）
 
 ### 人工一键回滚：noda-rollback 任务（2026-09-13，UI 可点）
-- 入口：Jenkins UI（或 curl）`noda-rollback`，参数 PRODUCT（8 产品）+ SCOPE
+- 入口：Jenkins UI（或 curl）`noda-rollback`，参数 PRODUCT（8 产品）+ SCOPE + ROLLBACK_DEPTH（1/2）
   - `static`：桶回滚 `sites/<product>-prev/` 快照 → 主前缀，**只影响本产品**（`pipeline_rollback_static_site`）
   - `api`：noda-api 容器回到 `rollback` 锚点镜像——⚠️ 后端全产品单体，**影响所有产品**
   - `all`：两者；边缘反代镜像不在此回滚（走 noda-infra SERVICE=nginx）
