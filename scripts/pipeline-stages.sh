@@ -2300,13 +2300,15 @@ https://auth.noda.co.nz/api/health|auth api 链"
 https://comments.noda.co.nz/api/health|comment api 链"
             ;;
         snagme)
-            # 前端为 Node 应用未静态化，无公网页面探针；API 链走 r4s 边缘内探
-            # （Host 头定位 snagme 块 /health → 直通 :3015，CF DNS/tunnel 生效前即可验证）
+            # 前端为 Node 应用未静态化，无公网页面探针；API 链走 r4s 边缘内探。
+            # ⚠️ 必须探 snagme 块独有的业务路径 /api/snagme/status——/health 会被
+            # class 兜底块（未匹配 Host 的 default server）以静态 200 顶替，假阳性
+            # （apps#11 实证：Deploy Prod 被跳过时探针照样「通过」）。
             if [ "$DEPLOY_TARGET" = "r4s" ] && [ -n "${SSH_KEY_FILE:-}" ]; then
-                if remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: snagme.noda.co.nz' --spider http://127.0.0.1:81/health"; then
-                    log_success "snagme api 链 E2E 验证通过（r4s 边缘内探）"
+                if remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: snagme.noda.co.nz' --spider http://127.0.0.1:81/api/snagme/status"; then
+                    log_success "snagme api 链 E2E 验证通过（r4s 边缘内探 → :3015 /api/snagme/status）"
                 else
-                    log_error "E2E 验证失败: snagme api 链（边缘 /health → :3015）"
+                    log_error "E2E 验证失败: snagme api 链（边缘 /api/snagme/status → :3015）"
                     return 1
                 fi
             else
