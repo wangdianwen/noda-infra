@@ -173,22 +173,26 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 | 同服务互斥（两个 class 并发触发） | apps #19 ∥ #20 | ✅ | #20 在 build-class 锁上等待 72s，#19 结束后自动接棒；不同产品并发不受影响 |
 | prod 实际收敛 | — | ✅ | #18（nearby/api，≥0ef8d69 镜像）落地后，边缘 /api/snagme/status 返回真实 scanner 数据——snagme 链路正式在线 |
 
-**Snagme 接入说明（2026-09-13，Trade Me 捡漏监控）：**
-- 后端：`snagme/api` Go 模块经 noda-api 组合根接入（`:3015`，`SNAGME_API_PORT`），
-  `PRODUCT=snagme&LAYER=api` 全流程发布；nginx `snagme.noda.co.nz` 块 `/api/*` 反代
-  ：3015、`/health` 直通上游（pipeline verify 走 r4s 边缘内探，不依赖公网 DNS）。
-- 前端：dashboard 是 better-sqlite3 Node 应用（运行时依赖 scanner 库），**不支持桶
-  发布**——`LAYER=static/all` 在 Pre-flight 即拒绝；独立部署形态待定（当前 launchd
-  本机运行）。
-- 域名生效前置（一次性，外部动作）：① CF DNS `snagme.noda.co.nz` CNAME → tunnel；
-  ② `noda-infra?SERVICE=noda-ops` 重建（ingress 已加 `config/cloudflare/config.yml`）。
+**Snagme 接入说明（2026-09-13 上线，Trade Me 捡漏监控）：**
+- 采集侧：r4s 宿主 crontab → Go monitor `crawl-snagme`（noda-jobs:multi 容器，白天
+  8 分钟一拍 + 夜间降频）→ Postgres `snagme_*` 表（TS launchd 常驻已退役，运维手册
+  snagme/deploy/README.md）。
+- 后端：`snagme/api` Go 模块经 noda-api 组合根接入（`:3015`），`PRODUCT=snagme
+  &LAYER=api` 发布；nginx `/api/*` 反代 :3015。
+- 前端：dashboard 为 Next.js `output:'export'` 静态导出（数据全部客户端同源 fetch
+  Go API），`LAYER=static` 桶发布 sites/snagme/，`/listing/<id>` 深链 404=200 回
+  app-shell 壳。**https://snagme.noda.co.nz/ 已上线**（公网 E2E 全绿）。
+- 发布入口：`noda-apps?PRODUCT=snagme&LAYER=static`（前端）/ `LAYER=api`（后端）。
 
 **并行与清理：**
-- 并行规则（2026-09-13 收紧）：**同一服务不允许并行**——noda-apps 持 `build-<product>`、
-  noda-infra 持 `build-infra-<service>` 构建级锁（Pre-flight 起到 post 释放，等待上限
-  15 分钟，超时明确失败）；不同服务并行互不影响。跨 Pipeline 维度（apps-prod /
-  apps-preprod / publish-\<product\> / infra-core / build-*）互不阻塞。
-  infra-core 收窄为 noda-infra Deploy→post 持有（仅动共享设施时互斥）
+- 并行规则（2026-09-13 定稿，Queue Gate 队列门禁）：**同一服务不允许并行**——
+  两个 Pipeline 首阶段 `Queue Gate` 经 `pipeline_queue_gate` 取 `build-<service>` 锁
+  （最长等 1h），后触发者在门禁处**排队、不做任何实际构建工作**，先到者完成自动接棒
+  （实测 #24/#26 零空窗接棒）；不同服务并行互不影响（实测 class ∥ snagme 同时跑）。
+  normal 模式在 Human Approval **前主动释放**队列锁（审批挂起不阻塞后续发布），
+  Deploy Prod/Rebuild 前重新获取。跨维度锁（apps-prod / apps-preprod /
+  publish-\<product\> / infra-core）互不阻塞；硬杀泄漏由 30min 陈旧锁自愈兜底。
+  infra-core 仅在 noda-infra Deploy→post 持有（动共享设施时互斥）
 - 旧 cleanup job（每周清理）已删除：构建后清理内建于两个 Pipeline 的 post 阶段（镜像保留、registry retention + GC、桶 mirror --remove 收敛）
 
 **Pre-prod 访问（通过 /etc/hosts）：**
