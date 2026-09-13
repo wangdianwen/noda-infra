@@ -256,10 +256,9 @@ pipeline_preflight()
         log_info "同步 r4s 仓库..."
         # 使用 fetch + reset --hard origin 替代 git pull，确保即使远程历史被重写（force push）
         # 也能正确同步；用 -e 排除运行时数据目录（history/crawler-logs 等），保护生产数据
-        # ⚠️ fetch 必须带显式 refspec（+branch:refs/remotes/origin/branch）：
-        # 裸 `git fetch origin main` 只写 FETCH_HEAD 不更新 origin/main 跟踪引用，
-        # 随后 reset --hard origin/main 会落到陈旧引用上（infra #10 实证：
-        # r4s 长期停在 7d96fc7，新 nginx 配置发布不生效）；+ 前缀容忍强推
+        # ⚠️ fetch 显式 refspec（+branch:refs/remotes/origin/branch）为防御性写法：
+        # git ≥1.8.4 裸 `fetch origin main` 会机会式更新跟踪引用（infra #10 实测
+        # 同步正常），但显式 refspec 不依赖该行为、容忍强推且意图明确
         remote_exec "cd /opt/noda/noda-infra && git fetch origin +${R4S_GIT_BRANCH}:refs/remotes/origin/${R4S_GIT_BRANCH} && git reset --hard origin/${R4S_GIT_BRANCH} && git clean -fd -e docker/volumes/" || {
             log_error "r4s 仓库同步失败"
             return 1
@@ -1480,8 +1479,8 @@ pipeline_infra_preflight()
         # 也能正确同步；清理本地修改避免冲突
         # 注意: git clean -fd 不删除 .gitignore 忽略的文件（如 backup/logs）；
         # 用 -e 排除运行时数据目录（history/crawler-logs 等），保护生产数据
-        # ⚠️ fetch 必须带显式 refspec：裸 `fetch origin main` 不更新 origin/main
-        # 跟踪引用，reset 会落到陈旧引用（infra #10 实证，同 apps 侧 259 行注释）
+        # ⚠️ fetch 显式 refspec 为防御性写法（git ≥1.8.4 裸 fetch 亦会机会式更新
+        # 跟踪引用，infra #10 实测同步正常；显式写法不依赖该行为且容忍强推）
         remote_exec "cd /opt/noda/noda-infra && git fetch origin +${R4S_GIT_BRANCH}:refs/remotes/origin/${R4S_GIT_BRANCH}" || {
             log_error "r4s 仓库 fetch 失败"
             return 1
