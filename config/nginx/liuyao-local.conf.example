@@ -399,25 +399,25 @@ server {
 
     # .txt（RSC 载荷）净 404（未预渲染 cronjobs 深链路由触发硬导航兜底）
     location ~ \.txt$ {
-        include /etc/nginx/snippets/seaweedfs-admin-static.conf;
+        include /etc/nginx/snippets/seaweedfs-admin-static-stg.conf;
     }
 
     # regex 顺序敏感：.txt > snagme 详情深链 > 两级 cronjobs 深链 > 单级 cronjobs
     location ~ ^/snagme/listing/[^/]+(/|$) {
         add_header Cache-Control "no-cache" always;
-        include /etc/nginx/snippets/seaweedfs-admin-static.conf;
+        include /etc/nginx/snippets/seaweedfs-admin-static-stg.conf;
         error_page 403 404 =200 /snagme/listing/app-shell.html;
     }
 
     location ~ ^/cronjobs/[^/]+/[^/]+(/|$) {
         add_header Cache-Control "no-cache" always;
-        include /etc/nginx/snippets/seaweedfs-admin-static.conf;
+        include /etc/nginx/snippets/seaweedfs-admin-static-stg.conf;
         error_page 403 404 =200 /cronjobs/app-shell/app-shell.html;
     }
 
     location ~ ^/cronjobs/ {
         add_header Cache-Control "no-cache" always;
-        include /etc/nginx/snippets/seaweedfs-admin-static.conf;
+        include /etc/nginx/snippets/seaweedfs-admin-static-stg.conf;
         error_page 403 404 =200 /cronjobs/app-shell.html;
     }
 
@@ -429,13 +429,13 @@ server {
     # 静态资产：一年 immutable
     location /_next/ {
         add_header Cache-Control "public, max-age=31536000, immutable" always;
-        include /etc/nginx/snippets/seaweedfs-admin-static.conf;
+        include /etc/nginx/snippets/seaweedfs-admin-static-stg.conf;
     }
 
     # HTML 与其余文件
     location / {
         add_header Cache-Control "no-cache" always;
-        include /etc/nginx/snippets/seaweedfs-admin-static.conf;
+        include /etc/nginx/snippets/seaweedfs-admin-static-stg.conf;
         error_page 403 404 /404.html;
     }
 }
