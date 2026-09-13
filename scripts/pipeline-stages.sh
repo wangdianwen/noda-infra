@@ -3191,6 +3191,13 @@ pipeline_queue_gate()
     fi
     NODA_LOCK_NAME="build-${svc}"
     export NODA_LOCK_NAME
+    # 幂等：本构建已在 Gate 持有同名锁（registry 登记）则直接通过——
+    # Deploy Prod 重取是「审批窗口释放后」的路径，fast/static 无审批路径
+    # 锁仍在手，重取会 mkdir 撞自己（mkdir 锁无属主语义，#6 自锁 15min 实证）
+    if [ -f "${NODA_LOCK_REGISTRY:-}" ] && grep -Fxq "build-${svc}" "$NODA_LOCK_REGISTRY" 2>/dev/null; then
+        log_info "队列门禁 [$svc]：本构建已持有锁，跳过重取"
+        return 0
+    fi
     log_info "队列门禁 [$svc]：同服务互斥——如有同服务发布进行中，本构建在此等待（最长 ${GATE_WAIT_SECONDS:-900}s）..."
     if ! acquire_deploy_lock "${GATE_WAIT_SECONDS:-900}" "build-${svc}"; then
         log_error "同服务 $svc 的发布等待超时（${GATE_WAIT_SECONDS:-900}s 未获得锁）——本构建终止，请稍后重试"
