@@ -2107,12 +2107,18 @@ _static_product_config()
     esac
 }
 
-# pipeline_publish_product - 产品静态站发布入口（noda-apps LAYER=static 调用）
+# pipeline_publish_product - 产品静态站发布入口（noda-apps 调用）
+# 参数: $1 = PRODUCT  $2 = TARGET（stg=preprod 桶 / prod=生产桶）
 # publish-<product> 锁互斥同产品发布；锁登记到 NODA_LOCK_REGISTRY，
 # post always 的 pipeline_release_lock 兜底释放
 pipeline_publish_product()
 {
     local product="$1"
+    local target="${2:-prod}"
+    case "$target" in
+        stg|prod) ;;
+        *) log_error "未知发布目标: ${target}（stg=preprod 桶 / prod=生产桶）"; return 1 ;;
+    esac
     _static_product_config "$product" || return 1
     NODA_LOCK_NAME="publish-${product}"
     export NODA_LOCK_NAME
@@ -2121,46 +2127,24 @@ pipeline_publish_product()
         return 1
     fi
     local rc=0
-    pipeline_publish_static_site "$product" || rc=1
+    pipeline_publish_static_site "$product" "$target" || rc=1
     release_deploy_lock "$NODA_LOCK_NAME"
     return $rc
 }
 
-pipeline_publish_static_site()
+# ============================================
+# pipeline_build_static_artifacts - 前端静态产物构建（Build 阶段调用）
+# ============================================
+# 构建与发布解耦（2026-09-14 简化）：产物 out/ 在 Build 阶段产出一次，
+# stg/prod 两桶发布（pipeline_publish_static_site）只做 mirror，不再各自构建——
+# prod 发布零编译（传输即发布）。产物校验：哨兵文件在位才算就绪。
+# 参数: $1 = PRODUCT
+pipeline_build_static_artifacts()
 {
     local product="$1"
     _static_product_config "$product" || return 1
-    local min_objs="$STATIC_MIN_OBJS"
     local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
     local web_dir="$apps_dir/$STATIC_WEB_DIR"
-    # 中继按产品隔离（2026-09-13 并行化）：不同产品的静态发布同时进行时，
-    # 共享的容器名/端口/alias 会互删对方的中继（build 76/77 实证）——
-    # 容器名、端口（9333-9340 固定映射）、mc alias 全部带产品维度。
-    local relay_name="tmp-s3-relay-${product}"
-    case "$product" in
-        class)   local relay_port="9333" ;;
-        www)     local relay_port="9334" ;;
-        admin)   local relay_port="9335" ;;
-        liuyao)  local relay_port="9336" ;;
-        nearby)  local relay_port="9337" ;;
-        auth)    local relay_port="9338" ;;
-        comment) local relay_port="9339" ;;
-        snagme)  local relay_port="9340" ;;
-        *)       local relay_port="9341" ;;
-    esac
-    local alias_name="noda-prd-relay-${product}"
-
-    _publish_site_cleanup()
-    {
-        remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true" || true
-        mc alias remove "$alias_name" >/dev/null 2>&1 || true
-        mc alias remove "$alias_name-stg" >/dev/null 2>&1 || true
-    }
-
-    if ! command -v mc >/dev/null 2>&1; then
-        log_error "本机未安装 minio client（brew install minio/stable/mc）"
-        return 1
-    fi
 
     # node/pnpm 就绪：Jenkins launchd 环境 PATH 不含 nvm——显式注入
     # （noda-apps 同款 v24.12.0 优先，其次任意 nvm 版本；homebrew node 仅作兜底）
@@ -2216,8 +2200,76 @@ pipeline_publish_static_site()
         log_error "构建产物缺失 $web_dir/$STATIC_SENTINEL（output:export 校验失败）"
         return 1
     fi
+    log_success "$product 静态产物构建完成: $web_dir/out/"
+}
 
-    # 临时 S3 中继：192.168.100.1:9333 → seaweedfs:8333（noda-network 内）
+# ============================================
+# pipeline_publish_static_site - 产品静态站单桶发布
+# ============================================
+# 参数: $1 = PRODUCT  $2 = TARGET（stg=preprod 桶 / prod=生产桶）
+# 构建已由 pipeline_build_static_artifacts 在 Build 阶段完成——发布只做
+# mirror + 对账 + 哨兵。
+#   stg  = noda-static-stg（本机 seaweedfs-stg，127.0.0.1:8333 直连，preprod 验证环境）
+#   prod = noda-static（r4s seaweedfs，经产品维度 socat 中继）
+pipeline_publish_static_site()
+{
+    local product="$1"
+    local target="${2:-prod}"
+    _static_product_config "$product" || return 1
+
+    if ! command -v mc >/dev/null 2>&1; then
+        log_error "本机未安装 minio client（brew install minio/stable/mc）"
+        return 1
+    fi
+
+    # 构建与发布解耦的契约：产物必须已在（Build 阶段产出，发布不再代建）
+    local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
+    local web_dir="$apps_dir/$STATIC_WEB_DIR"
+    if [ ! -f "$web_dir/$STATIC_SENTINEL" ]; then
+        log_error "构建产物缺失 $web_dir/$STATIC_SENTINEL——请先执行 pipeline_build_static_artifacts"
+        return 1
+    fi
+
+    if [ "$target" = "stg" ]; then
+        _publish_static_to_stg "$product" || return 1
+    else
+        _publish_static_to_prod "$product" || return 1
+    fi
+}
+
+# ============================================
+# _publish_static_to_prod - 生产桶发布：noda-static/sites/<product>/
+# ============================================
+# 中继按产品隔离（2026-09-13 并行化）：不同产品的静态发布同时进行时，
+# 共享的容器名/端口/alias 会互删对方的中继（build 76/77 实证）——
+# 容器名、端口（9333-9340 固定映射）、mc alias 全部带产品维度。
+_publish_static_to_prod()
+{
+    local product="$1"
+    local min_objs="$STATIC_MIN_OBJS"
+    local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
+    local web_dir="$apps_dir/$STATIC_WEB_DIR"
+    local relay_name="tmp-s3-relay-${product}"
+    case "$product" in
+        class)   local relay_port="9333" ;;
+        www)     local relay_port="9334" ;;
+        admin)   local relay_port="9335" ;;
+        liuyao)  local relay_port="9336" ;;
+        nearby)  local relay_port="9337" ;;
+        auth)    local relay_port="9338" ;;
+        comment) local relay_port="9339" ;;
+        snagme)  local relay_port="9340" ;;
+        *)       local relay_port="9341" ;;
+    esac
+    local alias_name="noda-prd-relay-${product}"
+
+    _publish_site_cleanup()
+    {
+        remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true" || true
+        mc alias remove "$alias_name" >/dev/null 2>&1 || true
+    }
+
+    # 临时 S3 中继：192.168.100.1:<port> → seaweedfs:8333（noda-network 内）
     _publish_site_cleanup
     if ! remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true; docker run -d --name $relay_name --network $NETWORK_NAME -p 192.168.100.1:${relay_port}:8333 alpine/socat tcp-listen:8333,fork,reuseaddr tcp:seaweedfs:8333"; then
         log_error "S3 中继启动失败"
@@ -2237,20 +2289,6 @@ pipeline_publish_static_site()
         return 1
     fi
 
-    # stg 桶（noda-static-stg，本机 seaweedfs-stg）凭据与 prod 不同源：
-    # 优先环境变量，其次挂载配置文件（gitignored，ensure_stg_s3_json 保证在位）
-    local stg_a="" stg_s=""
-    if [ -n "${STG_S3_ACCESS_KEY:-}" ] && [ -n "${STG_S3_SECRET_KEY:-}" ]; then
-        stg_a="$STG_S3_ACCESS_KEY"; stg_s="$STG_S3_SECRET_KEY"
-    else
-        local stg_json="$PROJECT_ROOT/config/seaweedfs/s3.json"
-        [ -f "$stg_json" ] || stg_json="$HOME/Project/noda-infra/config/seaweedfs/s3.json"
-        if [ -f "$stg_json" ]; then
-            stg_a=$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['accessKey'])" 2>/dev/null)
-            stg_s=$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['secretKey'])" 2>/dev/null)
-        fi
-    fi
-
     if ! mc alias set "$alias_name" "http://192.168.100.1:${relay_port}" "$s3a" "$s3s" --api S3v4; then
         log_error "mc alias 设置失败"
         _publish_site_cleanup
@@ -2268,39 +2306,6 @@ pipeline_publish_static_site()
         log_error "静态站同步失败"
         _publish_site_cleanup
         return 1
-    fi
-
-    # preprod 桶同构收敛（2026-09-13）：preprod 五站页面由本机 seaweedfs-stg 的
-    # noda-static-stg/sites/<product>/ 伺服——同一次发布一并 mirror --remove，
-    # prod/stg 双桶同步且各自收敛旧对象（用户要求：清理对 preprod+prod 都生效）。
-    # stg S3 只绑 127.0.0.1:8333（Jenkins 同机可直连）；不可达/凭据缺失仅告警不阻塞
-    if [ -n "$stg_a" ] && [ -n "$stg_s" ] && mc alias set "$alias_name-stg" "http://127.0.0.1:8333" "$stg_a" "$stg_s" --api S3v4 >/dev/null 2>&1; then
-        # 桶自愈（2026-09-13 实证：seaweedfs-stg 崩溃重建后桶元数据丢失，
-        # preprod 全站 404）——mc mb 幂等确保桶在位，任何环境桶丢失随发布自动重建
-        mc mb --ignore-existing "$alias_name-stg/noda-static-stg" >/dev/null 2>&1 || true
-        if mc ls --recursive "$alias_name-stg/noda-static-stg/sites/$product/" >/dev/null 2>&1; then
-            _static_snapshot_rotate "$alias_name-stg" "noda-static-stg" "$product"
-        fi
-        log_info "mc mirror 增量同步（含删除） out/ → noda-static-stg/sites/$product/ ..."
-        if ! mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name-stg/noda-static-stg/sites/$product/"; then
-            log_warn "preprod 桶（noda-static-stg）同步失败——preprod 静态内容可能滞后（不影响 prod）"
-        fi
-        # stg 对象级对账（同下方 prod 侧同款策略；build #35/#36 实证：stg 直连
-        # SeaweedFS 的 mirror 也会静默漏传 + 误删——#36 把 #35 刚传的 snagme.*
-        # 整组删除，preprod 页面随机 404。计数比对 + --overwrite 幂等补传，
-        # 绝不清空前缀）
-        local stg_src_objs stg_objs stg_attempt
-        stg_src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
-        for stg_attempt in 1 2 3; do
-            stg_objs=$(mc ls --recursive "$alias_name-stg/noda-static-stg/sites/$product/" 2>/dev/null | grep -c . || true)
-            if [ "${stg_objs:-0}" -ge "${stg_src_objs:-0}" ] && [ "${stg_objs:-0}" -gt 0 ]; then
-                break
-            fi
-            log_warn "stg 桶列举 ${stg_objs:-0} < 源 ${stg_src_objs:-0}——重跑 mirror 补传（第 ${stg_attempt} 次）..."
-            mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name-stg/noda-static-stg/sites/$product/" || true
-        done
-    else
-        log_warn "stg S3（127.0.0.1:8333）不可达或凭据缺失，跳过 preprod 桶同步"
     fi
 
     # 对象级对账（2026-09-13 build 72 实证：mc mirror 曾静默漏传 zh/topic/love.html
@@ -2350,6 +2355,157 @@ pipeline_publish_static_site()
     fi
 
     log_success "$product 静态站发布完成：noda-static/sites/$product/（$objs 个对象，与源一致，中继已拆除）"
+}
+
+# ============================================
+# _publish_static_to_stg - preprod 桶发布：noda-static-stg/sites/<product>/
+# ============================================
+# Jenkins 与 seaweedfs-stg 同机，S3 只绑 127.0.0.1:8333 直连，无需中继。
+# 2026-09-14 起本函数是独立的 preprod 发布目标（先发 stg 验证、审批后发 prod），
+# 不再是 prod 发布的顺带同步——凭据缺失/同步失败/对账不符从告警升级为失败，
+# 防止「stg 静默没发成、探活探的是旧内容」让 preprod 门禁形同虚设。
+_publish_static_to_stg()
+{
+    local product="$1"
+    local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
+    local web_dir="$apps_dir/$STATIC_WEB_DIR"
+    local alias_name="noda-prd-relay-${product}-stg"
+
+    # stg 桶凭据与 prod 不同源：优先环境变量，其次挂载配置文件（gitignored，
+    # ensure_stg_s3_json 保证在位）
+    local stg_a="" stg_s=""
+    if [ -n "${STG_S3_ACCESS_KEY:-}" ] && [ -n "${STG_S3_SECRET_KEY:-}" ]; then
+        stg_a="$STG_S3_ACCESS_KEY"; stg_s="$STG_S3_SECRET_KEY"
+    else
+        local stg_json="$PROJECT_ROOT/config/seaweedfs/s3.json"
+        [ -f "$stg_json" ] || stg_json="$HOME/Project/noda-infra/config/seaweedfs/s3.json"
+        if [ -f "$stg_json" ]; then
+            stg_a=$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['accessKey'])" 2>/dev/null)
+            stg_s=$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['secretKey'])" 2>/dev/null)
+        fi
+    fi
+    if [ -z "$stg_a" ] || [ -z "$stg_s" ]; then
+        log_error "stg S3 凭据缺失（STG_S3_ACCESS_KEY/SECRET_KEY 或 config/seaweedfs/s3.json）——preprod 桶发布中止"
+        return 1
+    fi
+
+    if ! mc alias set "$alias_name" "http://127.0.0.1:8333" "$stg_a" "$stg_s" --api S3v4; then
+        log_error "stg mc alias 设置失败"
+        mc alias remove "$alias_name" >/dev/null 2>&1 || true
+        return 1
+    fi
+
+    local rc=0
+    # 桶自愈（2026-09-13 实证：seaweedfs-stg 崩溃重建后桶元数据丢失，
+    # preprod 全站 404）——mc mb 幂等确保桶在位，任何环境桶丢失随发布自动重建
+    mc mb --ignore-existing "$alias_name/noda-static-stg" >/dev/null 2>&1 || true
+
+    # 发布前快照轮转（与 prod 桶同构；列举失败仅跳过轮转，mirror 照跑）
+    if mc ls --recursive "$alias_name/noda-static-stg/sites/$product/" >/dev/null 2>&1; then
+        _static_snapshot_rotate "$alias_name" "noda-static-stg" "$product"
+    fi
+
+    log_info "mc mirror 增量同步（含删除） out/ → noda-static-stg/sites/$product/ ..."
+    if ! mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name/noda-static-stg/sites/$product/"; then
+        log_error "preprod 桶（noda-static-stg）同步失败"
+        rc=1
+    fi
+
+    # stg 对象级对账（同 prod 侧同款策略；build #35/#36 实证：stg 直连
+    # SeaweedFS 的 mirror 也会静默漏传 + 误删——#36 把 #35 刚传的 snagme.*
+    # 整组删除，preprod 页面随机 404。计数比对 + --overwrite 幂等补传，
+    # 绝不清空前缀。直连无中继截断问题，最终不符判失败）
+    if [ "$rc" = "0" ]; then
+        local stg_src_objs stg_objs stg_attempt
+        stg_src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
+        stg_objs=0
+        for stg_attempt in 1 2 3; do
+            stg_objs=$(mc ls --recursive "$alias_name/noda-static-stg/sites/$product/" 2>/dev/null | grep -c . || true)
+            if [ "${stg_objs:-0}" -ge "${stg_src_objs:-0}" ] && [ "${stg_objs:-0}" -gt 0 ]; then
+                break
+            fi
+            log_warn "stg 桶列举 ${stg_objs:-0} < 源 ${stg_src_objs:-0}——重跑 mirror 补传（第 ${stg_attempt} 次）..."
+            mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name/noda-static-stg/sites/$product/" || true
+        done
+        if [ "${stg_objs:-0}" -lt "${stg_src_objs:-0}" ] || [ "${stg_objs:-0}" = "0" ]; then
+            log_error "stg 桶对账失败：源 $stg_src_objs 个文件 ≠ 桶 ${stg_objs:-0} 个对象——preprod 内容可能不完整"
+            rc=1
+        fi
+        # 哨兵单点校验（计数巧合对不上单点缺失）
+        if [ "$rc" = "0" ]; then
+            local sentinel="${STATIC_SENTINEL#out/}"
+            if [ -f "$web_dir/out/$sentinel" ]; then
+                if ! mc stat "$alias_name/noda-static-stg/sites/$product/$sentinel" >/dev/null 2>&1; then
+                    log_error "stg 哨兵对象缺失：sites/$product/$sentinel"
+                    rc=1
+                fi
+            fi
+        fi
+    fi
+
+    mc alias remove "$alias_name" >/dev/null 2>&1 || true
+    if [ "$rc" = "0" ]; then
+        log_success "$product preprod 桶发布完成：noda-static-stg/sites/$product/"
+    fi
+    return $rc
+}
+
+# ============================================
+# pipeline_verify_static_preprod - preprod 静态站探活（stg 桶发布后的验证关口）
+# ============================================
+# 链路：公网 *-preprod 域名 → r4s nginx（*-preprod server 块反代）→ Mac
+# preprod-noda-static → seaweedfs-stg 桶。探活 URL 与各产品哨兵文件同源。
+# 参数: $1 = PRODUCT
+pipeline_verify_static_preprod()
+{
+    local product="$1"
+    local retries="${E2E_MAX_RETRIES:-5}"
+    local interval="${E2E_INTERVAL:-2}"
+    local checks=""
+
+    case "$product" in
+        class)   checks="https://class-preprod.noda.co.nz/en|class preprod 静态壳" ;;
+        www)     checks="https://www-preprod.noda.co.nz/|www preprod 首页" ;;
+        admin)   checks="https://admin-preprod.noda.co.nz/login|admin preprod 登录页" ;;
+        liuyao)  checks="https://liuyao-preprod.noda.co.nz/en|liuyao preprod 静态壳" ;;
+        nearby)  checks="https://nearby-preprod.noda.co.nz/en|nearby preprod 静态壳" ;;
+        auth)    checks="https://auth-preprod.noda.co.nz/login|auth preprod 登录页" ;;
+        comment) checks="https://comments-preprod.noda.co.nz/admin|comment preprod 占位页" ;;
+        snagme)  checks="https://snagme-preprod.noda.co.nz/en|snagme preprod 看板" ;;
+        *)
+            log_error "未知产品: ${product}（可选 class/www/admin/liuyao/nearby/auth/comment/snagme）"
+            return 1
+            ;;
+    esac
+
+    local entry url label code i all_ok="true"
+    while IFS= read -r entry; do
+        [ -z "$entry" ] && continue
+        url="${entry%%|*}"
+        label="${entry#*|}"
+        code="000"
+        for i in $(seq 1 "$retries"); do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "$url" 2>/dev/null || echo "000")
+            if [ "$code" = "200" ]; then
+                break
+            fi
+            log_info "等待 $label → 200 ... (${i}/${retries}, HTTP ${code})"
+            sleep "$interval"
+        done
+        if [ "$code" = "200" ]; then
+            log_success "$label → 200 ($url)"
+        else
+            log_error "preprod 静态探活失败: $label ($url) 最后状态 HTTP ${code}"
+            all_ok="false"
+        fi
+    done <<EOF
+$checks
+EOF
+
+    if [ "$all_ok" != "true" ]; then
+        return 1
+    fi
+    log_success "产品 $product preprod 静态站探活全部通过"
 }
 
 # ============================================

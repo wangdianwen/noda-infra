@@ -1,15 +1,19 @@
 #!/usr/bin/env groovy
-// noda-apps —— 产品应用发布 Pipeline（2026-09-13 由 apps-deploy 重构更名）
+// noda-apps —— 产品应用发布 Pipeline（2026-09-14 简化：12 stages 收敛为 4）
 // 必须单选一个产品（PRODUCT，无 all），再选择发布层（LAYER）：
 //   api    = 后端：构建/部署 noda-api（Go 多模块单镜像，容器全产品共享，锁 apps-prod/apps-preprod 互斥）
-//   static = 前端：该产品静态站构建 + mc mirror 入 SeaweedFS 桶 sites/<product>/
-//            （prod+stg 双桶同步收敛；publish-<product> 锁 + 产品维度中继/端口，跨产品可并行）
+//   static = 前端：该产品静态站构建 → stg 桶（preprod 验证）→ 审批 → prod 桶
+//            （publish-<product> 锁 + 产品维度中继/端口，跨产品可并行）
 //   all    = 一起：api + noda-static 反代镜像顺带刷新 + 产品静态站
-// 流程（保留原 apps-deploy 流程骨架）:
-//   Pre-flight -> Build -> [Deploy Pre-prod ‖ Test] -> Human Approval
-//   -> Deploy Prod -> Publish Static -> Verify -> CDN Purge -> Cleanup
-//   （CDN 全域 Purge 收敛为发布尾部一次；Rebuild Pre-prod 循环回审批）
-//   （LAYER=static 时容器阶段全部跳过：Test 通过即桶发布，preprod 桶即为验证环境）
+// 流程（4 stages）:
+//   Build（队列门禁 + Pre-flight + 镜像/静态产物一次构建）
+//   → Deploy Pre-prod & Test（并行：容器部署 ‖ stg 桶发布 ‖ 测试挡板）
+//   → Human Approval（含 rebuild_preprod 循环，收在 stage 内部）
+//   → Deploy Prod（容器部署 / prod 桶发布 + E2E 验证 + CDN Purge 收尾）
+// 性能语义（2026-09-14）：
+//   - preprod 尽快可用：部署/桶发布（I/O）与测试（CPU）并行，不被 ~30m 测试阻塞
+//   - prod 零编译：镜像/产物在 Build 产出一次，prod 只做传输+切换 / 桶 mirror
+//   - 测试挡板语义不变：parallel 未全过不进入 Deploy Prod，prod 始终受测试保护
 // DEPLOY_MODE 参数:
 //   normal（默认）: preprod 部署验证 + 人工批准后才发 prod
 //   fast: 紧急修复路径——Test 通过后直接发 prod，跳过 preprod 与人工批准。
@@ -34,7 +38,7 @@ pipeline {
         BACKUP_HOST_DIR = "${HOME}/Project/noda-infra/docker/volumes/backup"
     }
 
-    // 并行化（2026-09-13）：无 disableConcurrentBuilds——项目已按维度隔离，
+    // 并行化：无 disableConcurrentBuilds——项目已按维度隔离，
     // 前端桶发布按产品互不覆盖（publish-<product> 锁 + 产品中继）；
     // 后端共享容器的切换由锁下沉到部署函数保证（deploy_preprod 持 apps-preprod、
     // deploy_prod 持 apps-prod），并发构建的容器切换依锁串行，构建/测试全程并行
@@ -52,47 +56,39 @@ pipeline {
         choice(
             name: 'LAYER',
             choices: ['all', 'api', 'static'],
-            description: '选择发布层：api=仅后端（Go API）；static=仅前端（该产品静态站桶发布）；all=前后端一起（含 noda-static 反代镜像顺带刷新）'
+            description: '选择发布层：api=仅后端（Go API）；static=仅前端（该产品静态站，stg 桶验证后发 prod 桶）；all=前后端一起（含 noda-static 反代镜像顺带刷新）'
         )
         choice(
             name: 'DEPLOY_MODE',
             choices: ['normal', 'fast'],
-            description: 'normal: preprod 验证 + 人工批准后发 prod；fast: 紧急修复——Test 通过直接发 prod，跳过 preprod 与人工批准（仅限确认无风险的 hotfix）。LAYER=static 时本参数不生效（桶发布即时生效）'
+            description: 'normal: preprod 验证 + 人工批准后发 prod；fast: 紧急修复——Test 通过直接发 prod，跳过 preprod 与人工批准（仅限确认无风险的 hotfix）。测试挡板两种模式下都生效'
         )
     }
 
     stages {
-        stage('Queue Gate') {
+        stage('Build') {
             options {
-                // 门禁自身最长等 900s；超时即失败，等锁不占 executor 干等
-                timeout(time: 20, unit: 'MINUTES')
+                // 队列门禁等待 + checkout + preflight + docker build（Mac）+
+                // 静态产物构建，常规 ~20m，45m 封顶
+                timeout(time: 45, unit: 'MINUTES')
             }
             steps {
+                // ① 队列门禁：同产品后触发构建在此等待（不开始实际构建），
+                //    先到者完成后自动接棒；normal 模式审批前会主动释放
+                //    （原独立 Queue Gate / Build Info / Pre-flight stage 收敛至此）
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
                         export SSH_KEY_FILE
-                        # 同服务队列门禁：后触发者在此等待（不开始实际构建），
-                        # 先到者完成后自动接棒；normal 模式审批前会主动释放
                         pipeline_queue_gate "$PRODUCT"
                     '''
                 }
-            }
-        }
-        stage('Build Info') {
-            options { timeout(time: 2, unit: 'MINUTES') }
-            steps {
                 script {
                     // Stage View / Job 页一眼看出这次发布是什么
                     currentBuild.displayName = "#${env.BUILD_NUMBER} ${params.PRODUCT}/${params.LAYER}" + (params.DEPLOY_MODE == 'fast' ? ' ⚡fast' : '')
                     currentBuild.description = "产品 <b>${params.PRODUCT}</b> · 层 <b>${params.LAYER}</b>（api=后端 / static=前端 / all=一起） · 模式 ${params.DEPLOY_MODE}"
                 }
-            }
-        }
-        stage('Pre-flight') {
-            options { timeout(time: 10, unit: 'MINUTES') }
-            steps {
                 // CI 防线：workspace 内的 noda-apps 若是指向本地工作区的符号链接，
                 // 会构建未提交代码且 cleanup 误删本地 node_modules——必须用真实 checkout
                 sh 'if [ -L noda-apps ]; then rm -f noda-apps && echo "⚠️ 已移除 noda-apps 符号链接（CI 禁用本地工作区直连）"; fi'
@@ -123,16 +119,9 @@ pipeline {
                         pipeline_preflight "$WORKSPACE/noda-apps"
                     '''
                 }
-            }
-        }
-
-        stage('Build') {
-            when { expression { params.LAYER != 'static' } }
-            options {
-                // docker build（Mac）+ registry 增量传输，常规 ~15m，45m 封顶
-                timeout(time: 45, unit: 'MINUTES')
-            }
-            steps {
+                // ② 一次构建，两环境复用：镜像（api/all）+ 静态产物（static/all）。
+                //    后端 preprod/prod 用同一 noda-api:<sha> 镜像（仅 env 不同）；
+                //    前端 out/ 产物 Build 产出一次，stg/prod 两桶各 mirror 一次
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
@@ -140,24 +129,31 @@ pipeline {
                         export LAYER_FILTER="${LAYER}"
                         export PRODUCT_FILTER="${PRODUCT}"
                         export SSH_KEY_FILE
-                        pipeline_build "$WORKSPACE/noda-apps" "$GIT_SHA"
+                        if [ "${LAYER}" != "static" ]; then
+                            pipeline_build "$WORKSPACE/noda-apps" "$GIT_SHA"
+                        fi
+                        if [ "${LAYER}" != "api" ]; then
+                            pipeline_build_static_artifacts "$PRODUCT"
+                        fi
                     '''
                 }
             }
         }
 
-        // Test 与 Pre-prod 部署并行：Build 阶段 Docker 已吃满 CPU，Test 跟 Build 并行只会互相抢；
-        // Pre-prod 部署以 I/O 等待为主，正好塞入 Test。语义变化：测试失败时镜像可能已进
-        // pre-prod（可接受，pre-prod 本就是验证环境），但 parallel 未全部通过不会进入
-        // Human Approval，prod 始终受测试挡板保护。
-        // LAYER=static 时无容器可部署——只跑 Test（发布挡板）。
+        // 并行三臂（2026-09-14）：preprod 尽快可用——部署/桶发布（I/O）不等测试
+        // （CPU）；测试挡板语义不变：parallel 未全过不进入后续，prod 始终受测试保护。
+        //   LAYER=api    → 容器臂 + Test
+        //   LAYER=static → 桶臂 + Test
+        //   LAYER=all    → 三臂全跑
+        //   fast 模式跳过两个 preprod 臂（Test 臂照跑——挡板仍在）
         stage('Deploy Pre-prod & Test') {
             options {
-                // 并行臂：pre-prod 部署 ~5m / Test（pnpm install + turbo + go）可达 ~30m
+                // 并行臂：pre-prod 部署 ~5m / 桶发布+探活 ~5m / Test（pnpm install +
+                // turbo + go）可达 ~30m
                 timeout(time: 40, unit: 'MINUTES')
             }
             parallel {
-                stage('Deploy Pre-prod') {
+                stage('Pre-prod 容器') {
                     when {
                         expression { params.LAYER != 'static' && params.DEPLOY_MODE == 'normal' }
                     }
@@ -176,15 +172,26 @@ pipeline {
                                 export SSH_KEY_FILE
                                 export DEPLOY_TARGET=local
                                 pipeline_deploy_preprod "$GIT_SHA"
+                                pipeline_health_check_preprod
                             '''
+                        }
+                    }
+                }
+                stage('Pre-prod 桶') {
+                    when {
+                        expression { params.LAYER != 'api' && params.DEPLOY_MODE == 'normal' }
+                    }
+                    steps {
+                        withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                             sh '''
                                 source scripts/lib/log.sh
                                 source scripts/pipeline-stages.sh
-                                export LAYER_FILTER="${LAYER}"
                                 export PRODUCT_FILTER="${PRODUCT}"
                                 export SSH_KEY_FILE
-                                export DEPLOY_TARGET=local
-                                pipeline_health_check_preprod
+                                # stg 桶（noda-static-stg）= preprod 验证环境；
+                                # 发布后探活 *-preprod 公网链路，作为人工验证的前置关口
+                                pipeline_publish_product "$PRODUCT" "stg"
+                                pipeline_verify_static_preprod "$PRODUCT"
                             '''
                         }
                     }
@@ -199,9 +206,8 @@ pipeline {
                                 source "$WORKSPACE/scripts/pipeline-stages.sh"
                                 export LAYER_FILTER="${LAYER}"
                                 export PRODUCT_FILTER="${PRODUCT}"
-                                # Node lint/test 并入 pipeline_test（2026-09-13）：按 PRODUCT_FILTER
-                                # 用 turbo --filter 只跑对应包 + workspace 依赖，替代原全仓
-                                # pnpm lint / pnpm test 两个独立 sh 步骤；Test 失败 = 发布挡板语义不变
+                                # 按 PRODUCT_FILTER 用 turbo --filter 只跑对应包 +
+                                # workspace 依赖 + Go 产品模块；Test 失败 = 发布挡板
                                 pipeline_test "$PWD"
                             '''
                             echo '✅ Lint + 单元测试通过'
@@ -211,63 +217,58 @@ pipeline {
             }
         }
 
+        // 审批 + preprod 重建循环收口为一个 stage（2026-09-14，原 Human Approval /
+        // Rebuild Pre-prod / Abort 三 stage 合并）：rebuild 循环收在 stage 内部；
+        // 拒绝 input 即中止（Jenkins 天然 ABORTED，无需独立 Abort stage）
         stage('Human Approval') {
             when {
-                expression { params.LAYER != 'static' && params.DEPLOY_MODE == 'normal' }
+                expression { params.DEPLOY_MODE == 'normal' }
             }
+            options { timeout(time: 6, unit: 'HOURS') }
             steps {
-                timeout(time: 6, unit: 'HOURS') {
-                    withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
-                        sh '''
-                            source scripts/lib/log.sh
-                            source scripts/pipeline-stages.sh
-                            export SSH_KEY_FILE
-                            pipeline_release_build_lock "$PRODUCT"
-                        '''
-                    }
-                    script {
-                        def userInput = input(
-                            message: """Pre-prod 部署完成（产品: ${params.PRODUCT}，本机 Mac，双容器 api+static），请验证：
-  - 主应用: https://class-preprod.noda.co.nz/
-  - 六爻算卦: https://liuyao-preprod.noda.co.nz/
-  - 官网静态: https://www-preprod.noda.co.nz/
-  镜像: noda-api:${env.GIT_SHA} / noda-static:${env.GIT_SHA}
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        pipeline_release_build_lock "$PRODUCT"
+                    '''
+                }
+                script {
+                    def preprodUrl = [class  : 'https://class-preprod.noda.co.nz/',
+                                      www    : 'https://www-preprod.noda.co.nz/',
+                                      admin  : 'https://admin-preprod.noda.co.nz/',
+                                      liuyao : 'https://liuyao-preprod.noda.co.nz/',
+                                      nearby : 'https://nearby-preprod.noda.co.nz/',
+                                      auth   : 'https://auth-preprod.noda.co.nz/',
+                                      comment: 'https://comments-preprod.noda.co.nz/',
+                                      snagme : 'https://snagme-preprod.noda.co.nz/'][params.PRODUCT]
+                    def userInput = input(
+                        message: """Pre-prod 部署完成（产品: ${params.PRODUCT}，本发布内容: ${preprodUrl}），请验证：
+  - 静态站经 preprod 桶伺服（stg 桶已发布并探活通过）
+  - API 容器链路: <产品域>-preprod.noda.co.nz/api/health
+  镜像/内容: ${env.GIT_SHA}
 
   请选择下一步操作：""",
-                            parameters: [
-                                choice(name: 'ACTION', choices: ['deploy_prod', 'rebuild_preprod', 'abort'], description: '选择操作：\n- deploy_prod: 验证通过，部署到生产环境\n- rebuild_preprod: 重新部署 pre-prod（无需重新构建）\n- abort: 中止部署')
-                            ]
-                        )
-                        // input 返回形状随提交方式变化（UI 提交=Map、空参批准=null/
-                        // 空串、旧版=String）——不做形状假设，统一归一化：
-                        // 显式 abort/rebuild_preprod 之外一律视为批准（deploy_prod）。
-                        // 背景：归一化前 normal 模式曾静默跳过 prod 部署且显示 SUCCESS
-                        // （apps#9/#11/#12/#15 连续实证，提交形状各异但 when 全部不命中）。
-                        echo "Human Approval raw input: [${userInput}] class: ${userInput?.getClass()}"
-                        def action = (userInput instanceof Map) ? userInput['ACTION'] : userInput
-                        if (!['deploy_prod', 'rebuild_preprod', 'abort'].contains(action)) {
-                            echo "DEPLOY_ACTION 归一化: [${action}] -> deploy_prod"
-                            action = 'deploy_prod'
-                        }
-                        env.DEPLOY_ACTION = action
+                        parameters: [
+                            choice(name: 'ACTION', choices: ['deploy_prod', 'rebuild_preprod', 'abort'], description: '选择操作：\n- deploy_prod: 验证通过，部署到生产环境\n- rebuild_preprod: 重新部署 pre-prod（无需重新构建）\n- abort: 中止部署')
+                        ]
+                    )
+                    // input 返回形状随提交方式变化（UI 提交=Map、空参批准=null/
+                    // 空串、旧版=String）——不做形状假设，统一归一化：
+                    // 显式 abort/rebuild_preprod 之外一律视为批准（deploy_prod）。
+                    // 背景：归一化前 normal 模式曾静默跳过 prod 部署且显示 SUCCESS
+                    // （apps#9/#11/#12/#15 连续实证，提交形状各异但 when 全部不命中）。
+                    echo "Human Approval raw input: [${userInput}] class: ${userInput?.getClass()}"
+                    def action = (userInput instanceof Map) ? userInput['ACTION'] : userInput
+                    if (!['deploy_prod', 'rebuild_preprod', 'abort'].contains(action)) {
+                        echo "DEPLOY_ACTION 归一化: [${action}] -> deploy_prod"
+                        action = 'deploy_prod'
                     }
-                }
-            }
-        }
+                    env.DEPLOY_ACTION = action
 
-        stage('Rebuild Pre-prod') {
-            when {
-                expression { params.LAYER != 'static' && params.DEPLOY_MODE == 'normal' && env.DEPLOY_ACTION == 'rebuild_preprod' }
-            }
-            options {
-                // 最多 5 轮（重建+健康检查+input）；stage 内 input 原本无超时，
-                // 人离开会无限占用 workspace 槽位——60m 封顶
-                timeout(time: 60, unit: 'MINUTES')
-            }
-            steps {
-                script {
-                    // 重建 → 回到审批继续选（循环），不再是死胡同——
-                    // 旧行为 rebuild 后整条流水线直接结束，要发 prod 得重跑全部构建
+                    // rebuild 循环：重建 → 回到审批继续选（最多 5 轮），
+                    // 按 LAYER 只重建触达层（容器 / stg 桶）
                     int round = 0
                     while (env.DEPLOY_ACTION == 'rebuild_preprod' && round < 5) {
                         round++
@@ -289,10 +290,16 @@ pipeline {
                                 export LAYER_FILTER="\${LAYER}"
                                 export PRODUCT_FILTER="\${PRODUCT}"
                                 export SSH_KEY_FILE
-                                export DEPLOY_TARGET=local
                                 echo "🔄 重新部署 Pre-prod（第 ${round} 轮，本机 Mac）..."
-                                pipeline_deploy_preprod "$GIT_SHA"
-                                pipeline_health_check_preprod
+                                if [ "\${LAYER}" != "static" ]; then
+                                    export DEPLOY_TARGET=local
+                                    pipeline_deploy_preprod "\${GIT_SHA}"
+                                    pipeline_health_check_preprod
+                                fi
+                                if [ "\${LAYER}" != "api" ]; then
+                                    pipeline_publish_product "\${PRODUCT}" "stg"
+                                    pipeline_verify_static_preprod "\${PRODUCT}"
+                                fi
                             """
                         }
                         withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
@@ -318,14 +325,17 @@ pipeline {
             }
         }
 
+        // prod 发布 + 验证 + CDN 收尾收敛为一个 stage（2026-09-14，原 Deploy Prod /
+        // Publish Static / Verify / CDN Purge 四 stage 合并）。
+        // 零编译：镜像/产物在 Build 产出，此处只做传输+切换 / 桶 mirror。
         stage('Deploy Prod') {
             when {
-                expression { params.LAYER != 'static' && (params.DEPLOY_MODE == 'fast' || env.DEPLOY_ACTION == 'deploy_prod') }
+                expression { params.DEPLOY_MODE == 'fast' || env.DEPLOY_ACTION == 'deploy_prod' }
             }
             options {
-                // 含门禁重取（其他构建持有队列锁时最长等 900s）+ prod 部署；
-                // 15m 会被等锁独占导致部署没开始就被杀——30m
-                timeout(time: 30, unit: 'MINUTES')
+                // 含门禁重取（其他构建持有队列锁时最长等 900s）+ prod 部署/桶发布 + E2E；
+                // 15m 会被等锁独占导致部署没开始就被杀——45m
+                timeout(time: 45, unit: 'MINUTES')
             }
             steps {
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
@@ -336,58 +346,20 @@ pipeline {
                         export PRODUCT_FILTER="${PRODUCT}"
                         export SSH_KEY_FILE
                         export DEPLOY_TARGET=r4s
-                        # 审批窗口已释放队列锁——部署前重新获取（与其他构建的部署串行）
+                        # 审批窗口已释放队列锁——部署前重新获取（与其他构建的部署串行；
+                        # 本构建已持锁时幂等跳过）
                         pipeline_queue_gate "$PRODUCT"
-                        pipeline_deploy_prod "$GIT_SHA"
-                    '''
-                }
-            }
-        }
-
-        // 前端静态站发布（LAYER=static/all）：测试挡板之后执行。
-        // prod+stg 双桶 mirror --remove 收敛 + 对象级对账 + 哨兵文件校验；
-        // publish-<product> 锁 + 产品维度中继容器/端口/alias——跨产品并行互不覆盖
-        stage('Publish Static') {
-            when { expression { params.LAYER != 'api' } }
-            options {
-                // 双桶 mirror --remove + 对象对账 + 哨兵校验，常规 <10m
-                timeout(time: 20, unit: 'MINUTES')
-            }
-            steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
-                    sh '''
-                        source scripts/lib/log.sh
-                        source scripts/pipeline-stages.sh
-                        export PRODUCT_FILTER="${PRODUCT}"
-                        export SSH_KEY_FILE
-                        export DEPLOY_TARGET=r4s
-                        pipeline_publish_product "$PRODUCT"
-                    '''
-                }
-            }
-        }
-
-        stage('Verify') {
-            steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
-                    sh '''
-                        source scripts/lib/log.sh
-                        source scripts/pipeline-stages.sh
-                        export SSH_KEY_FILE
-                        export DEPLOY_TARGET=r4s
+                        if [ "${LAYER}" != "static" ]; then
+                            pipeline_deploy_prod "$GIT_SHA"
+                        fi
+                        if [ "${LAYER}" != "api" ]; then
+                            pipeline_publish_product "$PRODUCT" "prod"
+                        fi
                         # 产品维度 E2E：公网链路（Cloudflare → 边缘 → 桶/Go API）；
                         # snagme 走 r4s 边缘内探（不依赖公网 DNS）
                         pipeline_verify_product "$PRODUCT"
                     '''
                 }
-                }
-            }
-        }
-
-        stage('CDN Purge') {
-            options { timeout(time: 5, unit: 'MINUTES') }
-            steps {
                 script {
                     try {
                         withCredentials([
@@ -399,9 +371,9 @@ pipeline {
                                 source scripts/pipeline-stages.sh
                                 export LAYER_FILTER="${LAYER}"
                                 export PRODUCT_FILTER="${PRODUCT}"
-                                # LAYER=static/all：只精准清除本产品入口 URL（全域 purge 会把
-                                # 同 zone 其它产品的边缘缓存全部打掉）；前端变更不跨产品
-                                # LAYER=api：容器镜像全产品共享，保持全域 purge_everything
+                                # LAYER=api：容器镜像全产品共享，保持全域 purge_everything；
+                                # static/all：只精准清除本产品入口 URL（全域 purge 会把
+                                # 同 zone 其它产品的边缘缓存全部打掉）
                                 if [ "${LAYER}" = "api" ]; then
                                     pipeline_purge_cdn
                                 else
@@ -412,20 +384,6 @@ pipeline {
                     } catch (Exception e) {
                         echo "CDN Purge 跳过: Cloudflare 凭据未配置 (${e.message})"
                     }
-                }
-            }
-        }
-
-        stage('Abort') {
-            when {
-                expression { params.LAYER != 'static' && params.DEPLOY_MODE == 'normal' && env.DEPLOY_ACTION == 'abort' }
-            }
-            options { timeout(time: 2, unit: 'MINUTES') }
-            steps {
-                script {
-                    currentBuild.result = 'ABORTED'
-                    echo "❌ 用户中止部署。Pre-prod 环境保持运行，可重新触发 Pipeline 验证后继续部署。"
-                    error("用户中止部署")
                 }
             }
         }
@@ -446,18 +404,14 @@ pipeline {
                         # === 1. 释放部署锁（总是执行，只放本构建登记的锁）===
                         pipeline_release_lock
 
-                        # === 2. 清理旧镜像（总是执行，增强容错）===
-                        # 即使前面步骤失败，也确保清理旧镜像释放磁盘空间
-                        if [ "${DEPLOY_ACTION:-}" != "abort" ]; then
-                            echo "🧹 执行镜像清理..."
-                            pipeline_cleanup || {
-                                echo "⚠️ 镜像清理部分失败，继续执行..."
-                                # 至少清理悬空镜像
-                                cleanup_dangling || true
-                            }
-                        else
-                            echo "⏭️ 部署已中止，跳过镜像清理"
-                        fi
+                        # === 2. 清理旧镜像（总是执行；保留策略每仓库最新 2 版，
+                        #        已部署镜像不受影响）===
+                        echo "🧹 执行镜像清理..."
+                        pipeline_cleanup || {
+                            echo "⚠️ 镜像清理部分失败，继续执行..."
+                            # 至少清理悬空镜像
+                            cleanup_dangling || true
+                        }
                     '''
                 }
             }
