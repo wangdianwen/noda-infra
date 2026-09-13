@@ -2086,6 +2086,20 @@ pipeline_publish_static_site()
         if ! mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name-stg/noda-static-stg/sites/$product/"; then
             log_warn "preprod 桶（noda-static-stg）同步失败——preprod 静态内容可能滞后（不影响 prod）"
         fi
+        # stg 对象级对账（同下方 prod 侧同款策略；build #35/#36 实证：stg 直连
+        # SeaweedFS 的 mirror 也会静默漏传 + 误删——#36 把 #35 刚传的 snagme.*
+        # 整组删除，preprod 页面随机 404。计数比对 + --overwrite 幂等补传，
+        # 绝不清空前缀）
+        local stg_src_objs stg_objs stg_attempt
+        stg_src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
+        for stg_attempt in 1 2 3; do
+            stg_objs=$(mc ls --recursive "$alias_name-stg/noda-static-stg/sites/$product/" 2>/dev/null | grep -c . || true)
+            if [ "${stg_objs:-0}" -ge "${stg_src_objs:-0}" ] && [ "${stg_objs:-0}" -gt 0 ]; then
+                break
+            fi
+            log_warn "stg 桶列举 ${stg_objs:-0} < 源 ${stg_src_objs:-0}——重跑 mirror 补传（第 ${stg_attempt} 次）..."
+            mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name-stg/noda-static-stg/sites/$product/" || true
+        done
     else
         log_warn "stg S3（127.0.0.1:8333）不可达或凭据缺失，跳过 preprod 桶同步"
     fi
