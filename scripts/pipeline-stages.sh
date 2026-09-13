@@ -3115,9 +3115,11 @@ https://auth.noda.co.nz/api/health|auth api 链"
 https://comments.noda.co.nz/api/health|comment api 链"
             ;;
         snagme)
-            # 公网探针（域名已生效）：看板静态壳 + Go API 业务端点
-            checks="https://snagme.noda.co.nz/|snagme 看板
-https://snagme.noda.co.nz/api/snagme/status|snagme api 链"
+            # 公网探针（域名已生效）：产品站首页 + 公开 API 端点。
+            # 2026-09-14 运营端点（status/deals/tail/...）收 requireAuth 后，
+            # E2E 匿名探针换公开 /showcase（200 且脱敏字段子集）
+            checks="https://snagme.noda.co.nz/|snagme 产品站
+https://snagme.noda.co.nz/api/snagme/showcase|snagme api 链"
             ;;
         *)
             log_error "未知产品: ${product}（可选 class/www/admin/liuyao/nearby/auth/comment/snagme）"
