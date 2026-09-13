@@ -98,7 +98,7 @@ services:
       RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-3}
       # 文件系统备份（2026-09-13 S3 逻辑备份：SeaweedFS S3 API → B2，
       # 只备素材（avatars/nearby 爬取图片），sites/ 前端编译产物经 Jenkins 可重建不备份）
-      BACKUP_FS_SOURCES: ${BACKUP_FS_SOURCES:-s3weed:noda-static/avatars:s3weed:noda-static/nearby}
+      BACKUP_FS_SOURCES: ${BACKUP_FS_SOURCES:-s3weed:noda-static/avatars,s3weed:noda-static/nearby}
       FS_B2_PATH: ${FS_B2_PATH:-backups/filesystem/}
       FS_RETENTION_DAYS: ${FS_RETENTION_DAYS:-3}
       SEAWEED_S3_ENDPOINT: ${SEAWEED_S3_ENDPOINT:-http://seaweedfs:8333}

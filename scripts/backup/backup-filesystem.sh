@@ -7,7 +7,7 @@ set -euo pipefail
 # 备份方式：rclone copy 直连 SeaweedFS S3 API → B2（对象级逻辑备份，流经内存
 #           不落本地盘）。原 tar 整卷方式废弃：活动写入下 tar 有一致性风险，
 #           且无法剔除可重建数据（sites/ 前端编译产物）。
-# 备份对象：BACKUP_FS_SOURCES（冒号分隔的 rclone 源路径，默认
+# 备份对象：BACKUP_FS_SOURCES（逗号分隔的 rclone 源路径，默认
 #           s3weed:noda-static/avatars:s3weed:noda-static/nearby，即头像 +
 #           nearby 爬取图片素材；sites/ 可经 Jenkins infra-deploy 重建不备份）
 # 目标：b2remote:<bucket>/<FS_B2_PATH><src_name>/<YYYY/MM/DD>/（对象树原样镜像，
@@ -50,7 +50,7 @@ show_help()
   --help       显示帮助信息
 
 环境变量:
-  BACKUP_FS_SOURCES     冒号分隔的 rclone 备份源
+  BACKUP_FS_SOURCES     逗号分隔的 rclone 备份源
                         （默认 s3weed:noda-static/avatars:s3weed:noda-static/nearby）
   FS_B2_PATH            B2 目标前缀（默认 backups/filesystem/）
   FS_RETENTION_DAYS     B2 端保留天数（默认 3）
@@ -157,9 +157,9 @@ main()
     log_info "Noda 文件系统备份系统（S3 逻辑备份）"
     log_info "=========================================="
 
-    # 解析备份源（rclone 路径列表）
+    # 解析备份源（rclone 路径列表；逗号分隔——路径自带 s3weed: 冒号，不能用冒号）
     local sources=()
-    IFS=':' read -ra source_list <<<"$(get_fs_sources)"
+    IFS=',' read -ra source_list <<<"$(get_fs_sources)"
     for src in "${source_list[@]}"; do
         [ -z "$src" ] && continue
         if [[ "$src" != s3weed:* ]]; then

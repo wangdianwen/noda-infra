@@ -44,7 +44,7 @@ DEFAULT_B2_PATH="${DEFAULT_B2_PATH:-backups/postgres/}"
 # 文件系统备份配置（2026-09-13 S3 逻辑备份改版）
 # 源：rclone 路径列表（冒号分隔）——只备真实素材（头像/nearby 爬取图片），
 #     sites/（前端编译产物）可经 Jenkins infra-deploy 重建，不备份
-DEFAULT_BACKUP_FS_SOURCES="${DEFAULT_BACKUP_FS_SOURCES:-s3weed:noda-static/avatars:s3weed:noda-static/nearby}"
+DEFAULT_BACKUP_FS_SOURCES="${DEFAULT_BACKUP_FS_SOURCES:-s3weed:noda-static/avatars,s3weed:noda-static/nearby}"
 DEFAULT_FS_B2_PATH="${DEFAULT_FS_B2_PATH:-backups/filesystem/}"
 DEFAULT_FS_RETENTION_DAYS="${DEFAULT_FS_RETENTION_DAYS:-3}"
 
