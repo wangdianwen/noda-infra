@@ -632,6 +632,19 @@ server {
         proxy_set_header Connection "";
         proxy_read_timeout 60s;
     }
+    # SnagMe 捡漏展示卡（2026-09-14）：www 首页 SnagmeShowcase 同域直连
+    # Go snagmeapi :3015（公开面仅 /showcase /recommend /listings/:id；
+    # 看板数据端点已在 API 层收 requireAuth）
+    location /api/snagme/ {
+        proxy_pass http://preprod-noda-api:3015;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
 
     # 带内容哈希的静态资源：一年 immutable（SeaweedFS 桶 sites/www/）
     location /_next/ {
