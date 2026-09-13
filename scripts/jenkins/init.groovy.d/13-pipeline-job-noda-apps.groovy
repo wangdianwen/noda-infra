@@ -21,7 +21,7 @@ def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
       <parameterDefinitions>
         <hudson.model.ChoiceParameterDefinition>
           <name>PRODUCT</name>
-          <description>选择要部署的产品（class / www / admin / liuyao / nearby / auth / comment / snagme，必选其一项，无 all；snagme 仅支持 LAYER=api）</description>
+          <description>选择要部署的产品（class / www / admin / liuyao / nearby / auth / comment / snagme，必选其一项，无 all）</description>
           <choices class="java.util.Arrays$ArrayList">
             <a class="string-array">
               <string>class</string>

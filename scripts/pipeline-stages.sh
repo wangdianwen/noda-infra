@@ -331,25 +331,9 @@ pipeline_preflight()
         log_warn "备份检查未通过，继续部署（生产环境应调查备份状态）"
     fi
 
-    # snagme 形态守卫：dashboard 是 better-sqlite3 Node 应用（运行时依赖 scanner
-    # 库），不能静态化入桶——发布层仅支持 api，static/all 在 Pre-flight 即拒绝
-    if [ "${PRODUCT_FILTER:-}" = "snagme" ] && [ "${LAYER_FILTER:-all}" != "api" ]; then
-        log_error "snagme 仅支持 LAYER=api（dashboard 为 Node 应用，桶发布不适用）"
-        return 1
-    fi
-
-    # 同服务互斥（构建级）：同一 PRODUCT 的两条 Pipeline 不允许并行——
-    # build-<product> 锁从 Pre-flight 持有到 post 兜底释放（registry 登记）。
-    # 不同产品各持各的锁互不影响；等待 15 分钟后明确失败（防占用 executor 空等）。
-    if [ -n "${PRODUCT_FILTER:-}" ]; then
-        local build_lock="build-${PRODUCT_FILTER}"
-        NODA_LOCK_NAME="${build_lock}"
-        export NODA_LOCK_NAME
-        if ! acquire_deploy_lock 900 "${build_lock}"; then
-            log_error "产品 ${PRODUCT_FILTER} 已有发布进行中（持有 ${build_lock}），本次终止——同服务不允许并行发布，请稍后重试"
-            return 1
-        fi
-    fi
+    # snagme 守卫已移除（2026-09-13）：dashboard 改静态导出后 LAYER=static/all 全支持
+    # 同服务互斥已上移到 Jenkinsfile 首阶段 Queue Gate（pipeline_queue_gate）——
+    # 后触发构建在进入 Pre-flight 前排队等待，不再占用实际构建资源
 
     log_success "前置检查全部通过"
 }
@@ -604,7 +588,33 @@ pipeline_post_publish_cleanup()
     log_success "发布后清理完成"
 }
 
-# pipeline_test - 安装依赖（lint/test 由 Jenkinsfile 独立 sh 步骤调用）
+# _node_pkg_for_product - PRODUCT → pnpm workspace 包名映射（Node 侧 lint/test 过滤用）
+# 逐个核实自 noda-apps 各 package.json 的 name 字段（2026-09-13）：
+#   class   → @noda-apps/web        (class/web)
+#   www     → @noda-apps/www        (www/web)
+#   admin   → @noda-apps/admin      (admin/web)
+#   liuyao  → @noda-apps/liuyao-web (liuyao/web；注意不是 @noda-apps/liuyao)
+#   nearby  → @noda-apps/nearby-web (nearby/web；包内无 test 脚本，turbo 静默跳过)
+#   auth    → @noda-apps/auth-app   (auth；-app 后缀区分共享包 @noda-apps/auth=packages/auth)
+#   comment → @noda-apps/comment    (comment；包内无 lint 脚本，同上)
+#   snagme  → （空）snagme/{dashboard,scanner,engine,database} 均无 lint/test 脚本，
+#             无 Node lint/test 可跑——调用方明确跳过并 log
+# 未映射值 / PRODUCT_FILTER 未设置 → 返回空，调用方回退全仓跑（行为同旧版，防静默漏测）
+_node_pkg_for_product()
+{
+    case "$1" in
+        class)   echo "@noda-apps/web" ;;
+        www)     echo "@noda-apps/www" ;;
+        admin)   echo "@noda-apps/admin" ;;
+        liuyao)  echo "@noda-apps/liuyao-web" ;;
+        nearby)  echo "@noda-apps/nearby-web" ;;
+        auth)    echo "@noda-apps/auth-app" ;;
+        comment) echo "@noda-apps/comment" ;;
+        *)       echo "" ;;
+    esac
+}
+
+# pipeline_test - 安装依赖 + Go 模块测试 + Node lint/test（均按 LAYER/PRODUCT 过滤）
 # 参数: $1 = APPS_DIR (noda-apps 目录)
 pipeline_test()
 {
@@ -639,6 +649,36 @@ pipeline_test()
         log_success "Go 测试全部通过"
         ;;
     esac
+
+    # Node 侧 lint/test（2026-09-13 补过滤：此前由 Jenkinsfile 两个独立 sh 步骤全仓
+    # pnpm lint / pnpm test，static 发布也要等全仓 1-2 分钟）。不按 LAYER 跳过——
+    # static 发布的挡板就是 Node lint/test。
+    # 用 turbo --filter '<pkg>...'（三点 = 该包 + 其 workspace 依赖，与 root 脚本同
+    # 工具链且有任务缓存）；turbo 对无对应 task 的包静默跳过（nearby 无 test、
+    # auth/comment 无 lint，实测 exit 0 + WARNING），依赖包先 ^build 再 test。
+    local node_pkg
+    node_pkg=$(_node_pkg_for_product "${PRODUCT_FILTER:-}")
+    (
+        cd "$apps_dir"
+        if [ -z "$node_pkg" ]; then
+            if [ "${PRODUCT_FILTER:-}" = "snagme" ]; then
+                log_info "Node lint/test: snagme/* 包均无 lint/test 脚本，跳过"
+            else
+                log_warn "Node lint/test: PRODUCT(${PRODUCT_FILTER:-未设置}) 无包映射，回退全仓 pnpm lint + pnpm test"
+                pnpm lint
+                pnpm test
+            fi
+        else
+            log_info "Node lint/test: turbo 过滤到 $node_pkg 及其 workspace 依赖"
+            pnpm exec turbo run lint --filter="$node_pkg..."
+            pnpm exec turbo run test --filter="$node_pkg..."
+            # test:i18n 为根级跨产品脚本（i18n parity 校验，秒级），无法按产品切分，保留全跑；
+            # typecheck 原随全仓 pnpm test 尾部执行，此处收窄到同一产品切片，保持挡板强度
+            pnpm test:i18n
+            pnpm exec turbo run typecheck --filter="$node_pkg..."
+        fi
+        log_success "Node lint/test 完成（PRODUCT=${PRODUCT_FILTER:-未设置}）"
+    ) || return 1
 }
 
 # _r4s_mem_available_mb - r4s 当前可用内存（MB），读取失败输出空字符串
@@ -1251,19 +1291,9 @@ pipeline_infra_preflight()
 
     log_info "基础设施前置检查: $service"
 
-    # 并行化锁（2026-09-13 二次收紧）：构建级 build-infra-<service> 锁持有到 post
-    # 兜底释放——同服务两条 Pipeline 不允许并行；不同服务可并行构建。
-    # 真正动共享设施（compose 栈/边缘反代）时由 pipeline_infra_core_enter 另持
-    # infra-core（Deploy 起持有到 post）。锁名经 NODA_LOCK_NAME 传给 pipeline_release_lock。
-    if [ "$DEPLOY_TARGET" = "r4s" ]; then
-        local build_lock="build-infra-${service}"
-        NODA_LOCK_NAME="${build_lock}"
-        export NODA_LOCK_NAME
-        if ! acquire_deploy_lock 900 "${build_lock}"; then
-            log_error "服务 ${service} 已有发布进行中（持有 ${build_lock}），本次终止——同服务不允许并行发布"
-            return 1
-        fi
-    fi
+    # 同服务互斥已上移到 Jenkinsfile 首阶段 Queue Gate（pipeline_queue_gate）——
+    # 后触发构建在进入 Pre-flight 前排队等待，不再占用实际构建资源。
+    # 共享设施互斥（infra-core）在 Deploy 阶段经 pipeline_infra_core_enter 获取。
 
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         # r4s 远程模式：同步仓库 + 检查远程 Docker daemon
@@ -1706,9 +1736,9 @@ _static_product_config()
             # admin 占位页（阈值 20；API 由 Go commentapi 承接）
             STATIC_WEB_DIR="comment";    STATIC_SENTINEL="out/admin.html";   STATIC_MIN_OBJS=20 ;;
         snagme)
-            log_error "snagme 前端是 better-sqlite3 Node 应用（运行时依赖 scanner 库），不支持桶发布——请用 LAYER=api 只发后端"
-            return 1
-            ;;
+            # 静态看板（Next.js output:'export'，单语言无 locale 前缀；数据全客户端
+            # fetch Go API :3015）；out/ 51 对象量级；阈值 30
+            STATIC_WEB_DIR="snagme/dashboard"; STATIC_SENTINEL="out/index.html"; STATIC_MIN_OBJS=30 ;;
         auth)
             # 静态壳（~35 HTML + 资产；阈值 60）；zh 无前缀 canonical（defaultLocale=zh）
             # ——哨兵文件用 out/zh/login.html；API 端点不在静态产物（Go authapi :3004 承接）
@@ -1758,7 +1788,8 @@ pipeline_publish_static_site()
         nearby)  local relay_port="9337" ;;
         auth)    local relay_port="9338" ;;
         comment) local relay_port="9339" ;;
-        *)       local relay_port="9340" ;;
+        snagme)  local relay_port="9340" ;;
+        *)       local relay_port="9341" ;;
     esac
     local alias_name="noda-prd-relay-${product}"
 
@@ -2364,21 +2395,9 @@ https://auth.noda.co.nz/api/health|auth api 链"
 https://comments.noda.co.nz/api/health|comment api 链"
             ;;
         snagme)
-            # 前端为 Node 应用未静态化，无公网页面探针；API 链走 r4s 边缘内探。
-            # ⚠️ 必须探 snagme 块独有的业务路径 /api/snagme/status——/health 会被
-            # class 兜底块（未匹配 Host 的 default server）以静态 200 顶替，假阳性
-            # （apps#11 实证：Deploy Prod 被跳过时探针照样「通过」）。
-            if [ "$DEPLOY_TARGET" = "r4s" ] && [ -n "${SSH_KEY_FILE:-}" ]; then
-                if remote_docker_exec "$(_resolve_nginx_container_remote)" "wget --quiet --tries=1 --header 'Host: snagme.noda.co.nz' --spider http://127.0.0.1:81/api/snagme/status"; then
-                    log_success "snagme api 链 E2E 验证通过（r4s 边缘内探 → :3015 /api/snagme/status）"
-                else
-                    log_error "E2E 验证失败: snagme api 链（边缘 /api/snagme/status → :3015）"
-                    return 1
-                fi
-            else
-                log_info "snagme 验证需 r4s 模式（DEPLOY_TARGET=r4s + SSH 凭据），跳过"
-            fi
-            return 0
+            # 公网探针（域名已生效）：看板静态壳 + Go API 业务端点
+            checks="https://snagme.noda.co.nz/|snagme 看板
+https://snagme.noda.co.nz/api/snagme/status|snagme api 链"
             ;;
         *)
             log_error "未知产品: $product（可选 class/www/admin/liuyao/nearby/auth/comment/snagme）"
@@ -2864,6 +2883,37 @@ pipeline_release_lock()
 # 锁获取成功即登记到 NODA_LOCK_REGISTRY（按构建隔离），post always 兜底
 # 只释放本构建持有的锁；部署函数内所有 return 路径由包装统一 release。
 NODA_LOCK_REGISTRY="${NODA_LOCK_REGISTRY:-${WORKSPACE:-/tmp}/.noda-locks-${BUILD_NUMBER:-$$}}"
+
+# pipeline_queue_gate - 同服务队列门禁（Jenkinsfile 首阶段调用，2026-09-13）
+# 语义：同一服务的多条 Pipeline 不允许同时构建——后触发者在门禁处等待
+# （不做 checkout/测试/传输等任何实际工作），先到者完成后自动接棒；
+# 等待超过 GATE_WAIT_SECONDS（默认 3600s）则明确失败。
+# 锁登记 NODA_LOCK_REGISTRY，post always 兜底释放；normal 模式在 Human
+# Approval 前主动释放（避免审批挂起阻塞同服务后续发布），Deploy Prod
+# /Rebuild 前经本函数重新获取。
+pipeline_queue_gate()
+{
+    local svc="$1"
+    if [ -z "$svc" ]; then
+        log_error "队列门禁缺少服务标识"
+        return 1
+    fi
+    NODA_LOCK_NAME="build-${svc}"
+    export NODA_LOCK_NAME
+    log_info "队列门禁 [$svc]：同服务互斥——如有同服务发布进行中，本构建在此等待（最长 ${GATE_WAIT_SECONDS:-3600}s）..."
+    if ! acquire_deploy_lock "${GATE_WAIT_SECONDS:-3600}" "build-${svc}"; then
+        log_error "同服务 $svc 的发布等待超时（${GATE_WAIT_SECONDS:-3600}s 未获得锁）——本构建终止，请稍后重试"
+        return 1
+    fi
+    log_success "队列门禁通过 [$svc]"
+}
+
+# pipeline_release_build_lock - 审批前主动释放队列门禁锁（Deploy 前重取）
+pipeline_release_build_lock()
+{
+    release_deploy_lock "build-$1"
+    log_info "队列门禁锁已释放（审批窗口不再阻塞同服务后续发布）"
+}
 
 pipeline_deploy_preprod()
 {

@@ -52,6 +52,18 @@ pipeline {
     }
 
     stages {
+        stage('Queue Gate') {
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        pipeline_queue_gate "$SERVICE"
+                    '''
+                }
+            }
+        }
         stage('Build Info') {
             steps {
                 script {
@@ -101,6 +113,14 @@ pipeline {
             }
             steps {
                 timeout(time: 30, unit: 'MINUTES') {
+                    withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                        sh '''
+                            source scripts/lib/log.sh
+                            source scripts/pipeline-stages.sh
+                            export SSH_KEY_FILE
+                            pipeline_release_build_lock "$SERVICE"
+                        '''
+                    }
                     input message: """确认重启 PostgreSQL?
                     服务: ${params.SERVICE}
                     影响范围: noda-apps、noda-ops 将短暂断连数据库
@@ -141,6 +161,8 @@ pipeline {
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
                         export SSH_KEY_FILE
+                        # postgres 审批窗口已释放队列锁——部署前重新获取
+                        pipeline_queue_gate "$SERVICE"
                         # infra-core 从 Deploy 起持有到 post 释放：动共享设施
                         # （compose 栈/边缘反代）期间其它核心服务互斥
                         pipeline_infra_core_enter

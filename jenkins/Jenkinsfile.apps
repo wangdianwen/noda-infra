@@ -47,7 +47,7 @@ pipeline {
         choice(
             name: 'PRODUCT',
             choices: ['class', 'www', 'admin', 'liuyao', 'nearby', 'auth', 'comment', 'snagme'],
-            description: '选择要发布的产品（必选其一，无 all）：class 主应用 / www 官网 / admin 管理后台 / liuyao 六爻 / nearby 附近 / auth 认证 / comment 评论 / snagme 捡露监控（仅后端，dashboard 为 Node 应用不支持静态发布）。后端 Go 测试只跑对应产品模块 + common'
+            description: '选择要发布的产品（必选其一，无 all）：class 主应用 / www 官网 / admin 管理后台 / liuyao 六爻 / nearby 附近 / auth 认证 / comment 评论 / snagme 捡漏监控（API :3015 + 静态看板）。后端 Go 测试只跑对应产品模块 + common'
         )
         choice(
             name: 'LAYER',
@@ -62,6 +62,20 @@ pipeline {
     }
 
     stages {
+        stage('Queue Gate') {
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        # 同服务队列门禁：后触发者在此等待（不开始实际构建），
+                        # 先到者完成后自动接棒；normal 模式审批前会主动释放
+                        pipeline_queue_gate "$PRODUCT"
+                    '''
+                }
+            }
+        }
         stage('Build Info') {
             steps {
                 script {
@@ -171,14 +185,12 @@ pipeline {
                                 source "$WORKSPACE/scripts/pipeline-stages.sh"
                                 export LAYER_FILTER="${LAYER}"
                                 export PRODUCT_FILTER="${PRODUCT}"
+                                # Node lint/test 并入 pipeline_test（2026-09-13）：按 PRODUCT_FILTER
+                                # 用 turbo --filter 只跑对应包 + workspace 依赖，替代原全仓
+                                # pnpm lint / pnpm test 两个独立 sh 步骤；Test 失败 = 发布挡板语义不变
                                 pipeline_test "$PWD"
                             '''
-                            echo '🧪 运行 Lint 检查...'
-                            sh 'export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH" && pnpm lint'
-                            echo '✅ Lint 通过'
-                            echo '🧪 运行单元测试...'
-                            sh 'export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH" && pnpm test'
-                            echo '✅ 测试通过'
+                            echo '✅ Lint + 单元测试通过'
                         }
                     }
                 }
@@ -191,6 +203,14 @@ pipeline {
             }
             steps {
                 timeout(time: 6, unit: 'HOURS') {
+                    withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                        sh '''
+                            source scripts/lib/log.sh
+                            source scripts/pipeline-stages.sh
+                            export SSH_KEY_FILE
+                            pipeline_release_build_lock "$PRODUCT"
+                        '''
+                    }
                     script {
                         def userInput = input(
                             message: """Pre-prod 部署完成（产品: ${params.PRODUCT}，本机 Mac，双容器 api+static），请验证：
@@ -232,6 +252,14 @@ pipeline {
                     int round = 0
                     while (env.DEPLOY_ACTION == 'rebuild_preprod' && round < 5) {
                         round++
+                        withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                export SSH_KEY_FILE
+                                pipeline_queue_gate "$PRODUCT"
+                            '''
+                        }
                         withCredentials([
                             sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
                             string(credentialsId: 'doppler-service-token-preprod', variable: 'DOPPLER_TOKEN_PREPROD')
@@ -247,6 +275,14 @@ pipeline {
                                 pipeline_deploy_preprod "$GIT_SHA"
                                 pipeline_health_check_preprod
                             """
+                        }
+                        withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                            sh '''
+                                source scripts/lib/log.sh
+                                source scripts/pipeline-stages.sh
+                                export SSH_KEY_FILE
+                                pipeline_release_build_lock "$PRODUCT"
+                            '''
                         }
                         def again = input(
                             message: "Pre-prod 已重建（第 ${round} 轮），请验证后选择下一步：",
@@ -277,6 +313,8 @@ pipeline {
                         export PRODUCT_FILTER="${PRODUCT}"
                         export SSH_KEY_FILE
                         export DEPLOY_TARGET=r4s
+                        # 审批窗口已释放队列锁——部署前重新获取（与其他构建的部署串行）
+                        pipeline_queue_gate "$PRODUCT"
                         pipeline_deploy_prod "$GIT_SHA"
                     '''
                 }
