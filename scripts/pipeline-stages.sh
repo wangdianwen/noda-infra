@@ -1249,8 +1249,10 @@ https://noda.co.nz/zh-TW/"
             ;;
         admin)
             # 登录页壳（发布哨兵 out/login.html）+ 登录后落地 dashboard 壳
+            # + snagme 看板壳（2026-09-13 集成，out/snagme.html）
             urls="https://admin.noda.co.nz/login
-https://admin.noda.co.nz/dashboard"
+https://admin.noda.co.nz/dashboard
+https://admin.noda.co.nz/snagme"
             ;;
         liuyao)
             # divine 主入口（en 无前缀）+ zh / zh-TW 变体壳（out/zh|zh-TW/divine.html）
