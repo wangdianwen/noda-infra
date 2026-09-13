@@ -370,7 +370,16 @@ pipeline {
                             sh '''
                                 source scripts/lib/log.sh
                                 source scripts/pipeline-stages.sh
-                                pipeline_purge_cdn
+                                export LAYER_FILTER="${LAYER}"
+                                export PRODUCT_FILTER="${PRODUCT}"
+                                # LAYER=static/all：只精准清除本产品入口 URL（全域 purge 会把
+                                # 同 zone 其它产品的边缘缓存全部打掉）；前端变更不跨产品
+                                # LAYER=api：容器镜像全产品共享，保持全域 purge_everything
+                                if [ "${LAYER}" = "api" ]; then
+                                    pipeline_purge_cdn
+                                else
+                                    pipeline_purge_cdn_urls "$PRODUCT"
+                                fi
                             '''
                         }
                     } catch (Exception e) {

@@ -1212,6 +1212,127 @@ pipeline_purge_cdn()
     return 0
 }
 
+# pipeline_purge_cdn_urls - 按产品精准清除 CDN 入口 URL（purge_everything 的替代路径）
+# 背景：全域 purge 会把同 zone 下所有产品的边缘缓存全部打掉——单产品发布后
+#   其它产品的缓存无谓失效、回源放大。改为只清本产品入口 URL。
+# 清单选型（每产品 1-6 个）：HTML 壳入口（首页/列表页）+ 健康端点。静态发布链路
+#   HTML 本身 no-cache（桶发布注释：HTML no-cache，浏览器与 CF 均不缓存陈旧壳），
+#   但边缘仍可能缓存非 HTML 来源的响应（301 跳转、API GET、历史 404），入口 URL
+#   精准 purge 兜底这些情况——数量少、单次请求成本近零。
+#   各产品清单与 pipeline_verify_product 的 E2E 探针域名口径一致（www 探规范域）。
+# CF API v4 zones/{zone_id}/purge_cache: {"files":[...]} 单次最多 30 个 URL——
+#   本表每产品上限 6 个，一次请求即可，无需分批。
+# 环境变量（由 Jenkins withCredentials 注入，同 pipeline_purge_cdn）：
+#   CF_API_TOKEN - Cloudflare API Token
+#   CF_ZONE_ID   - Cloudflare Zone ID
+# 参数: $1 = 产品名（class/www/admin/liuyao/nearby/auth/comment/snagme）
+# 返回: 0=成功或跳过（永远不阻止部署，per D-09/D-11，语义同 pipeline_purge_cdn）
+pipeline_purge_cdn_urls()
+{
+    local product="$1"
+    local urls=""
+
+    # 入口 URL 表（与 _static_product_config 的产品维度对齐；注释一行说明选型理由）
+    case "$product" in
+        class)
+            # en/zh/zh-TW 三个语言壳入口（out/en|zh|zh-TW.html）+ api 健康端点（verify 探针）
+            urls="https://class.noda.co.nz/en
+https://class.noda.co.nz/zh
+https://class.noda.co.nz/zh-TW
+https://class.noda.co.nz/api/health"
+            ;;
+        www)
+            # 规范域首页 + zh/zh-TW 目录壳（www 301 → noda.co.nz，与 verify 一样只探规范域）
+            urls="https://noda.co.nz/
+https://noda.co.nz/zh/
+https://noda.co.nz/zh-TW/"
+            ;;
+        admin)
+            # 登录页壳（发布哨兵 out/login.html）+ 登录后落地 dashboard 壳
+            urls="https://admin.noda.co.nz/login
+https://admin.noda.co.nz/dashboard"
+            ;;
+        liuyao)
+            # divine 主入口（en 无前缀）+ zh / zh-TW 变体壳（out/zh|zh-TW/divine.html）
+            urls="https://liuyao.noda.co.nz/divine
+https://liuyao.noda.co.nz/zh/divine
+https://liuyao.noda.co.nz/zh-TW/divine"
+            ;;
+        nearby)
+            # 根入口（defaultLocale 落地）+ en/zh 壳（zh-TW 同构页面随 Cache-Control 自然过期）
+            urls="https://nearby.noda.co.nz/
+https://nearby.noda.co.nz/en
+https://nearby.noda.co.nz/zh"
+            ;;
+        auth)
+            # defaultLocale=zh 无前缀：/login /register 即 zh 壳的两个认证入口
+            urls="https://auth.noda.co.nz/login
+https://auth.noda.co.nz/register"
+            ;;
+        comment)
+            # 唯一静态占位页壳（其余路径走 Go commentapi 动态响应，不在桶上）
+            urls="https://comments.noda.co.nz/admin"
+            ;;
+        snagme)
+            # 看板三壳：首页/历史/雷达（单语言无 locale 前缀，数据全客户端 fetch）
+            urls="https://snagme.noda.co.nz/
+https://snagme.noda.co.nz/history
+https://snagme.noda.co.nz/radar"
+            ;;
+        *)
+            # D-09: 未知产品不阻止部署（打错日志提示修正 _static_product_config 同款清单）
+            # ${product} 花括号形式：紧随全角括号时 bash 3.2/C locale 会把多字节字节并入变量名
+            log_error "未知产品: ${product}（可选 class/www/admin/liuyao/nearby/auth/comment/snagme），跳过 CDN URL 精准清除"
+            return 0
+            ;;
+    esac
+
+    # 凭据缺失时跳过（D-11，同 pipeline_purge_cdn）
+    if [ -z "${CF_API_TOKEN:-}" ] || [ -z "${CF_ZONE_ID:-}" ]; then
+        log_warn "Cloudflare 凭据未配置，跳过 CDN 入口 URL 清除 ($product)"
+        return 0
+    fi
+
+    log_info "精准清除 CDN 入口 URL (product: $product, zone: $CF_ZONE_ID, $(printf '%s\n' "$urls" | grep -c .) 个)..."
+
+    # 换行分隔的 URL 列表 → {"files":[...]} JSON（here-doc 而非管道：while 不进子 shell；
+    # 临时文件传 body，与 pipeline_purge_cdn 同约定）
+    local tmp_body
+    tmp_body=$(mktemp)
+    {
+        printf '{"files":['
+        local _sep="" _url
+        while IFS= read -r _url; do
+            [ -z "$_url" ] && continue
+            printf '%s"%s"' "$_sep" "$_url"
+            _sep=","
+        done <<EOF
+$urls
+EOF
+        printf ']}'
+    } >"$tmp_body"
+
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+        -H "Authorization: Bearer ${CF_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d @"$tmp_body" \
+        --connect-timeout 10 \
+        --max-time 30 2>/dev/null) || true
+
+    rm -f "$tmp_body"
+
+    if [ "$http_code" = "200" ]; then
+        log_success "CDN 入口 URL 清除完成 ($product)"
+    else
+        # D-09: 失败不阻止部署
+        log_error "CDN 入口 URL 清除失败 (HTTP ${http_code:-timeout})，不影响部署 ($product)"
+    fi
+
+    return 0
+}
+
 # pipeline_cleanup - 清理旧镜像
 # 官方镜像服务（Keycloak 等）跳过 SHA 镜像清理，仅清理 dangling images
 pipeline_cleanup()
@@ -1744,7 +1865,7 @@ _static_product_config()
             # ——哨兵文件用 out/zh/login.html；API 端点不在静态产物（Go authapi :3004 承接）
             STATIC_WEB_DIR="auth";       STATIC_SENTINEL="out/zh/login.html"; STATIC_MIN_OBJS=60 ;;
         *)
-            log_error "未知静态站产品: $1（可选 class/www/admin/liuyao/nearby/auth/comment）"
+            log_error "未知静态站产品: ${1}（可选 class/www/admin/liuyao/nearby/auth/comment）"
             return 1
             ;;
     esac
@@ -2400,7 +2521,7 @@ https://comments.noda.co.nz/api/health|comment api 链"
 https://snagme.noda.co.nz/api/snagme/status|snagme api 链"
             ;;
         *)
-            log_error "未知产品: $product（可选 class/www/admin/liuyao/nearby/auth/comment/snagme）"
+            log_error "未知产品: ${product}（可选 class/www/admin/liuyao/nearby/auth/comment/snagme）"
             return 1
             ;;
     esac
