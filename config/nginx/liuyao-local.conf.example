@@ -4,8 +4,9 @@
 #       挂载为 preprod-noda-static 的 /etc/nginx/conf.d/default.conf
 # 形态（2026-09-12 S5 后，运行时零 Node）：
 #   - 五站 + auth/comment 前端 = SeaweedFS 桶 sites/<product>/ 伺服
-#   - /api/* → preprod-noda-api（Go 七 listener：class 3001 / auth 3004 /
-#     liuyao 3007 / email 3010 / admin 3011 / comment 3012 / nearby 3014）
+#   - /api/* → preprod-noda-api（Go 八 listener：class 3001 / auth 3004 /
+#     liuyao 3007 / email 3010 / admin 3011 / comment 3012 / nearby 3014 /
+#     snagme 3015）
 #   - 桶 upstream：seaweedfs:8333（匿名只读，s3.json 授权）
 # 注意：顶部 map 块内联自 conf.d/*.map.conf（本机单文件形态）；
 #       修改后需 force-recreate preprod-noda-static（macOS 单文件 bind mount
@@ -385,12 +386,29 @@ server {
         proxy_read_timeout 120s;
     }
 
+    # snagme 看板数据（admin 域集成 snagme.noda.co.nz 看板，Go snagmeapi :3015；
+    # 与 prod admin 块同构）
+    location /api/snagme/ {
+        proxy_pass http://preprod-noda-api:3015;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+
     # .txt（RSC 载荷）净 404（未预渲染 cronjobs 深链路由触发硬导航兜底）
     location ~ \.txt$ {
         include /etc/nginx/snippets/seaweedfs-admin-static.conf;
     }
 
-    # regex 顺序敏感：.txt > 两级 cronjobs 深链 > 单级 cronjobs
+    # regex 顺序敏感：.txt > snagme 详情深链 > 两级 cronjobs 深链 > 单级 cronjobs
+    location ~ ^/snagme/listing/[^/]+(/|$) {
+        add_header Cache-Control "no-cache" always;
+        include /etc/nginx/snippets/seaweedfs-admin-static.conf;
+        error_page 403 404 =200 /snagme/listing/app-shell.html;
+    }
+
     location ~ ^/cronjobs/[^/]+/[^/]+(/|$) {
         add_header Cache-Control "no-cache" always;
         include /etc/nginx/snippets/seaweedfs-admin-static.conf;
