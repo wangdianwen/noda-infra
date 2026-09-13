@@ -174,6 +174,7 @@ shared 包 `"type": "module"` + `"main": "./src/index.ts"` 导致 Node.js 无法
 | prod 实际收敛 | — | ✅ | #18（nearby/api，≥0ef8d69 镜像）落地后，边缘 /api/snagme/status 返回真实 scanner 数据——snagme 链路正式在线 |
 | 发布快照 + 静态站一键回滚 | apps #31 + 本地演练 | ✅ | #31 发布产生 sites/snagme-prev/（51 对象）→ 实跑 `pipeline_rollback_static_site snagme`：prod 回滚 51=51 对象数一致、stg 同步回滚、中继容器/alias 全部清理、公网 200。演练后线上内容与回滚前一致（同 commit 重发布） |
 | UI 一键回滚任务（noda-rollback） | rollback #1 snagme/static | ✅ | Jenkins CPS 解析通过 → seed 幂等建 job → REST 触发+批准 → 门禁 5s → 桶回滚 51=51 → E2E 通过 → CDN 清除 → 公网 200 → r4s 无残留锁。api/all 路径同引擎（锚点镜像 + apps-prod 锁），审批页明示全产品影响 |
+| N 层快照轮转 + 深度回滚 | apps #34 + rollback #2 | ✅ | #34 发布日志「快照轮转 snagme-prev → snagme-prev2」，桶内 main/-prev/-prev2 三前缀各 51 对象；rollback #2 以 ROLLBACK_DEPTH=2 从 sites/snagme-prev2/ 回滚 51=51，公网 200 |
 | 锁属主语义 + 全 stage 超时 | infra #6/#7/#8 + apps #31 | ✅ | #6 自锁/#7 复活锁双实证后定稿：锁内 owner(BUILD_URL) 三态判定（自锁幂等通过/死属主抢破/无主孤儿 3min 抢破）+ 每 stage options.timeout（卡死自动失败走 post 释放）；#8 全绿复验 |
 
 **Snagme 接入说明（2026-09-13 上线，Trade Me 捡漏监控）：**
