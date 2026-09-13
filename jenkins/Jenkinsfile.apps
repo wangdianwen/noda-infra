@@ -218,11 +218,18 @@ pipeline {
                                 choice(name: 'ACTION', choices: ['deploy_prod', 'rebuild_preprod', 'abort'], description: '选择操作：\n- deploy_prod: 验证通过，部署到生产环境\n- rebuild_preprod: 重新部署 pre-prod（无需重新构建）\n- abort: 中止部署')
                             ]
                         )
-                        // input 带 parameters 时正常提交返回 Map（[ACTION:...]）；
-                        // 但 proceedEmpty（空参批准）返回 null——两者直接赋 env 都会让
-                        // Deploy Prod/Rebuild/abort 的 when 恒 false（normal 模式曾静默
-                        // 跳过 prod 部署且显示 SUCCESS）。解包 + null 回落默认批准项。
-                        env.DEPLOY_ACTION = (userInput instanceof Map) ? userInput['ACTION'] : (userInput ?: 'deploy_prod')
+                        // input 返回形状随提交方式变化（UI 提交=Map、空参批准=null/
+                        // 空串、旧版=String）——不做形状假设，统一归一化：
+                        // 显式 abort/rebuild_preprod 之外一律视为批准（deploy_prod）。
+                        // 背景：归一化前 normal 模式曾静默跳过 prod 部署且显示 SUCCESS
+                        // （apps#9/#11/#12/#15 连续实证，提交形状各异但 when 全部不命中）。
+                        echo "Human Approval raw input: [${userInput}] class: ${userInput?.getClass()}"
+                        def action = (userInput instanceof Map) ? userInput['ACTION'] : userInput
+                        if (!['deploy_prod', 'rebuild_preprod', 'abort'].contains(action)) {
+                            echo "DEPLOY_ACTION 归一化: [${action}] -> deploy_prod"
+                            action = 'deploy_prod'
+                        }
+                        env.DEPLOY_ACTION = action
                     }
                 }
             }
