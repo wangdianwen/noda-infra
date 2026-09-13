@@ -2406,8 +2406,21 @@ _publish_static_to_stg()
     fi
 
     log_info "mc mirror 增量同步（含删除） out/ → noda-static-stg/sites/$product/ ..."
-    if ! mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name/noda-static-stg/sites/$product/"; then
-        log_error "preprod 桶（noda-static-stg）同步失败"
+    # stg mirror 重试：桶臂与 Pre-prod 容器臂并行后，compose recreate 可能令
+    # seaweedfs-stg 同窗口重启（build #54 实证：mirror 撞上 "use of closed
+    # network connection"，S3 约 17s 后才重新上线）——重试扛过瞬断，否则假报发版失败
+    local mirror_ok="false"
+    local m_attempt
+    for m_attempt in 1 2 3; do
+        if mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name/noda-static-stg/sites/$product/"; then
+            mirror_ok="true"
+            break
+        fi
+        log_warn "stg mirror 第 ${m_attempt}/3 次失败（seaweedfs-stg 可能瞬时重启），5s 后重试..."
+        sleep 5
+    done
+    if [ "$mirror_ok" != "true" ]; then
+        log_error "preprod 桶（noda-static-stg）同步失败（重试 3 次仍失败）"
         rc=1
     fi
 
