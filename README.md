@@ -2,7 +2,7 @@
 
 # noda-infra
 
-Noda 项目的基础设施仓库，通过 Docker Compose 管理生产环境的数据库、认证、反向代理和应用服务的部署配置。
+Noda 项目的基础设施仓库，通过 Docker Compose 管理生产环境的数据库、反向代理、对象存储与应用服务的部署配置。（认证在 noda-apps 的 Go authapi，Keycloak 已于 2026-09-12 下线）
 
 ---
 
@@ -39,7 +39,7 @@ cp config/environments/.env.example config/environments/.env
    # 编辑 docker/.env，填入实际的密码、Token 等敏感信息
    ```
 
-3. **启动基础设施**（PostgreSQL + Keycloak + Nginx + noda-ops）：
+3. **启动基础设施**（PostgreSQL + Nginx + SeaweedFS + noda-ops）：
 
    ```bash
    # 生产环境
@@ -107,7 +107,6 @@ noda-infra/
 │   └── lib/            # 共享库（log.sh, health.sh, secrets.sh）
 ├── services/           # 服务专用配置
 │   ├── postgres/       # PostgreSQL 初始化脚本和配置（init/, conf/）
-│   └── keycloak/       # （已退役存档）Keycloak realm 配置
 └── jenkins/            # Jenkinsfile（noda-apps / noda-infra Pipeline）
 ```
 
@@ -145,7 +144,7 @@ Jenkins 运行在本机 `http://localhost:8080`，仅两个手动触发的 Pipel
 
 ## 重要注意事项
 
-- **构建时环境变量**：`NEXT_PUBLIC_*` 变量在 `docker build` 阶段写入 JS 产物，运行时环境变量仅影响 SSR 服务端。修改前端配置必须重新构建镜像。
+- **构建时环境变量**：`NEXT_PUBLIC_*` 变量在构建阶段写入静态产物，运行时环境变量对静态站无效。修改前端配置必须重新构建并发布静态站（`infra-deploy` SERVICE=<product>-static）。
 - **项目名一致性**：`docker-compose.yml` 和 `docker-compose.prod.yml` 的 `name` 必须一致（当前为 `noda-infra`），否则会创建重复容器和空数据卷。
 - **Cloudflare 缓存**：静态资源 URL 包含 hash 可自动更新，但 `index.html` 会被 CDN 缓存，部署后可能需要手动清除缓存。
 

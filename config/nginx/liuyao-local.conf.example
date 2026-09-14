@@ -192,9 +192,12 @@ map $request_uri $comment_cache_control {
 # ── HTTP → HTTPS 重定向 ──
 # ── snagme locale 协商（内联自 conf.d/snagme.map.conf，2026-09-14 产品站化；
 # 与 prod 保持同步——prod 侧更新时两处同改）──
+# en 必须显式认领：缺分支时 cookie=en 落 default ""，中文浏览器
+# Accept-Language 重新接管，zh 切英文被 302 回 /zh（2026-09-15 修复）
 map $cookie_noda_locale $snagme_cookie_locale {
     ~*^zh-TW$   zh-TW;
     ~*^zh$      zh;
+    ~*^en$      en;
     default     "";
 }
 map $http_accept_language $snagme_al_zhtw {
@@ -277,6 +280,15 @@ server {
         proxy_read_timeout 1800s;
         proxy_send_timeout 1800s;
         chunked_transfer_encoding on;
+    }
+
+    # 退款政策已迁 www 主站（2026-09-15）：旧 URL 301 到主站对应语言页
+    # （preprod 指向 www-preprod，与 prod 指向 www 对应）
+    location ~ ^/(?:en/|zh/|zh-TW/)?refunds$ {
+        return 301 https://www-preprod.noda.co.nz$uri/;
+    }
+    location ~ ^/(?:en/|zh/|zh-TW/)?refunds/$ {
+        return 301 https://www-preprod.noda.co.nz$uri;
     }
 
     # RSC 载荷 .txt：桶内缺（未预渲染 token 段）必须净 404（先于 s/[token] 深链壳）
@@ -827,8 +839,12 @@ server {
         proxy_read_timeout 120s;
     }
 
-    # RSC 载荷 .txt：净 404 触发硬导航（先于深链壳，regex 顺序敏感）
+    # RSC 载荷 .txt：净 404 触发硬导航（先于深链壳，regex 顺序敏感）；
+    # en 裸路径（桶内只有 /en/…）内部补前缀——软导航 200 化（2026-09-15 与 prod 同步）
     location ~ \.txt$ {
+        set $txtloc $snagme_locale;
+        if ($uri ~ "^/(en|zh|zh-TW)(/|$)") { set $txtloc ""; }
+        if ($txtloc = en) { rewrite ^(.*)$ /en$1 last; }
         include /etc/nginx/snippets/seaweedfs-snagme-static-stg.conf;
     }
 

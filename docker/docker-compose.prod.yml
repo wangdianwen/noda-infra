@@ -51,66 +51,9 @@ services:
       - /tmp
 
   # ----------------------------------------
-  # Keycloak 认证服务（单容器直接替换）
-  # 生产环境通过 Jenkins infra-deploy Pipeline 管理（docker stop/rm/run）
-  # 容器名: keycloak，此定义仅作为配置参考保留（profiles: disabled）
+ # Keycloak 已下线（2026-09-12）：服务块物理移除，证据见 git 历史与
+  # backup/2026/decommission/keycloak-final-20260912.dump；认证在 Go authapi。
   # ----------------------------------------
-  keycloak:
-    profiles:
-      - disabled
-    <<: *common-security
-    image: quay.io/keycloak/keycloak:26.2.3
-    labels:
-      - "noda.service-group=infra"
-      - "noda.environment=prod"
-    environment:
-      # 数据库配置（独立数据库架构）
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: ${POSTGRES_USER}
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
-      # 主机名配置（v2 SPI - 使用完整 URL）
-      KC_HOSTNAME: "https://auth.noda.co.nz"
-      KC_HOSTNAME_STRICT: "false"
-      KC_HTTP_ENABLED: "true"
-      KC_PROXY: "edge"
-      KC_PROXY_HEADERS: "xforwarded"
-      # 启用健康检查
-      KC_HEALTH_ENABLED: "true"
-      # 管理员账号
-      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
-      # SMTP 配置（密码重置邮件）
-      KC_MAIL_HOST: ${SMTP_HOST}
-      KC_MAIL_PORT: ${SMTP_PORT}
-      KC_MAIL_FROM: ${SMTP_FROM}
-      KC_MAIL_FROM_DISPLAY_NAME: Noda
-      KC_SMTP_AUTH: "true"
-      KC_SMTP_USER: ${SMTP_USER}
-      KC_SMTP_PASSWORD: ${SMTP_PASSWORD}
-      KC_SMTP_SSL: "false"
-      KC_SMTP_STARTTLS: "true"
-    command: start
-    volumes:
-      - ./services/keycloak/themes:/opt/keycloak/themes/noda:ro  # 可选：未来自定义主题
-    networks:
-      - noda-network
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
-    healthcheck:
-      test: ["CMD-SHELL", "echo > /dev/tcp/localhost/8080 2>/dev/null || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
   # ----------------------------------------
   # Nginx 安全加固（生产环境）
   # ----------------------------------------

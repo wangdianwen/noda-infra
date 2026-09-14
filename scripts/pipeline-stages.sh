@@ -1589,19 +1589,13 @@ pipeline_cleanup()
     # === 清理 r4s 上的旧镜像（保留当前运行 + 上一个版本用于回滚）===
     if [ "${DEPLOY_TARGET:-}" = "r4s" ] && [ -n "${SSH_KEY_FILE:-}" ]; then
         log_info "清理 r4s 旧镜像..."
-        # S5 双容器：分别清理 noda-api / noda-static 旧镜像，
-        # 各保留最新的 2 个（当前 + 回滚），删除其余
-        remote_exec "
-            for repo in noda-api noda-static; do
-                docker images \$repo --format '{{.ID}} {{.Tag}}' | \
-                grep -v '<none>' | \
-                sort -k2 -r | \
-                tail -n +3 | \
-                awk '{print \$1}' | \
-                while read id; do docker rmi \$id 2>/dev/null; done
-            done
-            docker image prune -f 2>/dev/null
-        " 2>/dev/null || true
+        # S5 双容器：noda-api / noda-static 各保留最新 2 版（当前 + 回滚）。
+        # 2026-09-15 修复：此前内联脚本按 tag 字符串倒序取"最新"——tag 是短 SHA，
+        # 字典序与创建时间无关，过期镜像能否存活全凭字母顺序碰运气；现统一走
+        # docker_image_retention（按 CreatedAt 逆序、同 ID 多 tag 去重）。
+        docker_image_retention noda-api 2 remote || true
+        docker_image_retention noda-static 2 remote || true
+        remote_exec "docker image prune -f 2>/dev/null" 2>/dev/null || true
         log_info "r4s 镜像清理完成"
     fi
 }

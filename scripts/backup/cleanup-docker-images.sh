@@ -85,9 +85,34 @@ else
     echo "✅ 没有需要清理的 noda-ops 镜像"
 fi
 
+# noda-api / noda-static 版本保留（2026-09-15 新增，与 Jenkins
+# docker_image_retention 同策略）：按 CreatedAt 逆序、同 ID 去重后保留最新 2 版
+# （当前 + 回滚锚点），其余删除。此前只清 dangling，commit-tag 旧镜像无限累积。
+echo ""
+echo "5. noda-api / noda-static 版本保留（各留最新 2 版）..."
+for REPO in noda-api noda-static; do
+    STALE=$(docker images "$REPO" --format '{{.CreatedAt}} {{.ID}}' | sort -ur | awk '{print $2}' | awk '!seen[$0]++' | tail -n +3)
+    if [ -n "$STALE" ]; then
+        for IMG in $STALE; do
+            # -f：同 ID 多历史 tag 时裸删会静默失败（见 lib/image-cleanup.sh 注释）
+            docker rmi -f "$IMG" 2>/dev/null || true
+        done
+        echo "✅ $REPO 旧版本已清理"
+    else
+        echo "✅ $REPO 无过期版本"
+    fi
+done
+
+# SeaweedFS vacuum（2026-09-15 新增）：反复整站 mc mirror 会留下垃圾卷，
+# vacuum 在线压缩，释放磁盘并抑制 needle map 缓慢膨胀
+echo ""
+echo "6. SeaweedFS vacuum..."
+VACUUM_OUT=$(docker exec seaweedfs wget -qO- 'http://127.0.0.1:9333/vol/vacuum?garbageThreshold=0.3' 2>/dev/null || true)
+if [ -n "$VACUUM_OUT" ]; then echo "✅ vacuum 已执行"; else echo "⚠️ vacuum 不可达（跳过，不影响清理）"; fi
+
 # 清理构建缓存
 echo ""
-echo "5. 清理构建缓存..."
+echo "7. 清理构建缓存..."
 CACHE_BEFORE=$(docker system df --format '{{.BuildCacheSize}}' 2>/dev/null || echo "0B")
 docker system prune -f 2>/dev/null || true
 echo "✅ 清理完成"

@@ -241,10 +241,12 @@ docker_image_retention()
     [ "$total" -gt "$keep" ] || return 0
     stale=$(printf '%s\n' "$ids" | tail -n +$((keep + 1)))
     log_info "镜像保留($mode): $repo 共 $total 版，保留最新 $keep，删除其余 $((total - keep))"
+    # -f：陈旧镜像常挂多个历史 tag，按 ID 裸删会报 "referenced in multiple
+    # repositories" 静默失败；-f 只影响非保留 ID（在用容器仍受 Docker 保护）
     if [ "$mode" = "remote" ]; then
-        for id in $stale; do remote_exec "docker rmi $id >/dev/null 2>&1 || true"; done
+        for id in $stale; do remote_exec "docker rmi -f $id >/dev/null 2>&1 || true"; done
     else
-        for id in $stale; do docker rmi "$id" >/dev/null 2>&1 || true; done
+        for id in $stale; do docker rmi -f "$id" >/dev/null 2>&1 || true; done
     fi
 }
 
