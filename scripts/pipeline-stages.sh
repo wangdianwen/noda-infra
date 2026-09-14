@@ -715,6 +715,17 @@ _start_prod_api()
 {
     local mode="$1" image="$2" env_file="$3"
     log_info "启动容器: $PROD_API_CONTAINER ($image)"
+    # snagme env 文件挂载（2026-09-15）：snagmeapi 的 Email 退订校验经
+    # LoadEmailConfig 回读该文件（进程 env 不注入，与 noda-jobs 同一事实源）；
+    # 文件不存在时跳过（本地模式），退订端点自动退化为 503
+    local snagme_mount=""
+    if [ "$mode" = "remote" ]; then
+        if remote_exec "test -f /etc/noda/snagme.env"; then
+            snagme_mount="-v /etc/noda/snagme.env:/etc/noda/snagme.env:ro"
+        fi
+    elif [ -f /etc/noda/snagme.env ]; then
+        snagme_mount="-v /etc/noda/snagme.env:/etc/noda/snagme.env:ro"
+    fi
     if [ "$mode" = "remote" ]; then
         remote_exec "docker rm -f $PROD_API_CONTAINER >/dev/null 2>&1 || true"
         remote_exec "docker run -d \
@@ -736,6 +747,7 @@ _start_prod_api()
             --log-opt max-size=10m \
             --log-opt max-file=3 \
             --env-file $env_file \
+            $snagme_mount \
             --label com.docker.compose.project=noda-infra \
             --label com.docker.compose.service=noda-api \
             --label noda.service-group=apps \
@@ -767,6 +779,7 @@ _start_prod_api()
             --log-opt max-size=10m \
             --log-opt max-file=3 \
             --env-file "$env_file" \
+            $snagme_mount \
             --label "com.docker.compose.project=noda-infra" \
             --label "com.docker.compose.service=noda-api-prod" \
             --label "noda.service-group=apps" \
