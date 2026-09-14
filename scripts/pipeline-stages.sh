@@ -2669,8 +2669,10 @@ pipeline_rollback_static_site()
     fi
 
     log_info "回滚: sites/${snap_dir}/（$prev_objs 对象）→ sites/$product/ ..."
+    # 回滚源必须用按深度计算的 $snap_dir（prod/stg 两桶同源）——
+    # 旧写法 prod 侧硬编码 ${product}-prev，ROLLBACK_DEPTH=2 时静默回错层
     if ! mc mirror --overwrite --remove --quiet \
-        "$alias_name/noda-static/sites/${product}-prev/" \
+        "$alias_name/noda-static/sites/${snap_dir}/" \
         "$alias_name/noda-static/sites/$product/"; then
         log_error "prod 桶回滚失败"
         _rollback_cleanup

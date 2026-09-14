@@ -189,8 +189,21 @@ pipeline {
                                 export PRODUCT_FILTER="${PRODUCT}"
                                 export SSH_KEY_FILE
                                 # stg 桶（noda-static-stg）= preprod 验证环境；
-                                # 发布后探活 *-preprod 公网链路，作为人工验证的前置关口
-                                pipeline_publish_product "$PRODUCT" "stg"
+                                # 发布后探活 *-preprod 公网链路，作为人工验证的前置关口。
+                                # 函数级重试 1 次（build #60/#62 实证：构建高负载下本机
+                                # seaweedfs-stg 会崩溃循环，函数内重试窗口可能全撞死墙）
+                                pub_ok=0
+                                for pub_attempt in 1 2; do
+                                    if pipeline_publish_product "$PRODUCT" "stg"; then
+                                        pub_ok=1
+                                        break
+                                    fi
+                                    if [ "$pub_attempt" = "1" ]; then
+                                        echo "⚠️ stg 发布第 1 次失败（stg S3 抖动?），30s 后整体重试..."
+                                        sleep 30
+                                    fi
+                                done
+                                [ "$pub_ok" = "1" ] || { echo "❌ stg 发布重试后仍失败"; exit 1; }
                                 pipeline_verify_static_preprod "$PRODUCT"
                             '''
                         }
