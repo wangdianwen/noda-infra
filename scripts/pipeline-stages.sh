@@ -813,10 +813,9 @@ _start_prod_jobs()
             --read-only \
             --tmpfs /tmp \
             --tmpfs /app/crawl-output:uid=1001,gid=1001,mode=0755 \
-            --tmpfs /app/crawler-logs:uid=1001,gid=1001,mode=0755 \
-            --memory 192m \
+            --memory 256m \
             --memory-reservation 64m \
-            --cpus 0.25 \
+            --cpus 0.5 \
             --log-driver json-file \
             --log-opt max-size=5m \
             --log-opt max-file=2 \
@@ -846,10 +845,9 @@ _start_prod_jobs()
             --read-only \
             --tmpfs /tmp \
             --tmpfs /app/crawl-output:uid=1001,gid=1001,mode=0755 \
-            --tmpfs /app/crawler-logs:uid=1001,gid=1001,mode=0755 \
-            --memory 192m \
+            --memory 256m \
             --memory-reservation 64m \
-            --cpus 0.25 \
+            --cpus 0.5 \
             --log-driver json-file \
             --log-opt max-size=5m \
             --log-opt max-file=2 \
