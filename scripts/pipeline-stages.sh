@@ -2396,6 +2396,24 @@ _publish_static_to_stg()
     fi
 
     local rc=0
+    # S3 活性探测（build #60 实证：seaweedfs-stg 在构建高负载下会崩溃循环，
+    # 约 40s 一个周期；且 mc mirror 连接失败仍 exit 0，不能信退出码）——
+    # 先等 S3 可列举再动手，最多 60s
+    local probe_ok="false" probe_i
+    for probe_i in 1 2 3 4 5 6; do
+        if mc ls "$alias_name/noda-static-stg" >/dev/null 2>&1; then
+            probe_ok="true"
+            break
+        fi
+        log_warn "stg S3 未就绪（第 ${probe_i}/6 次探测），10s 后重试..."
+        sleep 10
+    done
+    if [ "$probe_ok" != "true" ]; then
+        log_error "stg S3 持续不可达（60s）——preprod 桶发布中止"
+        mc alias remove "$alias_name" >/dev/null 2>&1 || true
+        return 1
+    fi
+
     # 桶自愈（2026-09-13 实证：seaweedfs-stg 崩溃重建后桶元数据丢失，
     # preprod 全站 404）——mc mb 幂等确保桶在位，任何环境桶丢失随发布自动重建
     mc mb --ignore-existing "$alias_name/noda-static-stg" >/dev/null 2>&1 || true
@@ -2406,22 +2424,25 @@ _publish_static_to_stg()
     fi
 
     log_info "mc mirror 增量同步（含删除） out/ → noda-static-stg/sites/$product/ ..."
-    # stg mirror 重试：桶臂与 Pre-prod 容器臂并行后，compose recreate 可能令
-    # seaweedfs-stg 同窗口重启（build #54 实证：mirror 撞上 "use of closed
-    # network connection"，S3 约 17s 后才重新上线）——重试扛过瞬断，否则假报发版失败
+    # stg mirror 重试（build #54/#60 实证）：桶臂与 Pre-prod 容器臂并行后，
+    # compose recreate + 构建高负载可令 seaweedfs-stg 瞬断（mc 静默失败不报错），
+    # 成功判据用「列举 > 0」而非退出码；重试窗口 3×10s 覆盖 stg 的重启周期
     local mirror_ok="false"
-    local m_attempt
+    local m_attempt objs_now
     for m_attempt in 1 2 3; do
-        if mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name/noda-static-stg/sites/$product/"; then
+        mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name/noda-static-stg/sites/$product/" || true
+        objs_now=$(mc ls --recursive "$alias_name/noda-static-stg/sites/$product/" 2>/dev/null | grep -c . || true)
+        if [ "${objs_now:-0}" -gt 0 ]; then
             mirror_ok="true"
             break
         fi
-        log_warn "stg mirror 第 ${m_attempt}/3 次失败（seaweedfs-stg 可能瞬时重启），5s 后重试..."
-        sleep 5
+        log_warn "stg mirror 第 ${m_attempt}/3 次未生效（seaweedfs-stg 可能重启中），10s 后重试..."
+        sleep 10
     done
     if [ "$mirror_ok" != "true" ]; then
         log_error "preprod 桶（noda-static-stg）同步失败（重试 3 次仍失败）"
-        rc=1
+        mc alias remove "$alias_name" >/dev/null 2>&1 || true
+        return 1
     fi
 
     # stg 对象级对账（同 prod 侧同款策略；build #35/#36 实证：stg 直连
@@ -2437,8 +2458,9 @@ _publish_static_to_stg()
             if [ "${stg_objs:-0}" -ge "${stg_src_objs:-0}" ] && [ "${stg_objs:-0}" -gt 0 ]; then
                 break
             fi
-            log_warn "stg 桶列举 ${stg_objs:-0} < 源 ${stg_src_objs:-0}——重跑 mirror 补传（第 ${stg_attempt} 次）..."
+            log_warn "stg 桶列举 ${stg_objs:-0} < 源 ${stg_src_objs:-0}——重跑 mirror 补传（第 ${stg_attempt} 次），10s 后执行..."
             mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name/noda-static-stg/sites/$product/" || true
+            sleep 10
         done
         if [ "${stg_objs:-0}" -lt "${stg_src_objs:-0}" ] || [ "${stg_objs:-0}" = "0" ]; then
             log_error "stg 桶对账失败：源 $stg_src_objs 个文件 ≠ 桶 ${stg_objs:-0} 个对象——preprod 内容可能不完整"
