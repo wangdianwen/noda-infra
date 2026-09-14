@@ -189,7 +189,12 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          # 384M 与生产 r4s seaweedfs 对齐（用户确认；生产同参同镜像、平时水位
+          # 370M/96% 而零重启，384M 是被生产长期验证的稳定值）。preprod 旧值
+          # 256M 过紧：mirror 写入风暴时峰值 268M 顶穿（cgroup memory.peak、
+          # max 限流 1897 次），进程自行退出（ExitCode=0、非 OOM kill）→ 构建
+          # 期崩溃循环（noda-apps #54/#60/#62 实证）
+          memory: 384M
 
 volumes:
   preprod-pgdata:
