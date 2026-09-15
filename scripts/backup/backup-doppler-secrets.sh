@@ -2,6 +2,8 @@
 # Doppler 密钥离线备份脚本
 # 用途：从 Doppler 下载密钥 → age 加密 → 上传到 Backblaze B2
 # 使用：DOPPLER_TOKEN='dp.st.prd.xxx' bash scripts/backup/backup-doppler-secrets.sh [--dry-run] [--project noda] [--config prd]
+# 保留：上传后对 doppler-backup/ 前缀执行 rclone delete --min-age 清理超期对象
+#       （DOPPLER_RETENTION_DAYS，默认 3 天，与 RETENTION_DAYS/FS_RETENTION_DAYS 同口径）
 
 set -euo pipefail
 
@@ -136,6 +138,17 @@ EOF
         rm -f "$local_rclone_config"
         warn "加密文件仍保留在本地: $OUTPUT_FILE"
         exit 1
+    fi
+
+    # B2 端保留策略：删除 doppler-backup/ 前缀下超期对象（2026-09-16 补齐——
+    # 此前只上传不清理，桶内堆积 112 份历史）。与 RETENTION_DAYS/FS_RETENTION_DAYS
+    # 同口径（默认 3 天，控 B2 免费额度）；清理失败不影响本次备份有效性。
+    if rclone delete "b2remote:${B2_BUCKET}/doppler-backup/" \
+        "${RCLONE_FLAGS[@]}" \
+        --min-age "${DOPPLER_RETENTION_DAYS:-3}d" 2>/dev/null; then
+        info "保留清理完成: doppler-backup/（> ${DOPPLER_RETENTION_DAYS:-3} 天对象已删除）"
+    else
+        warn "保留清理失败（不影响备份有效性）: doppler-backup/"
     fi
 
     rm -f "$local_rclone_config"
