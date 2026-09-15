@@ -719,10 +719,20 @@ server {
         include /etc/nginx/snippets/seaweedfs-nearby-static.conf;
     }
 
-    # 条目详情深链 /<loc>/item/<id> → app-shell 占位壳 + client 取数
+    # 条目详情深链 /<loc>/item/<id> → nearbyapi 服务端 head 注入（2026-09-16 P1 SEO，
+    # 与 prod nearby 块同构）：API 拉桶内壳 + 注入条目级 meta 整页返回；API 5xx 回退
+    # 旧静态壳路径（@named location 防 error_page 重进代理 location 的循环）
     location ~ ^/(en|zh|zh-TW)/item/[^/]+(/|$) {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+        error_page 502 503 504 = @nearby_item_static_shell;
+    }
+    location @nearby_item_static_shell {
         include /etc/nginx/snippets/seaweedfs-nearby-static.conf;
-        # 条件请求剥离见 snippets/strip-conditional-get.conf 头注（深链壳 304×error_page=200 → 空 200 白页）
         include /etc/nginx/snippets/strip-conditional-get.conf;
         error_page 403 404 =200 /$nearby_loc/item/app-shell.html;
     }

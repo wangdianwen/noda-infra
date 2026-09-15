@@ -80,6 +80,8 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_BUCKET: noda-static
+      # nearby 条目页 head 注入拉壳的桶（与 S3_BUCKET 同名,显式声明防漂移）
+      NEARBY_STATIC_BUCKET: noda-static
     networks:
       noda-network:
         aliases:
