@@ -609,8 +609,9 @@ pipeline_post_publish_cleanup()
 #   nearby  → @noda-apps/nearby-web (nearby/web；包内无 test 脚本，turbo 静默跳过)
 #   auth    → @noda-apps/auth-app   (auth；-app 后缀区分共享包 @noda-apps/auth=packages/auth)
 #   comment → @noda-apps/comment    (comment；包内无 lint 脚本，同上)
-#   snagme  → （空）snagme/{dashboard,scanner,engine,database} 均无 lint/test 脚本，
-#             无 Node lint/test 可跑——调用方明确跳过并 log
+#   snagme  → （空）snagme/{web,scanner,engine,database} 均无 lint/test 脚本
+#             （旧 dashboard 副本 2026-09-16 已删，看板唯一真身 = admin/web
+#             src/features/snagme/）——无 Node lint/test 可跑，调用方明确跳过并 log
 # 未映射值 / PRODUCT_FILTER 未设置 → 返回空，调用方回退全仓跑（行为同旧版，防静默漏测）
 _node_pkg_for_product()
 {
