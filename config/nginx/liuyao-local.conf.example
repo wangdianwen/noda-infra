@@ -97,9 +97,12 @@ map $request_uri $liuyao_cache_control {
 }
 
 # nearby：同 liuyao（as-needed）
+# en 必须显式认领：缺分支时 cookie=en 落 default ""，中文浏览器 Accept-Language
+# 重新接管，zh 切英文被 302 回 /zh（2026-09-15 修复，同 liuyao/snagme.map.conf 先例）
 map $cookie_noda_locale $nearby_cookie_locale {
     ~*^zh-TW$   zh-TW;
     ~*^zh$      zh;
+    ~*^en$      en;
     default     "";
 }
 map $http_accept_language $nearby_al_zhtw {
@@ -729,6 +732,8 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 30s;
+        # API 主动返回的 502(桶不可达且无陈旧壳缓存)也要进兜底——默认只拦 nginx 自产网关错误
+        proxy_intercept_errors on;
         error_page 502 503 504 = @nearby_item_static_shell;
     }
     location @nearby_item_static_shell {
