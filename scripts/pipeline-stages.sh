@@ -1965,14 +1965,6 @@ pipeline_deploy_nginx()
         # 从 Doppler 恢复 SSL 证书（确保 git reset --hard 后证书仍在）
         restore_ssl_certs || return 1
 
-        # 先停止并移除旧容器，再创建新容器
-        # 三容器拆分：容器名为 noda-static-prod（compose 服务键仍为 nginx）；legacy 名兜底清理
-        log_info "停止旧反代容器（r4s）..."
-        remote_exec "docker stop $NGINX_CONTAINER 2>/dev/null || true"
-        remote_exec "docker rm $NGINX_CONTAINER 2>/dev/null || true"
-        remote_exec "docker stop $NGINX_CONTAINER_LEGACY 2>/dev/null || true"
-        remote_exec "docker rm $NGINX_CONTAINER_LEGACY 2>/dev/null || true"
-
         # compose 模板镜像引用已变量化（apps 只发 commit tag，r4s 无 latest）——
         # 取 r4s 上最新 noda-static 的 tag 经 env 传给 compose；无静态镜像时回退
         # 模板 latest fallback（报错信息里可见，比静默失败清晰）
@@ -1985,6 +1977,28 @@ pipeline_deploy_nginx()
         else
             log_warn "r4s 上无 noda-static 镜像，compose 回退 latest fallback"
         fi
+
+        # 部署前预检（2026-09-16 GeoIP2 引入双仓联动后的防呆）：镜像源码在
+        # noda-apps 仓、nginx 配置在本仓——两仓发布节奏一旦 skew（conf 引用
+        # 新指令而镜像没带模块，反之亦然），直接 recreate 会让 nginx 起不来。
+        # 用「新镜像 × 新配置」先跑 nginx -t，失败即中止——此刻旧容器仍在跑，
+        # 中止零影响（镜像/配置已就位，修复后重跑即可）
+        if [ -n "$static_tag" ]; then
+            log_info "部署前预检: noda-static:${static_tag} × 新配置 nginx -t ..."
+            if ! remote_exec "docker run --rm -v /opt/noda/noda-infra/config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro -v /opt/noda/noda-infra/config/nginx/conf.d:/etc/nginx/conf.d:ro -v /opt/noda/noda-infra/config/nginx/snippets:/etc/nginx/snippets:ro -v /opt/noda/noda-infra/config/nginx/ssl:/etc/nginx/ssl:ro -v /opt/noda/noda-infra/config/nginx/errors:/etc/nginx/errors:ro noda-static:${static_tag} nginx -t"; then
+                log_error "预检失败：新镜像与新配置组合 nginx -t 不通过——中止部署（旧容器未动，站点无影响）"
+                return 1
+            fi
+            log_success "部署前预检通过"
+        fi
+
+        # 先停止并移除旧容器，再创建新容器
+        # 三容器拆分：容器名为 noda-static-prod（compose 服务键仍为 nginx）；legacy 名兜底清理
+        log_info "停止旧反代容器（r4s）..."
+        remote_exec "docker stop $NGINX_CONTAINER 2>/dev/null || true"
+        remote_exec "docker rm $NGINX_CONTAINER 2>/dev/null || true"
+        remote_exec "docker stop $NGINX_CONTAINER_LEGACY 2>/dev/null || true"
+        remote_exec "docker rm $NGINX_CONTAINER_LEGACY 2>/dev/null || true"
 
         remote_compose "up -d --no-deps nginx" \
             "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml" \
@@ -2017,6 +2031,24 @@ pipeline_deploy_nginx()
 
         # 从 Doppler 恢复 SSL 证书（确保 git reset --hard 后证书仍在）
         restore_ssl_certs || return 1
+
+        # 部署前预检（同 r4s 分支：防两仓 conf/镜像 skew 导致 recreate 后起不来）
+        local static_tag
+        static_tag=$(docker images noda-static --format '{{.Tag}}' | grep -v '<none>' | head -1)
+        if [ -n "$static_tag" ]; then
+            log_info "部署前预检: noda-static:${static_tag} × 新配置 nginx -t ..."
+            if ! docker run --rm \
+                -v "$(pwd)/config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
+                -v "$(pwd)/config/nginx/conf.d:/etc/nginx/conf.d:ro" \
+                -v "$(pwd)/config/nginx/snippets:/etc/nginx/snippets:ro" \
+                -v "$(pwd)/config/nginx/ssl:/etc/nginx/ssl:ro" \
+                -v "$(pwd)/config/nginx/errors:/etc/nginx/errors:ro" \
+                "noda-static:${static_tag}" nginx -t; then
+                log_error "预检失败：新镜像与新配置组合 nginx -t 不通过——中止部署（旧容器未动）"
+                return 1
+            fi
+            log_success "部署前预检通过"
+        fi
 
         # 先停止并移除旧容器，再创建新容器
         # 不使用 --force-recreate：该选项在新容器创建时网络连接尚未就绪，
@@ -3043,7 +3075,11 @@ pipeline_infra_verify()
         case "$service" in
             nginx)
                 remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --spider http://127.0.0.1:81/ 2>/dev/null"
-                log_success "Nginx E2E 验证通过（r4s）"
+                # GeoIP 哨兵（2026-09-16）：nearby /geo.json 依赖镜像内置 geoip2
+                # 模块 + DBIP 数据 + conf 三件套，任一在发布中丢失该端点即 404——
+                # 上面的 spider 探的是 class 块测不出，此处强制校验（失败 = 本次发布失败）
+                remote_docker_exec "$NGINX_CONTAINER" "wget -qO /dev/null --header 'Host: nearby.noda.co.nz' http://127.0.0.1:81/geo.json"
+                log_success "Nginx E2E 验证通过（r4s，含 GeoIP /geo.json 哨兵）"
                 ;;
             noda-ops)
                 local running
@@ -3072,7 +3108,9 @@ pipeline_infra_verify()
         case "$service" in
             nginx)
                 docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://127.0.0.1:81/ 2>/dev/null
-                log_success "Nginx E2E 验证通过"
+                # GeoIP 哨兵（同 r4s 分支）：/geo.json 三件套（模块/数据/conf）回归检查
+                docker exec "$NGINX_CONTAINER" wget -qO /dev/null --header 'Host: nearby.noda.co.nz' http://127.0.0.1:81/geo.json
+                log_success "Nginx E2E 验证通过（含 GeoIP /geo.json 哨兵）"
                 ;;
             noda-ops)
                 local running
