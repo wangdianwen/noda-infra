@@ -29,8 +29,10 @@ source "$PROJECT_ROOT/scripts/lib/cleanup.sh"
 # ============================================
 HEALTH_CHECK_MAX_RETRIES="${HEALTH_CHECK_MAX_RETRIES:-30}"
 HEALTH_CHECK_INTERVAL="${HEALTH_CHECK_INTERVAL:-4}"
-E2E_MAX_RETRIES="${E2E_MAX_RETRIES:-5}"
-E2E_INTERVAL="${E2E_INTERVAL:-2}"
+# 探针窗 10×3s=30s：#76 www 实证——对账补传 mirror 刚灌完 ~300MB 写，seaweedfs
+# 短暂 502，旧窗 5×2s=10s 全落在恢复期内 → 部署成功却 FAILED（假阴性）
+E2E_MAX_RETRIES="${E2E_MAX_RETRIES:-10}"
+E2E_INTERVAL="${E2E_INTERVAL:-3}"
 BACKUP_HOST_DIR="${BACKUP_HOST_DIR:-$PROJECT_ROOT/docker/volumes/backup}"
 # 26h 匹配每日 03:00 NZST 备份节奏；12h 会让下午部署必然误报"备份过期"
 #（2026-09-13 #42 preflight 实证——备份实际每日产出，阈值误报）
@@ -2499,8 +2501,8 @@ _publish_static_to_stg()
 pipeline_verify_static_preprod()
 {
     local product="$1"
-    local retries="${E2E_MAX_RETRIES:-5}"
-    local interval="${E2E_INTERVAL:-2}"
+    local retries="${E2E_MAX_RETRIES:-10}"
+    local interval="${E2E_INTERVAL:-3}"
     local checks=""
 
     case "$product" in
@@ -3107,8 +3109,8 @@ pipeline_infra_verify()
 pipeline_verify_product()
 {
     local product="$1"
-    local retries="${E2E_MAX_RETRIES:-5}"
-    local interval="${E2E_INTERVAL:-2}"
+    local retries="${E2E_MAX_RETRIES:-10}"
+    local interval="${E2E_INTERVAL:-3}"
     local checks=""
 
     case "$product" in

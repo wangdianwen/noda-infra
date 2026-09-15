@@ -256,10 +256,14 @@ pipeline {
                                       auth   : 'https://auth-preprod.noda.co.nz/',
                                       comment: 'https://comments-preprod.noda.co.nz/',
                                       snagme : 'https://snagme-preprod.noda.co.nz/'][params.PRODUCT]
+                    // API 探针路径按产品区分：nearby 域名未反代 /api/health（nginx 只通
+                    // /api/nearby|user/*），审批提示与 E2E 探针同口径用公开 feed
+                    def apiProbe = [nearby: '/api/nearby/feed?city=auckland&limit=1']
+                        .getOrDefault(params.PRODUCT, '/api/health')
                     def userInput = input(
                         message: """Pre-prod 部署完成（产品: ${params.PRODUCT}，本发布内容: ${preprodUrl}），请验证：
   - 静态站经 preprod 桶伺服（stg 桶已发布并探活通过）
-  - API 容器链路: <产品域>-preprod.noda.co.nz/api/health
+  - API 容器链路: <产品域>-preprod.noda.co.nz${apiProbe}
   镜像/内容: ${env.GIT_SHA}
 
   请选择下一步操作：""",
