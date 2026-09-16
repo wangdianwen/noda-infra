@@ -247,6 +247,21 @@ server {
 
     include /etc/nginx/snippets/upstream-seaweedfs.conf;
     resolver 127.0.0.11 valid=10s ipv6=off;
+    include /etc/nginx/snippets/upstream-graphql.conf;
+
+    # GraphQL BFF（同源反代，与 class-preprod 块同构）
+    location = /graphql {
+        client_max_body_size 1m;
+        proxy_pass http://$bff_upstream_preprod;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 240s;
+        proxy_send_timeout 240s;
+    }
 
     absolute_redirect off;
     client_max_body_size 10M;
@@ -318,6 +333,21 @@ server {
 
     include /etc/nginx/snippets/upstream-seaweedfs.conf;
     resolver 127.0.0.11 valid=10s ipv6=off;
+    include /etc/nginx/snippets/upstream-graphql.conf;
+
+    # GraphQL BFF（同源反代，与 class-preprod 块同构）
+    location = /graphql {
+        client_max_body_size 1m;
+        proxy_pass http://$bff_upstream_preprod;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
 
     # 302 Location 不绝对化（prod :81 教训同款防御）
     absolute_redirect off;
@@ -405,6 +435,21 @@ server {
 
     include /etc/nginx/snippets/upstream-seaweedfs.conf;
     resolver 127.0.0.11 valid=10s ipv6=off;
+    include /etc/nginx/snippets/upstream-graphql.conf;
+
+    # GraphQL BFF（同源反代，与 class-preprod 块同构）
+    location = /graphql {
+        client_max_body_size 1m;
+        proxy_pass http://$bff_upstream_preprod;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
 
     absolute_redirect off;
     client_max_body_size 100M;
@@ -668,6 +713,21 @@ server {
 
     include /etc/nginx/snippets/upstream-seaweedfs.conf;
     resolver 127.0.0.11 valid=10s ipv6=off;
+    include /etc/nginx/snippets/upstream-graphql.conf;
+
+    # GraphQL BFF（同源反代，与 class-preprod 块同构）
+    location = /graphql {
+        client_max_body_size 1m;
+        proxy_pass http://$bff_upstream_preprod;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
 
     include /etc/nginx/snippets/security-headers.conf;
 
@@ -750,6 +810,21 @@ server {
 
     include /etc/nginx/snippets/upstream-seaweedfs.conf;
     resolver 127.0.0.11 valid=10s ipv6=off;
+    include /etc/nginx/snippets/upstream-graphql.conf;
+
+    # GraphQL BFF（同源反代，与 class-preprod 块同构）
+    location = /graphql {
+        client_max_body_size 1m;
+        proxy_pass http://$bff_upstream_preprod;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
 
     absolute_redirect off;
     client_max_body_size 5M;
@@ -901,6 +976,21 @@ server {
 
     include /etc/nginx/snippets/upstream-seaweedfs.conf;
     resolver 127.0.0.11 valid=10s ipv6=off;
+    include /etc/nginx/snippets/upstream-graphql.conf;
+
+    # GraphQL BFF（同源反代，与 class-preprod 块同构）
+    location = /graphql {
+        client_max_body_size 1m;
+        proxy_pass http://$bff_upstream_preprod;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
 
     absolute_redirect off;
     client_max_body_size 10M;
