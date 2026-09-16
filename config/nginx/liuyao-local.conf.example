@@ -481,6 +481,39 @@ server {
     }
 }
 
+# ── HTTPS: api-preprod — GraphQL BFF preprod（与 prod api.noda.co.nz 块同构；
+#    spec: noda-apps docs/superpowers/specs/2026-09-16-graphql-bff-grpc-design.md）──
+# 只暴露 /graphql + /healthz。CORS 由 BFF Go 侧 cors() 统一处理，nginx 纯代理不叠加头。
+server {
+    listen 443 ssl;
+    server_name api-preprod.noda.co.nz;
+
+    ssl_certificate /etc/nginx/ssl/noda.dev.crt;
+    ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
+
+    include /etc/nginx/snippets/upstream-graphql.conf;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    location = /healthz {
+        proxy_pass http://$bff_upstream_preprod;
+        include /etc/nginx/snippets/proxy-common.conf;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+    }
+
+    location = /graphql {
+        client_max_body_size 1m;          # GraphQL 查询体上限（防滥用第一道）
+        proxy_pass http://$bff_upstream_preprod;
+        include /etc/nginx/snippets/proxy-common.conf;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
+    }
+
+    location / { return 404; }
+}
+
 # ── HTTPS: Class（S3 静态桶版，与 prod class 块同构）──
 # localePrefix:'always'：无前缀一律 302 到带前缀等价路径
 server {

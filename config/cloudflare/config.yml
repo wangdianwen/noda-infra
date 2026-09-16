@@ -34,6 +34,11 @@ ingress:
     service: http://noda-nginx:81
   - hostname: snagme.noda.co.nz
     service: http://noda-nginx:81
+  # GraphQL BFF 统一接口（spec 2026-09-16 graphql-bff-grpc-design）
+  # 注意：线上 tunnel 为 TUNNEL_TOKEN 托管（ingress 实际生效于 Cloudflare 控制台，
+  # 已配 api.noda.co.nz → noda-nginx:81）；本文件为仓库同构留档。
+  - hostname: api.noda.co.nz
+    service: http://noda-nginx:81
 
   # 默认规则 - 必须是最后一条
   - service: http_status:404
