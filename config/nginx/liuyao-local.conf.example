@@ -496,7 +496,12 @@ server {
 
     location = /healthz {
         proxy_pass http://$bff_upstream_preprod;
-        include /etc/nginx/snippets/proxy-common.conf;
+        # 本文件无 $forwarded_proto map（那在 prod default.conf 头部），与同文件
+        # 其他块一致用内联 proxy_set_header + $scheme，不 include proxy-common.conf
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_buffering off;
         proxy_set_header Connection "";
     }
@@ -504,7 +509,10 @@ server {
     location = /graphql {
         client_max_body_size 1m;          # GraphQL 查询体上限（防滥用第一道）
         proxy_pass http://$bff_upstream_preprod;
-        include /etc/nginx/snippets/proxy-common.conf;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_buffering off;
         proxy_set_header Connection "";
         proxy_read_timeout 30s;
