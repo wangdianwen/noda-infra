@@ -305,6 +305,13 @@ pipeline_preflight()
     fi
     log_info "noda-apps 目录存在: $apps_dir"
 
+    # env 模板 ↔ 代码读取对账（2026-09-16：ADMIN_ALLOWED_EMAILS / COMMENT_SERVICE_KEY
+    # 模板漏配连坏生产功能，构建期对账把这类问题前移。ENV_COVERAGE_STRICT=0 可降级警告）
+    if ! "$PROJECT_ROOT/scripts/check-env-coverage.sh" "$apps_dir"; then
+        log_error "env 覆盖对账失败——修复：补 env-noda-api 模板，或有理有据加入 env-allowlist.txt"
+        return 1
+    fi
+
     # noda-apps 专用检查：Node.js、pnpm、package.json、lint、test、备份
     if ! command -v node >/dev/null 2>&1; then
         log_error "Node.js 未安装"
@@ -1358,7 +1365,7 @@ prepare_prod_api_env_file()
     _prepare_env_file \
         "$PROJECT_ROOT/docker/env-noda-api.env" \
         "$tmp_file" \
-        '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${ANTHROPIC_MAX_TOKENS} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY} ${STRIPE_SECRET_KEY} ${STRIPE_WEBHOOK_SECRET} ${STRIPE_PRICE_DEEP_READ} ${LIUYAO_WEB_BASE_URL} ${EVENTFINDA_API_HOST} ${EVENTFINDA_API_USERNAME} ${EVENTFINDA_API_PASSWORD} ${SNAGME_API_PORT} ${GOOGLE_OAUTH_CLIENT_ID} ${GOOGLE_OAUTH_CLIENT_SECRET} ${AUTH_STATE_SECRET} ${COMMENT_SERVICE_KEY}' \
+        '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${ANTHROPIC_MAX_TOKENS} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY} ${STRIPE_SECRET_KEY} ${STRIPE_WEBHOOK_SECRET} ${STRIPE_PRICE_DEEP_READ} ${LIUYAO_WEB_BASE_URL} ${EVENTFINDA_API_HOST} ${EVENTFINDA_API_USERNAME} ${EVENTFINDA_API_PASSWORD} ${SNAGME_API_PORT} ${GOOGLE_OAUTH_CLIENT_ID} ${GOOGLE_OAUTH_CLIENT_SECRET} ${AUTH_STATE_SECRET} ${COMMENT_SERVICE_KEY} ${S3_ENDPOINT} ${S3_ACCESS_KEY} ${S3_SECRET_KEY}' \
         || return 1
     echo "$tmp_file"
 }
