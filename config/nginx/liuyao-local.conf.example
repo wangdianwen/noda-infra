@@ -541,7 +541,7 @@ server {
     ssl_certificate /etc/nginx/ssl/noda.dev.crt;
     ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
 
-    include /etc/nginx/snippets/upstream-seaweedfs.conf;
+    include /etc/nginx/snippets/upstream-graphql.conf;
     resolver 127.0.0.11 valid=10s ipv6=off;
 
     absolute_redirect off;
@@ -561,6 +561,20 @@ server {
     location /api/admin/ {
         return 403 '{"error":"forbidden"}';
         add_header Content-Type application/json always;
+    }
+
+    # GraphQL BFF（同源反代，与 prod class 块同构）
+    location = /graphql {
+        client_max_body_size 1m;          # GraphQL 查询体上限（防滥用第一道）
+        proxy_pass http://$bff_upstream_preprod;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_set_header Connection "";
+        proxy_read_timeout 30s;
+        proxy_send_timeout 30s;
     }
 
     # sitemap 由 Go API 生成
