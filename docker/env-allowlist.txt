@@ -107,3 +107,6 @@ NEXT_PUBLIC_NEARBY_SITE_URL
 NEXT_PUBLIC_SITE_URL
 S3_REGION
 #   ↑ authapi 头像桶（minio-go 空值默认 us-east-1，SeaweedFS 可接受）
+# ── C) GraphQL BFF/gRPC：GRPC_CLIENT_TARGETS 有默认空值（进程内直连 loopback），
+#      仅未来拆容器时才需要配置 → 豁免 env 模板
+GRPC_CLIENT_TARGETS
