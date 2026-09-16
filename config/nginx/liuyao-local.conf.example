@@ -296,12 +296,12 @@ server {
 
     # RSC 载荷 .txt：桶内缺（未预渲染 token 段）必须净 404（先于 s/[token] 深链壳）
     location ~ \.txt$ {
-        include /etc/nginx/snippets/seaweedfs-liuyao-static.conf;
+        include /etc/nginx/snippets/seaweedfs-liuyao-static-stg.conf;
     }
 
     # 分享落地页深链 /<loc>/s/<token> → app-shell 占位壳 + client 取数
     location ~ ^/(en|zh|zh-TW)/s/[^/]+(/|$) {
-        include /etc/nginx/snippets/seaweedfs-liuyao-static.conf;
+        include /etc/nginx/snippets/seaweedfs-liuyao-static-stg.conf;
         # 条件请求剥离见 snippets/strip-conditional-get.conf 头注（深链壳 304×error_page=200 → 空 200 白页）
         include /etc/nginx/snippets/strip-conditional-get.conf;
         error_page 403 404 =200 /$liuyao_loc/s/app-shell.html;
@@ -316,7 +316,7 @@ server {
         if ($loc = zh-TW) { return 302 /zh-TW$request_uri; }
         if ($loc = zh) { return 302 /zh$request_uri; }
         if ($loc = en) { rewrite ^(.*)$ /en$1 last; }
-        include /etc/nginx/snippets/seaweedfs-liuyao-static.conf;
+        include /etc/nginx/snippets/seaweedfs-liuyao-static-stg.conf;
         error_page 403 404 /404.html;
     }
 }
@@ -373,19 +373,19 @@ server {
 
     # 静态资产
     location /_next/ {
-        include /etc/nginx/snippets/seaweedfs-auth-static.conf;
+        include /etc/nginx/snippets/seaweedfs-auth-static-stg.conf;
     }
     location /images/ {
-        include /etc/nginx/snippets/seaweedfs-auth-static.conf;
+        include /etc/nginx/snippets/seaweedfs-auth-static-stg.conf;
     }
     location = /favicon.ico {
-        include /etc/nginx/snippets/seaweedfs-auth-static.conf;
+        include /etc/nginx/snippets/seaweedfs-auth-static-stg.conf;
     }
     location = /icon.svg {
-        include /etc/nginx/snippets/seaweedfs-auth-static.conf;
+        include /etc/nginx/snippets/seaweedfs-auth-static-stg.conf;
     }
     location = /apple-icon.png {
-        include /etc/nginx/snippets/seaweedfs-auth-static.conf;
+        include /etc/nginx/snippets/seaweedfs-auth-static-stg.conf;
     }
 
     # 头像（Go authapi 写桶 avatars/ 前缀，nginx 直读）
@@ -408,7 +408,7 @@ server {
             return 302 $1;
         }
         add_header Cache-Control $auth_cache_control always;
-        include /etc/nginx/snippets/seaweedfs-auth-static.conf;
+        include /etc/nginx/snippets/seaweedfs-auth-static-stg.conf;
         error_page 403 404 /404.html;
     }
 
@@ -647,7 +647,7 @@ server {
 
     # .txt（RSC 载荷）净 404（先于 course/category 深链壳，regex 顺序敏感）
     location ~ \.txt$ {
-        include /etc/nginx/snippets/seaweedfs-class-static.conf;
+        include /etc/nginx/snippets/seaweedfs-class-static-stg.conf;
     }
 
     # 受保护路径：课程编辑（cookie 门槛 → auth-preprod 登录）
@@ -655,7 +655,7 @@ server {
         if ($cookie_noda_session = "") {
             return 302 "https://auth-preprod.noda.co.nz/$1/login?from=https://class-preprod.noda.co.nz$request_uri";
         }
-        include /etc/nginx/snippets/seaweedfs-class-static.conf;
+        include /etc/nginx/snippets/seaweedfs-class-static-stg.conf;
         # 条件请求剥离见 snippets/strip-conditional-get.conf 头注（深链壳 304×error_page=200 → 空 200 白页）
         include /etc/nginx/snippets/strip-conditional-get.conf;
         error_page 403 404 =200 /$class_loc/course/app-shell/edit.html;
@@ -666,13 +666,13 @@ server {
         if ($cookie_noda_session = "") {
             return 302 "https://auth-preprod.noda.co.nz/$1/login?from=https://class-preprod.noda.co.nz$request_uri";
         }
-        include /etc/nginx/snippets/seaweedfs-class-static.conf;
+        include /etc/nginx/snippets/seaweedfs-class-static-stg.conf;
         error_page 403 404 /404.html;
     }
 
     # 课程详情（动态段 [id]）→ app-shell 壳页
     location ~ ^/(en|zh|zh-TW)/course/ {
-        include /etc/nginx/snippets/seaweedfs-class-static.conf;
+        include /etc/nginx/snippets/seaweedfs-class-static-stg.conf;
         # 条件请求剥离见 snippets/strip-conditional-get.conf 头注（深链壳 304×error_page=200 → 空 200 白页）
         include /etc/nginx/snippets/strip-conditional-get.conf;
         error_page 403 404 =200 /$class_loc/course/app-shell.html;
@@ -680,7 +680,7 @@ server {
 
     # 分类页（动态段 [...slug]）→ app-shell 壳页
     location ~ ^/(en|zh|zh-TW)/category/ {
-        include /etc/nginx/snippets/seaweedfs-class-static.conf;
+        include /etc/nginx/snippets/seaweedfs-class-static-stg.conf;
         # 条件请求剥离见 snippets/strip-conditional-get.conf 头注（深链壳 304×error_page=200 → 空 200 白页）
         include /etc/nginx/snippets/strip-conditional-get.conf;
         error_page 403 404 =200 /$class_loc/category/app-shell.html;
@@ -691,7 +691,7 @@ server {
         if ($class_needs_locale_redirect) {
             return 302 /$class_locale$request_uri;
         }
-        include /etc/nginx/snippets/seaweedfs-class-static.conf;
+        include /etc/nginx/snippets/seaweedfs-class-static-stg.conf;
         error_page 403 404 /404.html;
     }
 
@@ -860,7 +860,7 @@ server {
 
     # RSC 载荷 .txt 净 404（先于 item 深链壳，regex 顺序敏感）
     location ~ \.txt$ {
-        include /etc/nginx/snippets/seaweedfs-nearby-static.conf;
+        include /etc/nginx/snippets/seaweedfs-nearby-static-stg.conf;
     }
 
     # 条目详情深链 /<loc>/item/<id> → nearbyapi 服务端 head 注入（2026-09-16 P1 SEO，
@@ -878,7 +878,7 @@ server {
         error_page 502 503 504 = @nearby_item_static_shell;
     }
     location @nearby_item_static_shell {
-        include /etc/nginx/snippets/seaweedfs-nearby-static.conf;
+        include /etc/nginx/snippets/seaweedfs-nearby-static-stg.conf;
         include /etc/nginx/snippets/strip-conditional-get.conf;
         error_page 403 404 =200 /$nearby_loc/item/app-shell.html;
     }
@@ -892,7 +892,7 @@ server {
         if ($loc = zh-TW) { return 302 /zh-TW$request_uri; }
         if ($loc = zh) { return 302 /zh$request_uri; }
         if ($loc = en) { rewrite ^(.*)$ /en$1 last; }
-        include /etc/nginx/snippets/seaweedfs-nearby-static.conf;
+        include /etc/nginx/snippets/seaweedfs-nearby-static-stg.conf;
         error_page 403 404 /404.html;
     }
 
@@ -929,15 +929,15 @@ server {
 
     # RSC .txt：桶内缺对象必须净 404（Next 软导航兜底）
     location ~ \.txt$ {
-        include /etc/nginx/snippets/seaweedfs-comment-static.conf;
+        include /etc/nginx/snippets/seaweedfs-comment-static-stg.conf;
     }
 
     location /_next/ {
-        include /etc/nginx/snippets/seaweedfs-comment-static.conf;
+        include /etc/nginx/snippets/seaweedfs-comment-static-stg.conf;
     }
 
     location / {
-        include /etc/nginx/snippets/seaweedfs-comment-static.conf;
+        include /etc/nginx/snippets/seaweedfs-comment-static-stg.conf;
         error_page 403 404 /404.html;
     }
 
