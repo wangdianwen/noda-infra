@@ -3180,8 +3180,7 @@ https://liuyao.noda.co.nz/api/health|liuyao api 链"
             ;;
         nearby)
             checks="https://nearby.noda.co.nz/|nearby 静态壳
-https://nearby.noda.co.nz/sitemap.xml|nearby sitemap（反代 Go）
-https://nearby.noda.co.nz/en/plan|nearby plan 页（P3 静态产物）"
+https://nearby.noda.co.nz/sitemap.xml|nearby sitemap（反代 Go）"
             ;;
         auth)
             checks="https://auth.noda.co.nz/login|auth 登录页
