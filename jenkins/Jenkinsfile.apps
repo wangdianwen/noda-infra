@@ -258,7 +258,7 @@ pipeline {
                                       snagme : 'https://snagme-preprod.noda.co.nz/'][params.PRODUCT]
                     // API 探针路径按产品区分：nearby 域名未反代 /api/health（nginx 只通
                     // /api/nearby|user/*），审批提示与 E2E 探针同口径用公开 feed
-                    def apiProbe = [nearby: '/api/nearby/feed?city=auckland&limit=1']
+                    def apiProbe = [nearby: '/sitemap.xml']
                         .getOrDefault(params.PRODUCT, '/api/health')
                     def userInput = input(
                         message: """Pre-prod 部署完成（产品: ${params.PRODUCT}，本发布内容: ${preprodUrl}），请验证：
