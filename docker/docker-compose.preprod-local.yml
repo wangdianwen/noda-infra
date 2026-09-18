@@ -116,6 +116,10 @@ services:
       NEARBY_STATIC_BUCKET: "noda-static-stg"
       # class 课程/分类深链页 head 注入拉壳的桶（同上）
       CLASS_STATIC_BUCKET: "noda-static-stg"
+      # 站点绝对地址（Go 侧 sitemap/深链注入运行时读取；缺省回退 prod 域名，
+      # preprod 须显式指向 -preprod 域，否则 preprod sitemap/注入输出 prod URL）
+      NEXT_PUBLIC_SITE_URL: "https://class-preprod.noda.co.nz"
+      NEXT_PUBLIC_NEARBY_SITE_URL: "https://nearby-preprod.noda.co.nz"
     tmpfs:
       - /tmp
       - /app/crawl-output:uid=1001,gid=1001,mode=0755
