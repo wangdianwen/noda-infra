@@ -114,6 +114,8 @@ services:
       S3_BUCKET: "noda-static"
       # nearby 条目页 head 注入拉壳的桶（stg 桶与 S3_BUCKET 的 prod 名不同,须显式）
       NEARBY_STATIC_BUCKET: "noda-static-stg"
+      # class 课程/分类深链页 head 注入拉壳的桶（同上）
+      CLASS_STATIC_BUCKET: "noda-static-stg"
     tmpfs:
       - /tmp
       - /app/crawl-output:uid=1001,gid=1001,mode=0755
