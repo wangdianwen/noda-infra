@@ -3191,11 +3191,12 @@ https://auth.noda.co.nz/api/health|auth api 链"
 https://comments.noda.co.nz/api/health|comment api 链"
             ;;
         snagme)
-            # 公网探针（域名已生效）：产品站首页 + 公开 API 端点。
-            # 2026-09-14 运营端点（status/deals/tail/...）收 requireAuth 后，
-            # E2E 匿名探针换公开 /showcase（200 且脱敏字段子集）
+            # 公网探针（域名已生效）：产品站首页 + 新手问卷页（静态桶内容面）。
+            # 2026-09-17 P4 退役后 REST /api/* 刻意 410（nginx return 410 gone，
+            # 仅留 /api/snagme/img），GET 型探针已无可用 REST 路由——API 链路
+            # 改由下方 snagme 专属 POST /graphql 冒烟查询覆盖。
             checks="https://snagme.noda.co.nz/|snagme 产品站
-https://snagme.noda.co.nz/api/snagme/showcase|snagme api 链"
+https://snagme.noda.co.nz/quiz|snagme 问卷页（静态桶）"
             ;;
         *)
             log_error "未知产品: ${product}（可选 class/www/admin/liuyao/nearby/auth/comment/snagme）"
@@ -3226,6 +3227,29 @@ https://snagme.noda.co.nz/api/snagme/showcase|snagme api 链"
     done <<EOF
 $checks
 EOF
+
+    # snagme API 链专用探针：P4 退役后公开域无 GET 型 REST 路由（全量 410），
+    # 改用 POST /graphql 冒烟查询（snagmeShowcase，覆盖 BFF→gRPC→snagmeapi 链）。
+    if [ "$product" = "snagme" ]; then
+        local gq_code="000"
+        for i in $(seq 1 "$retries"); do
+            gq_code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 \
+                -H 'content-type: application/json' \
+                -d '{"query":"{ snagmeShowcase { listingId } }"}' \
+                "https://snagme.noda.co.nz/graphql" 2>/dev/null || echo "000")
+            if [ "$gq_code" = "200" ]; then
+                break
+            fi
+            log_info "等待 snagme api 链（POST /graphql）→ 200 ... (${i}/${retries}, HTTP ${gq_code})"
+            sleep "$interval"
+        done
+        if [ "$gq_code" = "200" ]; then
+            log_success "snagme api 链（POST /graphql snagmeShowcase）→ 200"
+        else
+            log_error "E2E 验证失败: snagme api 链 (POST /graphql) 最后状态 HTTP ${gq_code}"
+            all_ok="false"
+        fi
+    fi
 
     if [ "$all_ok" != "true" ]; then
         return 1
