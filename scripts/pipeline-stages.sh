@@ -3161,8 +3161,12 @@ pipeline_verify_product()
 
     case "$product" in
         class)
+            # 2026-09-17 P4 退役后 prod nginx 对 class /api/* 刻意 410（REST 面下线，
+            # 前端全量走 /graphql BFF）——/api/health 探针已失效；API 链路改探
+            # /sitemap.xml（nginx 反代 classapi :3001 动态生成，覆盖 API+DB 链，
+            # 同 nearby 口径）
             checks="https://class.noda.co.nz/en|class 静态壳
-https://class.noda.co.nz/api/health|class api 链"
+https://class.noda.co.nz/sitemap.xml|class sitemap（反代 Go API）"
             ;;
         www)
             # www.noda.co.nz 301 → noda.co.nz（规范域）；直接探规范域
