@@ -3169,30 +3169,31 @@ pipeline_verify_product()
 https://class.noda.co.nz/sitemap.xml|class sitemap（反代 Go API）"
             ;;
         www)
-            # www.noda.co.nz 301 → noda.co.nz（规范域）；直接探规范域
+            # www.noda.co.nz 301 → noda.co.nz（规范域）；直接探规范域。
+            # P4 退役后 /api/* 410，API 链改下方 POST /graphql 冒烟
             checks="https://noda.co.nz/|www 首页
-https://noda.co.nz/zh/|www 中文页
-https://noda.co.nz/api/courses|www api 链"
+https://noda.co.nz/zh/|www 中文页"
             ;;
         admin)
-            checks="https://admin.noda.co.nz/login|admin 登录页
-https://admin.noda.co.nz/api/admin/health|admin api 链"
+            # 2026-09-19 P4 探针跟进：/api/admin/health 已 410，API 链改 POST /graphql
+            checks="https://admin.noda.co.nz/login|admin 登录页"
             ;;
         liuyao)
-            checks="https://liuyao.noda.co.nz/divine|liuyao 静态壳
-https://liuyao.noda.co.nz/api/health|liuyao api 链"
+            # 2026-09-19 P4 探针跟进：/api/health 已 410，API 链改 POST /graphql
+            checks="https://liuyao.noda.co.nz/divine|liuyao 静态壳"
             ;;
         nearby)
             checks="https://nearby.noda.co.nz/|nearby 静态壳
 https://nearby.noda.co.nz/sitemap.xml|nearby sitemap（反代 Go）"
             ;;
         auth)
-            checks="https://auth.noda.co.nz/login|auth 登录页
-https://auth.noda.co.nz/api/health|auth api 链"
+            # 2026-09-19 P4 探针跟进：/api/health 已 410，API 链改 POST /graphql
+            checks="https://auth.noda.co.nz/login|auth 登录页"
             ;;
         comment)
-            checks="https://comments.noda.co.nz/admin|comment 占位页
-https://comments.noda.co.nz/api/health|comment api 链"
+            # comment 站无同源 /graphql（service-key 管理端架构），REST 探针随 P4
+            # 退役移除；保留管理端页面探针
+            checks="https://comments.noda.co.nz/admin|comment 占位页"
             ;;
         snagme)
             # 公网探针（域名已生效）：产品站首页 + 新手问卷页（静态桶内容面）。
@@ -3232,25 +3233,34 @@ https://snagme.noda.co.nz/quiz|snagme 问卷页（静态桶）"
 $checks
 EOF
 
-    # snagme API 链专用探针：P4 退役后公开域无 GET 型 REST 路由（全量 410），
-    # 改用 POST /graphql 冒烟查询（snagmeShowcase，覆盖 BFF→gRPC→snagmeapi 链）。
-    if [ "$product" = "snagme" ]; then
+    # API 链专用探针：P4 退役后公开域无 GET 型 REST 路由（全量 410），改用
+    # POST /graphql 冒烟查询（各产品一个廉价公开查询，覆盖 nginx→BFF→gRPC→
+    # app 链）。comment 站无同源 /graphql（service-key 管理端架构），不参与。
+    local gq_query=""
+    local gq_host="https://${product}.noda.co.nz/graphql"
+    case "$product" in
+        snagme) gq_query='{ snagmeShowcase { listingId } }' ;;
+        admin)  gq_query='{ me { id } }' ;;
+        www)    gq_query='{ featuredCourses(first: 1) { id } }'; gq_host="https://noda.co.nz/graphql" ;;
+        liuyao|auth) gq_query='{ me { id } }' ;;
+    esac
+    if [ -n "$gq_query" ]; then
         local gq_code="000"
         for i in $(seq 1 "$retries"); do
             gq_code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 \
                 -H 'content-type: application/json' \
-                -d '{"query":"{ snagmeShowcase { listingId } }"}' \
-                "https://snagme.noda.co.nz/graphql" 2>/dev/null || echo "000")
+                -d "{\"query\":\"$gq_query\"}" \
+                "$gq_host" 2>/dev/null || echo "000")
             if [ "$gq_code" = "200" ]; then
                 break
             fi
-            log_info "等待 snagme api 链（POST /graphql）→ 200 ... (${i}/${retries}, HTTP ${gq_code})"
+            log_info "等待 $product api 链（POST /graphql）→ 200 ... (${i}/${retries}, HTTP ${gq_code})"
             sleep "$interval"
         done
         if [ "$gq_code" = "200" ]; then
-            log_success "snagme api 链（POST /graphql snagmeShowcase）→ 200"
+            log_success "$product api 链（POST /graphql）→ 200 ($gq_host)"
         else
-            log_error "E2E 验证失败: snagme api 链 (POST /graphql) 最后状态 HTTP ${gq_code}"
+            log_error "E2E 验证失败: $product api 链 (POST /graphql $gq_host) 最后状态 HTTP ${gq_code}"
             all_ok="false"
         fi
     fi
