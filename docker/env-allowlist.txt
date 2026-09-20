@@ -66,8 +66,8 @@ SSH_KEY_FILE
 # ── 2026-09-16 首轮对账甄别补录 ──
 # B) 可选旋钮（代码有默认值/功能门控）
 ANTHROPIC_MODEL
-CDN_BASE_URL
-#   ↑ blobstore Validate 必填、Doppler prd 未配——启用 nearby 图片镜像/头像前先在 Doppler 补
+#   CDN_BASE_URL 曾在此豁免（Doppler prd 未配）；2026-09-21 已硬编码进 env-noda-api.env
+#   （https://cdn.noda.co.nz，非机密环境值，同 S3_BUCKET 先例），nearby 图片镜像随之生效
 ETL_ALERT_TO
 HTTP_PROXY
 HTTPS_PROXY
