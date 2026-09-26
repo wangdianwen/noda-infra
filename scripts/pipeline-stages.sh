@@ -3363,12 +3363,41 @@ PREPROD_CONTAINER="preprod-noda-apps"  # legacy 单容器（清理用）
 _preprod_infra_running()
 {
     local cname
-    for cname in preprod-postgres seaweedfs-stg preprod-noda-static; do
+    # 2026-09-26（#282 实证）：只检真基础设施（postgres / seaweedfs-stg）。
+    # preprod-noda-static 是应用层容器——它缺失（如被误清）时应走快路径 +
+    # static 兜底恢复，而非误判"基础设施缺失"触发整栈重建（该路径先 rm
+    # postgres、down --remove-orphans 清场，若 up 失败即全栈蒸发）。
+    for cname in preprod-postgres seaweedfs-stg; do
         if [ "$(docker inspect -f '{{.State.Running}}' "$cname" 2>/dev/null)" != "true" ]; then
             return 1
         fi
     done
     return 0
+}
+
+# _resolve_static_tag - 解析可用的 noda-static 镜像 tag（结果写 _RESOLVED_STATIC_TAG）
+# 优先本地最新 tag；缺失则从 Mac registry 逐 tag 拉回 retag（2026-09-26 #281/#282：
+# 构建机镜像被清空后，compose 回退拉不存在的 noda-static:latest 静默失败）。
+# 返回: 0=解析成功；1=本地与 registry 均无（调用方应响亮失败，勿静默跳过）
+_resolve_static_tag()
+{
+    _RESOLVED_STATIC_TAG=""
+    local tag reg_tag
+    tag=$(docker images noda-static --format '{{.Tag}}' | grep -v '<none>' | head -1)
+    if [ -n "$tag" ]; then
+        _RESOLVED_STATIC_TAG="$tag"
+        return 0
+    fi
+    for reg_tag in $(curl -s --max-time 10 http://localhost:5001/v2/noda-static/tags/list 2>/dev/null |
+            jq -r '.tags[]?' 2>/dev/null | grep -v '^null$'); do
+        if docker pull "localhost:5001/noda-static:${reg_tag}" >/dev/null 2>&1; then
+            docker tag "localhost:5001/noda-static:${reg_tag}" "noda-static:${reg_tag}" >/dev/null 2>&1
+            _RESOLVED_STATIC_TAG="$reg_tag"
+            log_info "本地无 noda-static 镜像，已从 registry 拉回: ${reg_tag}"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # _preprod_cleanup_legacy - 清理 legacy 单容器时代的 preprod 容器（容器名冲突防护）
@@ -3540,31 +3569,16 @@ pipeline_deploy_preprod_inner()
                 # 只重建本层服务：未触达层不动（镜像标签不存在时 compose 会尝试拉取而失败）
                 eval "COMPOSE_PROJECT_NAME=preprod $img_envs docker compose -f $compose_file up -d --no-deps --force-recreate $svc_list"
                 # 兼顾 api 重建的依赖级联历史行为：兜底确保 static 在位（幂等）。
-                # LAYER=api 时本次未构建 static 镜像——用本地最新 noda-static commit tag
-                # （2026-09-13 起构建不打 latest，不传 env 会踩模板 fallback 失败）。
-                # 2026-09-26（#281 实证）：本地无镜像时从 Mac registry 拉回（构建机
-                # 镜像被清空后 compose 回退拉不存在的 noda-static:latest 静默失败，
-                # static 永久缺失）；registry 也没有则显式报错退出，不再静默跳过。
+                # LAYER=api 时本次未构建 static 镜像——用本地/registry 最新
+                # noda-static tag（2026-09-13 起构建不打 latest，不传 env 会踩
+                # 模板 fallback 失败）；均无则响亮失败（#281 教训：静默跳过 =
+                # 静态边缘永久缺失，健康检查报不明超时）
                 if ! _layer_want_web; then
-                    local latest_static_tag
-                    latest_static_tag=$(docker images noda-static --format '{{.Tag}}' | grep -v '<none>' | head -1)
-                    if [ -z "$latest_static_tag" ]; then
-                        local reg_tag
-                        for reg_tag in $(curl -s --max-time 10 http://localhost:5001/v2/noda-static/tags/list 2>/dev/null |
-                                jq -r '.tags[]?' 2>/dev/null | grep -v '^null$'); do
-                            if docker pull "localhost:5001/noda-static:${reg_tag}" >/dev/null 2>&1; then
-                                docker tag "localhost:5001/noda-static:${reg_tag}" "noda-static:${reg_tag}" >/dev/null 2>&1
-                                latest_static_tag="$reg_tag"
-                                log_info "本地无 noda-static 镜像，已从 registry 拉回: ${reg_tag}"
-                                break
-                            fi
-                        done
-                    fi
-                    if [ -z "$latest_static_tag" ]; then
+                    if ! _resolve_static_tag; then
                         log_error "本地与 registry 均无 noda-static 镜像，无法确保 preprod 静态边缘在位——先跑一次 LAYER=all/static 构建"
                         exit 1
                     fi
-                    img_envs="$img_envs NORA_STATIC_IMAGE=noda-static:${latest_static_tag}"
+                    img_envs="$img_envs NORA_STATIC_IMAGE=noda-static:${_RESOLVED_STATIC_TAG}"
                 fi
                 eval "COMPOSE_PROJECT_NAME=preprod $img_envs docker compose -f $compose_file up -d --no-deps preprod-noda-static"
             )
@@ -3595,9 +3609,27 @@ pipeline_deploy_preprod_inner()
                 fi
                 local img_envs=""
                 if _layer_want_api; then img_envs="$img_envs NORA_API_IMAGE=$api_image"; fi
-                if _layer_want_web; then img_envs="$img_envs NORA_STATIC_IMAGE=$static_image"; fi
+                if _layer_want_web; then
+                    img_envs="$img_envs NORA_STATIC_IMAGE=$static_image"
+                elif _resolve_static_tag; then
+                    # 整栈 up 必建 static——LAYER=api 时无本轮 static 镜像，
+                    # 用本地/registry tag 兜底（#282 教训：缺 env 回退拉不存在的
+                    # noda-static:latest，up 整体失败，清场后全栈蒸发）
+                    img_envs="$img_envs NORA_STATIC_IMAGE=noda-static:${_RESOLVED_STATIC_TAG}"
+                else
+                    log_error "本地与 registry 均无 noda-static 镜像——整栈启动必需 static，先跑一次 LAYER=all/static 构建"
+                    exit 1
+                fi
                 eval "COMPOSE_PROJECT_NAME=preprod $img_envs docker compose -f $compose_file up -d --force-recreate"
             )
+            # 子 shell 的 exit 不中断父进程（sh 步骤无 set -e）——整栈 up 后显式校验
+            # 核心容器在运行，缺失立即失败（#282 教训：清场后 up 失败=全栈蒸发）
+            for _cname in preprod-postgres seaweedfs-stg "$PREPROD_API_CONTAINER" "$PREPROD_STATIC_CONTAINER"; do
+                if ! docker inspect -f '{{.State.Running}}' "$_cname" 2>/dev/null | grep -q true; then
+                    log_error "整栈启动后 ${_cname} 未在运行——up 失败（镜像缺失/拉取被拒？）"
+                    return 1
+                fi
+            done
 
             # 确保 keycloak 数据库存在（init SQL 可能无法 CREATE DATABASE）
             docker exec preprod-postgres psql -U postgres -c "CREATE DATABASE keycloak" 2>/dev/null || true
