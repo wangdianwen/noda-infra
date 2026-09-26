@@ -38,6 +38,11 @@
 # 生命周期规则（7 天自动隐藏/隐藏 1 天后删除/未完成上传 2 天取消）双保险）
 0 5 * * * rclone cleanup b2remote:noda-backups --config /home/nodaops/.config/rclone/rclone.conf >> /var/log/noda-backup/b2-cleanup.log 2>&1
 
+# 每天凌晨 5:10 B2 免费额度用量监控（备份 04:30 / cleanup 05:00 之后度量稳态；
+# --b2-versions 含隐藏旧版本的真实计费口径——默认口径会严重低估。45% 预警 /
+# 60% 严重两级邮件告警，远早于 Backblaze 75% 邮件留出处置时间）
+10 5 * * * /app/backup/b2-quota-monitor.sh >> /var/log/noda-backup/b2-quota.log 2>&1
+
 # 爬虫任务（2026-09-13 定案）：全部产品 cronjob（skykiwi 抓取/nearby/snagme/
 # lifecycle/vitals）由 noda-api 镜像的 noda-jobs 守护进程容器承载
 # （Jenkins apps-deploy LAYER=api 随 api 容器一并部署），本镜像不再涉及。
