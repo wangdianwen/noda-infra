@@ -32,6 +32,12 @@
 # 每周日 4:50 收敛备份日志（防 /var/log/noda-backup 卷无限增长；单文件 >5MB 截到 1MB）
 50 4 * * 0 find /var/log/noda-backup -name "*.log" -size +5000k -exec truncate -s 1M {} \; 2>/dev/null || true
 
+# 每天凌晨 5:00 清理 B2 桶隐藏旧版本（rclone 对 B2 的 delete/purge 只打 hide
+# marker，数据版本继续计费——2026-09-26 排查实证：4 月以来从未真正释放，堆到
+# 8.25 GB 触发免费额度 75% 告警；cleanup 永久删除旧版本、保留当前版本。与桶
+# 生命周期规则（7 天自动隐藏/隐藏 1 天后删除/未完成上传 2 天取消）双保险）
+0 5 * * * rclone cleanup b2remote:noda-backups --config /home/nodaops/.config/rclone/rclone.conf >> /var/log/noda-backup/b2-cleanup.log 2>&1
+
 # 爬虫任务（2026-09-13 定案）：全部产品 cronjob（skykiwi 抓取/nearby/snagme/
 # lifecycle/vitals）由 noda-api 镜像的 noda-jobs 守护进程容器承载
 # （Jenkins apps-deploy LAYER=api 随 api 容器一并部署），本镜像不再涉及。

@@ -12,8 +12,8 @@ set -euo pipefail
 #           nearby 爬取图片素材；sites/ 可经 Jenkins infra-deploy 重建不备份）
 # 目标：b2remote:<bucket>/<FS_B2_PATH><src_name>/<YYYY/MM/DD>/（对象树原样镜像，
 #           恢复 = rclone copy 反向拷回 s3weed:noda-static/<src_name>/）
-# 保留：FS_RETENTION_DAYS（默认 3 天）——每次备份后对 <FS_B2_PATH><src_name>/
-#           前缀执行 rclone delete --min-age，及时删除历史文件控制 B2 用量
+# 保留：FS_RETENTION_DAYS（默认 3 天）——每次备份后按日期目录整体清理
+#           <FS_B2_PATH><src_name>/ 下早于保留期的 YYYY/MM/DD 目录控制 B2 用量
 # 依赖：SEAWEED_S3_ENDPOINT / SEAWEED_S3_ACCESS_KEY / SEAWEED_S3_SECRET_KEY
 #           （rclone s3weed remote，见 lib/cloud.sh setup_rclone_config）
 # 运行位置：noda-ops 容器内 crond（deploy/crontab；容器与 seaweedfs 同在
@@ -215,18 +215,36 @@ main()
         log_success "备份完成: $src（${last_size:-0} bytes 累计）"
     done
 
-    # 保留策略：删除各源前缀下超期对象（FS_RETENTION_DAYS，默认 3 天）。
-    # 清理失败仅告警不置 failed——旧文件多留一天不致命，别让备份告警疲劳
+    # 保留策略：按日期目录整体清理（FS_RETENTION_DAYS 天前的 YYYY/MM/DD 目录）。
+    # 不用 rclone delete --min-age：min-age 按对象 modtime 判龄，而 rclone copy 会
+    # 保留 SeaweedFS 源对象的 LastModified（爬虫图片的原始抓取时间），当天新上传
+    # 的旧图 4 分钟后即被同场清理误删（2026-09-26 B2 用量排查实证）；日期目录名
+    # 即上传日，按目录名清理才是真实的"上传满 N 天"语义。
+    # 另注：rclone 对 B2 的 delete/purge 只打 hide marker（数据版本继续计费），
+    # 真正释放空间靠每日 rclone cleanup cron + 桶生命周期规则（见 deploy/crontab）。
+    # 清理失败仅告警不置 failed——旧目录多留一天不致命，别让备份告警疲劳
     if [ "$failed" -eq 0 ]; then
+        local cutoff_epoch=$(( $(date +%s) - FS_RETENTION_DAYS * 86400 ))
+        local cutoff
+        cutoff=$(date -d "@$cutoff_epoch" +%Y/%m/%d 2>/dev/null || date -r "$cutoff_epoch" +%Y/%m/%d)
         for src in "${sources[@]}"; do
             src_name=$(fs_source_name "$src")
-            local prefix="b2remote:$(get_b2_bucket_name)/$(get_fs_b2_path)${src_name}"
-            if rclone delete "$prefix" --config "$rclone_config" \
-                    --min-age "${FS_RETENTION_DAYS}d" 2>/dev/null; then
-                log_info "保留清理完成: $prefix（> ${FS_RETENTION_DAYS} 天对象已删除）"
-            else
-                log_warn "保留清理失败（不影响备份有效性）: $prefix"
-            fi
+            local base="b2remote:$(get_b2_bucket_name)/$(get_fs_b2_path)${src_name}"
+            local day_dir d
+            # 列出日期子目录逐个比对（错过清理的旧目录一并收敛，跨月/补漏）
+            while IFS= read -r day_dir; do
+                [ -z "$day_dir" ] && continue
+                d="${day_dir%/}"
+                # 只动纯日期目录（YYYY/MM/DD），其余结构不碰
+                [[ "$d" =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || continue
+                if [[ "$d" < "$cutoff" ]]; then
+                    if rclone purge "${base}/${d}" --config "$rclone_config" 2>/dev/null; then
+                        log_info "保留清理完成: ${base}/${d}（< ${cutoff}）"
+                    else
+                        log_warn "保留清理失败（不影响备份有效性）: ${base}/${d}"
+                    fi
+                fi
+            done < <(rclone lsf "$base" --dirs-only --recursive --config "$rclone_config" 2>/dev/null || true)
         done
     fi
     cleanup_rclone_config "$rclone_config"
