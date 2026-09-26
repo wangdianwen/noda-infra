@@ -3373,11 +3373,22 @@ _preprod_infra_running()
 
 # _preprod_cleanup_legacy - 清理 legacy 单容器时代的 preprod 容器（容器名冲突防护）
 # 参数: $1 = mode(remote|local)
+# 2026-09-26（#281 实证）：api/static 只在本轮要重建它时才清理——LAYER=api 时
+# 无条件 rm static 又不重建，兜底块若拉不到镜像（本地/registry 均无 noda-static）
+# preprod 静态边缘永久缺失，健康检查（static→api 链）必超时。
+# legacy 三件套（preprod-noda-apps / preprod-nginx / preprod-noda-frontend）恒清。
 _preprod_cleanup_legacy()
 {
     local mode="$1"
     local cname
-    for cname in "$PREPROD_CONTAINER" preprod-nginx "$PREPROD_API_CONTAINER" "$PREPROD_FRONTEND_CONTAINER" "$PREPROD_STATIC_CONTAINER"; do
+    local rm_list="$PREPROD_CONTAINER preprod-nginx $PREPROD_FRONTEND_CONTAINER"
+    if _layer_want_api; then
+        rm_list="$rm_list $PREPROD_API_CONTAINER"
+    fi
+    if _layer_want_web; then
+        rm_list="$rm_list $PREPROD_STATIC_CONTAINER"
+    fi
+    for cname in $rm_list; do
         if [ "$mode" = "remote" ]; then
             remote_exec "docker rm -f $cname >/dev/null 2>&1 || true"
         else
@@ -3530,16 +3541,39 @@ pipeline_deploy_preprod_inner()
                 eval "COMPOSE_PROJECT_NAME=preprod $img_envs docker compose -f $compose_file up -d --no-deps --force-recreate $svc_list"
                 # 兼顾 api 重建的依赖级联历史行为：兜底确保 static 在位（幂等）。
                 # LAYER=api 时本次未构建 static 镜像——用本地最新 noda-static commit tag
-                # （2026-09-13 起构建不打 latest，不传 env 会踩模板 fallback 失败）
+                # （2026-09-13 起构建不打 latest，不传 env 会踩模板 fallback 失败）。
+                # 2026-09-26（#281 实证）：本地无镜像时从 Mac registry 拉回（构建机
+                # 镜像被清空后 compose 回退拉不存在的 noda-static:latest 静默失败，
+                # static 永久缺失）；registry 也没有则显式报错退出，不再静默跳过。
                 if ! _layer_want_web; then
                     local latest_static_tag
                     latest_static_tag=$(docker images noda-static --format '{{.Tag}}' | grep -v '<none>' | head -1)
-                    if [ -n "$latest_static_tag" ]; then
-                        img_envs="$img_envs NORA_STATIC_IMAGE=noda-static:${latest_static_tag}"
+                    if [ -z "$latest_static_tag" ]; then
+                        local reg_tag
+                        for reg_tag in $(curl -s --max-time 10 http://localhost:5001/v2/noda-static/tags/list 2>/dev/null |
+                                jq -r '.tags[]?' 2>/dev/null | grep -v '^null$'); do
+                            if docker pull "localhost:5001/noda-static:${reg_tag}" >/dev/null 2>&1; then
+                                docker tag "localhost:5001/noda-static:${reg_tag}" "noda-static:${reg_tag}" >/dev/null 2>&1
+                                latest_static_tag="$reg_tag"
+                                log_info "本地无 noda-static 镜像，已从 registry 拉回: ${reg_tag}"
+                                break
+                            fi
+                        done
                     fi
+                    if [ -z "$latest_static_tag" ]; then
+                        log_error "本地与 registry 均无 noda-static 镜像，无法确保 preprod 静态边缘在位——先跑一次 LAYER=all/static 构建"
+                        exit 1
+                    fi
+                    img_envs="$img_envs NORA_STATIC_IMAGE=noda-static:${latest_static_tag}"
                 fi
                 eval "COMPOSE_PROJECT_NAME=preprod $img_envs docker compose -f $compose_file up -d --no-deps preprod-noda-static"
             )
+            # 子 shell 的 exit 不中断父进程（sh 步骤无 set -e）——显式校验 static 在位，
+            # 缺失立即失败，别拖到健康检查才报一个超时（#281 教训）
+            if ! docker inspect -f '{{.State.Running}}' "$PREPROD_STATIC_CONTAINER" 2>/dev/null | grep -q true; then
+                log_error "preprod-noda-static 未在运行——静态边缘缺失（$PREPROD_STATIC_CONTAINER）"
+                return 1
+            fi
         else
             # 兜底路径：基础设施容器缺失（首次部署/被手动清理），整栈拉起
             log_info "基础设施容器缺失，整栈启动本地 preprod..."
