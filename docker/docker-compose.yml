@@ -110,7 +110,11 @@ services:
       B2_APPLICATION_KEY: ${B2_APPLICATION_KEY}
       B2_BUCKET_NAME: ${B2_BUCKET_NAME:-noda-backups}
       B2_PATH: ${B2_PATH:-backups/postgres/}
+      # 告警邮件通道（2026-09-26 修复容器内告警从未发出）：Resend HTTP API，
+      # 与 adminapi/emailapi 同通道；ALERT_EMAIL/RESEND_API_KEY 经 Doppler 注入
       ALERT_EMAIL: ${ALERT_EMAIL:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: "${RESEND_FROM_EMAIL:-Noda <noreply@noda.co.nz>}"
       # SSL 配置（Docker 内部网络无需 SSL）
       PGSSLMODE: disable
       # Cloudflare Tunnel 配置

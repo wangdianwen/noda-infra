@@ -32,16 +32,44 @@ fi
 #   $1: 收件人
 #   $2: 主题
 #   $3: 正文
+# 通道（2026-09-26 修复容器内告警从未发出的问题）：
+#   1) RESEND_API_KEY + wget（生产容器路径）：走 Resend HTTP API——容器无 MTA
+#      且无 mail 命令，旧 mail 路径在容器内恒失败（静默）。与 adminapi/emailapi
+#      同一发送通道（noda.co.nz 域已在 Resend 验证），凭据经 Doppler → compose
+#      env-file 注入。busybox wget 支持 --post-data/--header。
+#   2) mail 命令（本机开发兜底）：无 RESEND_API_KEY 时走原路径。
 send_email()
 {
     local recipient=$1
     local subject=$2
     local body=$3
 
-    # 检查 mail 命令
+    # 通道 1：Resend HTTP API（生产容器；jq 缺席时落到通道 2，防 set -e 中断）
+    if [[ -n "${RESEND_API_KEY:-}" ]] && command -v wget >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+        local from="${RESEND_FROM_EMAIL:-Noda <noreply@noda.co.nz>}"
+        local payload resp
+        payload=$(jq -n \
+            --arg from "$from" \
+            --arg to "$recipient" \
+            --arg subject "$subject" \
+            --arg body "$body" \
+            '{from: $from, to: [$to], subject: $subject, html: ("<pre style=\"font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.5;white-space:pre-wrap\">" + ($body | gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;")) + "</pre>")}')
+        if resp=$(wget -q -O - --timeout=30 \
+                --header="Authorization: Bearer ${RESEND_API_KEY}" \
+                --header="Content-Type: application/json" \
+                --post-data="$payload" \
+                https://api.resend.com/emails 2>&1); then
+            log_info "邮件发送成功（Resend）: $recipient（${resp:-无响应体}）"
+            return 0
+        fi
+        log_error "Resend 发送失败: $recipient（${resp:-无响应}）"
+        return 1
+    fi
+
+    # 通道 2：mail 命令（本机开发兜底）
     if ! command -v mail >/dev/null 2>&1; then
-        log_error "mail 命令未安装，无法发送邮件"
-        log_error "安装方法: brew install postfix"
+        log_error "无法发送邮件：RESEND_API_KEY 未设置且 mail 命令未安装"
+        log_error "容器内经 Doppler 注入 RESEND_API_KEY；本机开发装 postfix+mail"
         return 1
     fi
 
@@ -50,8 +78,10 @@ send_email()
 
     if [[ $? -eq 0 ]]; then
         log_info "邮件发送成功: $recipient"
+        return 0
     else
         log_error "邮件发送失败: $recipient"
+        return 1
     fi
 }
 
