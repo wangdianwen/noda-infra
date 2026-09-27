@@ -36,10 +36,21 @@ CREATED_BACKUPS=()
 
 # 发现所有用户数据库（排除模板数据库）
 # 返回：数据库名称列表（每行一个）
+# 排除规则（2026-09-27，test_verify_failed 告警排查定案）：
+#   - postgres：维护库，无用户数据，备份无意义且会顶进周度验证的 head -3 选库
+#   - test_restore_%：周度验证失败路径不清理测试库（2026-09-13 已实证混入
+#     discover 会致每日备份整轮失败），入口处直接免疫
+#   - noda_preprod：生产机上的 schema-only 空壳（12 表 0 行），真 preprod 库
+#     在 Mac 的 preprod-postgres；空壳被备份+周度验证的"首表必须有数据"
+#     检查每周误报 test_verify_failed（库本身保留，仅不备份不验证）
 discover_databases()
 {
     PGPASSWORD=$POSTGRES_PASSWORD psql -h noda-infra-postgres-prod -U postgres -d postgres -t -c \
-        "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname;"
+        "SELECT datname FROM pg_database WHERE datistemplate = false
+         AND datname <> 'postgres'
+         AND datname NOT LIKE 'test_restore_%'
+         AND datname <> 'noda_preprod'
+         ORDER BY datname;"
 }
 
 # ============================================
