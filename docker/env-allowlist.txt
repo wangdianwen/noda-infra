@@ -93,6 +93,10 @@ SESSION_COOKIE_DOMAIN
 SESSION_COOKIE_NAME
 SNAGME_ARCHIVE_DIR
 SNAGME_CLIENT_ID
+SNAGME_FIRE_FATIGUE_DAYS
+#   疲劳门天数(snagmeapi 火列表查询,2026-09-27 火列表治理);代码默认 14,调优才进 env 模板
+SNAGME_PROBE_SAMPLE
+#   data-freshness 抽样验活台数(snagmejobs 第七任务);默认 0=关,TradeMe 零净增量硬约束,开启才显式配
 SNAGME_IMG_CACHE
 SNAGME_LLM_CACHE
 SNAGME_LLM_THINKING
