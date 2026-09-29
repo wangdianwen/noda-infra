@@ -2239,6 +2239,10 @@ pipeline_build_static_artifacts()
     fi
 
     log_info "构建 $product 静态站（pnpm build → out/）..."
+    # 2026-09-30 事故防护：workspace 持久化的 .next（turbopack 增量缓存）会让
+    # 增量构建静默产出旧代码（class #356/#360/#362 三连实证——编译 7.4s 全走
+    # 缓存，GA 埋点代码丢失、mirror 忠实上桶）。构建前整删 .next 换确定性全量。
+    rm -rf "$web_dir/.next"
     if ! (cd "$web_dir" && pnpm build); then
         log_error "$product 静态站构建失败: $web_dir"
         return 1
