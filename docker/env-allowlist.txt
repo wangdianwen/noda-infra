@@ -114,8 +114,16 @@ S3_REGION
 # ── C) GraphQL BFF/gRPC：GRPC_CLIENT_TARGETS 有默认空值（进程内直连 loopback），
 #      仅未来拆容器时才需要配置 → 豁免 env 模板
 GRPC_CLIENT_TARGETS
-# ── 2026-09-30 auth 巡检三任务（authjobs，daily-audit 随跑）两新旋钮 ──
+# ── 2026-09-30 auth 巡检三任务（authjobs，daily-audit 随跑）探针旋钮 ──
 AUTH_PREPROD_GRAPHQL_URL
-#   preprod 注册探针端点；代码默认 https://class-preprod.noda.co.nz/graphql，调目标才配
+#   preprod 注册探针端点；代码默认 https://<AUTH_PREPROD_HOST>/graphql，调目标才配
 AUTH_PROBE_PASSWORD
 #   探针账号密码；代码默认固定值（仅 preprod e2e- 账号，无敏感面），轮换才配
+AUTH_PREPROD_HOST
+#   探针目标域名；默认 class-preprod.noda.co.nz
+AUTH_PREPROD_DIAL_ADDR
+#   preprod 域名无公网 DNS（仅 Mac mini hosts）→ Dialer 定向 Mac mini LAN IP:443
+#   （192.168.100.133，与 r4s nginx cdn-preprod 代理同源拓扑）；换部署机才配
+AUTH_PREPROD_INSECURE_TLS
+#   Mac mini 自签证书、r4s 无本地 CA → 探针默认跳过 TLS 验证（仅 LAN 自探，
+#   载荷 e2e 一次性账号）；置 0 可关
