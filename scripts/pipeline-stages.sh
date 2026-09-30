@@ -3034,43 +3034,44 @@ pipeline_deploy_seaweedfs()
     fi
     rm -f "$s3json"
 
-    # ③ mc 初始化桶 + 匿名只读（幂等）
-    # r4s registry mirror 拉不动 minio/mc（publish 同款已知限制，实测 pull denied）——
-    # r4s 模式改走「本地 mc + 临时 socat 中继」，9340 端口与产品发布端口池隔离，中继即拆
-    log_info "初始化 S3 桶 ${S3_BUCKET}（mb --ignore-existing + anonymous download）..."
-    local mc_sh="mc mb --ignore-existing seaweedfs/${S3_BUCKET} && mc anonymous set download seaweedfs/${S3_BUCKET}"
+    # ③ rclone 初始化桶（幂等；2026-09-30 mc 归档停维护迁移）。
+    # 匿名读由本部署渲染的 s3.json anonymous identity（Read:<bucket>）授予——
+    # 旧 mc anonymous set download 依赖 ACL header，SeaweedFS 未实现
+    # （NotImplemented），该调用从来只是 best-effort，迁移后直接移除。
+    # 成功判据用 lsd 可列举（mkdir 对已存在桶的退出码因后端而异）。
+    log_info "初始化 S3 桶 ${S3_BUCKET}（rclone mkdir，幂等）..."
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
-        if ! command -v mc >/dev/null 2>&1; then
-            log_error "本机未安装 minio client（brew install minio/stable/mc）"
-            return 1
-        fi
-        local relay_name="tmp-s3-relay-seaweedfs"
-        local alias_name="noda-prd-relay-seaweedfs"
-        remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true; docker run -d --name $relay_name --network $NETWORK_NAME -p 192.168.100.1:9340:8333 alpine/socat tcp-listen:8333,fork,reuseaddr tcp:seaweedfs:8333" || {
-            log_error "S3 中继启动失败"
-            return 1
-        }
-        # 匿名读由本部署渲染的 s3.json anonymous identity（Read:<bucket>）授予；
-        # mc anonymous set download 依赖 ACL header，SeaweedFS 未实现（实测 NotImplemented），
-        # 仅作 best-effort，失败不阻塞部署
-        local init_ok="false"
-        if mc alias set "$alias_name" "http://192.168.100.1:9340" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" --api S3v4 \
-            && mc mb --ignore-existing "$alias_name/$S3_BUCKET"; then
-            init_ok="true"
-            mc anonymous set download "$alias_name/$S3_BUCKET" 2>/dev/null \
-                || log_info "mc anonymous 不被 SeaweedFS 支持，匿名读走 s3.json anonymous identity（已生效）"
-        fi
-        remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true" || true
-        mc alias remove "$alias_name" >/dev/null 2>&1 || true
-        if [ "$init_ok" != "true" ]; then
-            log_error "S3 桶初始化失败（$S3_BUCKET）"
+        # r4s 本机 rclone（内网直连 seaweedfs 免中继；二进制一次性部署于
+        # /opt/noda/bin/rclone，静态 linux-arm64）。env 须显式 -e 进容器。
+        local rrc="docker run --rm --network $NETWORK_NAME -v /opt/noda/bin/rclone:/usr/local/bin/rclone -e RCLONE_CONFIG_SW_TYPE=s3 -e RCLONE_CONFIG_SW_PROVIDER=Other -e RCLONE_CONFIG_SW_ENDPOINT=http://seaweedfs:8333 -e RCLONE_CONFIG_SW_ACCESS_KEY_ID=$S3_ACCESS_KEY -e RCLONE_CONFIG_SW_SECRET_ACCESS_KEY=$S3_SECRET_KEY --entrypoint /usr/local/bin/rclone alpine/socat"
+        remote_exec "$rrc mkdir SW:$S3_BUCKET" >/dev/null 2>&1 \
+            || log_info "mkdir 非零（可能桶已存在），以可列举验证..."
+        if remote_exec "$rrc lsf SW:$S3_BUCKET" >/dev/null 2>&1; then
+            log_info "桶可访问：$S3_BUCKET"
+        else
+            log_error "S3 桶初始化失败（$S3_BUCKET，r4s rclone 不可列举；若 /opt/noda/bin/rclone 缺失请先部署静态二进制）"
             return 1
         fi
     else
-        local net
-        net=$(docker inspect seaweedfs-stg --format '{{range $k,$_ := .NetworkSettings.Networks}}{{$k}}{{end}}')
-        docker pull minio/mc:latest >/dev/null 2>&1 || true
-        docker run --rm --network "$net" -e MC_HOST_seaweed="http://${S3_ACCESS_KEY}:${S3_SECRET_KEY}@seaweedfs:8333" minio/mc:latest sh -c "mc ready seaweedfs && ${mc_sh}"
+        if RCLONE_CONFIG_SW_TYPE=s3 RCLONE_CONFIG_SW_PROVIDER=Other \
+            RCLONE_CONFIG_SW_ENDPOINT=http://127.0.0.1:8333 \
+            RCLONE_CONFIG_SW_ACCESS_KEY_ID="$S3_ACCESS_KEY" \
+            RCLONE_CONFIG_SW_SECRET_ACCESS_KEY="$S3_SECRET_KEY" \
+            rclone mkdir "SW:$S3_BUCKET"; then
+            log_info "桶已创建/确认：$S3_BUCKET"
+        else
+            log_info "mkdir 非零（可能桶已存在），以可列举验证..."
+        fi
+        if RCLONE_CONFIG_SW_TYPE=s3 RCLONE_CONFIG_SW_PROVIDER=Other \
+            RCLONE_CONFIG_SW_ENDPOINT=http://127.0.0.1:8333 \
+            RCLONE_CONFIG_SW_ACCESS_KEY_ID="$S3_ACCESS_KEY" \
+            RCLONE_CONFIG_SW_SECRET_ACCESS_KEY="$S3_SECRET_KEY" \
+            rclone lsf "SW:$S3_BUCKET" >/dev/null 2>&1; then
+            :
+        else
+            log_error "S3 桶初始化失败（$S3_BUCKET，本地 rclone 不可列举）"
+            return 1
+        fi
     fi
 
     log_success "SeaweedFS 部署完成（桶 ${S3_BUCKET} 匿名只读已配置）"
