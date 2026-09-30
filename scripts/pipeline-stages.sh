@@ -2167,6 +2167,15 @@ pipeline_publish_product()
         *) log_error "未知发布目标: ${target}（stg=preprod 桶 / prod=生产桶）"; return 1 ;;
     esac
     _static_product_config "$product" || return 1
+    # 全局静态互斥（2026-09-30 #381/#382/#371 撞车教训）：静态发布共享一次性
+    # 资源——r4s 临时中继容器（失败清理 docker rm -f）、seaweedfs 桶、本机
+    # ~/.mc 别名表——跨产品并行 mirror 会互拆中继致 0 对象/列举截断/挂死 6h。
+    # 先全局后产品的固定取锁顺序防死锁；两把锁都登记 NODA_LOCK_REGISTRY，
+    # post always 的 pipeline_release_lock 统一释放（属主=本构建重取幂等）。
+    if ! acquire_deploy_lock 3600 "static-publish"; then
+        log_error "无法获取静态发布全局锁 [static-publish]，可能有其他静态站发布进行中"
+        return 1
+    fi
     NODA_LOCK_NAME="publish-${product}"
     export NODA_LOCK_NAME
     if ! acquire_deploy_lock 3600 "$NODA_LOCK_NAME"; then
@@ -2653,7 +2662,21 @@ _static_snapshot_rotate()
 #     source scripts/pipeline-stages.sh && pipeline_rollback_static_site <product> [depth]
 # 参数：depth=1 回滚到上一次发布（默认）；depth=2 上两次；上限 MAX_STATIC_SNAPSHOTS。
 # 注意：快照为 N 层滚动（每次发布深→浅轮转），可回滚窗口 = 层数。
+# 全局锁壳（2026-09-30）：回滚同样起中继 + mirror 主前缀，与发布路径共持
+# static-publish 全局互斥；实现体在 _pipeline_rollback_static_site_impl。
 pipeline_rollback_static_site()
+{
+    if ! acquire_deploy_lock 3600 "static-publish"; then
+        log_error "无法获取静态发布全局锁 [static-publish]，可能有其他静态站发布进行中"
+        return 1
+    fi
+    local rc=0
+    _pipeline_rollback_static_site_impl "$@" || rc=1
+    release_deploy_lock "static-publish"
+    return $rc
+}
+
+_pipeline_rollback_static_site_impl()
 {
     local product="$1"
     local depth="${2:-1}"
