@@ -2261,21 +2261,24 @@ pipeline_build_static_artifacts()
         return 1
     fi
 
-    # 产物指纹（发布期「未变更跳过」判定，2026-09-30）：git-sha + 字节树 hash +
-    # 对象数，随内容一起上桶。跳过判定只认 git-sha+对象数（Next 构建非确定性时
-    # 同 sha 字节可能不同，不参与判定）；tree-hash 仅作同 sha 异构建的诊断可见性。
-    # count+1 = 计入指纹文件自身（桶侧对象数与 find 口径一致）。
+    # 产物指纹 + 逐文件清单（2026-09-30 rclone 化底账）：
+    #   .noda-artifact-hash: "<git-sha> <tree-hash> <count>" → 同 sha+count 整段跳过
+    #   .noda-manifest:      "<sha>  <./path>" 每文件一行 → 清单 diff 只传变更文件
+    # 两个元文件自身不入清单；count+2 = 计入两个元文件（桶侧对象数与 find 口径一致）
     local b_sha b_tree b_count
     b_sha=$(cd "$apps_dir" && git rev-parse HEAD 2>/dev/null || echo unknown)
-    b_count=$(( $(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ') + 1 ))
-    b_tree=$(cd "$web_dir/out" && find . -type f ! -name '.noda-artifact-hash' \
-        | LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$f"; done \
-        | shasum -a 256 | awk '{print $1}')
+    : > "$web_dir/out/.noda-manifest"
+    (cd "$web_dir/out" && find . -type f ! -name '.noda-manifest' ! -name '.noda-artifact-hash' \
+        | LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$f"; done) \
+        > "$web_dir/out/.noda-manifest"
+    b_tree=$(shasum -a 256 < "$web_dir/out/.noda-manifest" | awk '{print $1}')
+    b_count=$(( $(wc -l < "$web_dir/out/.noda-manifest" | tr -d ' ') + 2 ))
     printf '%s %s %s\n' "$b_sha" "$b_tree" "$b_count" > "$web_dir/out/.noda-artifact-hash"
-    log_info "产物指纹: sha=$b_sha tree=$b_tree objects=$b_count"
+    log_info "产物指纹: sha=${b_sha} tree=${b_tree} objects=${b_count}（清单就绪）"
 
     log_success "$product 静态产物构建完成: $web_dir/out/"
 }
+
 
 # ============================================
 # pipeline_publish_static_site - 产品静态站单桶发布
@@ -2291,8 +2294,8 @@ pipeline_publish_static_site()
     local target="${2:-prod}"
     _static_product_config "$product" || return 1
 
-    if ! command -v mc >/dev/null 2>&1; then
-        log_error "本机未安装 minio client（brew install minio/stable/mc）"
+    if ! command -v rclone >/dev/null 2>&1; then
+        log_error "本机未安装 rclone（brew install rclone）——静态发布已 rclone 化（mc 归档停维护）"
         return 1
     fi
 
@@ -2312,11 +2315,13 @@ pipeline_publish_static_site()
 }
 
 # ============================================
-# _publish_static_to_prod - 生产桶发布：noda-static/sites/<product>/
+# _publish_static_to_prod - 生产桶发布：noda-static/sites/<product>/（rclone 版）
 # ============================================
-# 中继按产品隔离（2026-09-13 并行化）：不同产品的静态发布同时进行时，
-# 共享的容器名/端口/alias 会互删对方的中继（build 76/77 实证）——
-# 容器名、端口（9333-9340 固定映射）、mc alias 全部带产品维度。
+# 2026-09-30 rclone 化：minio mc 已归档停维护；且 mc mirror --overwrite 每次
+# 全量重传（fresh build mtime 全新 → 比较全差异），snagme 1340 对象双份拷贝
+# 曾是 40-60 分钟发版的主体。现改为：清单差量镜像（只传变更/新增/删除）+
+# 服务端快照轮转（seaweedfs CopyObject 只过控制面）。中继仍按产品隔离
+# （容器名/端口 9333-9340 固定映射），只承载 API 调用与差量数据。
 _publish_static_to_prod()
 {
     local product="$1"
@@ -2335,12 +2340,11 @@ _publish_static_to_prod()
         snagme)  local relay_port="9340" ;;
         *)       local relay_port="9341" ;;
     esac
-    local alias_name="noda-prd-relay-${product}"
+    local endpoint="http://192.168.100.1:${relay_port}"
 
     _publish_site_cleanup()
     {
         remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true" || true
-        mc alias remove "$alias_name" >/dev/null 2>&1 || true
     }
 
     # 临时 S3 中继：192.168.100.1:<port> → seaweedfs:8333（noda-network 内）
@@ -2363,70 +2367,53 @@ _publish_static_to_prod()
         return 1
     fi
 
-    if ! mc_t mc alias set "$alias_name" "http://192.168.100.1:${relay_port}" "$s3a" "$s3s" --api S3v4; then
-        log_error "mc alias 设置失败"
-        _publish_site_cleanup
-        return 1
-    fi
-
-    # 内容未变更判定（2026-09-30）：指纹 sha+对象数一致 → 快照轮转与镜像皆为
-    # 无操作，整段跳过（中继即拆即走，持锁秒级）。判定不过照常轮转+镜像。
-    if _static_content_unchanged "noda-static" "sites/$product" "$web_dir/out"; then
+    # 内容未变更判定（2026-09-30）：指纹 sha+对象数一致 → 镜像与快照皆为
+    # 无操作，整段跳过（中继即拆即走，持锁秒级）
+    if _static_content_unchanged "$endpoint" "$s3a" "$s3s" "noda-static" "sites/$product" "$web_dir/out"; then
         _publish_site_cleanup
         log_success "$product 内容未变更，跳过镜像与快照：noda-static/sites/$product/（中继已拆除）"
         return 0
     fi
 
-    # 发布前快照轮转（N 层滚动，2026-09-13 打磨）：snap(max)←snap(max-1)←...←snap(1)←主前缀
-    # -prev/-prev2 前缀不在 nginx 改写映射内，公网不可达；层数 MAX_STATIC_SNAPSHOTS（默认 2）
-    _static_snapshot_rotate "$alias_name" "noda-static" "$product"
+    # 发布前快照轮转（rclone 服务端 sync：层间拷贝不出 seaweedfs）
+    _static_snapshot_rotate "$endpoint" "$s3a" "$s3s" "noda-static" "$product"
 
-    log_info "mc mirror 增量同步（含删除） out/ → noda-static/sites/$product/ ..."
-    # --remove：桶内该前缀收敛为当前 out/（旧构建 hash 资产/已删页面对象随之清理）；
-    # 作用域仅 sites/<product>/ 前缀，图片（avatars/ 等）与其它前缀不受影响
-    if ! mc_t mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name/noda-static/sites/$product/"; then
+    # 清单差量镜像：只传变更/新增/删除（详见 _static_manifest_sync）
+    if ! _static_manifest_sync "$endpoint" "$s3a" "$s3s" "noda-static" "sites/$product" "$web_dir/out"; then
         log_error "静态站同步失败"
         _publish_site_cleanup
         return 1
     fi
 
-    # 对象级对账（2026-09-13 build 72 实证：mc mirror 曾静默漏传 zh/topic/love.html
-    # ——同目录部分对象上传部分跳过且零报错，min_objs 阈值无法发现，verify 探测兜住）。
-    # ⚠️ 中继（socat→seaweedfs）上的 mc ls --recursive 会随机截断：同一棵树实测
-    # 52/54/55/70 浮动（build 68/71/75）。截断计数曾触发「清空前缀全量重建」，
-    # rm --recursive + 半程重传直接把线上 /zh 打成 nginx 404（build 75 实证）。
-    # 因此对账策略改为：
-    #   1) 列举重试 3 次取最大值——截断只少不多，max 收敛于真值；
-    #   2) 不一致只重跑 mirror --overwrite（幂等补传，安全方向），
-    #      绝不清空前缀（rm --recursive 在列举抖动下是破坏性操作，已移除）；
-    #   3) 哨兵文件 mc stat 单对象 HEAD 兜底（计数巧合对不上单点缺失）。
+    # 对象级对账（2026-09-13 build 72 实证 mc mirror 曾静默漏传；rclone 化后
+    # 保留同款策略：列举重试 3 次、不一致只重跑幂等补传（无 --files-from 的
+    # copy，rclone 自身按 size/mtime 比较会补齐缺失对象），绝不清空前缀；
+    # 哨兵单对象存在性兜底。
     local objs src_objs attempt
     src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
     objs=0
     for attempt in 1 2 3; do
-        objs=$(mc_t mc ls --recursive "$alias_name/noda-static/sites/$product/" 2>/dev/null | grep -c . || true)
+        objs=$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "noda-static/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
         if [ "${objs:-0}" -ge "${src_objs:-0}" ]; then
             break
         fi
-        log_warn "桶列举 ${objs} < 源 ${src_objs}（中继截断或漏传）——重跑 mirror 补传（第 ${attempt} 次）..."
-        mc_t mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name/noda-static/sites/$product/" >/dev/null 2>&1 || true
+        log_warn "桶列举 ${objs} < 源 ${src_objs}（中继截断或漏传）——重跑补传（第 ${attempt} 次）..."
+        _rc "$endpoint" "$s3a" "$s3s" copy "$web_dir/out/" "noda-static/sites/$product/" >/dev/null 2>&1 || true
     done
 
-    # 全部校验（对象数/对账/哨兵）都依赖 mc alias 在位——中继拆除必须放在最后。
-    # （旧写法先 cleanup 再 mc stat，哨兵检查必然失败——旧 infra-deploy #80 的 FAILURE 根因）
     local publish_ok="true"
     if [ "${objs:-0}" -lt "$min_objs" ]; then
         log_error "桶内对象数异常（${objs} < ${min_objs}），发布疑似不完整"
         publish_ok="false"
     fi
     if [ "${objs:-0}" -ne "${src_objs:-0}" ]; then
-        log_error "镜像对账失败：源 out/ $src_objs 个文件 ≠ 桶 $objs 个对象——mc mirror 静默漏传，发布不完整"
+        log_error "镜像对账失败：源 out/ $src_objs 个文件 ≠ 桶 $objs 个对象——镜像静默漏传，发布不完整"
         publish_ok="false"
     fi
     local sentinel="${STATIC_SENTINEL#out/}"
     if [ -f "$web_dir/out/$sentinel" ]; then
-        if ! mc_t mc stat "$alias_name/noda-static/sites/$product/$sentinel" >/dev/null 2>&1; then
-            log_error "哨兵对象缺失：sites/$product/$sentinel（mc mirror 静默漏传）"
+        if [ -z "$(_rc "$endpoint" "$s3a" "$s3s" lsf "noda-static/sites/$product/$sentinel" 2>/dev/null)" ]; then
+            log_error "哨兵对象缺失：sites/${product}/${sentinel}（镜像静默漏传）"
             publish_ok="false"
         fi
     fi
@@ -2440,21 +2427,19 @@ _publish_static_to_prod()
 }
 
 # ============================================
-# _publish_static_to_stg - preprod 桶发布：noda-static-stg/sites/<product>/
+# _publish_static_to_stg - preprod 桶发布：noda-static-stg/sites/<product>/（rclone 版）
 # ============================================
 # Jenkins 与 seaweedfs-stg 同机，S3 只绑 127.0.0.1:8333 直连，无需中继。
-# 2026-09-14 起本函数是独立的 preprod 发布目标（先发 stg 验证、审批后发 prod），
-# 不再是 prod 发布的顺带同步——凭据缺失/同步失败/对账不符从告警升级为失败，
-# 防止「stg 静默没发成、探活探的是旧内容」让 preprod 门禁形同虚设。
+# 2026-09-30 rclone 化（同 prod：清单差量 + 服务端轮转）。凭据缺失/同步
+# 失败/对账不符从告警升级为失败，防「stg 静默没发成、探活探的是旧内容」
+# 让 preprod 门禁形同虚设。
 _publish_static_to_stg()
 {
     local product="$1"
     local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
     local web_dir="$apps_dir/$STATIC_WEB_DIR"
-    local alias_name="noda-prd-relay-${product}-stg"
+    local endpoint="http://127.0.0.1:8333"
 
-    # stg 桶凭据与 prod 不同源：优先环境变量，其次挂载配置文件（gitignored，
-    # ensure_stg_s3_json 保证在位）
     local stg_a="" stg_s=""
     if [ -n "${STG_S3_ACCESS_KEY:-}" ] && [ -n "${STG_S3_SECRET_KEY:-}" ]; then
         stg_a="$STG_S3_ACCESS_KEY"; stg_s="$STG_S3_SECRET_KEY"
@@ -2471,20 +2456,12 @@ _publish_static_to_stg()
         return 1
     fi
 
-    if ! mc_t mc alias set "$alias_name" "http://127.0.0.1:8333" "$stg_a" "$stg_s" --api S3v4; then
-        log_error "stg mc alias 设置失败"
-        mc alias remove "$alias_name" >/dev/null 2>&1 || true
-        return 1
-    fi
-
     local rc=0
     # S3 活性探测（build #60 实证：seaweedfs-stg 在构建高负载下会崩溃循环，
-    # 约 40s 一个周期；且 mc mirror 连接失败仍 exit 0，不能信退出码）——
-    # 先等 S3 可列举再动手，最多 60s。探测列举用 60s 短超时（挂死快速失败
-    # 进下一轮探测，不吃满全局看门狗）
+    # 约 40s 一个周期）——先等 S3 可列举再动手，最多 60s；探测用 30s 短看门狗
     local probe_ok="false" probe_i
     for probe_i in 1 2 3 4 5 6; do
-        if MC_CMD_TIMEOUT=60 mc_t mc ls "$alias_name/noda-static-stg" >/dev/null 2>&1; then
+        if RC_MAX_DURATION=30 _rc "$endpoint" "$stg_a" "$stg_s" lsf "noda-static-stg" >/dev/null 2>&1; then
             probe_ok="true"
             break
         fi
@@ -2493,83 +2470,59 @@ _publish_static_to_stg()
     done
     if [ "$probe_ok" != "true" ]; then
         log_error "stg S3 持续不可达（60s）——preprod 桶发布中止"
-        mc alias remove "$alias_name" >/dev/null 2>&1 || true
         return 1
     fi
 
     # 桶自愈（2026-09-13 实证：seaweedfs-stg 崩溃重建后桶元数据丢失，
-    # preprod 全站 404）——mc mb 幂等确保桶在位，任何环境桶丢失随发布自动重建
-    mc_t mc mb --ignore-existing "$alias_name/noda-static-stg" >/dev/null 2>&1 || true
+    # preprod 全站 404）——rclone mkdir 幂等确保桶在位
+    _rc "$endpoint" "$stg_a" "$stg_s" mkdir "noda-static-stg" >/dev/null 2>&1 || true
 
-    # 内容未变更判定（与 prod 路径同款；跳过时 alias 即拆，preprod 门禁探活的
-    # 是既有内容——上一次 stg 发布成功过即有效，未成功过则桶内无指纹自然不跳）
-    if _static_content_unchanged "noda-static-stg" "sites/$product" "$web_dir/out"; then
-        mc alias remove "$alias_name" >/dev/null 2>&1 || true
+    # 内容未变更判定（与 prod 路径同款；上一次 stg 发布成功过即有效，
+    # 未成功过则桶内无指纹自然不跳）
+    if _static_content_unchanged "$endpoint" "$stg_a" "$stg_s" "noda-static-stg" "sites/$product" "$web_dir/out"; then
         log_success "$product 内容未变更，跳过 stg 镜像与快照：noda-static-stg/sites/$product/"
         return 0
     fi
 
-    # 发布前快照轮转（与 prod 桶同构；列举失败仅跳过轮转，mirror 照跑）
-    if mc_t mc ls --recursive "$alias_name/noda-static-stg/sites/$product/" >/dev/null 2>&1; then
-        _static_snapshot_rotate "$alias_name" "noda-static-stg" "$product"
+    # 发布前快照轮转（rclone 服务端 sync）
+    if [ -n "$(_rc "$endpoint" "$stg_a" "$stg_s" lsf -R --files-only "noda-static-stg/sites/$product/" 2>/dev/null | head -1)" ]; then
+        _static_snapshot_rotate "$endpoint" "$stg_a" "$stg_s" "noda-static-stg" "$product"
     fi
 
-    log_info "mc mirror 增量同步（含删除） out/ → noda-static-stg/sites/$product/ ..."
-    # stg mirror 重试（build #54/#60 实证）：桶臂与 Pre-prod 容器臂并行后，
-    # compose recreate + 构建高负载可令 seaweedfs-stg 瞬断（mc 静默失败不报错），
-    # 成功判据用「列举 > 0」而非退出码；重试窗口 3×10s 覆盖 stg 的重启周期
-    local mirror_ok="false"
-    local m_attempt objs_now
-    for m_attempt in 1 2 3; do
-        mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name/noda-static-stg/sites/$product/" || true
-        objs_now=$(mc ls --recursive "$alias_name/noda-static-stg/sites/$product/" 2>/dev/null | grep -c . || true)
-        if [ "${objs_now:-0}" -gt 0 ]; then
-            mirror_ok="true"
-            break
-        fi
-        log_warn "stg mirror 第 ${m_attempt}/3 次未生效（seaweedfs-stg 可能重启中），10s 后重试..."
-        sleep 10
-    done
-    if [ "$mirror_ok" != "true" ]; then
-        log_error "preprod 桶（noda-static-stg）同步失败（重试 3 次仍失败）"
-        mc alias remove "$alias_name" >/dev/null 2>&1 || true
+    # 清单差量镜像
+    if ! _static_manifest_sync "$endpoint" "$stg_a" "$stg_s" "noda-static-stg" "sites/$product" "$web_dir/out"; then
+        log_error "preprod 桶（noda-static-stg）同步失败"
         return 1
     fi
 
-    # stg 对象级对账（同 prod 侧同款策略；build #35/#36 实证：stg 直连
-    # SeaweedFS 的 mirror 也会静默漏传 + 误删——#36 把 #35 刚传的 snagme.*
-    # 整组删除，preprod 页面随机 404。计数比对 + --overwrite 幂等补传，
-    # 绝不清空前缀。直连无中继截断问题，最终不符判失败）
-    if [ "$rc" = "0" ]; then
-        local stg_src_objs stg_objs stg_attempt
-        stg_src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
-        stg_objs=0
-        for stg_attempt in 1 2 3; do
-            stg_objs=$(mc ls --recursive "$alias_name/noda-static-stg/sites/$product/" 2>/dev/null | grep -c . || true)
-            if [ "${stg_objs:-0}" -ge "${stg_src_objs:-0}" ] && [ "${stg_objs:-0}" -gt 0 ]; then
-                break
-            fi
-            log_warn "stg 桶列举 ${stg_objs:-0} < 源 ${stg_src_objs:-0}——重跑 mirror 补传（第 ${stg_attempt} 次），10s 后执行..."
-            mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name/noda-static-stg/sites/$product/" || true
-            sleep 10
-        done
-        if [ "${stg_objs:-0}" -lt "${stg_src_objs:-0}" ] || [ "${stg_objs:-0}" = "0" ]; then
-            log_error "stg 桶对账失败：源 $stg_src_objs 个文件 ≠ 桶 ${stg_objs:-0} 个对象——preprod 内容可能不完整"
-            rc=1
+    # stg 对象级对账（策略与 prod 同构；直连无中继截断问题，最终不符判失败）
+    local stg_src_objs stg_objs stg_attempt
+    stg_src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
+    stg_objs=0
+    for stg_attempt in 1 2 3; do
+        stg_objs=$(_rc "$endpoint" "$stg_a" "$stg_s" lsf -R --files-only "noda-static-stg/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
+        if [ "${stg_objs:-0}" -ge "${stg_src_objs:-0}" ] && [ "${stg_objs:-0}" -gt 0 ]; then
+            break
         fi
-        # 哨兵单点校验（计数巧合对不上单点缺失）
-        if [ "$rc" = "0" ]; then
-            local sentinel="${STATIC_SENTINEL#out/}"
-            if [ -f "$web_dir/out/$sentinel" ]; then
-                if ! mc stat "$alias_name/noda-static-stg/sites/$product/$sentinel" >/dev/null 2>&1; then
-                    log_error "stg 哨兵对象缺失：sites/$product/$sentinel"
-                    rc=1
-                fi
+        log_warn "stg 桶列举 ${stg_objs:-0} < 源 ${stg_src_objs:-0}——重跑补传（第 ${stg_attempt} 次），10s 后执行..."
+        _rc "$endpoint" "$stg_a" "$stg_s" copy "$web_dir/out/" "noda-static-stg/sites/$product/" >/dev/null 2>&1 || true
+        sleep 10
+    done
+    if [ "${stg_objs:-0}" -lt "${stg_src_objs:-0}" ] || [ "${stg_objs:-0}" = "0" ]; then
+        log_error "stg 桶对账失败：源 $stg_src_objs 个文件 ≠ 桶 ${stg_objs:-0} 个对象——preprod 内容可能不完整"
+        rc=1
+    fi
+    # 哨兵单点校验（计数巧合对不上单点缺失）
+    if [ "$rc" = "0" ]; then
+        local sentinel="${STATIC_SENTINEL#out/}"
+        if [ -f "$web_dir/out/$sentinel" ]; then
+            if [ -z "$(_rc "$endpoint" "$stg_a" "$stg_s" lsf "noda-static-stg/sites/$product/$sentinel" 2>/dev/null)" ]; then
+                log_error "stg 哨兵对象缺失：sites/${product}/${sentinel}"
+                rc=1
             fi
         fi
     fi
 
-    mc alias remove "$alias_name" >/dev/null 2>&1 || true
     if [ "$rc" = "0" ]; then
         log_success "$product preprod 桶发布完成：noda-static-stg/sites/$product/"
     fi
@@ -2635,53 +2588,42 @@ EOF
 }
 
 # ============================================
-# mc_t - mc 长操作墙钟看门狗（2026-09-30）
+# _rc - rclone S3 访问（2026-09-30，替代已归档停维护的 minio mc）
 # ============================================
-# 中继半死（TCP 连接在但不响应）时 mc 自带重试可拖数小时——#371 曾耗尽
-# Jenkins 6h 全局超时并占住 static-publish 锁。mc 新版已无 --cmd-timeout，
-# 用后台进程 + sleep 看门狗实现：超时强杀返回 124（发布按失败处理，锁由
-# post always 的 pipeline_release_lock 释放）。MC_CMD_TIMEOUT 秒，默认 900；
-# 单调用可前缀覆盖（如 MC_CMD_TIMEOUT=60 mc_t mc ls ...）。
-# 兼容 set -euo pipefail：所有非零路径都有 || 守卫。
-mc_t()
+# remote 配置全部走 env（RCLONE_CONFIG_*），无落盘配置文件——mc 的
+# ~/.mc/config.json 曾是并发构建互踩点。--max-duration 内建墙钟看门狗
+# （替代 mc_t：中继半死不再拖到 Jenkins 全局超时）。RC_MAX_DURATION 秒。
+# 用法: _rc <endpoint> <ak> <sk> <rclone 子命令...>
+_rc()
 {
-    local t="${MC_CMD_TIMEOUT:-900}"
-    local rc=0
-    "$@" &
-    local pid=$!
-    ( sleep "$t" && kill "$pid" >/dev/null 2>&1 ) &
-    local watchdog=$!
-    wait "$pid" || rc=$?
-    kill "$watchdog" >/dev/null 2>&1 || true
-    wait "$watchdog" 2>/dev/null || true
-    if [ "$rc" -eq 143 ] || [ "$rc" -eq 124 ]; then
-        log_error "mc 命令超时终止（>${t}s）：$*"
-        return 124
-    fi
-    return "$rc"
+    local endpoint="$1" ak="$2" sk="$3"; shift 3
+    RCLONE_CONFIG_SW_TYPE=s3 \
+    RCLONE_CONFIG_SW_PROVIDER=Other \
+    RCLONE_CONFIG_SW_ENDPOINT="$endpoint" \
+    RCLONE_CONFIG_SW_ACCESS_KEY_ID="$ak" \
+    RCLONE_CONFIG_SW_SECRET_ACCESS_KEY="$sk" \
+        rclone --max-duration "${RC_MAX_DURATION:-900}s" "$@"
 }
 
 # ============================================
-# _static_content_unchanged - 发布「未变更跳过」判定（2026-09-30）
+# _static_content_unchanged - 发布「未变更跳过」判定（2026-09-30 rclone 版）
 # ============================================
-# 桶内指纹（构建期写入 out/.noda-artifact-hash 随镜像上桶，格式
-# `<git-sha> <tree-hash> <对象数>`）的 git-sha 与对象数与本次构建一致 →
-# 快照轮转与镜像皆为无操作，调用方整段跳过（#390 同 commit 重发实证每次
-# 白付 15-20 分钟快照+镜像）。只认双条件：指纹缺失/字段异常一律走完整
-# 路径；同 sha 对象数不一致=疑似上次发布不完整，走完整镜像自愈（对账
-# 哨兵既有语义）。FORCE_STATIC_PUBLISH=1 强制完整发布（如纯 env 变更同
-# sha 重发时用）。
-# 参数: $1=桶根(如 noda-static) $2=前缀(sites/<product>) $3=out 目录
+# 桶内指纹（构建期 .noda-artifact-hash，"<git-sha> <tree-hash> <对象数>" 随
+# 镜像上桶）的 git-sha 与对象数与本次构建一致 → 镜像与快照皆为无操作，调用
+# 方整段跳过。只认双条件：指纹缺失/字段异常一律走完整路径；同 sha 对象数
+# 不一致=疑似上次发布不完整，走完整镜像自愈。FORCE_STATIC_PUBLISH=1 强制
+# 完整发布（纯 env 变更同 sha 重发时用）。
+# 参数: $1=endpoint $2=ak $3=sk $4=bucket_root $5=prefix $6=out目录
 _static_content_unchanged()
 {
     if [ "${FORCE_STATIC_PUBLISH:-0}" = "1" ]; then
         log_info "FORCE_STATIC_PUBLISH=1，跳过未变更判定，走完整发布"
         return 1
     fi
-    local fp="$3/.noda-artifact-hash"
+    local fp="$6/.noda-artifact-hash"
     [ -f "$fp" ] || return 1
     local remote_fp
-    remote_fp=$(mc_t mc cat "$1/$2/.noda-artifact-hash" 2>/dev/null | head -1 || true)
+    remote_fp=$(_rc "$1" "$2" "$3" cat "$4/$5/.noda-artifact-hash" 2>/dev/null | head -1 || true)
     [ -n "$remote_fp" ] || return 1
     local r_sha r_tree r_cnt l_sha l_tree l_cnt
     read -r r_sha r_tree r_cnt <<EOF
@@ -2689,16 +2631,93 @@ $remote_fp
 EOF
     read -r l_sha l_tree l_cnt < "$fp"
     case "$r_sha" in
-        *[!0-9a-f]*|'') return 1 ;;  # 非法指纹视同缺失，走完整路径
+        *[!0-9a-f]*|'') return 1 ;;
     esac
     if [ "$r_sha" = "$l_sha" ] && [ "$r_cnt" = "$l_cnt" ]; then
         log_info "指纹比对一致：sha=${l_sha:0:12}… objects=$l_cnt → 判定内容未变更"
         return 0
     fi
     if [ "$r_sha" = "$l_sha" ]; then
-        log_warn "同 sha 但对象数不一致（桶 $r_cnt vs 源 $l_cnt）——疑似上次发布不完整，走完整镜像自愈"
+        log_warn "同 sha 但对象数不一致（桶 ${r_cnt} vs 源 ${l_cnt}）——疑似上次发布不完整，走完整镜像自愈"
     fi
     return 1
+}
+
+# ============================================
+# _static_manifest_sync - 清单差量镜像（2026-09-30 rclone 化核心）
+# ============================================
+# 桶内清单（构建期 .noda-manifest，"<sha>  <./路径>" 每文件一行）与本地清单
+# 内容级 diff：只上传变更/新增、删除已消失对象，最后上送新清单。seaweedfs
+# 不回 MD5 ETag、重建产物 mtime 全新——任何基于 size/mtime 的比较（含
+# rclone 原生 sync、旧 mc mirror --overwrite）都会退化成全量重传（40-60
+# 分钟发版的主体），内容级 diff 是唯一可靠增量。桶内清单缺失=首次 rclone
+# 发布，全量 copy 打底。清单路径含空格退回全量（shasum 行按空格分段不安全）。
+# 参数: $1=endpoint $2=ak $3=sk $4=bucket_root $5=prefix $6=out目录
+_static_manifest_sync()
+{
+    local endpoint="$1" ak="$2" sk="$3" bucket_root="$4" prefix="$5" out_dir="$6"
+    local remote="$bucket_root/$prefix"
+    local work
+    work=$(mktemp -d /tmp/noda-manifest.XXXXXX) || return 1
+
+    local remote_ok="true"
+    _rc "$endpoint" "$ak" "$sk" cat "$remote/.noda-manifest" > "$work/remote.manifest" 2>/dev/null || remote_ok="false"
+    if [ "$remote_ok" != "true" ] || [ ! -s "$work/remote.manifest" ]; then
+        log_info "桶内无清单（首次 rclone 发布）→ 全量 copy 打底 ..."
+        if ! _rc "$endpoint" "$ak" "$sk" copy "$out_dir/" "$remote/"; then
+            rm -rf "$work"
+            return 1
+        fi
+        _rc "$endpoint" "$ak" "$sk" copyto "$out_dir/.noda-manifest" "$remote/.noda-manifest" \
+            || log_warn "清单上送失败（下次仍走全量，不影响本次发布完整性）"
+        rm -rf "$work"
+        return 0
+    fi
+
+    # 清单路径含空格 → shasum 行字段错位，退回全量（本仓静态导出实际不含空格）
+    if grep -qE '^[0-9a-f]{64}  \./.* ' "$work/remote.manifest" "$out_dir/.noda-manifest" 2>/dev/null; then
+        log_warn "清单含空格路径——退回全量 copy"
+        if ! _rc "$endpoint" "$ak" "$sk" copy "$out_dir/" "$remote/"; then
+            rm -rf "$work"
+            return 1
+        fi
+        _rc "$endpoint" "$ak" "$sk" copyto "$out_dir/.noda-manifest" "$remote/.noda-manifest" || true
+        rm -rf "$work"
+        return 0
+    fi
+
+    # 内容级 diff：变更/新增（sha 不同或桶缺）→ changed；桶有本地无 → deleted
+    awk 'NR==FNR { r[substr($2, 3)] = $1; next }
+         { p = substr($2, 3); if (!(p in r) || r[p] != $1) print p }' \
+        "$work/remote.manifest" "$out_dir/.noda-manifest" > "$work/changed"
+    awk 'NR==FNR { l[substr($2, 3)] = $1; next }
+         { p = substr($2, 3); if (!(p in l)) print p }' \
+        "$out_dir/.noda-manifest" "$work/remote.manifest" > "$work/deleted"
+
+    local n_ch n_del
+    n_ch=$(wc -l < "$work/changed" | tr -d ' ')
+    n_del=$(wc -l < "$work/deleted" | tr -d ' ')
+    if [ "$n_ch" = "0" ] && [ "$n_del" = "0" ]; then
+        log_info "清单 diff 为空（内容与桶一致），零传输"
+        rm -rf "$work"
+        return 0
+    fi
+    log_info "清单差量：上传 ${n_ch}、删除 ${n_del}（总对象 $(wc -l < "$out_dir/.noda-manifest" | tr -d ' ')）..."
+
+    if [ "$n_ch" -gt 0 ]; then
+        if ! _rc "$endpoint" "$ak" "$sk" copy "$out_dir/" "$remote/" --files-from "$work/changed"; then
+            rm -rf "$work"
+            return 1
+        fi
+    fi
+    if [ "$n_del" -gt 0 ]; then
+        _rc "$endpoint" "$ak" "$sk" delete "$remote/" --files-from "$work/deleted" \
+            || log_warn "差量删除失败（对账哨兵/下次发布兜底）"
+    fi
+    _rc "$endpoint" "$ak" "$sk" copyto "$out_dir/.noda-manifest" "$remote/.noda-manifest" \
+        || log_warn "清单上送失败（下次仍走全量，不影响本次发布完整性）"
+    rm -rf "$work"
+    return 0
 }
 
 # ============================================
@@ -2720,12 +2739,15 @@ _static_snapshot_dir()
 # MAX_STATIC_SNAPSHOTS 控制层数（默认 2：-prev 可回滚一步 / -prev2 可回滚两步）。
 # 任一层轮转失败仅告警——快照是回滚锚点，但绝不能阻塞发布本身。
 # 快照前缀不在 nginx 改写映射内，公网不可达。
+# 发布前快照轮转（2026-09-30 rclone 化）：层间 sync 走 seaweedfs 服务端
+# CopyObject（原型实测 300 对象 0.3s——旧 mc mirror 经中继全量重传曾拖 18 分钟）。
+# sync 含删除语义（= 旧 mc mirror --remove）。任一层失败仅告警，不阻塞发布。
 _static_snapshot_rotate()
 {
-    local alias_name="$1" bucket_root="$2" product="$3"
+    local endpoint="$1" ak="$2" sk="$3" bucket_root="$4" product="$5"
     local max_snap="${MAX_STATIC_SNAPSHOTS:-2}"
     local i src dst
-    if ! mc_t mc ls --recursive "$alias_name/$bucket_root/sites/$product/" >/dev/null 2>&1; then
+    if [ -z "$(_rc "$endpoint" "$ak" "$sk" lsf -R --files-only "$bucket_root/sites/$product/" 2>/dev/null | head -1)" ]; then
         log_info "首次发布（桶内无 $product 前缀），跳过快照"
         return 0
     fi
@@ -2733,19 +2755,15 @@ _static_snapshot_rotate()
     while [ "$i" -ge 1 ]; do
         src=$(_static_snapshot_dir "$product" "$i")
         dst=$(_static_snapshot_dir "$product" "$((i + 1))")
-        if mc_t mc ls --recursive "$alias_name/$bucket_root/sites/$src/" >/dev/null 2>&1; then
+        if [ -n "$(_rc "$endpoint" "$ak" "$sk" lsf -R --files-only "$bucket_root/sites/$src/" 2>/dev/null | head -1)" ]; then
             log_info "快照轮转 $src → $dst ..."
-            mc_t mc mirror --overwrite --remove --quiet \
-                "$alias_name/$bucket_root/sites/$src/" \
-                "$alias_name/$bucket_root/sites/$dst/" || \
+            _rc "$endpoint" "$ak" "$sk" sync "$bucket_root/sites/$src/" "$bucket_root/sites/$dst/" >/dev/null 2>&1 || \
                 log_warn "快照轮转 $src → $dst 失败（该层快照可能过期）"
         fi
         i=$((i - 1))
     done
     log_info "快照当前发布 → $bucket_root/sites/$(_static_snapshot_dir "$product" 1)/ ..."
-    mc_t mc mirror --overwrite --remove --quiet \
-        "$alias_name/$bucket_root/sites/$product/" \
-        "$alias_name/$bucket_root/sites/$(_static_snapshot_dir "$product" 1)/" || \
+    _rc "$endpoint" "$ak" "$sk" sync "$bucket_root/sites/$product/" "$bucket_root/sites/$(_static_snapshot_dir "$product" 1)/" >/dev/null 2>&1 || \
         log_warn "快照失败（不影响本次发布，仅失去回滚锚点）"
 }
 
@@ -2788,10 +2806,6 @@ _pipeline_rollback_static_site_impl()
         log_error "用法: pipeline_rollback_static_site <product> [depth=1..${MAX_STATIC_SNAPSHOTS:-2}]"
         return 1
     fi
-    if ! command -v mc >/dev/null 2>&1; then
-        log_error "本机未安装 minio client（brew install minio/stable/mc）"
-        return 1
-    fi
 
     local relay_name="tmp-s3-relay-${product}"
     local relay_port
@@ -2806,11 +2820,10 @@ _pipeline_rollback_static_site_impl()
         snagme)  relay_port="9340" ;;
         *)       relay_port="9341" ;;
     esac
-    local alias_name="noda-prd-relay-${product}"
+    local endpoint="http://192.168.100.1:${relay_port}"
     _rollback_cleanup()
     {
         remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true" || true
-        mc alias remove "$alias_name" >/dev/null 2>&1 || true
     }
 
     if ! remote_exec "docker rm -f $relay_name >/dev/null 2>&1 || true; docker run -d --name $relay_name --network $NETWORK_NAME -p 192.168.100.1:${relay_port}:8333 alpine/socat tcp-listen:8333,fork,reuseaddr tcp:seaweedfs:8333"; then
@@ -2826,26 +2839,19 @@ _pipeline_rollback_static_site_impl()
         _rollback_cleanup
         return 1
     fi
-    if ! mc_t mc alias set "$alias_name" "http://192.168.100.1:${relay_port}" "$s3a" "$s3s" --api S3v4; then
-        log_error "mc alias 设置失败"
-        _rollback_cleanup
-        return 1
-    fi
 
     local prev_objs
-    prev_objs=$(mc_t mc ls --recursive "$alias_name/noda-static/sites/${snap_dir}/" 2>/dev/null | grep -c . || true)
+    prev_objs=$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "noda-static/sites/${snap_dir}/" 2>/dev/null | wc -l | tr -d ' ')
     if [ "${prev_objs:-0}" -eq 0 ]; then
         log_error "回滚快照为空：sites/${snap_dir}/ 不存在或无对象（该层快照尚未产生/无此深度历史）"
         _rollback_cleanup
         return 1
     fi
 
-    log_info "回滚: sites/${snap_dir}/（$prev_objs 对象）→ sites/$product/ ..."
+    log_info "回滚: sites/${snap_dir}/（$prev_objs 对象）→ sites/$product/ ...（rclone sync，服务端拷贝含删除）"
     # 回滚源必须用按深度计算的 $snap_dir（prod/stg 两桶同源）——
     # 旧写法 prod 侧硬编码 ${product}-prev，ROLLBACK_DEPTH=2 时静默回错层
-    if ! mc_t mc mirror --overwrite --remove --quiet \
-        "$alias_name/noda-static/sites/${snap_dir}/" \
-        "$alias_name/noda-static/sites/$product/"; then
+    if ! _rc "$endpoint" "$s3a" "$s3s" sync "noda-static/sites/${snap_dir}/" "noda-static/sites/$product/"; then
         log_error "prod 桶回滚失败"
         _rollback_cleanup
         return 1
@@ -2854,24 +2860,24 @@ _pipeline_rollback_static_site_impl()
     # stg 桶同步回滚（失败仅告警——preprod 非关键路径）
     local stg_json="$PROJECT_ROOT/config/seaweedfs/s3.json"
     if [ -f "$stg_json" ]; then
-        if mc_t mc alias set "$alias_name-stg" "http://127.0.0.1:8333" \
-            "$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['accessKey'])" 2>/dev/null)" \
-            "$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['secretKey'])" 2>/dev/null)" \
-            --api S3v4 >/dev/null 2>&1; then
-            mc_t mc mirror --overwrite --remove --quiet \
-                "$alias_name-stg/noda-static-stg/sites/${snap_dir}/" \
-                "$alias_name-stg/noda-static-stg/sites/$product/" \
+        local stg_a stg_s
+        stg_a=$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['accessKey'])" 2>/dev/null)
+        stg_s=$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['secretKey'])" 2>/dev/null)
+        if [ -n "$stg_a" ] && [ -n "$stg_s" ]; then
+            _rc "http://127.0.0.1:8333" "$stg_a" "$stg_s" sync \
+                "noda-static-stg/sites/${snap_dir}/" \
+                "noda-static-stg/sites/$product/" \
                 && log_info "stg 桶已同步回滚" || log_warn "stg 桶回滚失败（不影响 prod）"
         fi
     fi
 
-    # 对象数校验须在拆 alias 之前
+    # 对象数校验须在拆中继之前
     local now_objs
-    now_objs=$(mc_t mc ls --recursive "$alias_name/noda-static/sites/$product/" 2>/dev/null | grep -c . || true)
+    now_objs=$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "noda-static/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
     _rollback_cleanup
-    log_info "回滚后主前缀对象数: $now_objs（快照 $prev_objs）"
+    log_info "回滚后主前缀对象数: ${now_objs}（快照 ${prev_objs}）"
     if [ "$now_objs" != "$prev_objs" ]; then
-        log_warn "回滚后对象数与快照不一致（$now_objs vs $prev_objs）——请人工核对"
+        log_warn "回滚后对象数与快照不一致（${now_objs} vs ${prev_objs}）——请人工核对"
     fi
     log_success "$product 静态站已回滚到第 ${depth} 层快照（$now_objs 对象）；确认恢复后下次发布会重新快照"
     return 0
