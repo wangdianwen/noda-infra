@@ -2260,6 +2260,20 @@ pipeline_build_static_artifacts()
         log_error "构建产物缺失 $web_dir/$STATIC_SENTINEL（output:export 校验失败）"
         return 1
     fi
+
+    # 产物指纹（发布期「未变更跳过」判定，2026-09-30）：git-sha + 字节树 hash +
+    # 对象数，随内容一起上桶。跳过判定只认 git-sha+对象数（Next 构建非确定性时
+    # 同 sha 字节可能不同，不参与判定）；tree-hash 仅作同 sha 异构建的诊断可见性。
+    # count+1 = 计入指纹文件自身（桶侧对象数与 find 口径一致）。
+    local b_sha b_tree b_count
+    b_sha=$(cd "$apps_dir" && git rev-parse HEAD 2>/dev/null || echo unknown)
+    b_count=$(( $(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ') + 1 ))
+    b_tree=$(cd "$web_dir/out" && find . -type f ! -name '.noda-artifact-hash' \
+        | LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$f"; done \
+        | shasum -a 256 | awk '{print $1}')
+    printf '%s %s %s\n' "$b_sha" "$b_tree" "$b_count" > "$web_dir/out/.noda-artifact-hash"
+    log_info "产物指纹: sha=$b_sha tree=$b_tree objects=$b_count"
+
     log_success "$product 静态产物构建完成: $web_dir/out/"
 }
 
@@ -2349,10 +2363,18 @@ _publish_static_to_prod()
         return 1
     fi
 
-    if ! mc alias set "$alias_name" "http://192.168.100.1:${relay_port}" "$s3a" "$s3s" --api S3v4; then
+    if ! mc_t mc alias set "$alias_name" "http://192.168.100.1:${relay_port}" "$s3a" "$s3s" --api S3v4; then
         log_error "mc alias 设置失败"
         _publish_site_cleanup
         return 1
+    fi
+
+    # 内容未变更判定（2026-09-30）：指纹 sha+对象数一致 → 快照轮转与镜像皆为
+    # 无操作，整段跳过（中继即拆即走，持锁秒级）。判定不过照常轮转+镜像。
+    if _static_content_unchanged "noda-static" "sites/$product" "$web_dir/out"; then
+        _publish_site_cleanup
+        log_success "$product 内容未变更，跳过镜像与快照：noda-static/sites/$product/（中继已拆除）"
+        return 0
     fi
 
     # 发布前快照轮转（N 层滚动，2026-09-13 打磨）：snap(max)←snap(max-1)←...←snap(1)←主前缀
@@ -2362,7 +2384,7 @@ _publish_static_to_prod()
     log_info "mc mirror 增量同步（含删除） out/ → noda-static/sites/$product/ ..."
     # --remove：桶内该前缀收敛为当前 out/（旧构建 hash 资产/已删页面对象随之清理）；
     # 作用域仅 sites/<product>/ 前缀，图片（avatars/ 等）与其它前缀不受影响
-    if ! mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name/noda-static/sites/$product/"; then
+    if ! mc_t mc mirror --overwrite --remove --quiet "$web_dir/out/" "$alias_name/noda-static/sites/$product/"; then
         log_error "静态站同步失败"
         _publish_site_cleanup
         return 1
@@ -2382,12 +2404,12 @@ _publish_static_to_prod()
     src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
     objs=0
     for attempt in 1 2 3; do
-        objs=$(mc ls --recursive "$alias_name/noda-static/sites/$product/" 2>/dev/null | grep -c . || true)
+        objs=$(mc_t mc ls --recursive "$alias_name/noda-static/sites/$product/" 2>/dev/null | grep -c . || true)
         if [ "${objs:-0}" -ge "${src_objs:-0}" ]; then
             break
         fi
         log_warn "桶列举 ${objs} < 源 ${src_objs}（中继截断或漏传）——重跑 mirror 补传（第 ${attempt} 次）..."
-        mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name/noda-static/sites/$product/" >/dev/null 2>&1 || true
+        mc_t mc mirror --overwrite --quiet "$web_dir/out/" "$alias_name/noda-static/sites/$product/" >/dev/null 2>&1 || true
     done
 
     # 全部校验（对象数/对账/哨兵）都依赖 mc alias 在位——中继拆除必须放在最后。
@@ -2403,7 +2425,7 @@ _publish_static_to_prod()
     fi
     local sentinel="${STATIC_SENTINEL#out/}"
     if [ -f "$web_dir/out/$sentinel" ]; then
-        if ! mc stat "$alias_name/noda-static/sites/$product/$sentinel" >/dev/null 2>&1; then
+        if ! mc_t mc stat "$alias_name/noda-static/sites/$product/$sentinel" >/dev/null 2>&1; then
             log_error "哨兵对象缺失：sites/$product/$sentinel（mc mirror 静默漏传）"
             publish_ok="false"
         fi
@@ -2449,7 +2471,7 @@ _publish_static_to_stg()
         return 1
     fi
 
-    if ! mc alias set "$alias_name" "http://127.0.0.1:8333" "$stg_a" "$stg_s" --api S3v4; then
+    if ! mc_t mc alias set "$alias_name" "http://127.0.0.1:8333" "$stg_a" "$stg_s" --api S3v4; then
         log_error "stg mc alias 设置失败"
         mc alias remove "$alias_name" >/dev/null 2>&1 || true
         return 1
@@ -2458,10 +2480,11 @@ _publish_static_to_stg()
     local rc=0
     # S3 活性探测（build #60 实证：seaweedfs-stg 在构建高负载下会崩溃循环，
     # 约 40s 一个周期；且 mc mirror 连接失败仍 exit 0，不能信退出码）——
-    # 先等 S3 可列举再动手，最多 60s
+    # 先等 S3 可列举再动手，最多 60s。探测列举用 60s 短超时（挂死快速失败
+    # 进下一轮探测，不吃满全局看门狗）
     local probe_ok="false" probe_i
     for probe_i in 1 2 3 4 5 6; do
-        if mc ls "$alias_name/noda-static-stg" >/dev/null 2>&1; then
+        if MC_CMD_TIMEOUT=60 mc_t mc ls "$alias_name/noda-static-stg" >/dev/null 2>&1; then
             probe_ok="true"
             break
         fi
@@ -2476,10 +2499,18 @@ _publish_static_to_stg()
 
     # 桶自愈（2026-09-13 实证：seaweedfs-stg 崩溃重建后桶元数据丢失，
     # preprod 全站 404）——mc mb 幂等确保桶在位，任何环境桶丢失随发布自动重建
-    mc mb --ignore-existing "$alias_name/noda-static-stg" >/dev/null 2>&1 || true
+    mc_t mc mb --ignore-existing "$alias_name/noda-static-stg" >/dev/null 2>&1 || true
+
+    # 内容未变更判定（与 prod 路径同款；跳过时 alias 即拆，preprod 门禁探活的
+    # 是既有内容——上一次 stg 发布成功过即有效，未成功过则桶内无指纹自然不跳）
+    if _static_content_unchanged "noda-static-stg" "sites/$product" "$web_dir/out"; then
+        mc alias remove "$alias_name" >/dev/null 2>&1 || true
+        log_success "$product 内容未变更，跳过 stg 镜像与快照：noda-static-stg/sites/$product/"
+        return 0
+    fi
 
     # 发布前快照轮转（与 prod 桶同构；列举失败仅跳过轮转，mirror 照跑）
-    if mc ls --recursive "$alias_name/noda-static-stg/sites/$product/" >/dev/null 2>&1; then
+    if mc_t mc ls --recursive "$alias_name/noda-static-stg/sites/$product/" >/dev/null 2>&1; then
         _static_snapshot_rotate "$alias_name" "noda-static-stg" "$product"
     fi
 
@@ -2604,6 +2635,73 @@ EOF
 }
 
 # ============================================
+# mc_t - mc 长操作墙钟看门狗（2026-09-30）
+# ============================================
+# 中继半死（TCP 连接在但不响应）时 mc 自带重试可拖数小时——#371 曾耗尽
+# Jenkins 6h 全局超时并占住 static-publish 锁。mc 新版已无 --cmd-timeout，
+# 用后台进程 + sleep 看门狗实现：超时强杀返回 124（发布按失败处理，锁由
+# post always 的 pipeline_release_lock 释放）。MC_CMD_TIMEOUT 秒，默认 900；
+# 单调用可前缀覆盖（如 MC_CMD_TIMEOUT=60 mc_t mc ls ...）。
+# 兼容 set -euo pipefail：所有非零路径都有 || 守卫。
+mc_t()
+{
+    local t="${MC_CMD_TIMEOUT:-900}"
+    local rc=0
+    "$@" &
+    local pid=$!
+    ( sleep "$t" && kill "$pid" >/dev/null 2>&1 ) &
+    local watchdog=$!
+    wait "$pid" || rc=$?
+    kill "$watchdog" >/dev/null 2>&1 || true
+    wait "$watchdog" 2>/dev/null || true
+    if [ "$rc" -eq 143 ] || [ "$rc" -eq 124 ]; then
+        log_error "mc 命令超时终止（>${t}s）：$*"
+        return 124
+    fi
+    return "$rc"
+}
+
+# ============================================
+# _static_content_unchanged - 发布「未变更跳过」判定（2026-09-30）
+# ============================================
+# 桶内指纹（构建期写入 out/.noda-artifact-hash 随镜像上桶，格式
+# `<git-sha> <tree-hash> <对象数>`）的 git-sha 与对象数与本次构建一致 →
+# 快照轮转与镜像皆为无操作，调用方整段跳过（#390 同 commit 重发实证每次
+# 白付 15-20 分钟快照+镜像）。只认双条件：指纹缺失/字段异常一律走完整
+# 路径；同 sha 对象数不一致=疑似上次发布不完整，走完整镜像自愈（对账
+# 哨兵既有语义）。FORCE_STATIC_PUBLISH=1 强制完整发布（如纯 env 变更同
+# sha 重发时用）。
+# 参数: $1=桶根(如 noda-static) $2=前缀(sites/<product>) $3=out 目录
+_static_content_unchanged()
+{
+    if [ "${FORCE_STATIC_PUBLISH:-0}" = "1" ]; then
+        log_info "FORCE_STATIC_PUBLISH=1，跳过未变更判定，走完整发布"
+        return 1
+    fi
+    local fp="$3/.noda-artifact-hash"
+    [ -f "$fp" ] || return 1
+    local remote_fp
+    remote_fp=$(mc_t mc cat "$1/$2/.noda-artifact-hash" 2>/dev/null | head -1 || true)
+    [ -n "$remote_fp" ] || return 1
+    local r_sha r_tree r_cnt l_sha l_tree l_cnt
+    read -r r_sha r_tree r_cnt <<EOF
+$remote_fp
+EOF
+    read -r l_sha l_tree l_cnt < "$fp"
+    case "$r_sha" in
+        *[!0-9a-f]*|'') return 1 ;;  # 非法指纹视同缺失，走完整路径
+    esac
+    if [ "$r_sha" = "$l_sha" ] && [ "$r_cnt" = "$l_cnt" ]; then
+        log_info "指纹比对一致：sha=${l_sha:0:12}… objects=$l_cnt → 判定内容未变更"
+        return 0
+    fi
+    if [ "$r_sha" = "$l_sha" ]; then
+        log_warn "同 sha 但对象数不一致（桶 $r_cnt vs 源 $l_cnt）——疑似上次发布不完整，走完整镜像自愈"
+    fi
+    return 1
+}
+
+# ============================================
 # 静态站多层快照（2026-09-13 打磨：单份 -prev 只能回滚一步 → N 层滚动）
 # ============================================
 # 深度 i 对应的桶前缀：i=1 → <product>-prev（兼容既有命名），i≥2 → <product>-prev<i>
@@ -2627,7 +2725,7 @@ _static_snapshot_rotate()
     local alias_name="$1" bucket_root="$2" product="$3"
     local max_snap="${MAX_STATIC_SNAPSHOTS:-2}"
     local i src dst
-    if ! mc ls --recursive "$alias_name/$bucket_root/sites/$product/" >/dev/null 2>&1; then
+    if ! mc_t mc ls --recursive "$alias_name/$bucket_root/sites/$product/" >/dev/null 2>&1; then
         log_info "首次发布（桶内无 $product 前缀），跳过快照"
         return 0
     fi
@@ -2635,9 +2733,9 @@ _static_snapshot_rotate()
     while [ "$i" -ge 1 ]; do
         src=$(_static_snapshot_dir "$product" "$i")
         dst=$(_static_snapshot_dir "$product" "$((i + 1))")
-        if mc ls --recursive "$alias_name/$bucket_root/sites/$src/" >/dev/null 2>&1; then
+        if mc_t mc ls --recursive "$alias_name/$bucket_root/sites/$src/" >/dev/null 2>&1; then
             log_info "快照轮转 $src → $dst ..."
-            mc mirror --overwrite --remove --quiet \
+            mc_t mc mirror --overwrite --remove --quiet \
                 "$alias_name/$bucket_root/sites/$src/" \
                 "$alias_name/$bucket_root/sites/$dst/" || \
                 log_warn "快照轮转 $src → $dst 失败（该层快照可能过期）"
@@ -2645,7 +2743,7 @@ _static_snapshot_rotate()
         i=$((i - 1))
     done
     log_info "快照当前发布 → $bucket_root/sites/$(_static_snapshot_dir "$product" 1)/ ..."
-    mc mirror --overwrite --remove --quiet \
+    mc_t mc mirror --overwrite --remove --quiet \
         "$alias_name/$bucket_root/sites/$product/" \
         "$alias_name/$bucket_root/sites/$(_static_snapshot_dir "$product" 1)/" || \
         log_warn "快照失败（不影响本次发布，仅失去回滚锚点）"
@@ -2728,14 +2826,14 @@ _pipeline_rollback_static_site_impl()
         _rollback_cleanup
         return 1
     fi
-    if ! mc alias set "$alias_name" "http://192.168.100.1:${relay_port}" "$s3a" "$s3s" --api S3v4; then
+    if ! mc_t mc alias set "$alias_name" "http://192.168.100.1:${relay_port}" "$s3a" "$s3s" --api S3v4; then
         log_error "mc alias 设置失败"
         _rollback_cleanup
         return 1
     fi
 
     local prev_objs
-    prev_objs=$(mc ls --recursive "$alias_name/noda-static/sites/${snap_dir}/" 2>/dev/null | grep -c . || true)
+    prev_objs=$(mc_t mc ls --recursive "$alias_name/noda-static/sites/${snap_dir}/" 2>/dev/null | grep -c . || true)
     if [ "${prev_objs:-0}" -eq 0 ]; then
         log_error "回滚快照为空：sites/${snap_dir}/ 不存在或无对象（该层快照尚未产生/无此深度历史）"
         _rollback_cleanup
@@ -2745,7 +2843,7 @@ _pipeline_rollback_static_site_impl()
     log_info "回滚: sites/${snap_dir}/（$prev_objs 对象）→ sites/$product/ ..."
     # 回滚源必须用按深度计算的 $snap_dir（prod/stg 两桶同源）——
     # 旧写法 prod 侧硬编码 ${product}-prev，ROLLBACK_DEPTH=2 时静默回错层
-    if ! mc mirror --overwrite --remove --quiet \
+    if ! mc_t mc mirror --overwrite --remove --quiet \
         "$alias_name/noda-static/sites/${snap_dir}/" \
         "$alias_name/noda-static/sites/$product/"; then
         log_error "prod 桶回滚失败"
@@ -2756,11 +2854,11 @@ _pipeline_rollback_static_site_impl()
     # stg 桶同步回滚（失败仅告警——preprod 非关键路径）
     local stg_json="$PROJECT_ROOT/config/seaweedfs/s3.json"
     if [ -f "$stg_json" ]; then
-        if mc alias set "$alias_name-stg" "http://127.0.0.1:8333" \
+        if mc_t mc alias set "$alias_name-stg" "http://127.0.0.1:8333" \
             "$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['accessKey'])" 2>/dev/null)" \
             "$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['secretKey'])" 2>/dev/null)" \
             --api S3v4 >/dev/null 2>&1; then
-            mc mirror --overwrite --remove --quiet \
+            mc_t mc mirror --overwrite --remove --quiet \
                 "$alias_name-stg/noda-static-stg/sites/${snap_dir}/" \
                 "$alias_name-stg/noda-static-stg/sites/$product/" \
                 && log_info "stg 桶已同步回滚" || log_warn "stg 桶回滚失败（不影响 prod）"
@@ -2769,7 +2867,7 @@ _pipeline_rollback_static_site_impl()
 
     # 对象数校验须在拆 alias 之前
     local now_objs
-    now_objs=$(mc ls --recursive "$alias_name/noda-static/sites/$product/" 2>/dev/null | grep -c . || true)
+    now_objs=$(mc_t mc ls --recursive "$alias_name/noda-static/sites/$product/" 2>/dev/null | grep -c . || true)
     _rollback_cleanup
     log_info "回滚后主前缀对象数: $now_objs（快照 $prev_objs）"
     if [ "$now_objs" != "$prev_objs" ]; then
