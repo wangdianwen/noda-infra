@@ -36,6 +36,11 @@ pipeline {
         // 备份文件实际路径（Jenkins workspace 中无备份文件，需指向项目部署目录）
         // 按实际部署路径配置，本地开发: ~/Project/noda-infra/docker/volumes/backup
         BACKUP_HOST_DIR = "${HOME}/Project/noda-infra/docker/volumes/backup"
+        // node_modules 常驻槽位（2026-10-01）：构建后不再删除。槽位目录持久，
+        // 删了只会让下次构建多付一次 install；pnpm 全局 store 恒热时全量
+        // install 也只要 ~6s，而删除本身就要 ~8s。lockfile 漂移由构建段常跑
+        // 的 pnpm install --frozen-lockfile 兜住。
+        SKIP_NODE_MODULES_CLEANUP = '1'
     }
 
     // 并行化：无 disableConcurrentBuilds——项目已按维度隔离，

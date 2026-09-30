@@ -2224,11 +2224,13 @@ pipeline_build_static_artifacts()
         return 1
     fi
 
-    # 依赖就绪（2026-10-01 node_modules 持久热缓存）：8 产品 × 5 工作区槽位的
-    # node_modules 组合大多为冷，冷槽全量 pnpm install 是构建时长 3↔11 分钟
-    # 波动的主因。成功安装后把 node_modules 快照进持久缓存（按产品，含完整性
-    # 标记，staging+mv 原子换入防并发构建撕裂）；冷槽先 rsync 热缓存（秒级），
-    # 缓存缺失/损坏/rsync 失败一律回退既有 pnpm install（行为向后兼容）。
+    # 依赖就绪（2026-10-01 修订）：node_modules 改为常驻槽位（Jenkinsfile 置
+    # SKIP_NODE_MODULES_CLEANUP=1，不再每次构建后删除）——实测 pnpm 全局 store
+    # 恒热，缺失场景的全量 install 也只需 ~6s，"install 是分钟级波动主因"的
+    # 旧结论系归因错误（波动真因=发布互斥锁排队，见 #424 时序分析）。
+    # install 因此**常跑不跳**：lockfile 未变时是秒级幂等校验；lockfile 变更时
+    # 在此补链——node_modules 常驻后这步是唯一能追上依赖漂移的地方，不能省。
+    # 持久热缓存保留，仅服务于全新执行机/全局 store 被清的灾难场景。
     local nm_cache="$HOME/.jenkins/.cache/noda-apps-node-modules/${product}"
     if [ ! -d "$web_dir/node_modules" ] && [ -f "$nm_cache/node_modules/.noda-ok" ]; then
         log_info "node_modules 缺失——从持久缓存热身（rsync ${nm_cache}）..."
@@ -2240,13 +2242,14 @@ pipeline_build_static_artifacts()
             rm -rf "$web_dir/node_modules"
         fi
     fi
-    if [ ! -d "$web_dir/node_modules" ]; then
-        log_info "前端依赖缺失，pnpm install --frozen-lockfile ($apps_dir)..."
-        (cd "$apps_dir" && pnpm install --frozen-lockfile) || {
-            log_error "pnpm install 失败: $apps_dir"
-            return 1
-        }
-        # 安装成功 → 原子回写持久缓存（staging 构建完整体后 mv 换入 + 完整性标记）
+    log_info "pnpm install --frozen-lockfile ($apps_dir)..."
+    (cd "$apps_dir" && pnpm install --frozen-lockfile) || {
+        log_error "pnpm install 失败: $apps_dir"
+        return 1
+    }
+    if [ ! -f "$nm_cache/node_modules/.noda-ok" ]; then
+        # 缓存冷（每产品一次）→ 原子回写持久缓存（staging 构建完整体后 mv 换入
+        # + 完整性标记）；缓存已热则不回写——每构建 rsync 1.5G 纯属浪费
         if mkdir -p "$nm_cache" && rm -rf "$nm_cache/.staging" && rsync -a "$web_dir/node_modules/" "$nm_cache/.staging/"; then
             rm -rf "$nm_cache/node_modules"
             mv "$nm_cache/.staging" "$nm_cache/node_modules"
@@ -2677,38 +2680,71 @@ EOF
 # seaweedfs 同样的服务端拷贝 ~1 分钟。rclone 二进制一次性部署在 r4s
 # /opt/noda/bin/rclone（静态 linux-arm64，alpine/socat 镜像内直接运行）；
 # 不可用时回退经中继轮转（慢但正确）。
+# 2026-10-01 重构为「单次容器调用」：探查+整链轮转的远端脚本一次 docker run
+# 完成。三个教训固化在此：
+#   1) ⚠️ 必须 --network noda-network——默认 bridge 无内嵌 DNS，seaweedfs
+#      解析失败且 stderr 被吞 → lsf 恒空 → 全产品被误判「首次发布」跳过
+#      快照，回滚锚点静默停更（当日实证）。同坑见 seaweedfs 部署段 aee8f6a。
+#   2) r4s 上每次 docker run 固定开销 15-90s（容器创建+二进制挂载），拆
+#      多次调用按次数线性放大——曾 2 次探查就吃掉发布段 ~1 分钟。
+#   3) 脚本传输不能走 base64（OpenWrt BusyBox 无该 applet）——脚本自身保证
+#      不含单引号，直接单引号包裹作为 sh -c 参数穿越 ash→docker 两层。
 # 参数: $1=product $2=bucket_root $3=中继endpoint（回退用） $4=ak $5=sk
 _static_snapshot_rotate_prod()
 {
     local product="$1" bucket_root="$2" endpoint="$3" ak="$4" sk="$5"
     local max_snap="${MAX_STATIC_SNAPSHOTS:-2}"
-    # env 必须以 -e 显式进容器（docker 不透传宿主 env）；桶路径带 SW: 远程前缀
-    local docker_rclone="docker run --rm -v /opt/noda/bin/rclone:/usr/local/bin/rclone -e RCLONE_CONFIG_SW_TYPE=s3 -e RCLONE_CONFIG_SW_PROVIDER=Other -e RCLONE_CONFIG_SW_ENDPOINT=http://seaweedfs:8333 -e RCLONE_CONFIG_SW_ACCESS_KEY_ID=$ak -e RCLONE_CONFIG_SW_SECRET_ACCESS_KEY=$sk -e RCLONE_TRANSFERS=8 -e RCLONE_CHECKERS=16 --entrypoint /usr/local/bin/rclone alpine/socat"
-    local renv=""
-    if ! remote_exec "$docker_rclone version >/dev/null 2>&1"; then
-        log_warn "r4s rclone 不可用（/opt/noda/bin/rclone 缺失）——回退经中继轮转"
+    # env 必须以 -e 显式进容器（docker 不透传宿主 env）；桶路径带 SW: 远程前缀。
+    # 脚本约定输出：NO_PREFIX=主前缀不存在（首次发布）/ ROTATE_DONE=链路完成；
+    # 任一层 sync 失败仅打 WARN 行不中断（快照绝不阻塞发布）。
+    local script="_bin=/usr/local/bin/rclone
+_root=SW:${bucket_root}/sites
+if [ -z \"\$(\"\$_bin\" lsf -R --files-only \"\$_root/${product}/\" 2>/dev/null | head -1)\" ]; then
+  echo NO_PREFIX
+  exit 0
+fi
+_i=$((max_snap - 1))
+while [ \"\$_i\" -ge 1 ]; do
+  if [ \"\$_i\" -le 1 ]; then _src=${product}-prev; else _src=${product}-prev\$_i; fi
+  _dst=${product}-prev\$((_i + 1))
+  if [ -n \"\$(\"\$_bin\" lsf -R --files-only \"\$_root/\$_src/\" 2>/dev/null | head -1)\" ]; then
+    echo \"ROTATE \$_src -> \$_dst\"
+    \"\$_bin\" sync \"\$_root/\$_src/\" \"\$_root/\$_dst/\" --max-duration 600s || echo \"WARN\$_src\"
+  fi
+  _i=\$((_i - 1))
+done
+echo \"ROTATE ${product} -> ${product}-prev\"
+\"\$_bin\" sync \"\$_root/${product}/\" \"\$_root/${product}-prev/\" --max-duration 600s || echo WARN_main
+echo ROTATE_DONE"
+    # 单引号包裹是唯一防线：脚本混入单引号会让远端 ash 提前终止引号段
+    case "$script" in
+        *"'"*)
+            log_warn "轮转脚本含单引号（不应发生）——回退经中继轮转"
+            _static_snapshot_rotate "$endpoint" "$ak" "$sk" "$bucket_root" "$product"
+            return 0
+            ;;
+    esac
+    # 单次 ssh + 单次 docker run：探查与全部轮转在同一容器内完成
+    local out
+    out=$(remote_exec "docker run --rm --network noda-network -v /opt/noda/bin/rclone:/usr/local/bin/rclone -e RCLONE_CONFIG_SW_TYPE=s3 -e RCLONE_CONFIG_SW_PROVIDER=Other -e RCLONE_CONFIG_SW_ENDPOINT=http://seaweedfs:8333 -e RCLONE_CONFIG_SW_ACCESS_KEY_ID=$ak -e RCLONE_CONFIG_SW_SECRET_ACCESS_KEY=$sk -e RCLONE_TRANSFERS=8 -e RCLONE_CHECKERS=16 --entrypoint /bin/sh alpine/socat -c '$script'" 600 2>/dev/null) || out=""
+    if [ -z "$out" ]; then
+        log_warn "r4s 单次轮转不可用（rclone/容器异常）——回退经中继轮转"
         _static_snapshot_rotate "$endpoint" "$ak" "$sk" "$bucket_root" "$product"
         return 0
     fi
-    local i src dst
-    if [ -z "$(remote_exec "$renv $docker_rclone lsf -R --files-only SW:$bucket_root/sites/$product/ 2>/dev/null | head -1")" ]; then
-        log_info "首次发布（桶内无 $product 前缀），跳过快照"
-        return 0
+    local line saw_done="false"
+    while IFS= read -r line; do
+        case "$line" in
+            NO_PREFIX)   log_info "首次发布（桶内无 $product 前缀），跳过快照"; saw_done="true" ;;
+            ROTATE_DONE) log_success "快照轮转完成（r4s 本机单次调用）"; saw_done="true" ;;
+            ROTATE\ *)   log_info "快照轮转 ${line#ROTATE } ...（r4s 本机）" ;;
+            WARN*)       log_warn "快照轮转 ${line#WARN} 失败（该层快照可能过期，不影响发布）" ;;
+        esac
+    done <<< "$out"
+    # 600s 外层超时截断等异常：轮转半途而废时至少留下明确告警（不阻塞发布）
+    if [ "$saw_done" != "true" ]; then
+        log_warn "快照轮转输出异常（可能被超时截断）——回滚锚点可能未更新，不影响本次发布"
     fi
-    i=$((max_snap - 1))
-    while [ "$i" -ge 1 ]; do
-        src=$(_static_snapshot_dir "$product" "$i")
-        dst=$(_static_snapshot_dir "$product" "$((i + 1))")
-        if [ -n "$(remote_exec "$renv $docker_rclone lsf -R --files-only SW:$bucket_root/sites/$src/ 2>/dev/null | head -1")" ]; then
-            log_info "快照轮转 $src → $dst ...（r4s 本机）"
-            remote_exec "$renv $docker_rclone sync SW:$bucket_root/sites/$src/ SW:$bucket_root/sites/$dst/ --max-duration 600s >/dev/null 2>&1" \
-                || log_warn "快照轮转 $src → $dst 失败（该层快照可能过期）"
-        fi
-        i=$((i - 1))
-    done
-    log_info "快照当前发布 → $bucket_root/sites/$(_static_snapshot_dir "$product" 1)/ ...（r4s 本机）"
-    remote_exec "$renv $docker_rclone sync SW:$bucket_root/sites/$product/ SW:$bucket_root/sites/$(_static_snapshot_dir "$product" 1)/ --max-duration 600s >/dev/null 2>&1" \
-        || log_warn "快照失败（不影响本次发布，仅失去回滚锚点）"
 }
 
 # ============================================
