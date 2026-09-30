@@ -2375,8 +2375,9 @@ _publish_static_to_prod()
         return 0
     fi
 
-    # 发布前快照轮转（rclone 服务端 sync：层间拷贝不出 seaweedfs）
-    _static_snapshot_rotate "$endpoint" "$s3a" "$s3s" "noda-static" "$product"
+    # 发布前快照轮转：走 r4s 本机 rclone（内网直连 seaweedfs，免中继逐对象
+    # RTT——经中继 ~200ms/对象×1341×2 层≈10 分钟，r4s 内网 ~1 分钟）
+    _static_snapshot_rotate_prod "$product" "noda-static" "$endpoint" "$s3a" "$s3s"
 
     # 清单差量镜像：只传变更/新增/删除（详见 _static_manifest_sync）
     if ! _static_manifest_sync "$endpoint" "$s3a" "$s3s" "noda-static" "sites/$product" "$web_dir/out"; then
@@ -2602,6 +2603,8 @@ _rc()
     RCLONE_CONFIG_SW_ENDPOINT="$endpoint" \
     RCLONE_CONFIG_SW_ACCESS_KEY_ID="$ak" \
     RCLONE_CONFIG_SW_SECRET_ACCESS_KEY="$sk" \
+    RCLONE_TRANSFERS="${RC_TRANSFERS:-8}" \
+    RCLONE_CHECKERS="${RC_CHECKERS:-16}" \
         rclone --max-duration "${RC_MAX_DURATION:-900}s" "$@"
 }
 
@@ -2641,6 +2644,47 @@ EOF
         log_warn "同 sha 但对象数不一致（桶 ${r_cnt} vs 源 ${l_cnt}）——疑似上次发布不完整，走完整镜像自愈"
     fi
     return 1
+}
+
+# ============================================
+# _static_snapshot_rotate_prod - 生产桶快照轮转（r4s 本机 rclone，2026-09-30）
+# ============================================
+# 经中继逐对象 API RTT ~200ms，双层轮转 1341 对象 ≈10 分钟；r4s 内网直连
+# seaweedfs 同样的服务端拷贝 ~1 分钟。rclone 二进制一次性部署在 r4s
+# /opt/noda/bin/rclone（静态 linux-arm64，alpine/socat 镜像内直接运行）；
+# 不可用时回退经中继轮转（慢但正确）。
+# 参数: $1=product $2=bucket_root $3=中继endpoint（回退用） $4=ak $5=sk
+_static_snapshot_rotate_prod()
+{
+    local product="$1" bucket_root="$2" endpoint="$3" ak="$4" sk="$5"
+    local max_snap="${MAX_STATIC_SNAPSHOTS:-2}"
+    # env 必须以 -e 显式进容器（docker 不透传宿主 env）；桶路径带 SW: 远程前缀
+    local docker_rclone="docker run --rm -v /opt/noda/bin/rclone:/usr/local/bin/rclone -e RCLONE_CONFIG_SW_TYPE=s3 -e RCLONE_CONFIG_SW_PROVIDER=Other -e RCLONE_CONFIG_SW_ENDPOINT=http://seaweedfs:8333 -e RCLONE_CONFIG_SW_ACCESS_KEY_ID=$ak -e RCLONE_CONFIG_SW_SECRET_ACCESS_KEY=$sk -e RCLONE_TRANSFERS=8 -e RCLONE_CHECKERS=16 --entrypoint /usr/local/bin/rclone alpine/socat"
+    local renv=""
+    if ! remote_exec "$docker_rclone version >/dev/null 2>&1"; then
+        log_warn "r4s rclone 不可用（/opt/noda/bin/rclone 缺失）——回退经中继轮转"
+        _static_snapshot_rotate "$endpoint" "$ak" "$sk" "$bucket_root" "$product"
+        return 0
+    fi
+    local i src dst
+    if [ -z "$(remote_exec "$renv $docker_rclone lsf -R --files-only SW:$bucket_root/sites/$product/ 2>/dev/null | head -1")" ]; then
+        log_info "首次发布（桶内无 $product 前缀），跳过快照"
+        return 0
+    fi
+    i=$((max_snap - 1))
+    while [ "$i" -ge 1 ]; do
+        src=$(_static_snapshot_dir "$product" "$i")
+        dst=$(_static_snapshot_dir "$product" "$((i + 1))")
+        if [ -n "$(remote_exec "$renv $docker_rclone lsf -R --files-only SW:$bucket_root/sites/$src/ 2>/dev/null | head -1")" ]; then
+            log_info "快照轮转 $src → $dst ...（r4s 本机）"
+            remote_exec "$renv $docker_rclone sync SW:$bucket_root/sites/$src/ SW:$bucket_root/sites/$dst/ --max-duration 600s >/dev/null 2>&1" \
+                || log_warn "快照轮转 $src → $dst 失败（该层快照可能过期）"
+        fi
+        i=$((i - 1))
+    done
+    log_info "快照当前发布 → $bucket_root/sites/$(_static_snapshot_dir "$product" 1)/ ...（r4s 本机）"
+    remote_exec "$renv $docker_rclone sync SW:$bucket_root/sites/$product/ SW:$bucket_root/sites/$(_static_snapshot_dir "$product" 1)/ --max-duration 600s >/dev/null 2>&1" \
+        || log_warn "快照失败（不影响本次发布，仅失去回滚锚点）"
 }
 
 # ============================================
