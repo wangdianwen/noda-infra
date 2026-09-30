@@ -175,6 +175,12 @@ cleanup_jenkins_temp_files()
     rm -f "$workspace/deploy-failure-infra.log" 2>/dev/null || true
     find "$workspace" -name "*.tmp" -type f -delete 2>/dev/null || true
 
+    # 构建级 Doppler 密钥缓存（secrets.sh load_secrets 写入，600 权限）：
+    # 构建正常走到这里即删；被 ABORT 的构建由下次写入时的 >1h 孤儿清扫兜底
+    if [ -n "${JOB_NAME:-}" ] && [ -n "${BUILD_NUMBER:-}" ]; then
+        rm -f "${TMPDIR:-/tmp}/noda-secrets-${JOB_NAME//\//_}-${BUILD_NUMBER}"-*.env 2>/dev/null || true
+    fi
+
     log_info "临时文件清理完成"
 }
 

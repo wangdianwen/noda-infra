@@ -59,17 +59,55 @@ load_secrets()
     local _config="${DOPPLER_CONFIG:-prd}"
     local _secrets
 
-    _secrets=$(doppler secrets download --no-file --format=env --project noda --config "$_config" 2>/dev/null)
+    # 进程内快路径：本进程已加载过同一 config → 环境变量已在，直接返回
+    if [ "${_NODA_SECRETS_LOADED:-}" = "$_config" ]; then
+        $_restore_trace
+        log_success "密钥已就绪（进程内缓存, config=${_config}）"
+        return 0
+    fi
 
-    if [ $? -ne 0 ]; then
+    # 构建级快路径（2026-10-01）：流水线一个构建有 13 个 sh 步骤，各自是新
+    # bash 进程、各自 source pipeline-stages.sh → 旧行为每次都全量拉 Doppler
+    # API（实测 4-6 次/构建 ≈ 20-30s）。同一构建的步骤共享缓存文件：
+    #   - 文件名含 JOB_NAME+BUILD_NUMBER+config，只有本构建撞得到
+    #   - umask 077 + chmod 600，落在构建机 /tmp（内容本就在各步骤进程内存里，
+    #     不扩大暴露面；构建结束由 cleanup_jenkins_temp_files 删除）
+    #   - 写入时顺手清扫同名前缀 >1h 的孤儿（构建被 ABORT 后的自愈）
+    #   - JOB_NAME/BUILD_NUMBER 缺失（本地直跑/E2E）→ 自动退回每次实拉
+    local _cache=""
+    if [ -n "${JOB_NAME:-}" ] && [ -n "${BUILD_NUMBER:-}" ]; then
+        _cache="${TMPDIR:-/tmp}/noda-secrets-${JOB_NAME//\//_}-${BUILD_NUMBER}-${_config}.env"
+    fi
+    if [ -n "$_cache" ] && [ -s "$_cache" ] && grep -qm1 '=' "$_cache" 2>/dev/null; then
+        _secrets=$(cat "$_cache")
+        set -a
+        eval "$_secrets"
+        set +a
+        _NODA_SECRETS_LOADED="$_config"
+        export _NODA_SECRETS_LOADED
+        $_restore_trace
+        log_success "密钥已就绪（构建级缓存命中, project=noda, config=${_config}）"
+        return 0
+    fi
+
+    if ! _secrets=$(doppler secrets download --no-file --format=env --project noda --config "$_config" 2>/dev/null); then
         $_restore_trace
         log_error "Doppler 密钥拉取失败（检查 DOPPLER_TOKEN 是否有效）"
         return 1
     fi
 
+    if [ -n "$_cache" ]; then
+        (umask 077; printf '%s\n' "$_secrets" > "$_cache") && chmod 600 "$_cache" 2>/dev/null || true
+        # -H 必带：/tmp 在 macOS 是指向 /private/tmp 的符号链接，BSD find 默认
+        # 不跟随起始路径符号链接，裸 find 会静默扫空（孤儿清扫永不生效）
+        find -H "${TMPDIR:-/tmp}" -maxdepth 1 -name 'noda-secrets-*.env' -mmin +60 -delete 2>/dev/null || true
+    fi
+
     set -a
     eval "$_secrets"
     set +a
+    _NODA_SECRETS_LOADED="$_config"
+    export _NODA_SECRETS_LOADED
 
     # 恢复 trace 状态
     $_restore_trace
