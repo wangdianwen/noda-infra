@@ -2395,11 +2395,12 @@ _publish_static_to_prod()
     objs=0
     for attempt in 1 2 3; do
         objs=$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "SW:noda-static/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
-        if [ "${objs:-0}" -ge "${src_objs:-0}" ]; then
+        if [ "${objs:-0}" -eq "${src_objs:-0}" ]; then
             break
         fi
-        log_warn "桶列举 ${objs} < 源 ${src_objs}（中继截断或漏传）——重跑补传（第 ${attempt} 次）..."
-        _rc "$endpoint" "$s3a" "$s3s" copy "$web_dir/out/" "SW:noda-static/sites/$product/" >/dev/null 2>&1 || true
+        # 不平（少=漏传/截断，多=中止发布的孤儿）→ 全量 sync 收敛（含删除）后重数
+        log_warn "桶列举 ${objs} ≠ 源 ${src_objs}——全量 sync 收敛（第 ${attempt} 次）..."
+        _rc "$endpoint" "$s3a" "$s3s" sync "$web_dir/out/" "SW:noda-static/sites/$product/" >/dev/null 2>&1 || true
     done
 
     local publish_ok="true"
@@ -2502,11 +2503,11 @@ _publish_static_to_stg()
     stg_objs=0
     for stg_attempt in 1 2 3; do
         stg_objs=$(_rc "$endpoint" "$stg_a" "$stg_s" lsf -R --files-only "SW:noda-static-stg/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
-        if [ "${stg_objs:-0}" -ge "${stg_src_objs:-0}" ] && [ "${stg_objs:-0}" -gt 0 ]; then
+        if [ "${stg_objs:-0}" -eq "${stg_src_objs:-0}" ] && [ "${stg_objs:-0}" -gt 0 ]; then
             break
         fi
-        log_warn "stg 桶列举 ${stg_objs:-0} < 源 ${stg_src_objs:-0}——重跑补传（第 ${stg_attempt} 次），10s 后执行..."
-        _rc "$endpoint" "$stg_a" "$stg_s" copy "$web_dir/out/" "SW:noda-static-stg/sites/$product/" >/dev/null 2>&1 || true
+        log_warn "stg 桶列举 ${stg_objs:-0} ≠ 源 ${stg_src_objs:-0}——全量 sync 收敛（第 ${stg_attempt} 次），10s 后执行..."
+        _rc "$endpoint" "$stg_a" "$stg_s" sync "$web_dir/out/" "SW:noda-static-stg/sites/$product/" >/dev/null 2>&1 || true
         sleep 10
     done
     if [ "${stg_objs:-0}" -lt "${stg_src_objs:-0}" ] || [ "${stg_objs:-0}" = "0" ]; then
@@ -2707,8 +2708,8 @@ _static_manifest_sync()
     local remote_ok="true"
     _rc "$endpoint" "$ak" "$sk" cat "$remote/.noda-manifest" > "$work/remote.manifest" 2>/dev/null || remote_ok="false"
     if [ "$remote_ok" != "true" ] || [ ! -s "$work/remote.manifest" ]; then
-        log_info "桶内无清单（首次 rclone 发布）→ 全量 copy 打底 ..."
-        if ! _rc "$endpoint" "$ak" "$sk" copy "$out_dir/" "$remote/"; then
+        log_info "桶内无清单（首次 rclone 发布）→ 全量 sync 打底（收敛中止发布的孤儿对象）..."
+        if ! _rc "$endpoint" "$ak" "$sk" sync "$out_dir/" "$remote/"; then
             rm -rf "$work"
             return 1
         fi
