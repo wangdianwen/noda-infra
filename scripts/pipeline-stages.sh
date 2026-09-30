@@ -2224,14 +2224,37 @@ pipeline_build_static_artifacts()
         return 1
     fi
 
-    # 依赖就绪：fresh checkout 无 node_modules（Jenkins workspace 轮换槽位首次使用时），
-    # workspace 安装一次后随目录持久，frozen-lockfile 幂等且快
+    # 依赖就绪（2026-10-01 node_modules 持久热缓存）：8 产品 × 5 工作区槽位的
+    # node_modules 组合大多为冷，冷槽全量 pnpm install 是构建时长 3↔11 分钟
+    # 波动的主因。成功安装后把 node_modules 快照进持久缓存（按产品，含完整性
+    # 标记，staging+mv 原子换入防并发构建撕裂）；冷槽先 rsync 热缓存（秒级），
+    # 缓存缺失/损坏/rsync 失败一律回退既有 pnpm install（行为向后兼容）。
+    local nm_cache="$HOME/.jenkins/.cache/noda-apps-node-modules/${product}"
+    if [ ! -d "$web_dir/node_modules" ] && [ -f "$nm_cache/node_modules/.noda-ok" ]; then
+        log_info "node_modules 缺失——从持久缓存热身（rsync ${nm_cache}）..."
+        mkdir -p "$web_dir"
+        if rsync -a "$nm_cache/node_modules/" "$web_dir/node_modules/"; then
+            log_info "node_modules 热身完成（rsync）"
+        else
+            log_warn "node_modules 热身失败——回退 pnpm install"
+            rm -rf "$web_dir/node_modules"
+        fi
+    fi
     if [ ! -d "$web_dir/node_modules" ]; then
         log_info "前端依赖缺失，pnpm install --frozen-lockfile ($apps_dir)..."
         (cd "$apps_dir" && pnpm install --frozen-lockfile) || {
             log_error "pnpm install 失败: $apps_dir"
             return 1
         }
+        # 安装成功 → 原子回写持久缓存（staging 构建完整体后 mv 换入 + 完整性标记）
+        if mkdir -p "$nm_cache" && rm -rf "$nm_cache/.staging" && rsync -a "$web_dir/node_modules/" "$nm_cache/.staging/"; then
+            rm -rf "$nm_cache/node_modules"
+            mv "$nm_cache/.staging" "$nm_cache/node_modules"
+            touch "$nm_cache/node_modules/.noda-ok"
+            log_info "node_modules 已回写持久缓存（${product}）"
+        else
+            log_warn "持久缓存回写失败（不影响本次构建）"
+        fi
     fi
 
     # workspace 共享包构建产物（gitignore 不入库：database/auth/shared tsc dist +
