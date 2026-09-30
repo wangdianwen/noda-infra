@@ -2393,12 +2393,12 @@ _publish_static_to_prod()
     src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
     objs=0
     for attempt in 1 2 3; do
-        objs=$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "noda-static/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
+        objs=$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "SW:noda-static/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
         if [ "${objs:-0}" -ge "${src_objs:-0}" ]; then
             break
         fi
         log_warn "桶列举 ${objs} < 源 ${src_objs}（中继截断或漏传）——重跑补传（第 ${attempt} 次）..."
-        _rc "$endpoint" "$s3a" "$s3s" copy "$web_dir/out/" "noda-static/sites/$product/" >/dev/null 2>&1 || true
+        _rc "$endpoint" "$s3a" "$s3s" copy "$web_dir/out/" "SW:noda-static/sites/$product/" >/dev/null 2>&1 || true
     done
 
     local publish_ok="true"
@@ -2412,7 +2412,7 @@ _publish_static_to_prod()
     fi
     local sentinel="${STATIC_SENTINEL#out/}"
     if [ -f "$web_dir/out/$sentinel" ]; then
-        if [ -z "$(_rc "$endpoint" "$s3a" "$s3s" lsf "noda-static/sites/$product/$sentinel" 2>/dev/null)" ]; then
+        if [ -z "$(_rc "$endpoint" "$s3a" "$s3s" lsf "SW:noda-static/sites/$product/$sentinel" 2>/dev/null)" ]; then
             log_error "哨兵对象缺失：sites/${product}/${sentinel}（镜像静默漏传）"
             publish_ok="false"
         fi
@@ -2461,7 +2461,7 @@ _publish_static_to_stg()
     # 约 40s 一个周期）——先等 S3 可列举再动手，最多 60s；探测用 30s 短看门狗
     local probe_ok="false" probe_i
     for probe_i in 1 2 3 4 5 6; do
-        if RC_MAX_DURATION=30 _rc "$endpoint" "$stg_a" "$stg_s" lsf "noda-static-stg" >/dev/null 2>&1; then
+        if RC_MAX_DURATION=30 _rc "$endpoint" "$stg_a" "$stg_s" lsf "SW:noda-static-stg" >/dev/null 2>&1; then
             probe_ok="true"
             break
         fi
@@ -2475,7 +2475,7 @@ _publish_static_to_stg()
 
     # 桶自愈（2026-09-13 实证：seaweedfs-stg 崩溃重建后桶元数据丢失，
     # preprod 全站 404）——rclone mkdir 幂等确保桶在位
-    _rc "$endpoint" "$stg_a" "$stg_s" mkdir "noda-static-stg" >/dev/null 2>&1 || true
+    _rc "$endpoint" "$stg_a" "$stg_s" mkdir "SW:noda-static-stg" >/dev/null 2>&1 || true
 
     # 内容未变更判定（与 prod 路径同款；上一次 stg 发布成功过即有效，
     # 未成功过则桶内无指纹自然不跳）
@@ -2485,7 +2485,7 @@ _publish_static_to_stg()
     fi
 
     # 发布前快照轮转（rclone 服务端 sync）
-    if [ -n "$(_rc "$endpoint" "$stg_a" "$stg_s" lsf -R --files-only "noda-static-stg/sites/$product/" 2>/dev/null | head -1)" ]; then
+    if [ -n "$(_rc "$endpoint" "$stg_a" "$stg_s" lsf -R --files-only "SW:noda-static-stg/sites/$product/" 2>/dev/null | head -1)" ]; then
         _static_snapshot_rotate "$endpoint" "$stg_a" "$stg_s" "noda-static-stg" "$product"
     fi
 
@@ -2500,12 +2500,12 @@ _publish_static_to_stg()
     stg_src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
     stg_objs=0
     for stg_attempt in 1 2 3; do
-        stg_objs=$(_rc "$endpoint" "$stg_a" "$stg_s" lsf -R --files-only "noda-static-stg/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
+        stg_objs=$(_rc "$endpoint" "$stg_a" "$stg_s" lsf -R --files-only "SW:noda-static-stg/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
         if [ "${stg_objs:-0}" -ge "${stg_src_objs:-0}" ] && [ "${stg_objs:-0}" -gt 0 ]; then
             break
         fi
         log_warn "stg 桶列举 ${stg_objs:-0} < 源 ${stg_src_objs:-0}——重跑补传（第 ${stg_attempt} 次），10s 后执行..."
-        _rc "$endpoint" "$stg_a" "$stg_s" copy "$web_dir/out/" "noda-static-stg/sites/$product/" >/dev/null 2>&1 || true
+        _rc "$endpoint" "$stg_a" "$stg_s" copy "$web_dir/out/" "SW:noda-static-stg/sites/$product/" >/dev/null 2>&1 || true
         sleep 10
     done
     if [ "${stg_objs:-0}" -lt "${stg_src_objs:-0}" ] || [ "${stg_objs:-0}" = "0" ]; then
@@ -2516,7 +2516,7 @@ _publish_static_to_stg()
     if [ "$rc" = "0" ]; then
         local sentinel="${STATIC_SENTINEL#out/}"
         if [ -f "$web_dir/out/$sentinel" ]; then
-            if [ -z "$(_rc "$endpoint" "$stg_a" "$stg_s" lsf "noda-static-stg/sites/$product/$sentinel" 2>/dev/null)" ]; then
+            if [ -z "$(_rc "$endpoint" "$stg_a" "$stg_s" lsf "SW:noda-static-stg/sites/$product/$sentinel" 2>/dev/null)" ]; then
                 log_error "stg 哨兵对象缺失：sites/${product}/${sentinel}"
                 rc=1
             fi
@@ -2623,7 +2623,7 @@ _static_content_unchanged()
     local fp="$6/.noda-artifact-hash"
     [ -f "$fp" ] || return 1
     local remote_fp
-    remote_fp=$(_rc "$1" "$2" "$3" cat "$4/$5/.noda-artifact-hash" 2>/dev/null | head -1 || true)
+    remote_fp=$(_rc "$1" "$2" "$3" cat "SW:$4/$5/.noda-artifact-hash" 2>/dev/null | head -1 || true)
     [ -n "$remote_fp" ] || return 1
     local r_sha r_tree r_cnt l_sha l_tree l_cnt
     read -r r_sha r_tree r_cnt <<EOF
@@ -2656,7 +2656,7 @@ EOF
 _static_manifest_sync()
 {
     local endpoint="$1" ak="$2" sk="$3" bucket_root="$4" prefix="$5" out_dir="$6"
-    local remote="$bucket_root/$prefix"
+    local remote="SW:$bucket_root/$prefix"
     local work
     work=$(mktemp -d /tmp/noda-manifest.XXXXXX) || return 1
 
@@ -2747,7 +2747,7 @@ _static_snapshot_rotate()
     local endpoint="$1" ak="$2" sk="$3" bucket_root="$4" product="$5"
     local max_snap="${MAX_STATIC_SNAPSHOTS:-2}"
     local i src dst
-    if [ -z "$(_rc "$endpoint" "$ak" "$sk" lsf -R --files-only "$bucket_root/sites/$product/" 2>/dev/null | head -1)" ]; then
+    if [ -z "$(_rc "$endpoint" "$ak" "$sk" lsf -R --files-only "SW:$bucket_root/sites/$product/" 2>/dev/null | head -1)" ]; then
         log_info "首次发布（桶内无 $product 前缀），跳过快照"
         return 0
     fi
@@ -2755,15 +2755,15 @@ _static_snapshot_rotate()
     while [ "$i" -ge 1 ]; do
         src=$(_static_snapshot_dir "$product" "$i")
         dst=$(_static_snapshot_dir "$product" "$((i + 1))")
-        if [ -n "$(_rc "$endpoint" "$ak" "$sk" lsf -R --files-only "$bucket_root/sites/$src/" 2>/dev/null | head -1)" ]; then
+        if [ -n "$(_rc "$endpoint" "$ak" "$sk" lsf -R --files-only "SW:$bucket_root/sites/$src/" 2>/dev/null | head -1)" ]; then
             log_info "快照轮转 $src → $dst ..."
-            _rc "$endpoint" "$ak" "$sk" sync "$bucket_root/sites/$src/" "$bucket_root/sites/$dst/" >/dev/null 2>&1 || \
+            _rc "$endpoint" "$ak" "$sk" sync "SW:$bucket_root/sites/$src/" "SW:$bucket_root/sites/$dst/" >/dev/null 2>&1 || \
                 log_warn "快照轮转 $src → $dst 失败（该层快照可能过期）"
         fi
         i=$((i - 1))
     done
     log_info "快照当前发布 → $bucket_root/sites/$(_static_snapshot_dir "$product" 1)/ ..."
-    _rc "$endpoint" "$ak" "$sk" sync "$bucket_root/sites/$product/" "$bucket_root/sites/$(_static_snapshot_dir "$product" 1)/" >/dev/null 2>&1 || \
+    _rc "$endpoint" "$ak" "$sk" sync "SW:$bucket_root/sites/$product/" "SW:$bucket_root/sites/$(_static_snapshot_dir "$product" 1)/" >/dev/null 2>&1 || \
         log_warn "快照失败（不影响本次发布，仅失去回滚锚点）"
 }
 
@@ -2841,7 +2841,7 @@ _pipeline_rollback_static_site_impl()
     fi
 
     local prev_objs
-    prev_objs=$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "noda-static/sites/${snap_dir}/" 2>/dev/null | wc -l | tr -d ' ')
+    prev_objs=$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "SW:noda-static/sites/${snap_dir}/" 2>/dev/null | wc -l | tr -d ' ')
     if [ "${prev_objs:-0}" -eq 0 ]; then
         log_error "回滚快照为空：sites/${snap_dir}/ 不存在或无对象（该层快照尚未产生/无此深度历史）"
         _rollback_cleanup
@@ -2851,7 +2851,7 @@ _pipeline_rollback_static_site_impl()
     log_info "回滚: sites/${snap_dir}/（$prev_objs 对象）→ sites/$product/ ...（rclone sync，服务端拷贝含删除）"
     # 回滚源必须用按深度计算的 $snap_dir（prod/stg 两桶同源）——
     # 旧写法 prod 侧硬编码 ${product}-prev，ROLLBACK_DEPTH=2 时静默回错层
-    if ! _rc "$endpoint" "$s3a" "$s3s" sync "noda-static/sites/${snap_dir}/" "noda-static/sites/$product/"; then
+    if ! _rc "$endpoint" "$s3a" "$s3s" sync "SW:noda-static/sites/${snap_dir}/" "SW:noda-static/sites/$product/"; then
         log_error "prod 桶回滚失败"
         _rollback_cleanup
         return 1
@@ -2865,15 +2865,15 @@ _pipeline_rollback_static_site_impl()
         stg_s=$(python3 -c "import json;d=json.load(open('$stg_json'));print(d['identities'][0]['credentials'][0]['secretKey'])" 2>/dev/null)
         if [ -n "$stg_a" ] && [ -n "$stg_s" ]; then
             _rc "http://127.0.0.1:8333" "$stg_a" "$stg_s" sync \
-                "noda-static-stg/sites/${snap_dir}/" \
-                "noda-static-stg/sites/$product/" \
+                "SW:noda-static-stg/sites/${snap_dir}/" \
+                "SW:noda-static-stg/sites/$product/" \
                 && log_info "stg 桶已同步回滚" || log_warn "stg 桶回滚失败（不影响 prod）"
         fi
     fi
 
     # 对象数校验须在拆中继之前
     local now_objs
-    now_objs=$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "noda-static/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
+    now_objs=$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "SW:noda-static/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
     _rollback_cleanup
     log_info "回滚后主前缀对象数: ${now_objs}（快照 ${prev_objs}）"
     if [ "$now_objs" != "$prev_objs" ]; then
