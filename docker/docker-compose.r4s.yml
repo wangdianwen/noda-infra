@@ -162,7 +162,7 @@ services:
           memory: 64M
 
   # ----------------------------------------
-  # SeaweedFS — 1G（静态对象存储，Phase 1, 2026-09-12；2026-10-01 上调）
+  # SeaweedFS — 512M（静态对象存储，Phase 1, 2026-09-12；2026-10-01 384M→512M）
   # server 一体模式（master+volume+S3）；8333/9333 一律不映射宿主机端口（评审补遗 #3），
   # 仅 noda-network 内可达：nginx cdn.conf 反代 / Jenkins 经 docker run --network 上传
   # 数据卷挂数据盘 /mnt/mmc1-4（预检 ≥5GB 余量 ✓）；S3 凭据由 pipeline 渲染
@@ -199,10 +199,10 @@ services:
       resources:
         limits:
           cpus: '0.5'
-          # 1G（2026-10-01 上调 384M）：当日三轮全站桶同步期间 RSS 涨破 384M，
-          # 触发 OOM（exit 137）崩溃循环、全矩阵静态站 502/超时——S3 主链路余量
-          # 必须覆盖同步峰值页缓存（Go 不主动归还）；宿主 4G，恢复期可控
-          memory: 1G
+          # 512M（2026-10-01 384M→512M，站长定调先 512 试）：当日三轮全站桶同步期间
+          # RSS 涨破 384M 触发 OOM（docker oom 事件 + exit 137）崩溃循环、全矩阵
+          # 静态站 502/超时。若后续同步期再顶破 512 再上调（1G 备选）
+          memory: 512M
         reservations:
           cpus: '0.1'
           memory: 64M
