@@ -69,7 +69,7 @@ verify_docker_autostart()
     free -m | grep -i swap
     echo ""
     echo "Docker 数据目录磁盘:"
-    df -h /mnt/mmc1-4/docker 2>/dev/null || df -h / | head -2
+    df -h /mnt/mmc1-4/System/Docker 2>/dev/null || df -h / | head -2
 }
 
 # 支持独立运行和 source 引入

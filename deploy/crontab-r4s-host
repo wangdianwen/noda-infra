@@ -5,6 +5,7 @@
 #     Pacific/Auckland 时区 DST 自适应，本机时区不再需要 NZDT 手工 +1h）
 #   - 文件系统备份收编进 noda-ops 容器内 crond（deploy/crontab，rclone S3 逻辑备份）
 #   - 本文件只剩宿主机职责项：docker 镜像清理 + noda 日志收敛
+#     + hermes 残留会话看门狗 + OpenClash 周重启（2026-09-29 内存治理新增）
 #
 # 安装：scp 本文件到 r4s 后执行 `crontab deploy/crontab-r4s-host`
 # 注意：iStoreOS 无 logrotate，日志收敛用 find + truncate；BusyBox crond
@@ -18,3 +19,15 @@
 # ===== （已移除，2026-09-13 集中化）=====
 # snagme tick / nearby 五 job / skykiwi 四 job → noda-jobs 守护进程容器
 # SeaweedFS tar 备份（04:30 docker run 一次性容器）→ noda-ops 容器内 crond
+
+# ===== hermes 残留会话看门狗（每小时；杀运行超 24h 的裸 `hermes` chat 进程，脚本在
+#       r4s:/root/.hermes/scripts/kill-stale-hermes-chat.sh，gateway 不受影响）=====
+15 * * * * /root/.hermes/scripts/kill-stale-hermes-chat.sh
+
+# ===== OpenClash 周重启（每周一 04:00；clash 运行时内存约 20 天涨到 280MB，周重启清零）=====
+0 4 * * 1 /etc/init.d/openclash restart >/dev/null 2>&1
+
+# ===== 数据盘→备份盘整盘快照（每天 05:10；硬链接增量，保留 2 代，脚本在
+#       r4s:/mnt/mmc1-4/System/Scripts/backup-snapshot.sh；2026-10-02 目录功能化
+#       重组后路径由 /mnt/mmc1-4/scripts/ 迁至 System/Scripts/）=====
+10 5 * * * /mnt/mmc1-4/System/Scripts/backup-snapshot.sh >> /var/log/noda-snapshot.log 2>&1

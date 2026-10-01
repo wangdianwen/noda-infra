@@ -3046,7 +3046,7 @@ pipeline_deploy_seaweedfs()
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         log_info "SeaweedFS 部署（r4s 远程）"
         # 数据盘数据目录
-        remote_exec "mkdir -p /mnt/mmc1-4/noda/seaweedfs"
+        remote_exec "mkdir -p /mnt/mmc1-4/Noda/Data/seaweedfs"
         # s3.json → 远端仓库配置路径（gitignored；经 stdin 传输，密钥不进 Jenkins 日志）
         remote_exec "mkdir -p /opt/noda/noda-infra/config/seaweedfs"
         cat "$s3json" | remote_exec "cat > /opt/noda/noda-infra/config/seaweedfs/s3.json && chmod 600 /opt/noda/noda-infra/config/seaweedfs/s3.json" || { rm -f "$s3json"; return 1; }

@@ -183,7 +183,7 @@ services:
       -s3 -s3.port=8333
       -s3.config=/etc/seaweedfs/s3.json
     volumes:
-      - /mnt/mmc1-4/noda/seaweedfs:/data
+      - /mnt/mmc1-4/Noda/Data/seaweedfs:/data
       - /opt/noda/noda-infra/config/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
     networks:
       noda-network:

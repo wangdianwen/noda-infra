@@ -11,8 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/log.sh
 source "${SCRIPT_DIR}/../lib/log.sh"
 
-# 常量（D-21: Swap 文件放在 SD 卡 Docker 数据目录）
-SWAPFILE="/mnt/mmc1-4/docker/swapfile"
+# 常量（2026-10-02 目录重组后 Swap 文件在数据盘 System/ 下）
+SWAPFILE="/mnt/mmc1-4/System/swapfile"
 SWAP_SIZE_MB=2048
 
 setup_swap()
