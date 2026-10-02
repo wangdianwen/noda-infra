@@ -36,6 +36,12 @@ Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL
 要求）；r4s 内存高压期（MemAvailable<300MB）双 api 并存 +190M，宜错峰发版。
 jobs/static 容器维持原 recreate（非用户面/纯 nginx）。
 
+**新鲜度门禁（2026-10-03）**：`pipeline_deploy_prod` 部署前 `pipeline_check_freshness`
+ls-remote 核对本班 GIT_SHA 与 origin/main——落后即拒绝（防并行发版的「后切一班
+构建于更旧 main」回退覆盖，#517/#518 撞车形态根治；apps-prod 锁只管切换串行管
+不了这个）。凭据经 Jenkinsfile Deploy Prod 注入 GIT_SSH_COMMAND；ls-remote 失败
+fail-open 放行并告警。部署后核对镜像 tag=本班 commit 的铁律不变。
+
 ## 部署规则
 
 ### 禁止直接使用 Docker Compose 命令

@@ -360,7 +360,12 @@ pipeline {
                 timeout(time: 45, unit: 'MINUTES')
             }
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
+                    // 新鲜度门禁用：pipeline_check_freshness 部署前 ls-remote origin/main，
+                    // 防过期构建回退覆盖（2026-10-03 #517/#518 撞车形态）
+                    sshUserPrivateKey(credentialsId: 'noda-apps-git-credentials', keyFileVariable: 'NODA_APPS_GIT_KEY')
+                ]) {
                     sh '''
                         source scripts/lib/log.sh
                         source scripts/pipeline-stages.sh
@@ -368,6 +373,7 @@ pipeline {
                         export PRODUCT_FILTER="${PRODUCT}"
                         export SSH_KEY_FILE
                         export DEPLOY_TARGET=r4s
+                        export GIT_SSH_COMMAND="ssh -i ${NODA_APPS_GIT_KEY} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
                         # 审批窗口已释放队列锁——部署前重新获取（与其他构建的部署串行；
                         # 本构建已持锁时幂等跳过）
                         pipeline_queue_gate "$PRODUCT"

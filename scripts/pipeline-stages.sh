@@ -4130,6 +4130,30 @@ pipeline_deploy_preprod()
     return $rc
 }
 
+# pipeline_check_freshness - 回退守卫：本班构建提交落后 origin/main 时拒绝部署。
+# 并行发版的真实事故形态（2026-10-03 #517/#518 撞车等四起）：apps-prod 锁保证
+# 「容器切换」串行，但不保证「后切的一班构建于更旧的 main」——各班 checkout
+# 时机不同，后写者会用旧镜像覆盖新版本。部署前 ls-remote 核对，HEAD 前移即
+# 放弃本班（线上保持新版本，重新触发即得最新构建）。ls-remote 失败跳过核对
+# （fail-open 可观测）；凭据由 Jenkinsfile Deploy Prod 注入 GIT_SSH_COMMAND。
+pipeline_check_freshness()
+{
+    local git_sha="$1"
+    local repo_dir="${WORKSPACE:-}/noda-apps"
+    local head_sha
+    head_sha=$(git -C "$repo_dir" ls-remote origin -h refs/heads/main 2>/dev/null | awk '{print $1}')
+    if [ -z "$head_sha" ]; then
+        log_warn "新鲜度核对跳过：无法读取 origin/main HEAD（git ls-remote 失败）"
+        return 0
+    fi
+    if [ "$git_sha" != "${head_sha:0:${#git_sha}}" ]; then
+        log_error "新鲜度门禁拦截：本班构建 ${git_sha:0:7}，origin/main 已前移至 ${head_sha:0:7}——继续部署=旧镜像覆盖新版本（回退）。本班放弃部署（线上不受影响），请直接重新触发发版。"
+        return 1
+    fi
+    log_info "新鲜度核对通过：本班 ${git_sha:0:7} == origin/main HEAD"
+    return 0
+}
+
 pipeline_deploy_prod()
 {
     if ! acquire_deploy_lock 3600 apps-prod; then
@@ -4137,6 +4161,10 @@ pipeline_deploy_prod()
         return 1
     fi
     local rc=0
+    if ! pipeline_check_freshness "$1"; then
+        release_deploy_lock apps-prod
+        return 1
+    fi
     pipeline_deploy_prod_inner "$@" || rc=1
     release_deploy_lock apps-prod
     return $rc
