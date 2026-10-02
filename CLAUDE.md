@@ -96,3 +96,10 @@ preprod 双容器负载均衡等记录随 Keycloak/SSR 退役已从本文件移�
 - **发布后页面没更新**：① CF CDN 缓存（HTML 短缓存 5-15 分钟）② `NEXT_PUBLIC_*` 变更需重新构建+发布静态站 ③ 浏览器强刷
 - **登录异常**：认证在 Go authapi（:3004），会话在 `auth_sessions` 表；Google OAuth PKCE 直连，回调域名须在 Google Console 白名单
 - **cron 任务**：唯一 scheduler 在 `noda-jobs-prod:3016`（`docker exec noda-jobs-prod wget -qO- 127.0.0.1:3016/status`）；admin cronjobs 页经 adminapi cron-pull 直连该端口
+
+## CF 区级 UA 过滤（2026-10-03 来源定案）
+- prod 五站对 `Python-urllib/*` UA 返回 **403，配置在 Cloudflare 面板**（区级
+  WAF/僵尸程序过滤，人工配置——noda-infra 仓库无此规则、noda-static-prod nginx
+  conf 无、CF_API_TOKEN 仅 Cache Purge 权限读不到防火墙规则）。GSC 验证爬虫
+  CF 默认豁免不受影响。**自动化探针一律带浏览器 UA**。preprod 无 CF 代理不受
+  拦。若要规则代码化需新建含 Zone.WAF Edit 权限的 CF token（待用户拍板）。
