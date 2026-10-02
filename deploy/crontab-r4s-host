@@ -37,3 +37,9 @@
 #       脚本 r4s:/mnt/mmc1-4/System/Scripts/immich-thumb-heal.sh，
 #       凭证 .immich-ops-token（同目录 600）。2026-10-03 缩略图缺失排查新增）=====
 40 * * * * /mnt/mmc1-4/System/Scripts/immich-thumb-heal.sh >> /var/log/noda-immich-heal.log 2>&1
+
+# ===== Immich→百度网盘冷备增量（每天 03:30；幂等：同名同大小跳过/同 md5 秒传；
+#       登录失效自动 Telegram 告警；锁防与基线并行。
+#       脚本 r4s:/mnt/mmc1-4/System/Scripts/immich-cloud-upload.sh，
+#       凭证 BaiduPCS-Go 配置（bin 同目录 ~/.config）。2026-10-03 云备份工程新增）=====
+30 3 * * * /mnt/mmc1-4/System/Scripts/immich-cloud-upload.sh >> /var/log/noda-immich-cloud.log 2>&1
