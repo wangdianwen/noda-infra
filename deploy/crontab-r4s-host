@@ -31,3 +31,9 @@
 #       r4s:/mnt/mmc1-4/System/Scripts/backup-snapshot.sh；2026-10-02 目录功能化
 #       重组后路径由 /mnt/mmc1-4/scripts/ 迁至 System/Scripts/）=====
 10 5 * * * /mnt/mmc1-4/System/Scripts/backup-snapshot.sh >> /var/log/noda-snapshot.log 2>&1
+
+# ===== Immich 缩略图自愈（每小时；修上传链路不写 asset_job_status 的产品 bug：
+#       回填状态行 + 视频缺流信息二次提取 + missing-only 补队；负载>8 自动跳过。
+#       脚本 r4s:/mnt/mmc1-4/System/Scripts/immich-thumb-heal.sh，
+#       凭证 .immich-ops-token（同目录 600）。2026-10-03 缩略图缺失排查新增）=====
+40 * * * * /mnt/mmc1-4/System/Scripts/immich-thumb-heal.sh >> /var/log/noda-immich-heal.log 2>&1
