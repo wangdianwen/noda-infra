@@ -3482,23 +3482,59 @@ EOF
     esac
     if [ -n "$gq_query" ]; then
         local gq_code="000"
+        local gq_body
+        gq_body=$(mktemp /tmp/noda-gq-verify.XXXXXX)
         for i in $(seq 1 "$retries"); do
-            gq_code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 \
+            gq_code=$(curl -sk -o "$gq_body" -w '%{http_code}' --connect-timeout 5 --max-time 10 \
                 -H 'content-type: application/json' \
                 -d "{\"query\":\"$gq_query\"}" \
                 "$gq_host" 2>/dev/null || echo "000")
-            if [ "$gq_code" = "200" ]; then
+            # 2026-10-03 升级：HTTP 200 且响应体无 errors 才算过——
+            # 2026-10-02 snagme G8 事故实证 (nil,nil) 形故障会 200+errors，
+            # 且容器 crash-loop 的 20-35s 存活窗内只看状态码可侥幸通过
+            if [ "$gq_code" = "200" ] && ! grep -q '"errors"' "$gq_body" 2>/dev/null; then
                 break
             fi
-            log_info "等待 $product api 链（POST /graphql）→ 200 ... (${i}/${retries}, HTTP ${gq_code})"
+            log_info "等待 $product api 链（POST /graphql）→ 200 无 errors ... (${i}/${retries}, HTTP ${gq_code})"
             sleep "$interval"
         done
-        if [ "$gq_code" = "200" ]; then
-            log_success "$product api 链（POST /graphql）→ 200 ($gq_host)"
+        if [ "$gq_code" = "200" ] && ! grep -q '"errors"' "$gq_body" 2>/dev/null; then
+            log_success "$product api 链（POST /graphql）→ 200 无 errors ($gq_host)"
         else
-            log_error "E2E 验证失败: $product api 链 (POST /graphql $gq_host) 最后状态 HTTP ${gq_code}"
+            log_error "E2E 验证失败: $product api 链 (POST /graphql $gq_host) 最后状态 HTTP ${gq_code} body=$(head -c 200 "$gq_body" 2>/dev/null)"
             all_ok="false"
         fi
+        rm -f "$gq_body"
+    fi
+
+    # snagme 专属：供给看板 0 行族探针（2026-10-02 G8 (nil,nil) panic 事故回归锁）。
+    # lexus/gs450h 两库均 0 行（preprod noda_preprod / prod noda_prod 实证），
+    # 合法终态 = HTTP 200 且（返回 data 或结构化 INSUFFICIENT_DATA/RATE_LIMITED）——
+    # 数据形态变化不误报；INTERNAL / 502 / 容器崩必挂（#500 部错提交时该探针会当场变红）。
+    if [ "$product" = "snagme" ]; then
+        local sb_code="000"
+        local sb_body
+        sb_body=$(mktemp /tmp/noda-sb-verify.XXXXXX)
+        for i in $(seq 1 "$retries"); do
+            sb_code=$(curl -sk -o "$sb_body" -w '%{http_code}' --connect-timeout 5 --max-time 15 \
+                -H 'content-type: application/json' \
+                -d '{"query":"query($make:String!,$model:String!,$budget:Float!){ snagmeSupplyBoard(make:$make,model:$model,budget:$budget){ activeTotal } }","variables":{"make":"lexus","model":"gs450h","budget":15000}}' \
+                "https://snagme.noda.co.nz/graphql" 2>/dev/null || echo "000")
+            if [ "$sb_code" = "200" ] && \
+               grep -qE '"snagmeSupplyBoard":\{|"code":"(INSUFFICIENT_DATA|RATE_LIMITED)"' "$sb_body" 2>/dev/null; then
+                break
+            fi
+            log_info "等待 snagme 供给看板 0 行族探针（data/INSUFFICIENT_DATA）... (${i}/${retries}, HTTP ${sb_code})"
+            sleep "$interval"
+        done
+        if [ "$sb_code" = "200" ] && \
+           grep -qE '"snagmeSupplyBoard":\{|"code":"(INSUFFICIENT_DATA|RATE_LIMITED)"' "$sb_body" 2>/dev/null; then
+            log_success "snagme 供给看板 0 行族探针 → 结构化终态 (gs450h HTTP $sb_code)"
+        else
+            log_error "E2E 验证失败: snagme 供给看板 0 行族探针最后状态 HTTP ${sb_code} body=$(head -c 200 "$sb_body" 2>/dev/null)"
+            all_ok="false"
+        fi
+        rm -f "$sb_body"
     fi
 
     if [ "$all_ok" != "true" ]; then
