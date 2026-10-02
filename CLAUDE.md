@@ -26,6 +26,16 @@ Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL
 | seaweedfs | 8333/9333 | S3 对象存储：桶 `noda-static`（静态站/头像/爬虫图片） |
 | noda-ops | 8080 (healthcheck) | 备份 cron（DB/B2/Doppler/filesystem）+ Cloudflare Tunnel |
 
+## api 蓝绿切换（B4 2026-10-03）
+
+`_start_prod_api` remote 分支已改蓝绿：新容器以 `noda-api-prod-next` 启动并临时
+加网络别名 `noda-api-prod`（docker DNS 新旧双 IP，nginx resolver valid=10s 逐
+请求重解析），健康门通过后 rm 旧容器 + rename 接管正式名——**/graphql 等上游
+不再有 recreate 停机窗**。回滚语义：新容器 unhealthy → rm -next 即回落旧容器
+（旧容器全程未动）。双活窗口约 30-90s，前提=迁移向后兼容（仓库迁移规范既有
+要求）；r4s 内存高压期（MemAvailable<300MB）双 api 并存 +190M，宜错峰发版。
+jobs/static 容器维持原 recreate（非用户面/纯 nginx）。
+
 ## 部署规则
 
 ### 禁止直接使用 Docker Compose 命令

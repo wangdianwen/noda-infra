@@ -737,10 +737,24 @@ _start_prod_api()
         snagme_mount="-v /etc/noda/snagme.env:/etc/noda/snagme.env:ro"
     fi
     if [ "$mode" = "remote" ]; then
-        remote_exec "docker rm -f $PROD_API_CONTAINER >/dev/null 2>&1 || true"
+        # 蓝绿切换（B4 2026-10-03）：不再先 rm 旧容器——那一步就是 /graphql
+        # 停机窗的根源（rm → 新容器起 listener 之间 DNS 无可解析目标）。改为：
+        #   ① 新容器以 $PROD_API_CONTAINER-next 名称启动，临时加网络别名
+        #      $PROD_API_CONTAINER——docker DNS 对该名返回新旧双 IP 轮询，
+        #      nginx resolver(valid=10s) 逐请求重解析，旧容器全程在线，零停机；
+        #   ② 本函数内等新容器 healthy（迁移已跑完、listener 已就绪）；
+        #   ③ rm 旧容器 + rename 新容器接管正式名（别名原样保留）。
+        # 回滚：新容器 unhealthy → 本函数 rm -next 返回失败，旧容器未动过，
+        # DNS 自动回落单 IP（调用方 _rollback_prod_containers 无需介入即恢复）。
+        # 前提纪律：迁移必须向后兼容（只加列/可回滚——仓库迁移规范既有要求），
+        # 双活窗口内新旧版本并存约 30-90s；r4s 内存高压期（Hermes 排查基线
+        # MemAvailable<300MB）双 api 并存约 +190M，宜错峰发版。
+        local next_container="$PROD_API_CONTAINER-next"
+        remote_exec "docker rm -f $next_container >/dev/null 2>&1 || true"
         remote_exec "docker run -d \
-            --name $PROD_API_CONTAINER \
+            --name $next_container \
             --network $NETWORK_NAME \
+            --network-alias $next_container \
             --network-alias $PROD_API_CONTAINER \
             --restart always \
             --stop-timeout 30 \
@@ -768,6 +782,14 @@ _start_prod_api()
             --health-retries 3 \
             --health-start-period 30s \
             $image"
+        if ! wait_container_healthy "$next_container" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))" true true; then
+            log_error "蓝绿：新 api 容器（$next_container）未通过健康门 — 移除新容器，旧容器继续服务"
+            remote_exec "docker rm -f $next_container >/dev/null 2>&1 || true"
+            return 1
+        fi
+        remote_exec "docker rm -f $PROD_API_CONTAINER >/dev/null 2>&1 || true"
+        remote_exec "docker rename $next_container $PROD_API_CONTAINER"
+        log_success "蓝绿：api 切流完成（$next_container → $PROD_API_CONTAINER，旧容器已退场）"
     else
         docker rm -f "$PROD_API_CONTAINER" >/dev/null 2>&1 || true
         docker run -d \
