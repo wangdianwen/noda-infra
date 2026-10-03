@@ -3832,7 +3832,7 @@ pipeline_deploy_preprod_inner()
         if [ -n "${DOPPLER_TOKEN_PREPROD:-}" ]; then
             _preprod_doppler_args="--token ${DOPPLER_TOKEN_PREPROD}"
         fi
-        _preprod_key_override=$(doppler secrets download ${_preprod_doppler_args} --project noda --config prd_pre --no-file --format=env 2>/dev/null | grep -E '^(STRIPE_|ANTHROPIC_|COMMENT_SERVICE_KEY|GOOGLE_OAUTH_|TOKEN_SECRET|AUTH_STATE_SECRET|EMAIL_SERVICE_API_KEY|EVENTFINDA_|SNAGME_)' || true)
+        _preprod_key_override=$(doppler secrets download ${_preprod_doppler_args} --project noda --config prd_pre --no-file --format=env 2>/dev/null | grep -E '^(STRIPE_|ANTHROPIC_|COMMENT_SERVICE_KEY|GOOGLE_OAUTH_|TOKEN_SECRET|RENEWAL_TOKEN_SECRET|AUTH_STATE_SECRET|EMAIL_SERVICE_API_KEY|EVENTFINDA_|SNAGME_)' || true)
         if [ -z "$_preprod_key_override" ]; then
             log_warn "prd_pre 密钥导出为空，preprod 将无 Stripe/Anthropic 凭据"
         fi
