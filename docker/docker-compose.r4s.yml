@@ -198,12 +198,21 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
+          # 1.0（2026-10-04，33s manifest GET 事故后 0.5→1.0）：清单差量双轮 ~11k
+          # 元数据写期间 S3 写队列 + filer leveldb compaction 在 0.5 核下排队拉长
+          # 尾延迟；6 核机常态空闲 >80%，1.0 仅用于吸收发版风暴
+          cpus: '1.0'
           # 512M（2026-10-01 384M→512M，站长定调先 512 试）：当日三轮全站桶同步期间
           # RSS 涨破 384M 触发 OOM（docker oom 事件 + exit 137）崩溃循环、全矩阵
           # 静态站 502/超时。若后续同步期再顶破 512 再上调（1G 备选）
           # 1G（2026-10-01 晚：512M 期间再触 exit 137，全量快照+并发发版期 RSS 顶破，按预案上调 1G）
           memory: 1G
+      # 防 swap 债务（2026-10-04 33s GET 根因之一：149MB 热内存压 swapfile，
+      # 与数据同盘 sda2，风暴期换页 pgmajfault 9.1 万）。cgroup v2 无 swappiness
+      # 旋钮，且容器 recreate 会重置 cgroup——每次 recreate/重启后需重新执行：
+      #   echo 0 > /sys/fs/cgroup/docker/$(docker inspect -f "{{.Id}}" seaweedfs)/memory.swap.max
+      #（recreate 本身即清零旧 swap 债务；此行防新债。宿主 swapfile 在
+      # /mnt/mmc1-4/System/swapfile，与 weed 数据同盘）
         reservations:
           cpus: '0.1'
           memory: 64M
