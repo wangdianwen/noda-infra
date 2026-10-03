@@ -45,3 +45,8 @@
 #       system-config-backup.sh（v4 整树单副本）与 immich-cloud-upload.sh（v2 增量）。
 #       2026-10-03 由单一照片 cron 升级为统一入口）=====
 30 3 * * * /mnt/mmc1-4/System/Scripts/baidu-sync-all.sh >> /var/log/noda-baidu-sync-all.log 2>&1
+
+# ===== 百度上传僵死看门狗（每 10 分钟）：实例在跑但 90 分钟无文件完成（连接僵死，
+#       BaiduPCS-Go 对吊死连接不超时）→ 杀掉重启（断点续传+秒传）+ Telegram 告警。
+#       2026-10-03 基线期间发现连接可僵死 2.5h 无任何重试/报告，新增）=====
+*/10 * * * * /mnt/mmc1-4/System/Scripts/baidu-upload-watchdog.sh
