@@ -199,12 +199,12 @@ services:
     deploy:
       resources:
         limits:
-          # 384M 与生产 r4s seaweedfs 对齐（用户确认；生产同参同镜像、平时水位
-          # 370M/96% 而零重启，384M 是被生产长期验证的稳定值）。preprod 旧值
-          # 256M 过紧：mirror 写入风暴时峰值 268M 顶穿（cgroup memory.peak、
-          # max 限流 1897 次），进程自行退出（ExitCode=0、非 OOM kill）→ 构建
-          # 期崩溃循环（noda-apps #54/#60/#62 实证）
-          memory: 384M
+          # 768M（2026-10-04 再放宽）：384M（对齐生产 r4s，用户确认）在 wiki 三语
+          # 把静态同步对象量做大后顶不住 rclone 全量对账的 Head/Put 并发风暴——
+          # cgroup OOM kill（ExitCode=137，RestartCount 87+），发布期同步必超时
+          # （snagme #559/#560/#561 三连实证）。Docker VM 7.75G 水位充裕，
+          # 生产 r4s 不动。沿革：256M（mirror 写入风暴 #54/#60/#62）→ 384M → 768M
+          memory: 768M
 
 volumes:
   preprod-pgdata:
