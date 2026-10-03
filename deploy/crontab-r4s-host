@@ -38,8 +38,10 @@
 #       凭证 .immich-ops-token（同目录 600）。2026-10-03 缩略图缺失排查新增）=====
 40 * * * * /mnt/mmc1-4/System/Scripts/immich-thumb-heal.sh >> /var/log/noda-immich-heal.log 2>&1
 
-# ===== Immich→百度网盘冷备增量（每天 03:30；幂等：同名同大小跳过/同 md5 秒传；
-#       登录失效自动 Telegram 告警；锁防与基线并行。
-#       脚本 r4s:/mnt/mmc1-4/System/Scripts/immich-cloud-upload.sh，
-#       凭证 BaiduPCS-Go 配置（bin 同目录 ~/.config）。2026-10-03 云备份工程新增）=====
-30 3 * * * /mnt/mmc1-4/System/Scripts/immich-cloud-upload.sh >> /var/log/noda-immich-cloud.log 2>&1
+# ===== 统一百度云同步（每天 03:30）：配置整树增量（先，秒级）+ 照片两树增量/DB 转储（后；
+#       纯单文件架构——BaiduPCS-Go v4.0.2 目录上传全灭，本地状态差集只传新/变文件，秒传防重复；
+#       161G 基线期间内部锁自动跳过当日重入；登录失效/上传失败自动 Telegram 告警。
+#       入口 r4s:/mnt/mmc1-4/System/Scripts/baidu-sync-all.sh，分见
+#       system-config-backup.sh（v4 整树单副本）与 immich-cloud-upload.sh（v2 增量）。
+#       2026-10-03 由单一照片 cron 升级为统一入口）=====
+30 3 * * * /mnt/mmc1-4/System/Scripts/baidu-sync-all.sh >> /var/log/noda-baidu-sync-all.log 2>&1
