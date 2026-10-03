@@ -209,10 +209,10 @@ services:
           memory: 1G
       # 防 swap 债务（2026-10-04 33s GET 根因之一：149MB 热内存压 swapfile，
       # 与数据同盘 sda2，风暴期换页 pgmajfault 9.1 万）。cgroup v2 无 swappiness
-      # 旋钮，且容器 recreate 会重置 cgroup——每次 recreate/重启后需重新执行：
-      #   echo 0 > /sys/fs/cgroup/docker/$(docker inspect -f "{{.Id}}" seaweedfs)/memory.swap.max
-      #（recreate 本身即清零旧 swap 债务；此行防新债。宿主 swapfile 在
-      # /mnt/mmc1-4/System/swapfile，与 weed 数据同盘）
+      # 旋钮，且本机 docker 不支持 swap limit（memswap_limit 会被引擎整行丢弃）——
+      # 禁 swap 靠 cgroup 直写 memory.swap.max=0 + 宿主守卫 cron 每 10 分钟自愈
+      # 漂移（recreate/带外启动自动重设 + TG 告警），见 deploy/crontab-r4s-host
+      # weed-swap-guard 与 r4s:/mnt/mmc1-4/System/Scripts/weed-swap-guard.sh
         reservations:
           cpus: '0.1'
           memory: 64M

@@ -50,3 +50,10 @@
 #       BaiduPCS-Go 对吊死连接不超时）→ 杀掉重启（断点续传+秒传）+ Telegram 告警。
 #       2026-10-03 基线期间发现连接可僵死 2.5h 无任何重试/报告，新增）=====
 */10 * * * * /mnt/mmc1-4/System/Scripts/baidu-upload-watchdog.sh
+
+# ===== weed swap 债守卫（每 10 分钟）：核对 seaweedfs cgroup memory.swap.max=0，
+#       漂移（recreate/带外启动）自动重设 + TG 告警。背景：2026-10-04 33s manifest
+#       GET 事故——weed 149MB 热内存压在与数据同盘（sda2）的 swapfile 上；本机
+#       docker 不支持 swap limit（memswap_limit 被引擎丢弃），禁 swap 只能 cgroup
+#       直写且容器 recreate 会重置。脚本 r4s:/mnt/mmc1-4/System/Scripts/weed-swap-guard.sh =====
+*/10 * * * * /mnt/mmc1-4/System/Scripts/weed-swap-guard.sh >> /var/log/noda-weed-guard.log 2>&1

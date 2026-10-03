@@ -2787,7 +2787,12 @@ _static_manifest_sync()
     work=$(mktemp -d /tmp/noda-manifest.XXXXXX) || return 1
 
     local remote_ok="true"
+    # 后端劣化哨兵（2026-10-04 33s manifest GET 事故）：清单 GET 是发版对 weed
+    # 的首击，耗时异常先亮牌——空闲态 healthcheck 永远绿，swap 债务只在此可见
+    local _t0=$(date +%s) _dt
     _rc "$endpoint" "$ak" "$sk" cat "$remote/.noda-manifest" > "$work/remote.manifest" 2>/dev/null || remote_ok="false"
+    _dt=$(( $(date +%s) - _t0 ))
+    [ "$_dt" -ge 5 ] && log_warn "桶内清单 GET 耗时 ${_dt}s（≥5s：weed 响应劣化——查 r4s weed swap/cgroup/compaction，本次发版将持续变慢）"
     if [ "$remote_ok" != "true" ] || [ ! -s "$work/remote.manifest" ]; then
         log_info "桶内无清单（首次 rclone 发布）→ 全量 sync 打底（收敛中止发布的孤儿对象）..."
         if ! _rc "$endpoint" "$ak" "$sk" sync "$out_dir/" "$remote/"; then
