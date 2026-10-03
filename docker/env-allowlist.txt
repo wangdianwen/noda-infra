@@ -127,3 +127,8 @@ AUTH_PREPROD_DIAL_ADDR
 AUTH_PREPROD_INSECURE_TLS
 #   Mac mini 自签证书、r4s 无本地 CA → 探针默认跳过 TLS 验证（仅 LAN 自探，
 #   载荷 e2e 一次性账号）；置 0 可关
+# ── 2026-10-04 snagme 估值区间发版对账补录 ──
+#   RENEWAL_TOKEN_SECRET：class A1 R1 教师续期无状态令牌密钥（ecc81e9c）。
+#   B 类功能门控：未配置 = 续期路由 404（软关闭，common/go/config/config.go
+#   注释明示）；模板覆盖由 class 发版批次跟进，故先行豁免不阻塞全线发版。
+RENEWAL_TOKEN_SECRET
