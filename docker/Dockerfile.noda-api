@@ -1,0 +1,3 @@
+
+# A1 R1 教师续期令牌（值经 env 模板/Doppler 注入，此处默认空 = 功能关闭）
+ENV RENEWAL_TOKEN_SECRET=
