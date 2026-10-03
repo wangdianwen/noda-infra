@@ -33,6 +33,16 @@ then echo "  ✓ tree 查询括号已 URL 编码"; else echo "  ✗ tree 查询�
 need "无危险 InputAction 类路径" "! grep -q 'cps.actions.InputAction' $S"
 need "InputAction 正确类路径" "grep -q 'workflow.support.steps.input.InputAction' $S"
 need "批准前刷新 crumb" "grep -q '批准前重新取' $S"
+# ⑤ macOS bash 3.2 会把紧跟 $VAR 的多字节字符并进变量名（实弹抓过：$MODE）→ unbound）
+if python3 - "$S" << 'PYEOF'
+import re, sys
+s = open(sys.argv[1], encoding="utf-8").read()
+bad = re.findall(r"\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]", s)
+if bad:
+    print("    bad:", bad)
+sys.exit(1 if bad else 0)
+PYEOF
+then echo "  ✓ 无 \$VAR 紧跟非 ASCII（bash 3.2 变量名吞噬坑）"; else echo "  ✗ \$VAR 紧跟非 ASCII"; FAIL=1; fi
 
 echo "== json_field 行为（strict=False 与队列项取号） =="
 # 与脚本内 json_field 同款 snippet（改动须双向同步）

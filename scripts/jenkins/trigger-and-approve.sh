@@ -72,9 +72,9 @@ if [ -z "$BUILD" ]; then
   P=$(curl -s --max-time 10 -b "$JAR" \
     "$JENKINS/job/$JOB/$BUILD/api/json?tree=actions%5Bparameters%5Bname,value%5D%5D" |
     json_field '"|".join(p["value"] for a in d["actions"] for p in a.get("parameters", []) if p["name"] == "PRODUCT")' 2>/dev/null || echo "?")
-  [ "$P" = "$PRODUCT" ] || { echo "构建#$BUILD PRODUCT=$P ≠ $PRODUCT，疑似并行会话构建，退出"; exit 1; }
+  [ "$P" = "$PRODUCT" ] || { echo "构建#$BUILD PRODUCT=$P ≠ ${PRODUCT}，疑似并行会话构建，退出"; exit 1; }
 fi
-echo "build#$BUILD 已触发（PRODUCT=$PRODUCT LAYER=$LAYER MODE=$MODE）"
+echo "build#$BUILD 已触发（PRODUCT=$PRODUCT LAYER=$LAYER MODE=${MODE}）"
 
 # 4. 轮询批准门（最长 30 分钟；preprod 验证通过后才会出 input）
 approve_gate() {
