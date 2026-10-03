@@ -132,3 +132,4 @@ AUTH_PREPROD_INSECURE_TLS
 #   B 类功能门控：未配置 = 续期路由 404（软关闭，common/go/config/config.go
 #   注释明示）；模板覆盖由 class 发版批次跟进，故先行豁免不阻塞全线发版。
 RENEWAL_TOKEN_SECRET
+DB_SLOW_LOG_MS
