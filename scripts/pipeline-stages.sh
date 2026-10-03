@@ -2654,7 +2654,7 @@ _rc()
     RCLONE_CONFIG_SW_SECRET_ACCESS_KEY="$sk" \
     RCLONE_TRANSFERS="${RC_TRANSFERS:-8}" \
     RCLONE_CHECKERS="${RC_CHECKERS:-16}" \
-        rclone --max-duration "${RC_MAX_DURATION:-900}s" "$@"
+        rclone --max-duration "${RC_MAX_DURATION:-2400}s" "$@"
 }
 
 # ============================================
