@@ -174,6 +174,25 @@ pipeline {
             }
         }
 
+        // Go 门禁第二层（2026-10-05 T6）：golangci-lint v2.14.0 官方镜像（12 模块
+        // pattern，与仓库 pnpm lint:go 同口径）+ api/smoke 全仓守卫（W-01/02/04，
+        // Test stage 的产品模块切片覆盖不到）。static 层纯前端无 Go 面整段跳过。
+        stage('Go Lint') {
+            when { expression { params.LAYER != 'static' } }
+            options {
+                // 官方镜像 docker run + 冷缓存模块下载 ~10m 封顶
+                timeout(time: 15, unit: 'MINUTES')
+            }
+            steps {
+                sh '''
+                    source "$WORKSPACE/scripts/lib/log.sh"
+                    source "$WORKSPACE/scripts/pipeline-stages.sh"
+                    pipeline_lint_go "$WORKSPACE/noda-apps"
+                '''
+                echo '✅ golangci-lint + Go 守卫通过'
+            }
+        }
+
         // preprod 部署并行双臂（原三臂，Test 已拆出）：容器（api/all）+ 桶（static/all）；
         // fast 模式双臂全跳（挡板已由前置 Test stage 承担）
         stage('Deploy Pre-prod') {

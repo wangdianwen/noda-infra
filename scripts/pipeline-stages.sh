@@ -706,6 +706,34 @@ pipeline_test()
     ) || return 1
 }
 
+# pipeline_lint_go - Go 门禁第二层（2026-10-05 T6 收尾批）：golangci-lint + 全仓守卫。
+# 与 Test stage（宿主 go build+test，产品模块切片）的两层边界：
+#   本层 = ① golangci-lint v2.14.0（12 模块 pattern，与仓库 pnpm lint:go 完全同口径，
+#          经官方镜像 docker run 跑——构建机不装 golangci 二进制，版本钉死不漂移；
+#          module/build cache 挂持久卷，二次构建增量命中）；
+#         ② api/smoke 守卫测试（W-01 JOIN≤3 / W-02 迁移前缀 / W-04 5xx 泄漏），
+#          Test stage 的产品模块切片覆盖不到 api/smoke，全仓守卫在此兜底（宿主 go）。
+# LAYER=static 调用方已跳过（纯前端发布无 Go 面）。
+pipeline_lint_go()
+{
+    local apps_dir="$1"
+    local img="golangci/golangci-lint:v2.14.0"
+    log_info "golangci-lint v2.14.0（docker 官方镜像，12 模块 pattern）"
+    docker run --rm \
+        -v "$apps_dir":/app -w /app \
+        -v jenkins-gomodcache:/go/pkg/mod \
+        -v jenkins-gocache:/root/.cache/go-build \
+        -e GOFLAGS=-buildvcs=false \
+        "$img" \
+        run ./api/... ./common/... ./common/crawler/... ./common/jobs/... \
+            ./auth/api/... ./class/api/... ./comment/api/... ./liuyao/api/... \
+            ./nearby/api/... ./snagme/api/... ./admin/api/... ./bff/... \
+        || return 1
+    log_info "Go 守卫测试（api/smoke：W-01/W-02/W-04，宿主 go）"
+    ( cd "$apps_dir/api" && go test -count=1 ./smoke/ ) || return 1
+    log_success "Go lint + 守卫通过"
+}
+
 # _r4s_mem_available_mb - r4s 当前可用内存（MB），读取失败输出空字符串
 # 用 /proc/meminfo 的 MemAvailable（含可回收页缓存），BusyBox awk 兼容
 _r4s_mem_available_mb()
