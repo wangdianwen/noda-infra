@@ -5,15 +5,16 @@
 //   static = 前端：该产品静态站构建 → stg 桶（preprod 验证）→ 审批 → prod 桶
 //            （publish-<product> 锁 + 产品维度中继/端口，跨产品可并行）
 //   all    = 一起：api + noda-static 反代镜像顺带刷新 + 产品静态站
-// 流程（4 stages）:
+// 流程（5 stages）:
 //   Build（队列门禁 + Pre-flight + 镜像/静态产物一次构建）
-//   → Deploy Pre-prod & Test（并行：容器部署 ‖ stg 桶发布 ‖ 测试挡板）
+//   → Test（测试挡板，独立 stage——失败连 preprod 都不发）
+//   → Deploy Pre-prod（并行：容器部署 ‖ stg 桶发布）
 //   → Human Approval（含 rebuild_preprod 循环，收在 stage 内部）
 //   → Deploy Prod（容器部署 / prod 桶发布 + E2E 验证 + CDN Purge 收尾）
-// 性能语义（2026-09-14）：
-//   - preprod 尽快可用：部署/桶发布（I/O）与测试（CPU）并行，不被 ~30m 测试阻塞
+// 性能语义（2026-10-04 修订）：
 //   - prod 零编译：镜像/产物在 Build 产出一次，prod 只做传输+切换 / 桶 mirror
-//   - 测试挡板语义不变：parallel 未全过不进入 Deploy Prod，prod 始终受测试保护
+//   - 测试挡板语义不变：Test 未过不进入 Deploy Pre-prod/Prod，prod 始终受测试保护
+//   - （原「部署与测试并行」已拆：static 层 Test 秒过后 UI 假卡 ~6min，#588）
 // DEPLOY_MODE 参数:
 //   normal（默认）: preprod 部署验证 + 人工批准后才发 prod
 //   fast: 紧急修复路径——Test 通过后直接发 prod，跳过 preprod 与人工批准。
@@ -145,16 +146,39 @@ pipeline {
             }
         }
 
-        // 并行三臂（2026-09-14）：preprod 尽快可用——部署/桶发布（I/O）不等测试
-        // （CPU）；测试挡板语义不变：parallel 未全过不进入后续，prod 始终受测试保护。
-        //   LAYER=api    → 容器臂 + Test
-        //   LAYER=static → 桶臂 + Test
-        //   LAYER=all    → 三臂全跑
-        //   fast 模式跳过两个 preprod 臂（Test 臂照跑——挡板仍在）
-        stage('Deploy Pre-prod & Test') {
+        // 测试挡板独立成 stage（2026-10-04 拆分）：原与 preprod 部署同 stage 并行，
+        // static 层 Test 秒过后（跳 Go、snagme 无 lint/test）stage 迟迟不关闭——
+        // 其实在等 stg 发布臂——UI 呈现「Test 完了却卡住不进审批」的假象（#588 用户反馈）。
+        // 拆分后 stage 视图始终显示真实动作：Test（门禁）→ Deploy Pre-prod → 审批；
+        // 门禁前置=失败连 preprod 都不发（原并行仅省 Test 的 ~2s，无实际收益）。
+        stage('Test') {
             options {
-                // 并行臂：pre-prod 部署 ~5m / 桶发布+探活 ~5m / Test（pnpm install +
-                // turbo + go）可达 ~30m
+                // pnpm install + turbo + go 可达 ~30m
+                timeout(time: 30, unit: 'MINUTES')
+            }
+            steps {
+                dir('noda-apps') {
+                    sh '''
+                        # 设置 PATH 包含 Node.js 和 pnpm
+                        export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+                        source "$WORKSPACE/scripts/lib/log.sh"
+                        source "$WORKSPACE/scripts/pipeline-stages.sh"
+                        export LAYER_FILTER="${LAYER}"
+                        export PRODUCT_FILTER="${PRODUCT}"
+                        # 按 PRODUCT_FILTER 用 turbo --filter 只跑对应包 +
+                        # workspace 依赖 + Go 产品模块；Test 失败 = 发布挡板
+                        pipeline_test "$PWD"
+                    '''
+                    echo '✅ Lint + 单元测试通过'
+                }
+            }
+        }
+
+        // preprod 部署并行双臂（原三臂，Test 已拆出）：容器（api/all）+ 桶（static/all）；
+        // fast 模式双臂全跳（挡板已由前置 Test stage 承担）
+        stage('Deploy Pre-prod') {
+            options {
+                // pre-prod 容器部署 ~5m / 桶发布+探活 ~5m（跳过判定命中时秒级）
                 timeout(time: 40, unit: 'MINUTES')
             }
             parallel {
@@ -211,24 +235,6 @@ pipeline {
                                 [ "$pub_ok" = "1" ] || { echo "❌ stg 发布重试后仍失败"; exit 1; }
                                 pipeline_verify_static_preprod "$PRODUCT"
                             '''
-                        }
-                    }
-                }
-                stage('Test') {
-                    steps {
-                        dir('noda-apps') {
-                            sh '''
-                                # 设置 PATH 包含 Node.js 和 pnpm
-                                export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
-                                source "$WORKSPACE/scripts/lib/log.sh"
-                                source "$WORKSPACE/scripts/pipeline-stages.sh"
-                                export LAYER_FILTER="${LAYER}"
-                                export PRODUCT_FILTER="${PRODUCT}"
-                                # 按 PRODUCT_FILTER 用 turbo --filter 只跑对应包 +
-                                # workspace 依赖 + Go 产品模块；Test 失败 = 发布挡板
-                                pipeline_test "$PWD"
-                            '''
-                            echo '✅ Lint + 单元测试通过'
                         }
                     }
                 }
