@@ -269,6 +269,9 @@ pipeline {
             }
             options { timeout(time: 6, unit: 'HOURS') }
             steps {
+                // 锁等待可见性：release_build_lock 在他人发布时静默等数分钟，stage
+                // 视图只显示 running 零输出——#588「假卡」同族余留，先说破再等
+                echo "⏳ 获取发布锁（若其他产品发布中，此处可能等待数分钟——非卡死）"
                 withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh '''
                         source scripts/lib/log.sh
@@ -295,6 +298,10 @@ pipeline {
   - 静态站经 preprod 桶伺服（stg 桶已发布并探活通过）
   - API 容器链路: <产品域>-preprod.noda.co.nz${apiProbe}
   镜像/内容: ${env.GIT_SHA}
+
+  ⏱ 本审批 6 小时后自动超时（构建记 FAILURE）。
+  ⚠️ 浏览器 Proceed/Abort 按钮因 Jenkins 上游缺陷不可用（表单缺 json 参数恒 400），
+  三种操作请在本机执行：scripts/jenkins/gate-action.sh ${env.BUILD_NUMBER} <deploy_prod|rebuild_preprod|abort>
 
   请选择下一步操作：""",
                         parameters: [
@@ -358,7 +365,7 @@ pipeline {
                             '''
                         }
                         def again = input(
-                            message: "Pre-prod 已重建（第 ${round} 轮），请验证后选择下一步：",
+                            message: "Pre-prod 已重建（第 ${round} 轮），请验证后选择下一步（浏览器按钮不可用，用 gate-action.sh ${env.BUILD_NUMBER} <ACTION>；6h 超时）",
                             parameters: [
                                 choice(name: 'ACTION', choices: ['deploy_prod', 'rebuild_preprod', 'abort'], description: 'deploy_prod: 部署生产 / rebuild_preprod: 再重建一次 / abort: 中止')
                             ]
