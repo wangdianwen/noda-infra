@@ -2770,7 +2770,7 @@ EOF
 _static_snapshot_rotate_prod()
 {
     local product="$1" bucket_root="$2" endpoint="$3" ak="$4" sk="$5"
-    local max_snap="${MAX_STATIC_SNAPSHOTS:-2}"
+    local max_snap="${MAX_STATIC_SNAPSHOTS:-1}"
     # env 必须以 -e 显式进容器（docker 不透传宿主 env）；桶路径带 SW: 远程前缀。
     # 脚本约定输出：NO_PREFIX=主前缀不存在（首次发布）/ ROTATE_DONE=链路完成；
     # 任一层 sync 失败仅打 WARN 行不中断（快照绝不阻塞发布）。
@@ -2940,7 +2940,8 @@ _static_snapshot_dir()
 
 # 发布前快照轮转（深→浅逐层外移，最浅层吃掉当前主前缀）：
 #   snap(max) ← snap(max-1) ← ... ← snap(1) ← sites/<product>/
-# MAX_STATIC_SNAPSHOTS 控制层数（默认 2：-prev 可回滚一步 / -prev2 可回滚两步）。
+# MAX_STATIC_SNAPSHOTS 控制层数（2026-10-04 默认 2→1：轮转是发布大头（26k 对象服务端
+# 拷贝/层），单层省一半时长；代价=回滚窗口一步。-prev2 残留前缀不再轮转、无害）。
 # 任一层轮转失败仅告警——快照是回滚锚点，但绝不能阻塞发布本身。
 # 快照前缀不在 nginx 改写映射内，公网不可达。
 # 发布前快照轮转（2026-09-30 rclone 化）：层间 sync 走 seaweedfs 服务端
@@ -2949,7 +2950,7 @@ _static_snapshot_dir()
 _static_snapshot_rotate()
 {
     local endpoint="$1" ak="$2" sk="$3" bucket_root="$4" product="$5"
-    local max_snap="${MAX_STATIC_SNAPSHOTS:-2}"
+    local max_snap="${MAX_STATIC_SNAPSHOTS:-1}"
     local i src dst
     if [ -z "$(_rc "$endpoint" "$ak" "$sk" lsf -R --files-only "SW:$bucket_root/sites/$product/" 2>/dev/null | head -1)" ]; then
         log_info "首次发布（桶内无 $product 前缀），跳过快照"
@@ -3003,7 +3004,7 @@ _pipeline_rollback_static_site_impl()
 {
     local product="$1"
     local depth="${2:-1}"
-    local max_snap="${MAX_STATIC_SNAPSHOTS:-2}"
+    local max_snap="${MAX_STATIC_SNAPSHOTS:-1}"
     case "$depth" in ''|*[!0-9]*) depth=1 ;; esac
     [ "$depth" -lt 1 ] && depth=1
     [ "$depth" -gt "$max_snap" ] && depth=$max_snap
