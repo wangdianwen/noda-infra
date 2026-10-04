@@ -719,7 +719,11 @@ pipeline_lint_go()
     local apps_dir="$1"
     local img="golangci/golangci-lint:v2.14.0"
     log_info "golangci-lint v2.14.0（docker 官方镜像，12 模块 pattern）"
+    # v2.14.0 镜像 ENTRYPOINT=null、CMD=[golangci-lint]，且二进制从 /usr/local/bin
+    # 挪到 /usr/bin——"run ./..." 传参会整体替换 CMD 把 "run" 当可执行文件
+    # （#606 实证 exec: "run": not found），显式钉 entrypoint 兼容任意镜像配置。
     docker run --rm \
+        --entrypoint /usr/bin/golangci-lint \
         -v "$apps_dir":/app -w /app \
         -v jenkins-gomodcache:/go/pkg/mod \
         -v jenkins-gocache:/root/.cache/go-build \
