@@ -356,8 +356,10 @@ pipeline {
             }
             options {
                 // 含门禁重取（其他构建持有队列锁时最长等 900s）+ prod 部署/桶发布 + E2E；
-                // 15m 会被等锁独占导致部署没开始就被杀——45m
-                timeout(time: 45, unit: 'MINUTES')
+                // 15m 会被等锁独占导致部署没开始就被杀；45m 曾被 buildId 切换税
+                //（全量差量+快照两代全量轮转）压到剩 7min（2026-10-04 #573 实证
+                // 37min）——60m；rclone copy 看门狗 RC_MAX_DURATION 默认须小于本值
+                timeout(time: 60, unit: 'MINUTES')
             }
             steps {
                 withCredentials([

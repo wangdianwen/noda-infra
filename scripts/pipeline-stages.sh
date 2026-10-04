@@ -2513,8 +2513,8 @@ _publish_static_to_stg()
     for probe_i in 1 2 3 4 5 6; do
         # ⚠️ 必须套子 shell：VAR=x func args 对【函数】调用时赋值会持久留存
         # （POSIX 语义，函数≠外部命令）——曾在探测后把 RC_MAX_DURATION=30 留在
-        # 环境里，把正式 copy 的 2400s 默认看门狗污染成 30s（#564-#570 stg 同步
-        # 六连败实证，26k 对象差量 30s 必死）
+        # 环境里，把正式 copy 的默认看门狗（时值 2400s，现 2700s）污染成 30s
+        # （#564-#570 stg 同步六连败实证，26k 对象差量 30s 必死）
         if ( RC_MAX_DURATION=30 _rc "$endpoint" "$stg_a" "$stg_s" lsf "SW:noda-static-stg" >/dev/null 2>&1 ); then
             probe_ok="true"
             break
@@ -2658,7 +2658,7 @@ _rc()
     RCLONE_CONFIG_SW_SECRET_ACCESS_KEY="$sk" \
     RCLONE_TRANSFERS="${RC_TRANSFERS:-8}" \
     RCLONE_CHECKERS="${RC_CHECKERS:-16}" \
-        rclone --max-duration "${RC_MAX_DURATION:-2400}s" "$@"
+        rclone --max-duration "${RC_MAX_DURATION:-2700}s" "$@"
 }
 
 # ============================================
