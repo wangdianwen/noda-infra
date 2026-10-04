@@ -37,12 +37,12 @@ def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
         </hudson.model.ChoiceParameterDefinition>
         <hudson.model.ChoiceParameterDefinition>
           <name>LAYER</name>
-          <description>选择部署层级（all=前后端一起部署，api=仅后端，static=仅前端）</description>
+          <description>选择部署层级（static=仅前端【默认，误触代价最小】/ api=仅后端 / all=前后端一起；2026-10-05 默认值 all→static：原默认下误点 Build 即 class 前后端全量发布）</description>
           <choices class="java.util.Arrays$ArrayList">
             <a class="string-array">
-              <string>all</string>
-              <string>api</string>
               <string>static</string>
+              <string>api</string>
+              <string>all</string>
             </a>
           </choices>
         </hudson.model.ChoiceParameterDefinition>

@@ -3,8 +3,12 @@
 //
 // 执行时机：02-plugins.groovy 之后执行（字母顺序 05 > 02）
 // 幂等性：已安装插件跳过，不重复安装
-// 配置：File Logger 需要在 Jenkins 启动后通过 UI 手动配置
-//       Jenkins 管理 → Audit Trail → 添加 File Logger → 路径: /var/lib/jenkins/audit-trail/audit-trail.log
+// 配置：File Logger 需在插件安装并重启后配置。2026-10-05 勘误：
+//   ① 原注释的 /var/lib/jenkins/... 是 Linux 路径，本机（macOS）JENKINS_HOME
+//      在 ~/.jenkins，正确路径 ~/.jenkins/audit-trail/audit-trail.log（父目录需先建）
+//   ② 截至 2026-10-05 该插件在线上从未安装成功（97 插件清单无 audit-trail），
+//      AUDIT-03/D-02 审计目标实际未落地；本脚本只负责装插件，File Logger 的
+//      路径/轮转仍在 UI 配（Manage Jenkins → Audit Trail）
 import jenkins.model.*
 import hudson.PluginWrapper
 

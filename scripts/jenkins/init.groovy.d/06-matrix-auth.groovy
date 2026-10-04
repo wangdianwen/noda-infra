@@ -42,16 +42,35 @@ if (!pm.getPlugin(pluginId)) {
 
 // ---------- 2. 创建 developer 用户（如果不存在） ----------
 
+// 密码来源（2026-10-05 修订）：$JENKINS_HOME/.developer.env 的
+// JENKINS_DEVELOPER_PASSWORD，或同名环境变量。不再硬编码默认密码——
+// 线上实证 developer:changeme-immediately 一直未改（HTTP 200 可登录），
+// 已于 2026-10-05 手动重置；未来重建若未配置密码则跳过创建，宁缺毋滥。
+def developerPass = null
+def devEnvFile = new File(System.getProperty('JENKINS_HOME')
+    ?: System.getenv('JENKINS_HOME')
+    ?: "${System.getProperty('user.home')}/.jenkins", '.developer.env')
+if (devEnvFile.exists()) {
+    def props = new Properties()
+    devEnvFile.withInputStream { stream -> props.load(stream) }
+    developerPass = props.getProperty('JENKINS_DEVELOPER_PASSWORD')
+}
+if (developerPass == null) {
+    developerPass = System.getenv('JENKINS_DEVELOPER_PASSWORD')
+}
+
 def realm = instance.getSecurityRealm()
 
 // 确保使用 HudsonPrivateSecurityRealm（用户名/密码认证）
 if (!(realm instanceof HudsonPrivateSecurityRealm)) {
     println "WARNING: Security realm is not HudsonPrivateSecurityRealm, skipping user creation"
+} else if (developerPass == null) {
+    println "WARNING: JENKINS_DEVELOPER_PASSWORD not configured, skipping developer creation"
 } else {
     def devUser = realm.getUser('developer')
     if (devUser == null) {
-        realm.createAccount('developer', 'changeme-immediately')
-        println "Created developer user with default password. ADMIN: please change the password via Jenkins UI."
+        realm.createAccount('developer', developerPass)
+        println "Created developer user (password from env file/env var)"
     } else {
         println "Developer user already exists, skipping creation"
     }
@@ -64,6 +83,14 @@ def strategy = new GlobalMatrixAuthorizationStrategy()
 
 // Admin 角色：Overall/Administer（包含所有权限）
 strategy.add(Jenkins.ADMINISTER, "admin")
+
+// anonymous 只读（2026-10-05 对齐线上实证行为：匿名可浏览 job 页/console、
+// 不可触发/不可改。原脚本未授予任何匿名权限，与线上 FullControlOnceLoggedIn
+// allowAnonymousRead=true 矛盾——未来重建若按原脚本执行会静默改变浏览器可见性）
+strategy.add(Jenkins.READ, "anonymous")
+strategy.add(hudson.model.Item.READ, "anonymous")
+strategy.add(hudson.model.Run.READ, "anonymous")
+strategy.add(hudson.model.View.READ, "anonymous")
 
 // Developer 角色：最小权限集
 // Overall/Read — 必须授予，否则其他权限无效
