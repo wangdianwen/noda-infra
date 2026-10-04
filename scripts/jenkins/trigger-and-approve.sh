@@ -84,8 +84,11 @@ echo "build#$BUILD 已触发（PRODUCT=$PRODUCT LAYER=$LAYER MODE=${MODE}）"
 # 4. 轮询批准门（最长 30 分钟；preprod 验证通过后才会出 input）
 approve_gate() {
   local id
+  # id 形如 A1aefe44175f3dedb0ce15e065c438de（33 位、随机大小写十六进制，
+  # 非 32 位纯小写——2026-10-05 #611 实证 [a-f0-9]{32} 恒不匹配致批准门
+  # 空转 30 分钟；放宽为 ≥32 位字母数字）
   id=$(curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" "$JENKINS/job/$JOB/$BUILD/input/" |
-    grep -oE '[a-f0-9]{32}/submit' | head -1 | cut -d/ -f1)
+    grep -oE '[a-zA-Z0-9]{32,}/submit' | head -1 | cut -d/ -f1)
   [ -n "$id" ] || return 1
   CRUMB=$(crumb_header)   # crumb 绑会话且有时效（实测 ~1h），批准前重新取
   curl -s --max-time 30 "${AUTH[@]}" -b "$JAR" -H "$CRUMB" -X POST "$JENKINS/scriptText" \
