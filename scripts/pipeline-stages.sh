@@ -2477,10 +2477,25 @@ _publish_static_to_prod()
     # 缺失 → 内容未变更判定形同虚设，同内容重发仍走全量。
     # ⚠️ 必须在 _publish_site_cleanup 之前：cleanup 拆 socat 中继，晚了打到死
     # 端点必失败（#580 实证仅告警、prod 指纹停在旧值）。仅对账通过才送。
+    # 重试 3 次退避 45s：大发布触发 weed 自动 vacuum，vacuum 期卷瞬时只读、
+    # PUT 500（#585 实证发布完成即撞 vacuum 窗口）；单次尝试 RC_MAX_DURATION
+    # 收紧到 120s 防内部重试拖时（子 shell 包 env 防 POSIX 持久化），最坏
+    # 3×(120+45)s≈8min，不顶爆 stage 超时。最终失败仅告警（下次全量自愈）。
     if [ "$publish_ok" = "true" ]; then
-        _rc "$endpoint" "$s3a" "$s3s" copyto "$web_dir/out/.noda-artifact-hash" \
-            "SW:noda-static/sites/$product/.noda-artifact-hash" 2>/dev/null \
-            || log_warn "产物指纹上送失败（下次同内容重发仍走全量，不影响本次发布）"
+        local _fp_try
+        for _fp_try in 1 2 3; do
+            if ( RC_MAX_DURATION=120 _rc "$endpoint" "$s3a" "$s3s" copyto \
+                    "$web_dir/out/.noda-artifact-hash" \
+                    "SW:noda-static/sites/$product/.noda-artifact-hash" ) 2>/dev/null; then
+                break
+            fi
+            if [ "$_fp_try" = "3" ]; then
+                log_warn "产物指纹上送失败（下次同内容重发仍走全量，不影响本次发布）"
+            else
+                log_warn "产物指纹上送第 ${_fp_try} 次失败（疑遇 vacuum），45s 后重试..."
+                sleep 45
+            fi
+        done
     fi
 
     _publish_site_cleanup
@@ -2594,10 +2609,21 @@ _publish_static_to_stg()
 
     if [ "$rc" = "0" ]; then
         # 产物指纹上送（同 prod，#574 实证 stg 桶指纹缺失）：对账通过后补送，
-        # 内容未变更判定才能在下次同内容重发时命中；失败仅告警。
-        _rc "$endpoint" "$stg_a" "$stg_s" copyto "$web_dir/out/.noda-artifact-hash" \
-            "SW:noda-static-stg/sites/$product/.noda-artifact-hash" 2>/dev/null \
-            || log_warn "stg 产物指纹上送失败（下次同内容重发仍走全量，不影响本次发布）"
+        # 内容未变更判定才能在下次同内容重发时命中；重试退避同 prod（vacuum 窗口）。
+        local _fp_try
+        for _fp_try in 1 2 3; do
+            if ( RC_MAX_DURATION=120 _rc "$endpoint" "$stg_a" "$stg_s" copyto \
+                    "$web_dir/out/.noda-artifact-hash" \
+                    "SW:noda-static-stg/sites/$product/.noda-artifact-hash" ) 2>/dev/null; then
+                break
+            fi
+            if [ "$_fp_try" = "3" ]; then
+                log_warn "stg 产物指纹上送失败（下次同内容重发仍走全量，不影响本次发布）"
+            else
+                log_warn "stg 产物指纹上送第 ${_fp_try} 次失败（疑遇 vacuum），45s 后重试..."
+                sleep 45
+            fi
+        done
         log_success "$product preprod 桶发布完成：noda-static-stg/sites/$product/"
     fi
     return $rc
