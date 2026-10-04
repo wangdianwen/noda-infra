@@ -2472,18 +2472,21 @@ _publish_static_to_prod()
         fi
     fi
 
+    # 产物指纹上送（#574 实证）：指纹不在清单内，清单差量路径从不携带——桶内
+    # 指纹永远停留在最近一次全量打底（prod 实为 #571 的 26750d30），stg 甚至
+    # 缺失 → 内容未变更判定形同虚设，同内容重发仍走全量。
+    # ⚠️ 必须在 _publish_site_cleanup 之前：cleanup 拆 socat 中继，晚了打到死
+    # 端点必失败（#580 实证仅告警、prod 指纹停在旧值）。仅对账通过才送。
+    if [ "$publish_ok" = "true" ]; then
+        _rc "$endpoint" "$s3a" "$s3s" copyto "$web_dir/out/.noda-artifact-hash" \
+            "SW:noda-static/sites/$product/.noda-artifact-hash" 2>/dev/null \
+            || log_warn "产物指纹上送失败（下次同内容重发仍走全量，不影响本次发布）"
+    fi
+
     _publish_site_cleanup
     if [ "$publish_ok" != "true" ]; then
         return 1
     fi
-
-    # 产物指纹上送（#574 实证）：指纹不在清单内，清单差量路径从不携带——桶内
-    # 指纹永远停留在最近一次全量打底（prod 实为 #571 的 26750d30），stg 甚至
-    # 缺失 → 内容未变更判定形同虚设，同内容重发仍走全量。对账通过后补送；
-    # 失败仅告警（下次仍走全量自愈，不影响本次发布）。
-    _rc "$endpoint" "$s3a" "$s3s" copyto "$web_dir/out/.noda-artifact-hash" \
-        "SW:noda-static/sites/$product/.noda-artifact-hash" 2>/dev/null \
-        || log_warn "产物指纹上送失败（下次同内容重发仍走全量，不影响本次发布）"
 
     log_success "$product 静态站发布完成：noda-static/sites/$product/（$objs 个对象，与源一致，中继已拆除）"
 }
