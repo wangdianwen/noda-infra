@@ -2315,9 +2315,12 @@ pipeline_build_static_artifacts()
     # 两个元文件自身不入清单；count+2 = 计入两个元文件（桶侧对象数与 find 口径一致）
     local b_sha b_tree b_count
     b_sha=$(cd "$apps_dir" && git rev-parse HEAD 2>/dev/null || echo unknown)
-    : > "$web_dir/out/.noda-manifest"
+    # ⚠️ 逐文件 while+shasum 循环在 set -x 下每文件 2-4 行 trace，26k 文件≈10 万行
+    # 日志风暴曾把 durable-task 日志 tailer 打挂（#574：Build 中途控制台全程冻结、
+    # 后续所有 stage 无输出，但流水线照常推进——观测断而执行未断）。xargs 单进程
+    # 只有一行 trace；-print0/-0 兼容 $ 与空格文件名，输出与旧循环逐字节同格式。
     (cd "$web_dir/out" && find . -type f ! -name '.noda-manifest' ! -name '.noda-artifact-hash' \
-        | LC_ALL=C sort | while IFS= read -r f; do shasum -a 256 "$f"; done) \
+        -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) \
         > "$web_dir/out/.noda-manifest"
     b_tree=$(shasum -a 256 < "$web_dir/out/.noda-manifest" | awk '{print $1}')
     b_count=$(( $(wc -l < "$web_dir/out/.noda-manifest" | tr -d ' ') + 2 ))
@@ -2748,12 +2751,12 @@ while [ \"\$_i\" -ge 1 ]; do
   _dst=${product}-prev\$((_i + 1))
   if [ -n \"\$(\"\$_bin\" lsf -R --files-only \"\$_root/\$_src/\" 2>/dev/null | head -1)\" ]; then
     echo \"ROTATE \$_src -> \$_dst\"
-    \"\$_bin\" sync \"\$_root/\$_src/\" \"\$_root/\$_dst/\" --max-duration 600s || echo \"WARN\$_src\"
+    \"\$_bin\" sync \"\$_root/\$_src/\" \"\$_root/\$_dst/\" --max-duration 900s || echo \"WARN\$_src\"
   fi
   _i=\$((_i - 1))
 done
 echo \"ROTATE ${product} -> ${product}-prev\"
-\"\$_bin\" sync \"\$_root/${product}/\" \"\$_root/${product}-prev/\" --max-duration 600s || echo WARN_main
+\"\$_bin\" sync \"\$_root/${product}/\" \"\$_root/${product}-prev/\" --max-duration 900s || echo WARN_main
 echo ROTATE_DONE"
     # 单引号包裹是唯一防线：脚本混入单引号会让远端 ash 提前终止引号段
     case "$script" in
@@ -2763,9 +2766,13 @@ echo ROTATE_DONE"
             return 0
             ;;
     esac
-    # 单次 ssh + 单次 docker run：探查与全部轮转在同一容器内完成
+    # 单次 ssh + 单次 docker run：探查与全部轮转在同一容器内完成。
+    # 三层超时/吞吐校正（#573/#574 实证轮转 19min 且常被截断）：外层总预算
+    # 600s < 单层 600s×2 层——外层先到先杀，轮转半途而废、快照过期；26k 对象
+    # 服务端 Copy 在 transfers=8 下单层即逼近 600s。改：外层 1800s、单层 900s、
+    # 传输 32/校验 64（服务端 CopyObject 纯元数据，不吃源站带宽）。
     local out
-    out=$(remote_exec "docker run --rm --network noda-network -v /opt/noda/bin/rclone:/usr/local/bin/rclone -e RCLONE_CONFIG_SW_TYPE=s3 -e RCLONE_CONFIG_SW_PROVIDER=Other -e RCLONE_CONFIG_SW_ENDPOINT=http://seaweedfs:8333 -e RCLONE_CONFIG_SW_ACCESS_KEY_ID=$ak -e RCLONE_CONFIG_SW_SECRET_ACCESS_KEY=$sk -e RCLONE_TRANSFERS=8 -e RCLONE_CHECKERS=16 --entrypoint /bin/sh alpine/socat -c '$script'" 600 2>/dev/null) || out=""
+    out=$(remote_exec "docker run --rm --network noda-network -v /opt/noda/bin/rclone:/usr/local/bin/rclone -e RCLONE_CONFIG_SW_TYPE=s3 -e RCLONE_CONFIG_SW_PROVIDER=Other -e RCLONE_CONFIG_SW_ENDPOINT=http://seaweedfs:8333 -e RCLONE_CONFIG_SW_ACCESS_KEY_ID=$ak -e RCLONE_CONFIG_SW_SECRET_ACCESS_KEY=$sk -e RCLONE_TRANSFERS=32 -e RCLONE_CHECKERS=64 --entrypoint /bin/sh alpine/socat -c '$script'" 1800 2>/dev/null) || out=""
     if [ -z "$out" ]; then
         log_warn "r4s 单次轮转不可用（rclone/容器异常）——回退经中继轮转"
         _static_snapshot_rotate "$endpoint" "$ak" "$sk" "$bucket_root" "$product"
@@ -2853,14 +2860,28 @@ _static_manifest_sync()
     log_info "清单差量：上传 ${n_ch}、删除 ${n_del}（总对象 $(wc -l < "$out_dir/.noda-manifest" | tr -d ' ')）..."
 
     if [ "$n_ch" -gt 0 ]; then
-        if ! _rc "$endpoint" "$ak" "$sk" copy "$out_dir/" "$remote/" --files-from "$work/changed"; then
+        # --no-traverse：否则 rclone 仍全量列举远端 26k 对象（经中继按目录树，
+        # 分钟级）——改为逐文件 HEAD，差量小时秒级。子 shell 包 env 赋值：VAR=x
+        # 对【函数】调用会持久留存（#564-570 同坑），不得污染后续 _rc 默认值。
+        if ! ( RC_TRANSFERS=16 RC_CHECKERS=32 _rc "$endpoint" "$ak" "$sk" copy \
+                "$out_dir/" "$remote/" --files-from "$work/changed" --no-traverse ); then
             rm -rf "$work"
             return 1
         fi
     fi
     if [ "$n_del" -gt 0 ]; then
-        _rc "$endpoint" "$ak" "$sk" delete "$remote/" --files-from "$work/deleted" \
-            || log_warn "差量删除失败（对账哨兵/下次发布兜底）"
+        if [ "$n_del" -le 500 ]; then
+            # 逐对象 DELETE：rclone delete --files-from 同样先全量列举远端——小差量
+            # 逐个删反而秒级（典型删除=个位数，500 封顶防极端差量退化）
+            while IFS= read -r p; do
+                [ -n "$p" ] || continue
+                _rc "$endpoint" "$ak" "$sk" deletefile "$remote/$p" 2>/dev/null \
+                    || log_warn "删除失败（对账哨兵/下次发布兜底）: $p"
+            done < "$work/deleted"
+        else
+            _rc "$endpoint" "$ak" "$sk" delete "$remote/" --files-from "$work/deleted" \
+                || log_warn "差量删除失败（对账哨兵/下次发布兜底）"
+        fi
     fi
     _rc "$endpoint" "$ak" "$sk" copyto "$out_dir/.noda-manifest" "$remote/.noda-manifest" \
         || log_warn "清单上送失败（下次仍走全量，不影响本次发布完整性）"
@@ -2905,13 +2926,16 @@ _static_snapshot_rotate()
         dst=$(_static_snapshot_dir "$product" "$((i + 1))")
         if [ -n "$(_rc "$endpoint" "$ak" "$sk" lsf -R --files-only "SW:$bucket_root/sites/$src/" 2>/dev/null | head -1)" ]; then
             log_info "快照轮转 $src → $dst ..."
-            _rc "$endpoint" "$ak" "$sk" sync "SW:$bucket_root/sites/$src/" "SW:$bucket_root/sites/$dst/" >/dev/null 2>&1 || \
+            # 子 shell 包 env：VAR=x 对【函数】调用持久留存（POSIX），防污染后续 _rc
+            ( RC_TRANSFERS=32 RC_CHECKERS=64 _rc "$endpoint" "$ak" "$sk" sync \
+                "SW:$bucket_root/sites/$src/" "SW:$bucket_root/sites/$dst/" >/dev/null 2>&1 ) || \
                 log_warn "快照轮转 $src → $dst 失败（该层快照可能过期）"
         fi
         i=$((i - 1))
     done
     log_info "快照当前发布 → $bucket_root/sites/$(_static_snapshot_dir "$product" 1)/ ..."
-    _rc "$endpoint" "$ak" "$sk" sync "SW:$bucket_root/sites/$product/" "SW:$bucket_root/sites/$(_static_snapshot_dir "$product" 1)/" >/dev/null 2>&1 || \
+    ( RC_TRANSFERS=32 RC_CHECKERS=64 _rc "$endpoint" "$ak" "$sk" sync \
+        "SW:$bucket_root/sites/$product/" "SW:$bucket_root/sites/$(_static_snapshot_dir "$product" 1)/" >/dev/null 2>&1 ) || \
         log_warn "快照失败（不影响本次发布，仅失去回滚锚点）"
 }
 
