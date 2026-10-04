@@ -2418,7 +2418,8 @@ _publish_static_to_prod()
         return 1
     fi
 
-    # 内容未变更判定（2026-09-30）：指纹 sha+对象数一致 → 镜像与快照皆为
+    # 内容未变更判定（2026-09-30；2026-10-04 主判据改为内容树哈希+对象数——
+    # docs-only 提交内容零变化但 git sha 前进，不再白白全量）→ 镜像与快照皆为
     # 无操作，整段跳过（中继即拆即走，持锁秒级）
     if _static_content_unchanged "$endpoint" "$s3a" "$s3s" "noda-static" "sites/$product" "$web_dir/out"; then
         _publish_site_cleanup
@@ -2681,8 +2682,10 @@ _rc()
 # _static_content_unchanged - 发布「未变更跳过」判定（2026-09-30 rclone 版）
 # ============================================
 # 桶内指纹（构建期 .noda-artifact-hash，"<git-sha> <tree-hash> <对象数>" 随
-# 镜像上桶）的 git-sha 与对象数与本次构建一致 → 镜像与快照皆为无操作，调用
-# 方整段跳过。只认双条件：指纹缺失/字段异常一律走完整路径；同 sha 对象数
+# 镜像上桶）的内容树哈希与对象数与本次构建一致 → 镜像与快照皆为无操作，调用
+# 方整段跳过（tree=逐文件清单整体 sha256，内容身份的真指纹；git sha 仅展示——
+# docs-only 提交内容零变化也能跳）。只认双条件：指纹缺失/字段异常一律走完整
+# 路径；tree 同而对象数异=指纹疑似损坏，走完整镜像自愈
 # 不一致=疑似上次发布不完整，走完整镜像自愈。FORCE_STATIC_PUBLISH=1 强制
 # 完整发布（纯 env 变更同 sha 重发时用）。
 # 参数: $1=endpoint $2=ak $3=sk $4=bucket_root $5=prefix $6=out目录
@@ -2705,12 +2708,15 @@ EOF
     case "$r_sha" in
         *[!0-9a-f]*|'') return 1 ;;
     esac
-    if [ "$r_sha" = "$l_sha" ] && [ "$r_cnt" = "$l_cnt" ]; then
-        log_info "指纹比对一致：sha=${l_sha:0:12}… objects=$l_cnt → 判定内容未变更"
+    if [ "$r_tree" = "$l_tree" ] && [ "$r_cnt" = "$l_cnt" ]; then
+        # 主判据=内容树哈希（对逐文件清单整体 sha256——内容逐字节一致则必然相等），
+        # git sha 只作展示：docs-only 提交（#575 场景，7b66ceac vs e1d4cb4 内容零变化）
+        # 不再因 sha 前进而白白全量
+        log_info "内容树一致：tree=${l_tree:0:12}… objects=$l_cnt（git ${l_sha:0:12}…→${r_sha:0:12}…）→ 判定内容未变更"
         return 0
     fi
-    if [ "$r_sha" = "$l_sha" ]; then
-        log_warn "同 sha 但对象数不一致（桶 ${r_cnt} vs 源 ${l_cnt}）——疑似上次发布不完整，走完整镜像自愈"
+    if [ "$r_tree" = "$l_tree" ]; then
+        log_warn "内容树一致但对象数不一致（桶 ${r_cnt} vs 源 ${l_cnt}）——指纹疑似损坏，走完整镜像自愈"
     fi
     return 1
 }
