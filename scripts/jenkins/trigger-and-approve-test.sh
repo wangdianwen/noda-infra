@@ -33,6 +33,12 @@ then echo "  ✓ tree 查询括号已 URL 编码"; else echo "  ✗ tree 查询�
 need "无危险 InputAction 类路径" "! grep -q 'cps.actions.InputAction' $S"
 need "InputAction 正确类路径" "grep -q 'workflow.support.steps.input.InputAction' $S"
 need "批准前刷新 crumb" "grep -q '批准前重新取' $S"
+# ⑥ 批准门存在性判断走 wfapi（#610/#611 同日双卡：HTML 抓 id 对大写开头 id 恒失配）
+need "存在性判断用 wfapi pendingInputActions" "grep -q 'wfapi/pendingInputActions' $S"
+need "HTML 抓 id 旧法已移除" "! grep -qE 'grep -oE .\[a-zA-Z0-9\].*submit' $S"
+# ⑦ AUTO_APPROVE 开关与 TG 通知挂钩（卡死/失败必须有人知道）
+need "AUTO_APPROVE 默认开" "grep -q 'AUTO_APPROVE:-1' $S"
+need "TG 通知挂钩≥3 处" "[ \$(grep -c 'tg-notify.sh' $S) -ge 3 ]"
 # ⑤ macOS bash 3.2 会把紧跟 $VAR 的多字节字符并进变量名（实弹抓过：$MODE）→ unbound）
 if python3 - "$S" << 'PYEOF'
 import re, sys
@@ -57,6 +63,14 @@ P_Q='{"executable":{"number":539,"url":"http://x/job/noda-apps/539/"},"why":"awa
 need "队列项 executable 取号" "printf '%s' \"\$P_Q\" | python3 -c \"\$PY\" '(d.get(\"executable\") or {}).get(\"number\")' 2>/dev/null | grep -q 539"
 P_NONE='{"executable":null,"why":"pending"}'
 need "未出队返回 None 可识别" "printf '%s' \"\$P_NONE\" | python3 -c \"\$PY\" '(d.get(\"executable\") or {}).get(\"number\")' 2>/dev/null | grep -q None"
+
+echo "== gate-action.sh 守卫（人工三选唯一可用入口） =="
+G="$DIR/gate-action.sh"
+need "gate-action bash 语法" "bash -n $G"
+need "gate-action 三选项校验" "grep -q 'deploy_prod|rebuild_preprod|abort' $G"
+need "gate-action 全部 curl 带会话 cookie" "! grep -nE 'curl -s' $G | grep -vE -- '-[bc] \"\\\$JAR\"'"
+need "gate-action InputAction 正确类路径" "grep -q 'workflow.support.steps.input.InputAction' $G"
+need "gate-action 存在性判断用 wfapi" "grep -q 'wfapi/pendingInputActions' $G"
 
 echo "== 活体冒烟（只读） =="
 if curl -s --max-time 5 "http://localhost:8080/api/json" >/dev/null 2>&1; then

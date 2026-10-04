@@ -15,19 +15,32 @@
 #   ③ JSON 解析一律 strict=False——并行会话构建参数含未转义控制字符会炸严格解析
 #   ④ tree 查询的 [] 一律 URL 编码 %5B/%5D（zsh glob 坑）
 #
+# 2026-10-05 ⑤ 批准门存在性判断改 wfapi/pendingInputActions（无 pending 返回
+#   [] HTTP 200，干净布尔）——/input/ 页 HTML 正则抓执行 id 太脆：id 首字符可能
+#   大写（A/C/E/F 约 1/3，#610/#611 同日双卡实证），批准走 Script Console 遍历
+#   executions 本就不需要 id。
+# ⑥ TG 通知/告警（tg-notify.sh，凭据 config/telegram.env）：审批门放行、构建
+#   完成结果、卡死退出均推送；通知失败静默不阻塞发布。
+# ⑦ AUTO_APPROVE（默认 1=沿用自动批准；=0 转守望模式：不批准，每 10 分钟 TG
+#   提醒，等人工 gate-action.sh 三选处理）。
+#   手动三选（deploy_prod/rebuild_preprod/abort）用 gate-action.sh——浏览器
+#   Proceed/Abort 因上游 UI 缺陷（缺 Stapler json 参数恒 400）已不可用。
+#
 # 前提：Jenkins 跑在本机 :8080（2026-10-05 实测 useSecurity=True，匿名只读；
 # 构建触发需 admin basic auth，凭据 config/jenkins-admin.env），crumb+session 仍必须。
 # 用法：jenkins/trigger-and-approve.sh <PRODUCT> <LAYER> <DEPLOY_MODE>
-#   例：jenkins/trigger-and-approve.sh class api normal
+#   例：AUTO_APPROVE=0 jenkins/trigger-and-approve.sh class api normal
 set -euo pipefail
 
 PRODUCT="${1:?用法: $0 <PRODUCT> <LAYER> <DEPLOY_MODE>}"
+DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # admin basic auth（2026-10-05：Jenkins 开启安全域后匿名 POST 一律 403/login 跳转）
-source "$(dirname "$0")/config/jenkins-admin.env"
+source "$DIR/config/jenkins-admin.env"
 AUTH=("-u" "${JENKINS_ADMIN_USER}:${JENKINS_ADMIN_PASSWORD}")
 LAYER="${2:-api}"
 MODE="${3:-normal}"
+AUTO_APPROVE="${AUTO_APPROVE:-1}"
 JENKINS="${JENKINS_URL:-http://localhost:8080}"
 JOB="noda-apps"
 JAR=$(mktemp /tmp/jenkins-ta.XXXXXX.jar)
@@ -56,7 +69,7 @@ HTTP=$(curl -s "${AUTH[@]}" -b "$JAR" -H "$CRUMB" -X POST \
   "$JENKINS/job/$JOB/buildWithParameters" \
   --data "PRODUCT=$PRODUCT" --data "LAYER=$LAYER" --data "DEPLOY_MODE=$MODE" \
   -D "$HDR" -w '%{http_code}' -o /dev/null)
-[ "$HTTP" = "201" ] || { echo "触发失败 HTTP=$HTTP"; exit 1; }
+[ "$HTTP" = "201" ] || { echo "触发失败 HTTP=$HTTP"; "$DIR/tg-notify.sh" "❌ Jenkins ${PRODUCT}/${LAYER}/${MODE} 触发失败 HTTP=${HTTP}" || true; exit 1; }
 QITEM=$(grep -i '^location:' "$HDR" | tail -1 | tr -d '\r' | awk '{print $2}' | sed 's:/*$::')
 [ -n "$QITEM" ] && [ "$QITEM" != "/" ] || { echo "未取得队列项 Location，请手动核对队列"; exit 1; }
 
@@ -82,14 +95,17 @@ fi
 echo "build#$BUILD 已触发（PRODUCT=$PRODUCT LAYER=$LAYER MODE=${MODE}）"
 
 # 4. 轮询批准门（最长 30 分钟；preprod 验证通过后才会出 input）
+# 存在性判断用 wfapi（无 pending 返回 [] HTTP 200）；批准本身走 Script Console
+# 遍历 executions，不需要 id——HTML 正则抓 id 当判据的旧法已废（⑤）
+pending_count() {
+  local pend
+  pend=$(curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" \
+    "$JENKINS/job/$JOB/$BUILD/wfapi/pendingInputActions" || true)
+  printf '%s' "$pend" | json_field 'len(d)' 2>/dev/null || echo 0
+}
+
 approve_gate() {
-  local id
-  # id 形如 A1aefe44175f3dedb0ce15e065c438de（33 位、随机大小写十六进制，
-  # 非 32 位纯小写——2026-10-05 #611 实证 [a-f0-9]{32} 恒不匹配致批准门
-  # 空转 30 分钟；放宽为 ≥32 位字母数字）
-  id=$(curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" "$JENKINS/job/$JOB/$BUILD/input/" |
-    grep -oE '[a-zA-Z0-9]{32,}/submit' | head -1 | cut -d/ -f1)
-  [ -n "$id" ] || return 1
+  [ "$(pending_count)" != "0" ] || return 1
   CRUMB=$(crumb_header)   # crumb 绑会话且有时效（实测 ~1h），批准前重新取
   curl -s --max-time 30 "${AUTH[@]}" -b "$JAR" -H "$CRUMB" -X POST "$JENKINS/scriptText" \
     --data-urlencode "script=
@@ -100,15 +116,33 @@ ia.getExecutions().each { ex -> println(\"approving: \" + ex.getInput().getMessa
 println(\"approved\")" | tail -1
 }
 
+APPROVED_TG=0   # 审批门放行只推一次
 for i in $(seq 1 60); do
   STATE=$(curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" \
     "$JENKINS/job/$JOB/$BUILD/api/json?tree=building,result" |
     json_field 'str(d["building"]).lower()+"/"+str(d["result"])' 2>/dev/null || echo "parse-error")
   case "$STATE" in
-    false/*) echo "build#$BUILD 完成: $STATE"; exit 0 ;;
+    false/SUCCESS) echo "build#$BUILD 完成: $STATE"; exit 0 ;;
+    false/*)
+      echo "build#$BUILD 完成: $STATE"
+      "$DIR/tg-notify.sh" "❌ Jenkins #${BUILD} ${PRODUCT}/${LAYER}/${MODE} 结束：${STATE#false/}" || true
+      exit 1 ;;
   esac
-  OUT=$(approve_gate || true)
-  [ -n "$OUT" ] && echo "$OUT"
+  if [ "$(pending_count)" != "0" ]; then
+    if [ "$AUTO_APPROVE" = "1" ]; then
+      OUT=$(approve_gate || true)
+      [ -n "$OUT" ] && echo "$OUT"
+      if [ "$APPROVED_TG" = "0" ] && [ "$(pending_count)" = "0" ]; then
+        APPROVED_TG=1
+        "$DIR/tg-notify.sh" "🤖 Jenkins #${BUILD} ${PRODUCT}/${LAYER}/${MODE} 审批门已自动放行 deploy_prod（AUTO_APPROVE=1）；需拦截请尽快到构建页 Stop" || true
+      fi
+    elif [ $((i % 20)) = 1 ]; then
+      echo "⏸ #${BUILD} 等待人工审批（AUTO_APPROVE=0）"
+      "$DIR/tg-notify.sh" "⏸ Jenkins #${BUILD} ${PRODUCT}/${LAYER}/${MODE} 等待人工审批（6h 超时）→ gate-action.sh ${BUILD} deploy_prod|rebuild_preprod|abort" || true
+    fi
+  fi
   sleep 30
 done
-echo "30 分钟未完成，退出（构建仍在后台跑，可手动查看）"; exit 2
+echo "30 分钟未完成，退出（构建仍在后台跑，可手动查看）"
+"$DIR/tg-notify.sh" "⏰ Jenkins #${BUILD} ${PRODUCT}/${LAYER}/${MODE} 守望 30 分钟未结束，脚本退出（构建仍后台运行）" || true
+exit 2
