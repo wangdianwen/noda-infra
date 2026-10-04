@@ -777,7 +777,7 @@ _start_prod_api()
             --label noda.service-group=apps \
             --label noda.environment=prod \
             --health-cmd \"wget --quiet --tries=1 --spider http://127.0.0.1:3001/api/health || exit 1\" \
-            --health-interval 30s \
+            --health-interval 5s \
             --health-timeout 10s \
             --health-retries 3 \
             --health-start-period 30s \
@@ -817,7 +817,7 @@ _start_prod_api()
             --label "noda.service-group=apps" \
             --label noda.environment=prod \
             --health-cmd "wget --quiet --tries=1 --spider http://127.0.0.1:3001/api/health || exit 1" \
-            --health-interval 30s \
+            --health-interval 5s \
             --health-timeout 10s \
             --health-retries 3 \
             --health-start-period 30s \
@@ -872,7 +872,7 @@ _start_prod_jobs()
             --label noda.service-group=apps \
             --label noda.environment=prod \
             --health-cmd \"wget --quiet --tries=1 --spider http://127.0.0.1:3016/healthz || exit 1\" \
-            --health-interval 30s \
+            --health-interval 5s \
             --health-timeout 10s \
             --health-retries 3 \
             --health-start-period 60s \
@@ -904,7 +904,7 @@ _start_prod_jobs()
             --label "noda.service-group=apps" \
             --label noda.environment=prod \
             --health-cmd "wget --quiet --tries=1 --spider http://127.0.0.1:3016/healthz || exit 1" \
-            --health-interval 30s \
+            --health-interval 5s \
             --health-timeout 10s \
             --health-retries 3 \
             --health-start-period 60s \
@@ -965,7 +965,7 @@ _start_prod_static()
             --label noda.service-group=apps \
             --label noda.environment=prod \
             --health-cmd \"wget --quiet --tries=1 --spider http://127.0.0.1:81/health || exit 1\" \
-            --health-interval 30s \
+            --health-interval 5s \
             --health-timeout 5s \
             --health-retries 3 \
             --health-start-period 10s \
@@ -1007,7 +1007,7 @@ _start_prod_static()
             --label "noda.service-group=apps" \
             --label noda.environment=prod \
             --health-cmd "wget --quiet --tries=1 --spider http://127.0.0.1:81/health || exit 1" \
-            --health-interval 30s \
+            --health-interval 5s \
             --health-timeout 5s \
             --health-retries 3 \
             --health-start-period 10s \
@@ -3871,7 +3871,7 @@ pipeline_deploy_preprod_inner()
             --label noda.service-group=apps \
             --label noda.environment=preprod \
             --health-cmd \"wget --quiet --tries=1 --spider http://127.0.0.1:80/health || exit 1\" \
-            --health-interval 30s \
+            --health-interval 5s \
             --health-timeout 5s \
             --health-retries 3 \
             --health-start-period 10s \

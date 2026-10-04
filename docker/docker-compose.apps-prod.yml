@@ -88,7 +88,7 @@ services:
           - noda-api-prod
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:3001/api/health || exit 1"]
-      interval: 30s
+      interval: 5s
       timeout: 10s
       retries: 3
       start_period: 30s
