@@ -15,12 +15,17 @@
 #   ③ JSON 解析一律 strict=False——并行会话构建参数含未转义控制字符会炸严格解析
 #   ④ tree 查询的 [] 一律 URL 编码 %5B/%5D（zsh glob 坑）
 #
-# 前提：Jenkins 跑在本机 :8080（Unsecured + 无认证域，匿名可用，crumb 必须）。
+# 前提：Jenkins 跑在本机 :8080（2026-10-05 实测 useSecurity=True，匿名只读；
+# 构建触发需 admin basic auth，凭据 config/jenkins-admin.env），crumb+session 仍必须。
 # 用法：jenkins/trigger-and-approve.sh <PRODUCT> <LAYER> <DEPLOY_MODE>
 #   例：jenkins/trigger-and-approve.sh class api normal
 set -euo pipefail
 
 PRODUCT="${1:?用法: $0 <PRODUCT> <LAYER> <DEPLOY_MODE>}"
+
+# admin basic auth（2026-10-05：Jenkins 开启安全域后匿名 POST 一律 403/login 跳转）
+source "$(dirname "$0")/config/jenkins-admin.env"
+AUTH=("-u" "${JENKINS_ADMIN_USER}:${JENKINS_ADMIN_PASSWORD}")
 LAYER="${2:-api}"
 MODE="${3:-normal}"
 JENKINS="${JENKINS_URL:-http://localhost:8080}"
@@ -38,16 +43,16 @@ print(eval(sys.argv[1]))' "$1"
 }
 
 crumb_header() {
-  curl -s --max-time 10 -b "$JAR" "$JENKINS/crumbIssuer/api/json" |
+  curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" "$JENKINS/crumbIssuer/api/json" |
     json_field 'd["crumbRequestField"]+": "+d["crumb"]'
 }
 
 # 1. 会话 + crumb
-curl -s --max-time 10 -c "$JAR" "$JENKINS/login" >/dev/null
+curl -s --max-time 10 "${AUTH[@]}" -c "$JAR" "$JENKINS/login" >/dev/null
 CRUMB=$(crumb_header)
 
 # 2. 触发：Location 头 = 我们的队列项（出队后即本次请求的构建号）
-HTTP=$(curl -s -b "$JAR" -H "$CRUMB" -X POST \
+HTTP=$(curl -s "${AUTH[@]}" -b "$JAR" -H "$CRUMB" -X POST \
   "$JENKINS/job/$JOB/buildWithParameters" \
   --data "PRODUCT=$PRODUCT" --data "LAYER=$LAYER" --data "DEPLOY_MODE=$MODE" \
   -D "$HDR" -w '%{http_code}' -o /dev/null)
@@ -58,7 +63,7 @@ QITEM=$(grep -i '^location:' "$HDR" | tail -1 | tr -d '\r' | awk '{print $2}' | 
 # 3. 等出队拿自己的构建号（最长 10 分钟；执行器被并行会话占着时在此等）
 BUILD=""
 for i in $(seq 1 60); do
-  OUT=$(curl -s --max-time 10 -b "$JAR" "$QITEM/api/json" || true)
+  OUT=$(curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" "$QITEM/api/json" || true)
   if [ -n "$OUT" ]; then
     N=$(printf '%s' "$OUT" | json_field '(d.get("executable") or {}).get("number")' 2>/dev/null || true)
     if [ -n "$N" ] && [ "$N" != "None" ]; then BUILD=$N; break; fi
@@ -67,9 +72,9 @@ for i in $(seq 1 60); do
 done
 if [ -z "$BUILD" ]; then
   echo "⚠️ 队列项 10 分钟未出队，回退 lastBuild 并按 PRODUCT 参数核对"
-  BUILD=$(curl -s --max-time 10 -b "$JAR" \
+  BUILD=$(curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" \
     "$JENKINS/job/$JOB/api/json?tree=lastBuild%5Bnumber%5D" | json_field 'd["lastBuild"]["number"]')
-  P=$(curl -s --max-time 10 -b "$JAR" \
+  P=$(curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" \
     "$JENKINS/job/$JOB/$BUILD/api/json?tree=actions%5Bparameters%5Bname,value%5D%5D" |
     json_field '"|".join(p["value"] for a in d["actions"] for p in a.get("parameters", []) if p["name"] == "PRODUCT")' 2>/dev/null || echo "?")
   [ "$P" = "$PRODUCT" ] || { echo "构建#$BUILD PRODUCT=$P ≠ ${PRODUCT}，疑似并行会话构建，退出"; exit 1; }
@@ -79,11 +84,11 @@ echo "build#$BUILD 已触发（PRODUCT=$PRODUCT LAYER=$LAYER MODE=${MODE}）"
 # 4. 轮询批准门（最长 30 分钟；preprod 验证通过后才会出 input）
 approve_gate() {
   local id
-  id=$(curl -s --max-time 10 -b "$JAR" "$JENKINS/job/$JOB/$BUILD/input/" |
+  id=$(curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" "$JENKINS/job/$JOB/$BUILD/input/" |
     grep -oE '[a-f0-9]{32}/submit' | head -1 | cut -d/ -f1)
   [ -n "$id" ] || return 1
   CRUMB=$(crumb_header)   # crumb 绑会话且有时效（实测 ~1h），批准前重新取
-  curl -s --max-time 30 -b "$JAR" -H "$CRUMB" -X POST "$JENKINS/scriptText" \
+  curl -s --max-time 30 "${AUTH[@]}" -b "$JAR" -H "$CRUMB" -X POST "$JENKINS/scriptText" \
     --data-urlencode "script=
 def j = Jenkins.instance.getItem(\"$JOB\")
 def b = j.getBuildByNumber($BUILD)
@@ -93,7 +98,7 @@ println(\"approved\")" | tail -1
 }
 
 for i in $(seq 1 60); do
-  STATE=$(curl -s --max-time 10 -b "$JAR" \
+  STATE=$(curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" \
     "$JENKINS/job/$JOB/$BUILD/api/json?tree=building,result" |
     json_field 'str(d["building"]).lower()+"/"+str(d["result"])' 2>/dev/null || echo "parse-error")
   case "$STATE" in
