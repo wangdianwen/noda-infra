@@ -740,7 +740,7 @@ _start_prod_api()
         # 蓝绿切换（B4 2026-10-03）：不再先 rm 旧容器——那一步就是 /graphql
         # 停机窗的根源（rm → 新容器起 listener 之间 DNS 无可解析目标）。改为：
         #   ① 新容器以 $PROD_API_CONTAINER-next 名称启动，临时加网络别名
-        #      $PROD_API_CONTAINER——docker DNS 对该名返回新旧双 IP 轮询，
+        #      ${PROD_API_CONTAINER}——docker DNS 对该名返回新旧双 IP 轮询，
         #      nginx resolver(valid=10s) 逐请求重解析，旧容器全程在线，零停机；
         #   ② 本函数内等新容器 healthy（迁移已跑完、listener 已就绪）；
         #   ③ rm 旧容器 + rename 新容器接管正式名（别名原样保留）。
@@ -783,13 +783,13 @@ _start_prod_api()
             --health-start-period 30s \
             $image"
         if ! wait_container_healthy "$next_container" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))" true true; then
-            log_error "蓝绿：新 api 容器（$next_container）未通过健康门 — 移除新容器，旧容器继续服务"
+            log_error "蓝绿：新 api 容器（${next_container}）未通过健康门 — 移除新容器，旧容器继续服务"
             remote_exec "docker rm -f $next_container >/dev/null 2>&1 || true"
             return 1
         fi
         remote_exec "docker rm -f $PROD_API_CONTAINER >/dev/null 2>&1 || true"
         remote_exec "docker rename $next_container $PROD_API_CONTAINER"
-        log_success "蓝绿：api 切流完成（$next_container → $PROD_API_CONTAINER，旧容器已退场）"
+        log_success "蓝绿：api 切流完成（$next_container → ${PROD_API_CONTAINER}，旧容器已退场）"
     else
         docker rm -f "$PROD_API_CONTAINER" >/dev/null 2>&1 || true
         docker run -d \
@@ -1209,7 +1209,7 @@ pipeline_deploy_prod_inner()
         if _layer_want_web; then transfer_list+=("$static_image"); fi
         for img in "${transfer_list[@]}"; do
             if ! transfer_image "$img" "$img"; then
-                log_error "镜像传输失败: $img（旧容器未受影响，线上继续服务）"
+                log_error "镜像传输失败: ${img}（旧容器未受影响，线上继续服务）"
                 return 1
             fi
         done
@@ -1972,7 +1972,7 @@ pipeline_infra_deploy()
             pipeline_deploy_seaweedfs
             ;;
         *)
-            log_error "未知服务: $service（可选 nginx/seaweedfs/noda-ops/postgres）"
+            log_error "未知服务: ${service}（可选 nginx/seaweedfs/noda-ops/postgres）"
             return 1
             ;;
     esac
@@ -2305,7 +2305,7 @@ pipeline_build_static_artifacts()
         return 1
     fi
     if [ ! -f "$web_dir/$STATIC_SENTINEL" ]; then
-        log_error "构建产物缺失 $web_dir/$STATIC_SENTINEL（output:export 校验失败）"
+        log_error "构建产物缺失 $web_dir/${STATIC_SENTINEL}（output:export 校验失败）"
         return 1
     fi
 
@@ -2354,7 +2354,7 @@ pipeline_publish_static_site()
     local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
     local web_dir="$apps_dir/$STATIC_WEB_DIR"
     if [ ! -f "$web_dir/$STATIC_SENTINEL" ]; then
-        log_error "构建产物缺失 $web_dir/$STATIC_SENTINEL——请先执行 pipeline_build_static_artifacts"
+        log_error "构建产物缺失 $web_dir/${STATIC_SENTINEL}——请先执行 pipeline_build_static_artifacts"
         return 1
     fi
 
@@ -2715,7 +2715,7 @@ EOF
         # 主判据=内容树哈希（对逐文件清单整体 sha256——内容逐字节一致则必然相等），
         # git sha 只作展示：docs-only 提交（#575 场景，7b66ceac vs e1d4cb4 内容零变化）
         # 不再因 sha 前进而白白全量
-        log_info "内容树一致：tree=${l_tree:0:12}… objects=$l_cnt（git ${l_sha:0:12}…→${r_sha:0:12}…）→ 判定内容未变更"
+        log_info "内容树一致：tree=${l_tree:0:12}… objects=${l_cnt}（git ${l_sha:0:12}…→${r_sha:0:12}…）→ 判定内容未变更"
         return 0
     fi
     if [ "$r_tree" = "$l_tree" ]; then
@@ -3030,7 +3030,7 @@ _pipeline_rollback_static_site_impl()
     fi
 
     log_info "回滚: sites/${snap_dir}/（$prev_objs 对象）→ sites/$product/ ...（rclone sync，服务端拷贝含删除）"
-    # 回滚源必须用按深度计算的 $snap_dir（prod/stg 两桶同源）——
+    # 回滚源必须用按深度计算的 ${snap_dir}（prod/stg 两桶同源）——
     # 旧写法 prod 侧硬编码 ${product}-prev，ROLLBACK_DEPTH=2 时静默回错层
     if ! _rc "$endpoint" "$s3a" "$s3s" sync "SW:noda-static/sites/${snap_dir}/" "SW:noda-static/sites/$product/"; then
         log_error "prod 桶回滚失败"
@@ -3185,7 +3185,7 @@ pipeline_deploy_seaweedfs()
         if remote_exec "$rrc lsf SW:$S3_BUCKET" >/dev/null 2>&1; then
             log_info "桶可访问：$S3_BUCKET"
         else
-            log_error "S3 桶初始化失败（$S3_BUCKET，r4s rclone 不可列举；若 /opt/noda/bin/rclone 缺失请先部署静态二进制）"
+            log_error "S3 桶初始化失败（${S3_BUCKET}，r4s rclone 不可列举；若 /opt/noda/bin/rclone 缺失请先部署静态二进制）"
             return 1
         fi
     else
@@ -3205,7 +3205,7 @@ pipeline_deploy_seaweedfs()
             rclone lsf "SW:$S3_BUCKET" >/dev/null 2>&1; then
             :
         else
-            log_error "S3 桶初始化失败（$S3_BUCKET，本地 rclone 不可列举）"
+            log_error "S3 桶初始化失败（${S3_BUCKET}，本地 rclone 不可列举）"
             return 1
         fi
     fi
@@ -3934,7 +3934,7 @@ pipeline_deploy_preprod_inner()
             # 子 shell 的 exit 不中断父进程（sh 步骤无 set -e）——显式校验 static 在位，
             # 缺失立即失败，别拖到健康检查才报一个超时（#281 教训）
             if ! docker inspect -f '{{.State.Running}}' "$PREPROD_STATIC_CONTAINER" 2>/dev/null | grep -q true; then
-                log_error "preprod-noda-static 未在运行——静态边缘缺失（$PREPROD_STATIC_CONTAINER）"
+                log_error "preprod-noda-static 未在运行——静态边缘缺失（${PREPROD_STATIC_CONTAINER}）"
                 return 1
             fi
         else
