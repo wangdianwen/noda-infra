@@ -57,3 +57,10 @@
 #       docker 不支持 swap limit（memswap_limit 被引擎丢弃），禁 swap 只能 cgroup
 #       直写且容器 recreate 会重置。脚本 r4s:/mnt/mmc1-4/System/Scripts/weed-swap-guard.sh =====
 */10 * * * * /mnt/mmc1-4/System/Scripts/weed-swap-guard.sh >> /var/log/noda-weed-guard.log 2>&1
+
+# ===== weed S3 假死守卫（每 5 分钟）：直探 S3 :8333，连续 2 轮连不上/超时
+#       （403/404 等应用层响应=活着）自动 docker restart + TG。背景：2026-10-04
+#       #571 发版 26k PUT 风暴触发 vacuum 卡死整个 weed 进程，线上 502 22 分钟
+#       ——healthcheck 早已报 unhealthy 但无人响应。脚本
+#       r4s:/mnt/mmc1-4/System/Scripts/weed-watchdog.sh（存档 deploy/weed-watchdog.sh）=====
+*/5 * * * * /mnt/mmc1-4/System/Scripts/weed-watchdog.sh >> /var/log/noda-weed-guard.log 2>&1
