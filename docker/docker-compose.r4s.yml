@@ -175,11 +175,16 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
+    # volume.max 96→300（2026-10-04 #574 后夜实测：26k 对象发布风暴为并发写预分配
+    # 新卷、风暴后卷停在 6~35MB 半空态，96 槽碎片化耗尽（96/96 free:0）→ stg
+    # collection "No writable volumes" 全部写 500、读正常——非进程故障，重启守卫
+    # 无效（只会反复打断启动/vacuum，已停用）。实际数据 2.9G、盘余 512G，300 槽
+    # 兼容碎片化；volumeSizeLimitMB=1024 不动（半空卷与它无关，纯槽位问题）
     command: >-
       server -dir=/data -ip=seaweedfs
       -master.volumeSizeLimitMB=1024
       -master.volumePreallocate=false
-      -volume.max=96
+      -volume.max=300
       -s3 -s3.port=8333
       -s3.config=/etc/seaweedfs/s3.json
     volumes:
