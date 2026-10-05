@@ -300,8 +300,8 @@ pipeline {
   镜像/内容: ${env.GIT_SHA}
 
   ⏱ 本审批 6 小时后自动超时（构建记 FAILURE）。
-  ⚠️ 浏览器 Proceed/Abort 按钮因 Jenkins 上游缺陷不可用（表单缺 json 参数恒 400），
-  三种操作请在本机执行：scripts/jenkins/gate-action.sh ${env.BUILD_NUMBER} <deploy_prod|rebuild_preprod|abort>
+  ✅ 人工审批（2026-10-06 起浏览器按钮已修复）：在 ACTION 下拉选 deploy_prod/rebuild_preprod/abort 后点 Proceed
+  （Abort 按钮=直接中止构建）；等价命令行：scripts/jenkins/gate-action.sh ${env.BUILD_NUMBER} <deploy_prod|rebuild_preprod|abort>
 
   请选择下一步操作：""",
                         parameters: [
@@ -365,7 +365,7 @@ pipeline {
                             '''
                         }
                         def again = input(
-                            message: "Pre-prod 已重建（第 ${round} 轮），请验证后选择下一步（浏览器按钮不可用，用 gate-action.sh ${env.BUILD_NUMBER} <ACTION>；6h 超时）",
+                            message: "Pre-prod 已重建（第 ${round} 轮），请验证后选择下一步（浏览器选 ACTION 点 Proceed，或 gate-action.sh ${env.BUILD_NUMBER} <ACTION>；6h 超时）",
                             parameters: [
                                 choice(name: 'ACTION', choices: ['deploy_prod', 'rebuild_preprod', 'abort'], description: 'deploy_prod: 部署生产 / rebuild_preprod: 再重建一次 / abort: 中止')
                             ]

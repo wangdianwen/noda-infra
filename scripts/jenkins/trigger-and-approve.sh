@@ -6,6 +6,10 @@
 #   crumb+cookie → buildWithParameters → 队列项等出队取自己的构建号 →
 #   轮询 input 出现 → scriptText 批准 → 等待结果
 #
+# 2026-10-06：浏览器审批按钮已修复可用（Jenkins 2.580.1 原生提交带 json +
+# simple-theme-plugin 注入 userContent/fix-input-json.js 兜底，真浏览器
+# Proceed/Abort 三连测通过）；本脚本的 Script Console 批准仅服务 AUTO_APPROVE=1。
+#
 # 2026-10-04 加固（实战三坑，见 spec/ledger）：
 #   ① 所有 GET 必须带 -b "$JAR"——匿名读会被 Jenkins 间歇性回 HTML 登录页，
 #     python 在 char 0 炸 JSONDecodeError（触发成功但脚本死于批准轮询前）
@@ -21,15 +25,14 @@
 #   executions 本就不需要 id。
 # ⑥ TG 通知/告警（tg-notify.sh，凭据 config/telegram.env）：审批门放行、构建
 #   完成结果、卡死退出均推送；通知失败静默不阻塞发布。
-# ⑦ AUTO_APPROVE（默认 1=沿用自动批准；=0 转守望模式：不批准，每 10 分钟 TG
-#   提醒，等人工 gate-action.sh 三选处理）。
-#   手动三选（deploy_prod/rebuild_preprod/abort）用 gate-action.sh——浏览器
-#   Proceed/Abort 因上游 UI 缺陷（缺 Stapler json 参数恒 400）已不可用。
+# ⑦ AUTO_APPROVE（2026-10-06 起默认 0=守望人工审批：不批准，每 10 分钟 TG 提醒，
+#   等人工处理；=1 恢复自动批准 deploy_prod）。人工审批两条路：
+#   浏览器构建页选 ACTION 后点 Proceed（或 gate-action.sh 三选，等价）。
 #
 # 前提：Jenkins 跑在本机 :8080（2026-10-05 实测 useSecurity=True，匿名只读；
 # 构建触发需 admin basic auth，凭据 config/jenkins-admin.env），crumb+session 仍必须。
 # 用法：jenkins/trigger-and-approve.sh <PRODUCT> <LAYER> <DEPLOY_MODE>
-#   例：AUTO_APPROVE=0 jenkins/trigger-and-approve.sh class api normal
+#   例：AUTO_APPROVE=1 jenkins/trigger-and-approve.sh class api normal  # 显式恢复全自动
 set -euo pipefail
 
 PRODUCT="${1:?用法: $0 <PRODUCT> <LAYER> <DEPLOY_MODE>}"
@@ -40,7 +43,7 @@ source "$DIR/config/jenkins-admin.env"
 AUTH=("-u" "${JENKINS_ADMIN_USER}:${JENKINS_ADMIN_PASSWORD}")
 LAYER="${2:-api}"
 MODE="${3:-normal}"
-AUTO_APPROVE="${AUTO_APPROVE:-1}"
+AUTO_APPROVE="${AUTO_APPROVE:-0}"
 JENKINS="${JENKINS_URL:-http://localhost:8080}"
 JOB="noda-apps"
 JAR=$(mktemp /tmp/jenkins-ta.XXXXXX.jar)
@@ -138,7 +141,7 @@ for i in $(seq 1 60); do
       fi
     elif [ $((i % 20)) = 1 ]; then
       echo "⏸ #${BUILD} 等待人工审批（AUTO_APPROVE=0）"
-      "$DIR/tg-notify.sh" "⏸ Jenkins #${BUILD} ${PRODUCT}/${LAYER}/${MODE} 等待人工审批（6h 超时）→ gate-action.sh ${BUILD} deploy_prod|rebuild_preprod|abort" || true
+      "$DIR/tg-notify.sh" "⏸ Jenkins #${BUILD} ${PRODUCT}/${LAYER}/${MODE} 等待人工审批（6h 超时）→ 浏览器构建页选 ACTION 点 Proceed，或 gate-action.sh ${BUILD} deploy_prod|rebuild_preprod|abort" || true
     fi
   fi
   sleep 30

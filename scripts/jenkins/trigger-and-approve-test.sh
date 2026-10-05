@@ -37,7 +37,7 @@ need "批准前刷新 crumb" "grep -q '批准前重新取' $S"
 need "存在性判断用 wfapi pendingInputActions" "grep -q 'wfapi/pendingInputActions' $S"
 need "HTML 抓 id 旧法已移除" "! grep -qE 'grep -oE .\[a-zA-Z0-9\].*submit' $S"
 # ⑦ AUTO_APPROVE 开关与 TG 通知挂钩（卡死/失败必须有人知道）
-need "AUTO_APPROVE 默认开" "grep -q 'AUTO_APPROVE:-1' $S"
+need "AUTO_APPROVE 默认关(守望人工审批)" "grep -q 'AUTO_APPROVE:-0' $S"
 need "TG 通知挂钩≥3 处" "[ \$(grep -c 'tg-notify.sh' $S) -ge 3 ]"
 # ⑤ macOS bash 3.2 会把紧跟 $VAR 的多字节字符并进变量名（实弹抓过：$MODE）→ unbound）
 if python3 - "$S" << 'PYEOF'
