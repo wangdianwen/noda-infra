@@ -3572,8 +3572,12 @@ https://nearby.noda.co.nz/sitemap.xml|nearby sitemap（反代 Go）"
             # 2026-09-17 P4 退役后 REST /api/* 刻意 410（nginx return 410 gone，
             # 仅留 /api/snagme/img），GET 型探针已无可用 REST 路由——API 链路
             # 改由下方 snagme 专属 POST /graphql 冒烟查询覆盖。
-            checks="https://snagme.noda.co.nz/|snagme 产品站
-https://snagme.noda.co.nz/quiz|snagme 问卷页（静态桶）"
+            # 2026-10-06 D-21 localePrefix always 语义：/ 与 /quiz 由 nginx 30x 到
+            # 带前缀 canonical（协商 locale），探针改打 200 面并新增开货列表页探针
+            # （quiz-listings-seo 批新页面；旧 / 探针在 #640 误报 FAILURE 记档）。
+            checks="https://snagme.noda.co.nz/en|snagme 产品站（D-21 canonical）
+https://snagme.noda.co.nz/en/quiz|snagme 问卷页（静态桶）
+https://snagme.noda.co.nz/en/listings|snagme 开货列表总览"
             ;;
         *)
             log_error "未知产品: ${product}（可选 class/www/admin/liuyao/nearby/auth/comment/snagme）"
