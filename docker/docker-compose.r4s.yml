@@ -180,11 +180,17 @@ services:
     # collection "No writable volumes" 全部写 500、读正常——非进程故障，重启守卫
     # 无效（只会反复打断启动/vacuum，已停用）。实际数据 2.9G、盘余 512G，300 槽
     # 兼容碎片化；volumeSizeLimitMB=1024 不动（半空卷与它无关，纯槽位问题）
+    # garbageThreshold 0.3→0.6（2026-10-05 OOM 循环治理）：快照轮转每发版产生 ~26k
+    # 垃圾 needle，默认 0.3 下 master 每 840s 扫描即触发自动 vacuum，vacuum 重建
+    # 内存 compact idx 是内存尖峰源；0.6 降频至 ~每 4 发一次。compactionMBps=20
+    # 限 vacuum 后台 I/O，避免与百度上传同盘（sda）争抢（10-05 晨 D 状态僵死同型）
     command: >-
       server -dir=/data -ip=seaweedfs
       -master.volumeSizeLimitMB=1024
+      -master.garbageThreshold=0.6
       -master.volumePreallocate=false
       -volume.max=300
+      -volume.compactionMBps=20
       -s3 -s3.port=8333
       -s3.config=/etc/seaweedfs/s3.json
     volumes:
@@ -211,7 +217,10 @@ services:
           # RSS 涨破 384M 触发 OOM（docker oom 事件 + exit 137）崩溃循环、全矩阵
           # 静态站 502/超时。若后续同步期再顶破 512 再上调（1G 备选）
           # 1G（2026-10-01 晚：512M 期间再触 exit 137，全量快照+并发发版期 RSS 顶破，按预案上调 1G）
-          memory: 1G
+          # 1.5G（2026-10-05：vacuum 内存尖峰 anon-rss 1.04G 撞 1G → memcg OOM 循环
+          # （swap.max=0 无缓冲，dmesg 单日 8 次 weed 被杀，每次重启重置 swap.max
+          # 触发守卫告警）。在线 docker update --memory 1536m 已止血，此处落盘持久化）
+          memory: 1.5G
       # 防 swap 债务（2026-10-04 33s GET 根因之一：149MB 热内存压 swapfile，
       # 与数据同盘 sda2，风暴期换页 pgmajfault 9.1 万）。cgroup v2 无 swappiness
       # 旋钮，且本机 docker 不支持 swap limit（memswap_limit 会被引擎整行丢弃）——
