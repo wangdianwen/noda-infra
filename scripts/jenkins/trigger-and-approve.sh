@@ -46,8 +46,10 @@ MODE="${3:-normal}"
 AUTO_APPROVE="${AUTO_APPROVE:-0}"
 JENKINS="${JENKINS_URL:-http://localhost:8080}"
 JOB="noda-apps"
-JAR=$(mktemp /tmp/jenkins-ta.XXXXXX.jar)
-HDR=$(mktemp /tmp/jenkins-ta.XXXXXX.hdr)
+# macOS mktemp 模板 X 不在末尾时按字面量处理（残留同名文件后恒 "File exists"，
+# 2026-10-07 #654 触发两连败实证）——先建无后缀临时文件再改后缀
+JAR=$(mktemp /tmp/jenkins-ta.XXXXXX) && mv "$JAR" "$JAR.jar" && JAR="$JAR.jar"
+HDR=$(mktemp /tmp/jenkins-ta.XXXXXX) && mv "$HDR" "$HDR.hdr" && HDR="$HDR.hdr"
 trap 'rm -f "$JAR" "$HDR"' EXIT
 
 # json_field EXPR：stdin 收 JSON，strict=False 容忍控制字符，EXPR 在 d 上求值。
