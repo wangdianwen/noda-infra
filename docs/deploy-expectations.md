@@ -43,6 +43,7 @@ weed 性能参考（2026-10-07 双机实测）：r4s ~33-44 obj/s 饱和（并�
 ## 四、发版纪律（2026-10-07 起）
 
 1. ~~静态与 API 发版不要同时跑~~ **已结构化（3141ed0）**：纯 API 班次的 Deploy Prod 会自动等待 `static-publish` 锁（最长 60min），静态与 API 并行互抢资源从锁层面排除；stage 日志可见「尝试获取部署锁 [static-publish]」的等待即此机制。
-2. snagme 大站有变更发版前确认 r4s `SwapFree` 与 `docker stats seaweedfs`（MemPerc）；高水位时轮转可能要 ~24min。
-3. r4s 资源治理状态（2026-10-07）：weed 限额 2G（在线+落盘）；stg 限额 1536M（180e84e）；swap 债周清守卫已上线（周日 05:30，安全阈值+TG，2572036）——swap 满载的残余风险在首个安全窗口自动清偿，或人工 `docker restart immich_server`（释放 ~470MB 冷页，最快）。
+2. **资源门禁（fc56aec）**：Build 入口与 Deploy Prod 重取锁后各跑一次 `pipeline_resource_gate`——r4s 五项检查（weed 健康 / weed 内存 <85% / 可用内存 ≥500MB / 负载 <8 / 无残留中继），30s 轮询最长等 15min 自愈，超时本班不跑（FAIL 信息含排查指引）。swap 慢性债只告警不阻断。行为可调：`RESOURCE_GATE_WAIT_SECONDS`（等待上限）、`RESOURCE_GATE_MIN_FREE_MB`（内存地板）。探针缺失时 fail-open 放行（不会因探针故障瘫痪发版）。
+3. snagme 大站有变更发版前确认 r4s `SwapFree` 与 `docker stats seaweedfs`（MemPerc）；高水位时轮转可能要 ~24min。
+4. r4s 资源治理状态（2026-10-07）：weed 限额 2G（在线+落盘）；stg 限额 1536M（180e84e）；swap 债周清守卫已上线（周日 05:30，安全阈值+TG，2572036）——swap 满载的残余风险在首个安全窗口自动清偿，或人工 `docker restart immich_server`（释放 ~470MB 冷页，最快）。
 4. 想测「跳过路径」别用注释——会被 minifier 剥掉（#663）；产物不变就走跳过，这是设计行为。
