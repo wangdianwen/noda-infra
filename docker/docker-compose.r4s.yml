@@ -220,7 +220,12 @@ services:
           # 1.5G（2026-10-05：vacuum 内存尖峰 anon-rss 1.04G 撞 1G → memcg OOM 循环
           # （swap.max=0 无缓冲，dmesg 单日 8 次 weed 被杀，每次重启重置 swap.max
           # 触发守卫告警）。在线 docker update --memory 1536m 已止血，此处落盘持久化）
-          memory: 1.5G
+          # 2G（2026-10-07：snagme 涨到 50,780 对象 + 64 并发服务端 sync，轮转/差量
+          # 期 RSS 实测 1.39-1.41GiB（93%+ 贴线）→ Go GC 贴线抖动，同一台机轮转
+          # 1418s vs 270s 的 4-6 倍波动主因之一（另一因=swap 债满载）。在线 docker
+          # update --memory 2g 已生效（零停机），此处落盘。清 swap 债 + 跨层发版
+          # 互斥后按实测回调）
+          memory: 2G
       # 防 swap 债务（2026-10-04 33s GET 根因之一：149MB 热内存压 swapfile，
       # 与数据同盘 sda2，风暴期换页 pgmajfault 9.1 万）。cgroup v2 无 swappiness
       # 旋钮，且本机 docker 不支持 swap limit（memswap_limit 会被引擎整行丢弃）——

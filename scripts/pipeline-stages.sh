@@ -4286,13 +4286,30 @@ pipeline_deploy_prod()
         log_error "prod 部署锁获取失败（apps-prod），中止"
         return 1
     fi
+    # 跨层互斥（2026-10-07 #661 诊断）：纯 API 班次加持 static-publish——静态与
+    # API 两线并行时 r4s 单机资源互抢（weed/docker daemon/swap），实证 191s 建容器
+    # 停滞 + 轮转吞吐 4-6 倍波动。仅 LAYER=api 取：LAYER=all 的内层静态段自取自放，
+    # 此处再取会嵌套双重释放（release_deploy_lock 是无条件 rm，会拆他人锁）。
+    # 锁序全局一致 apps-prod → static-publish，无死锁环；等待对 stage 可见。
+    local _xl="false"
+    if [ "${LAYER_FILTER:-}" = "api" ]; then
+        if acquire_deploy_lock 3600 static-publish; then
+            _xl="true"
+        else
+            log_error "static-publish 锁等待超时（3600s）——有静态发布长时间进行中，本班 API 部署中止"
+            release_deploy_lock apps-prod
+            return 1
+        fi
+    fi
     local rc=0
     if ! pipeline_check_freshness "$1"; then
         release_deploy_lock apps-prod
+        if [ "$_xl" = "true" ]; then release_deploy_lock static-publish; fi
         return 1
     fi
     pipeline_deploy_prod_inner "$@" || rc=1
     release_deploy_lock apps-prod
+    if [ "$_xl" = "true" ]; then release_deploy_lock static-publish; fi
     return $rc
 }
 
