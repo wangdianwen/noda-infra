@@ -2818,12 +2818,12 @@ while [ \"\$_i\" -ge 1 ]; do
   _dst=${product}-prev\$((_i + 1))
   if [ -n \"\$(\"\$_bin\" lsf -R --files-only \"\$_root/\$_src/\" 2>/dev/null | head -1)\" ]; then
     echo \"ROTATE \$_src -> \$_dst\"
-    \"\$_bin\" sync \"\$_root/\$_src/\" \"\$_root/\$_dst/\" --max-duration 900s || echo \"WARN\$_src\"
+    \"\$_bin\" sync \"\$_root/\$_src/\" \"\$_root/\$_dst/\" --max-duration 1500s || echo \"WARN\$_src\"
   fi
   _i=\$((_i - 1))
 done
 echo \"ROTATE ${product} -> ${product}-prev\"
-\"\$_bin\" sync \"\$_root/${product}/\" \"\$_root/${product}-prev/\" --max-duration 900s || echo WARN_main
+\"\$_bin\" sync \"\$_root/${product}/\" \"\$_root/${product}-prev/\" --max-duration 1500s || echo WARN_main
 echo ROTATE_DONE"
     # 单引号包裹是唯一防线：脚本混入单引号会让远端 ash 提前终止引号段
     case "$script" in
@@ -2838,8 +2838,12 @@ echo ROTATE_DONE"
     # 600s < 单层 600s×2 层——外层先到先杀，轮转半途而废、快照过期；26k 对象
     # 服务端 Copy 在 transfers=8 下单层即逼近 600s。改：外层 1800s、单层 900s、
     # 传输 32/校验 64（服务端 CopyObject 纯元数据，不吃源站带宽）。
+    # #660 再校正（2026-10-07）：snagme 涨到 50k 对象，r4s transfers=32 实测
+    # ~54 obj/s，单层 926s>900s 预算——主层轮转每次到点被杀、回滚锚点持续
+    # 处于部分混装状态（旧文件+部分新文件）。改：传输 64（延迟主导，加倍并发
+    # 对折时长，50k≈460s）、单层 1500s、外层 2400s，给 10 万对象留余量。
     local out
-    out=$(remote_exec "docker run --rm --network noda-network -v /opt/noda/bin/rclone:/usr/local/bin/rclone -e RCLONE_CONFIG_SW_TYPE=s3 -e RCLONE_CONFIG_SW_PROVIDER=Other -e RCLONE_CONFIG_SW_ENDPOINT=http://seaweedfs:8333 -e RCLONE_CONFIG_SW_ACCESS_KEY_ID=$ak -e RCLONE_CONFIG_SW_SECRET_ACCESS_KEY=$sk -e RCLONE_TRANSFERS=32 -e RCLONE_CHECKERS=64 --entrypoint /bin/sh alpine/socat -c '$script'" 1800 2>/dev/null) || out=""
+    out=$(remote_exec "docker run --rm --network noda-network -v /opt/noda/bin/rclone:/usr/local/bin/rclone -e RCLONE_CONFIG_SW_TYPE=s3 -e RCLONE_CONFIG_SW_PROVIDER=Other -e RCLONE_CONFIG_SW_ENDPOINT=http://seaweedfs:8333 -e RCLONE_CONFIG_SW_ACCESS_KEY_ID=$ak -e RCLONE_CONFIG_SW_SECRET_ACCESS_KEY=$sk -e RCLONE_TRANSFERS=64 -e RCLONE_CHECKERS=128 --entrypoint /bin/sh alpine/socat -c '$script'" 2400 2>/dev/null) || out=""
     if [ -z "$out" ]; then
         log_warn "r4s 单次轮转不可用（rclone/容器异常）——回退经中继轮转"
         _static_snapshot_rotate "$endpoint" "$ak" "$sk" "$bucket_root" "$product"
@@ -2930,7 +2934,9 @@ _static_manifest_sync()
         # --no-traverse：否则 rclone 仍全量列举远端 26k 对象（经中继按目录树，
         # 分钟级）——改为逐文件 HEAD，差量小时秒级。子 shell 包 env 赋值：VAR=x
         # 对【函数】调用会持久留存（#564-570 同坑），不得污染后续 _rc 默认值。
-        if ! ( RC_TRANSFERS=16 RC_CHECKERS=32 _rc "$endpoint" "$ak" "$sk" copy \
+        # 传输 16→32（#660 实证：snagme 42k 差量对象 685s≈61 obj/s，单连接
+        # ~600ms 延迟主导；加倍并发对折时长，r4s weed 实测扛得住，卡顿可回调）
+        if ! ( RC_TRANSFERS=32 RC_CHECKERS=64 _rc "$endpoint" "$ak" "$sk" copy \
                 "$out_dir/" "$remote/" --files-from "$work/changed" --no-traverse ); then
             rm -rf "$work"
             return 1
@@ -2995,14 +3001,16 @@ _static_snapshot_rotate()
         if [ -n "$(_rc "$endpoint" "$ak" "$sk" lsf -R --files-only "SW:$bucket_root/sites/$src/" 2>/dev/null | head -1)" ]; then
             log_info "快照轮转 $src → $dst ..."
             # 子 shell 包 env：VAR=x 对【函数】调用持久留存（POSIX），防污染后续 _rc
-            ( RC_TRANSFERS=32 RC_CHECKERS=64 _rc "$endpoint" "$ak" "$sk" sync \
+            # 传输 64：Mac 本机 stg weed transfers=32 实测 ~245 obj/s（#660 snagme
+            # 50k 对象 204s），留一倍余量给更大站点；stg 直连无中继，开销低
+            ( RC_TRANSFERS=64 RC_CHECKERS=128 _rc "$endpoint" "$ak" "$sk" sync \
                 "SW:$bucket_root/sites/$src/" "SW:$bucket_root/sites/$dst/" >/dev/null 2>&1 ) || \
                 log_warn "快照轮转 $src → $dst 失败（该层快照可能过期）"
         fi
         i=$((i - 1))
     done
     log_info "快照当前发布 → $bucket_root/sites/$(_static_snapshot_dir "$product" 1)/ ..."
-    ( RC_TRANSFERS=32 RC_CHECKERS=64 _rc "$endpoint" "$ak" "$sk" sync \
+    ( RC_TRANSFERS=64 RC_CHECKERS=128 _rc "$endpoint" "$ak" "$sk" sync \
         "SW:$bucket_root/sites/$product/" "SW:$bucket_root/sites/$(_static_snapshot_dir "$product" 1)/" >/dev/null 2>&1 ) || \
         log_warn "快照失败（不影响本次发布，仅失去回滚锚点）"
 }
