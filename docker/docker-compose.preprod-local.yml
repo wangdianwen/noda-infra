@@ -199,12 +199,13 @@ services:
     deploy:
       resources:
         limits:
-          # 768M（2026-10-04 再放宽）：384M（对齐生产 r4s，用户确认）在 wiki 三语
-          # 把静态同步对象量做大后顶不住 rclone 全量对账的 Head/Put 并发风暴——
-          # cgroup OOM kill（ExitCode=137，RestartCount 87+），发布期同步必超时
-          # （snagme #559/#560/#561 三连实证）。Docker VM 7.75G 水位充裕，
-          # 生产 r4s 不动。沿革：256M（mirror 写入风暴 #54/#60/#62）→ 384M → 768M
-          memory: 768M
+          # 1536M（2026-10-07 三度放宽）：snagme 50,780 对象 + 轮转/差量同步 64
+          # 并发下 weed 实测涨到 720MiB/768MiB（93.8%），Go GC 贴线抖动致 stg
+          # 发布 5 倍劣化（#664 stg 轮转+上传 20.5min vs #660 同量级 12min；
+          # 64 并发 sync 内存=空闲值 2.2 倍的规律与 r4s 实测一致）。Docker VM
+          # 7.75G 水位充裕。沿革：256M（mirror 写入风暴 #54/#60/#62）→ 384M
+          # （OOM 137 重启 87 次）→ 768M（#559-#561 超时）→ 1536M（#664 GC 抖动）
+          memory: 1536M
 
 volumes:
   preprod-pgdata:
