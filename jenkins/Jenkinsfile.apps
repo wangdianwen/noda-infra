@@ -88,6 +88,9 @@ pipeline {
                         source scripts/pipeline-stages.sh
                         export SSH_KEY_FILE
                         pipeline_queue_gate "$PRODUCT"
+                        # 资源门禁：r4s 枯竭（weed GC 贴线/可用内存见底/高负载/上一班
+                        # 中继未清场）时等待自愈，超时不跑——省掉注定又慢又险的发版
+                        pipeline_resource_gate
                     '''
                 }
                 script {
@@ -411,6 +414,9 @@ pipeline {
                         # 审批窗口已释放队列锁——部署前重新获取（与其他构建的部署串行；
                         # 本构建已持锁时幂等跳过）
                         pipeline_queue_gate "$PRODUCT"
+                        # 资源门禁复检：审批窗口最长 6h，Build 时的健康资源到批准时可能
+                        # 已被其他负载（百度上传/周清窗口/多班并发）耗尽——部署重活前再看一眼
+                        pipeline_resource_gate
                         if [ "${LAYER}" != "static" ]; then
                             pipeline_deploy_prod "$GIT_SHA"
                         fi

@@ -4244,6 +4244,81 @@ pipeline_release_build_lock()
     log_info "队列门禁锁已释放（审批窗口不再阻塞同服务后续发布）"
 }
 
+# pipeline_resource_gate - 发版前置资源门禁（2026-10-07）
+# 背景：#661 实证单机资源枯竭时管线照跑=建容器停滞 191s+轮转 4-6 倍波动；且
+# 6h 审批窗口内资源状态漂移（Build 时健康 ≠ Deploy 时健康）。锁解决「管线互抢」，
+# 本门禁解决「机器本身枯竭时照跑」。检查 r4s 单机瓶颈五项：weed 健康、weed 内存
+# <85%（GC 贴线抖动判据，180e84e 实测 93.8% 时 5 倍劣化）、MemAvailable ≥
+# RESOURCE_GATE_MIN_FREE_MB（默认 500MB）、1min 负载 <8（6 核机轮转+上传峰值 7.8）、
+# 无残留 tmp-s3-relay 中继（上一班发布未清场）。swap 仅告警不阻断（慢性债由
+# swap-debt-guard 周清，阻断会让守卫窗口期所有发版失效）。探针为 r4s 宿主机脚本
+# pipeline-resource-probe.sh（存档 deploy/），fail-open：探针缺失/不可达仅告警
+# 放行（对齐 pipeline_check_freshness 的 ls-remote fail-open 语义）——门禁阻断
+# 依赖探针存活，探针自身故障不该瘫痪发版。
+# 行为：不满足 30s 轮询，RESOURCE_GATE_WAIT_SECONDS（默认 900s，与队列门禁同级）
+# 内自愈即放行；超时构建失败（fast 失败省掉无谓构建与传输）。
+pipeline_resource_gate()
+{
+    local wait_total="${RESOURCE_GATE_WAIT_SECONDS:-900}"
+    local min_free_mb="${RESOURCE_GATE_MIN_FREE_MB:-500}"
+    local elapsed=0 reason first="true"
+    while [ "$elapsed" -lt "$wait_total" ]; do
+        reason=$(_resource_gate_check "$min_free_mb")
+        if [ -z "$reason" ]; then
+            if [ "$elapsed" -gt 0 ]; then
+                log_success "资源门禁通过（等待 ${elapsed}s 后资源自愈）"
+            else
+                log_success "资源门禁通过（r4s：可用内存/ weed 内存与健康/负载/中继清理 全部就绪）"
+            fi
+            return 0
+        fi
+        if [ "$first" = "true" ]; then
+            log_info "资源门禁：${reason}——每 30s 复查（最长等待 ${wait_total}s，超时本班不跑）..."
+            first="false"
+        fi
+        sleep 30
+        elapsed=$((elapsed + 30))
+    done
+    log_error "资源门禁超时（${wait_total}s）：${reason}——本班发布不跑。稍后重发，或人工排查：ssh r4s 后 free -m / docker stats seaweedfs / docker ps | grep tmp-s3-relay"
+    return 1
+}
+
+_resource_gate_check()
+{
+    local min_free_mb="$1" out reason=""
+    out=$(remote_exec "/mnt/mmc1-4/System/Scripts/pipeline-resource-probe.sh" 60 2>/dev/null) || out=""
+    if [ -z "$out" ]; then
+        # 本函数经命令替换调用（reason=$(...)），log 必须走 stderr——stdout 会被
+        # 捕获进 reason 污染判定（healthy 场景被 swap 告警文本误判失败的实证）
+        log_warn "资源探针不可达/缺失（r4s:/mnt/mmc1-4/System/Scripts/pipeline-resource-probe.sh）——fail-open 放行" >&2
+        return 0
+    fi
+    local mem_avail_mb weed_memperc weed_health relays load1 swapfree_pct
+    mem_avail_mb=$(echo "$out" | sed -n 's/^mem_avail_mb=//p')
+    weed_memperc=$(echo "$out" | sed -n 's/^weed_memperc=//p')
+    weed_health=$(echo "$out" | sed -n 's/^weed_health=//p')
+    relays=$(echo "$out" | sed -n 's/^relays=//p')
+    load1=$(echo "$out" | sed -n 's/^load1=//p')
+    swapfree_pct=$(echo "$out" | sed -n 's/^swapfree_pct=//p')
+    if [ "${weed_health:-unknown}" != "healthy" ]; then
+        reason="seaweedfs 健康状态=${weed_health:-unknown}（非 healthy，发布必失败/极慢）"
+    elif echo "$weed_memperc" | grep -q '^[0-9.]*$' && awk -v v="$weed_memperc" 'BEGIN{exit !(v>=85)}'; then
+        reason="seaweedfs 内存 ${weed_memperc}%（≥85% GC 贴线抖动区——多半有上一班重 IO 在跑）"
+    elif echo "$mem_avail_mb" | grep -q '^[0-9]*$' && [ "$mem_avail_mb" -lt "$min_free_mb" ]; then
+        reason="可用内存 ${mem_avail_mb}MB < ${min_free_mb}MB"
+    elif echo "$relays" | grep -q '^[0-9]*$' && [ "${relays:-0}" -gt 0 ]; then
+        reason="存在 ${relays} 个 tmp-s3-relay 残留中继（上一班发布未清场）"
+    elif echo "$load1" | grep -q '^[0-9]*$' && [ "${load1:-0}" -ge 8 ]; then
+        reason="1min 负载 ${load1} ≥ 8（6 核机，其他重活在跑）"
+    fi
+    # swap 慢性债：仅告警（swap-debt-guard 周清负责），不构成阻断理由；走 stderr
+    # 防命令替换捕获污染 reason
+    if echo "$swapfree_pct" | grep -q '^[0-9]*$' && [ "${swapfree_pct:-100}" -lt 10 ]; then
+        log_warn "swap 债未清（SwapFree ${swapfree_pct}% <10%）——性能将劣化；swap-debt-guard 周日 05:30 自动清偿或人工 restart immich_server" >&2
+    fi
+    printf '%s' "$reason"
+}
+
 pipeline_deploy_preprod()
 {
     if ! acquire_deploy_lock 3600 apps-preprod; then

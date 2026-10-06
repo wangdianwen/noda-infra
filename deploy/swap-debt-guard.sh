@@ -23,7 +23,7 @@ if [ "$sw_used" -lt $((sw_total / 10)) ]; then
 fi
 if [ "$avail" -lt "$need" ] || [ "$load" -ge 2 ]; then
   log "SKIP: avail=${avail}kB need=${need}kB load=$load"
-  tg "swap 清债跳过：可用内存 ${avail}kB < 需要 ${need}kB（或负载 $load≥2）。swap 仍 ${sw_used}kB 满——建议空窗期 docker restart immich_server（释放 ~470MB 冷页）后自动满足。"
+  tg "swap 清债跳过：可用内存 ${avail}kB < 需要 ${need}kB（或负载 ${load}≥2）。swap 仍 ${sw_used}kB 满——建议空窗期 docker restart immich_server（释放 ~470MB 冷页）后自动满足。"
   exit 0
 fi
 if swapoff /mnt/mmc1-4/System/swapfile && swapon /mnt/mmc1-4/System/swapfile; then
