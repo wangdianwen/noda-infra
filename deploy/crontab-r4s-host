@@ -46,10 +46,17 @@
 #       2026-10-03 由单一照片 cron 升级为统一入口）=====
 30 3 * * * /mnt/mmc1-4/System/Scripts/baidu-sync-all.sh >> /var/log/noda-baidu-sync-all.log 2>&1
 
-# ===== 百度上传僵死看门狗（每 10 分钟）：实例在跑但 90 分钟无文件完成（连接僵死，
-#       BaiduPCS-Go 对吊死连接不超时）→ 杀掉重启（断点续传+秒传）+ Telegram 告警。
-#       2026-10-03 基线期间发现连接可僵死 2.5h 无任何重试/报告，新增）=====
+# ===== 百度上传僵死看门狗（每 10 分钟）：实例在跑但 90 分钟无文件完成且进度条字节冻结
+#       （连接僵死，BaiduPCS-Go 对吊死连接不超时）→ 杀掉重启（断点续传+秒传）+ Telegram 告警。
+#       2026-10-03 基线期间发现连接可僵死 2.5h 无任何重试/报告，新增；
+#       2026-10-06 v2：完成数 OR 进度条字节 任一变化即判活（27GB 级单文件正常传数小时，
+#       v1 只看完成数会把健康大文件传输误杀重启、进度清零死循环）。
+#       进度条(↑)由上传脚本改写到 /tmp/.baidu-progress 侧文件，主日志不再膨胀。=====
 */10 * * * * /mnt/mmc1-4/System/Scripts/baidu-upload-watchdog.sh
+
+# ===== 日志瘦身（每日 04:50）：/var/log 是内存盘，noda 日志超 2MB 保留末尾 200KB，
+#       进度条侧文件超 1MB 清空（2026-10-07 进度条曾把单日志刷到 39MB 挤占 RAM）=====
+50 4 * * * /mnt/mmc1-4/System/Scripts/log-trim.sh
 
 # ===== weed swap 债守卫（每 10 分钟）：核对 seaweedfs cgroup memory.swap.max=0，
 #       漂移（recreate/带外启动）自动重设 + TG 告警。背景：2026-10-04 33s manifest
