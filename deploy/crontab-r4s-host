@@ -71,3 +71,13 @@
 #       ——healthcheck 早已报 unhealthy 但无人响应。脚本
 #       r4s:/mnt/mmc1-4/System/Scripts/weed-watchdog.sh（存档 deploy/weed-watchdog.sh）=====
 */5 * * * * /mnt/mmc1-4/System/Scripts/weed-watchdog.sh >> /var/log/noda-weed-guard.log 2>&1
+
+# ===== swap 债周清（周日 05:30）：swapfile 1G 曾连续 99.9% 满（immich 栈 ~470MB
+#       冷页 + postgres + clash/hermes；Linux 不主动换回），满载时新换页需求=OOM/
+#       抖动——实测拖慢 docker 建容器 191s（#661 诊断）与 weed 轮转 4-6 倍波动。
+#       动作=swapoff+swapon 强制冷页回内存；安全阈值硬性：MemAvailable > SwapUsed
+#       +512MB 且 1min 负载 <2，不满足 TG 告警跳过（人肉窗口 docker restart
+#       immich_server 直接丢弃其 ~470MB 匿名页最快）。排周日 05:30 避开 05:10
+#       快照（同盘 IO）与 03:30 百度上传。脚本
+#       r4s:/mnt/mmc1-4/System/Scripts/swap-debt-guard.sh（2026-10-07 部署并试运行验证）=====
+30 5 * * 0 /mnt/mmc1-4/System/Scripts/swap-debt-guard.sh >> /var/log/noda-swap-guard.log 2>&1
