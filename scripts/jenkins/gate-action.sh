@@ -65,7 +65,7 @@ def ia = b.getAction(org.jenkinsci.plugins.workflow.support.steps.input.InputAct
 if (ia == null) { println(\"no-input-action\"); return }
 ia.getExecutions().each { ex ->
   println(\"applying $ACTION: \" + ex.getInput().getMessage())
-  try { if (\"$GROOVY_ACTION\" == \"proceed\") { ex.proceed($GROOVY_VALUE) } else { ex.abort() } }
+  try { if (\"$GROOVY_ACTION\" == \"proceed\") { ex.proceed($GROOVY_VALUE) } else { ex.doAbort() } }
   catch (e) { println(\"failed: \" + e.message) }
 }
 println(\"done\")" | tail -5
