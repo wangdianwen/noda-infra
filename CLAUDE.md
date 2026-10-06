@@ -67,6 +67,16 @@ fail-open 放行并告警。部署后核对镜像 tag=本班 commit 的铁律不
 前端 `NEXT_PUBLIC_*` 变量在构建时写入 JS 产物，运行时环境变量对静态站无效。
 **修改前端配置必须重新构建并发布静态站（Jenkins `infra-deploy` SERVICE=<product>-static），不能只改运行时环境变量。**
 
+### Docker 缓存治理（2026-10-06 起，硬性）
+
+**每次发布（noda-apps / infra Pipeline）的 post 阶段必须清理全部 Docker 缓存**，防止 Mac 盘 Docker.raw 无限增长（228G 盘 2026-10-06 一天内两次告急均因此）：
+
+- 已固化在 `scripts/lib/cleanup.sh`：`cleanup_after_deploy` → build cache **全清**（`BUILD_CACHE_RETENTION_HOURS=all` 为默认；可设小时数回退保守模式，但那会重新引入无限增长）→ `docker_host_hygiene`（fstrim 收缩 Docker.raw + 未使用镜像清理 + 磁盘水位 <30G 大声告警）
+- **prune 不缩 Docker.raw**：Mac 的 Docker.raw 是稀疏文件，必须 fstrim（nsenter1 进 VM `fstrim /var/lib/docker`）宿主机空间才回来（实测 prune 后仍占 29G、fstrim 后 22G）——这是 `docker_host_hygiene` 存在的理由，勿删
+- 并发保护：函数内置 mkdir 原子锁 + 活跃 `docker build` 检测，有并发构建在跑自动跳过本轮；勿移除该保护（管线无 disableConcurrentBuilds）
+- 临时开关：`SKIP_BUILD_CACHE_CLEANUP=1` / `SKIP_DOCKER_HOST_HYGIENE=1`（仅排查问题时临时用，禁止常设）
+- Jenkins 轮换工作区孤儿副本（`ws-*@tmp`/`ws-*@2`，单个可达 3.2G）由 `cleanup_jenkins_temp_files` 清 48h 未动者
+
 ### Cloudflare 缓存
 静态资源更新后需要清除 CDN 缓存。静态资源 URL 包含 hash，但 index.html 会被缓存。
 

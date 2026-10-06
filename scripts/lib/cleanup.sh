@@ -16,16 +16,20 @@ _NODA_CLEANUP_LOADED=1
 # ============================================
 # 保留策略（可通过环境变量覆盖）
 # ============================================
-BUILD_CACHE_RETENTION_HOURS="${BUILD_CACHE_RETENTION_HOURS:-24}"
+BUILD_CACHE_RETENTION_HOURS="${BUILD_CACHE_RETENTION_HOURS:-all}"
 CONTAINER_RETENTION_HOURS="${CONTAINER_RETENTION_HOURS:-24}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-30}"
+# Mac 磁盘水位告警阈值（G）；低于此值在构建日志大声告警
+DISK_WATERMARK_GB="${DISK_WATERMARK_GB:-30}"
 
 # -------------------------------------------
 # Docker Build Cache 清理 (DOCK-01)
 # -------------------------------------------
 # 参数:
-#   $1: 保留小时数（默认 BUILD_CACHE_RETENTION_HOURS，即 24）
+#   $1: 保留小时数，或 all=全清（默认 BUILD_CACHE_RETENTION_HOURS，即 all）
 # 返回：无（清理超过保留期的 build cache）
+# 2026-10-06 起 default=all：Mac 盘 228G 曾被 Docker.raw 无限增长逼满
+# （buildx prune 按 24h 保留，构建频繁时缓存净增不减），除非显式设回小时数
 cleanup_docker_build_cache()
 {
     local retention_hours="${1:-$BUILD_CACHE_RETENTION_HOURS}"
@@ -36,15 +40,75 @@ cleanup_docker_build_cache()
         return 0
     fi
 
-    log_info "清理 Docker build cache（保留 ${retention_hours} 小时内）..."
-
     local before_size
     before_size=$(docker buildx du 2>/dev/null | tail -1 | awk '{print $3 $4}' || echo "unknown")
-    log_info "Build cache 当前大小: ${before_size}"
 
-    docker buildx prune -f --filter "until=${retention_hours}h" 2>/dev/null || true
+    if [ "${retention_hours}" = "all" ]; then
+        log_info "清理 Docker build cache（全清模式，当前 ${before_size}）..."
+        docker buildx prune -af 2>/dev/null || true
+    else
+        log_info "清理 Docker build cache（保留 ${retention_hours} 小时内，当前 ${before_size}）..."
+        docker buildx prune -f --filter "until=${retention_hours}h" 2>/dev/null || true
+    fi
 
     log_success "Docker build cache 清理完成"
+}
+
+# -------------------------------------------
+# 主机侧 Docker 磁盘回收（2026-10-06 规范：每次发布后必跑）
+# -------------------------------------------
+# buildx/image prune 只清 daemon 记账；Mac 上 Docker.raw 是稀疏文件，
+# 不 fstrim 虚拟机内 /var/lib/docker 宿主机空间不会回来（实测 prune 后
+# 仍占 29G，fstrim 后 22G）。
+# 并发安全：mkdir 原子锁串行化 + 检测到活跃 docker build 则本轮跳过
+# （管线允许并发构建，不能打断他人 Build stage）。
+# 跳过开关：SKIP_DOCKER_HOST_HYGIENE=1
+docker_host_hygiene()
+{
+    command -v docker >/dev/null 2>&1 || return 0
+    if ! docker info >/dev/null 2>&1; then
+        log_info "Docker daemon 不可用，跳过主机磁盘回收"
+        return 0
+    fi
+
+    local lockdir="/tmp/noda-docker-hygiene.lock"
+    if ! mkdir "$lockdir" 2>/dev/null; then
+        # 锁超过 30 分钟视为上次异常残留，抢断
+        if [ -n "$(find "$lockdir" -maxdepth 0 -mmin +30 2>/dev/null)" ]; then
+            rm -rf "$lockdir"
+            mkdir "$lockdir" 2>/dev/null || { log_warn "docker_host_hygiene: 抢锁失败，本轮跳过"; return 0; }
+        else
+            log_info "另一清理正在进行（锁被占），本轮跳过主机磁盘回收"
+            return 0
+        fi
+    fi
+
+    # 有并发构建在跑就绝不动缓存/镜像（防止打断其 docker build）
+    if pgrep -f "docker build" >/dev/null 2>&1 || pgrep -f "docker.*buildx" >/dev/null 2>&1; then
+        log_warn "检测到进行中的 docker build，本轮跳过缓存清理（保护并发构建）"
+        rm -rf "$lockdir"
+        return 0
+    fi
+
+    echo "🧹 Docker build cache 全清..."
+    docker builder prune -af >/dev/null 2>&1 || true
+
+    echo "🧹 fstrim 回收宿主机空间（Docker.raw 稀疏收缩）..."
+    docker run --rm --privileged --pid=host justincormack/nsenter1 /sbin/fstrim -v /var/lib/docker >/dev/null 2>&1 \
+        || log_warn "fstrim 未成功（nsenter1 镜像拉取失败?），宿主机空间本轮未回收"
+
+    echo "🧹 清理未使用镜像（运行中容器的镜像不受影响）..."
+    docker image prune -af >/dev/null 2>&1 || true
+
+    rm -rf "$lockdir"
+
+    local avail_gb
+    avail_gb=$(df -g /System/Volumes/Data 2>/dev/null | awk 'NR==2{print $4}')
+    if [ -n "$avail_gb" ] && [ "$avail_gb" -lt "$DISK_WATERMARK_GB" ]; then
+        log_warn "⚠️ Mac 磁盘仅剩 ${avail_gb}G（水位 ${DISK_WATERMARK_GB}G）——需人工清理（node_modules/worktree/Caches，勿动 Docker 卷）"
+    else
+        log_info "Mac 磁盘剩余 ${avail_gb:-?}G"
+    fi
 }
 
 # -------------------------------------------
@@ -181,6 +245,12 @@ cleanup_jenkins_temp_files()
         rm -f "${TMPDIR:-/tmp}/noda-secrets-${JOB_NAME//\//_}-${BUILD_NUMBER}"-*.env 2>/dev/null || true
     fi
 
+    # Jenkins 轮换工作区的孤儿副本（@tmp / @2）：并发构建撞同一槽位时产生，
+    # 实测单个可到 3.2G。只清 48h 未动的（活跃/近期构建绝不受影响）。
+    if [ -n "${JOB_NAME:-}" ] && [ -d "${HOME}/.jenkins/${JOB_NAME}" ]; then
+        find "${HOME}/.jenkins/${JOB_NAME}" -maxdepth 1 -type d \( -name '*@tmp' -o -name '*@2' \) -mtime +1 -exec rm -rf {} + 2>/dev/null || true
+    fi
+
     log_info "临时文件清理完成"
 }
 
@@ -237,6 +307,7 @@ disk_snapshot()
 #   $1: workspace 路径（默认 $WORKSPACE）
 # 环境变量跳过控制:
 #   SKIP_BUILD_CACHE_CLEANUP     - 跳过 build cache 清理
+#   SKIP_DOCKER_HOST_HYGIENE     - 跳过主机侧磁盘回收（fstrim/未用镜像/水位告警）
 #   SKIP_CONTAINER_CLEANUP       - 跳过容器清理
 #   SKIP_NETWORK_CLEANUP         - 跳过网络清理
 #   SKIP_VOLUME_CLEANUP          - 跳过卷清理
@@ -250,6 +321,10 @@ cleanup_after_deploy()
 
     if [[ -z "${SKIP_BUILD_CACHE_CLEANUP:-}" ]]; then
         cleanup_docker_build_cache "$BUILD_CACHE_RETENTION_HOURS"
+        # 主机侧回收：prune 不缩 Docker.raw，必须 fstrim（2026-10-06 规范）
+        if [[ -z "${SKIP_DOCKER_HOST_HYGIENE:-}" ]]; then
+            docker_host_hygiene
+        fi
     fi
 
     if [[ -z "${SKIP_CONTAINER_CLEANUP:-}" ]]; then
