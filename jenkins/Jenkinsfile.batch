@@ -1,0 +1,77 @@
+// Jenkinsfile.batch — noda-release-all 全站批量发布编排
+// spec: docs/superpowers/specs/2026-10-08-release-all-batch-deploy-design.md
+// noda-apps 单产品管线零改动；本 job 是指挥家：触发/等门/批量门/代批/汇报。
+// 用户硬要求：一切等待必须可见——心跳由 batch-release.sh 输出，本文件不加静默等待。
+pipeline {
+    agent any
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 24, unit: 'HOURS')
+    }
+    parameters {
+        string(name: 'PRODUCTS', defaultValue: '',
+               description: '逗号分隔产品子集（空=全部 8 站：class,www,admin,liuyao,nearby,auth,comment,snagme）')
+        choice(name: 'LAYER', choices: ['static', 'all'],
+               description: 'static=8 站前端（默认）/ all=前后端一起（单趟显著更长）')
+        string(name: 'COOLDOWN_SECONDS', defaultValue: '60',
+               description: '产品间冷却秒数（r4s 单盘喘息窗口）')
+    }
+    stages {
+        stage('Phase 1 逐产品构建+preprod') {
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh 'scripts/jenkins/batch-release.sh phase1 "${PRODUCTS}" "${LAYER}" "${COOLDOWN_SECONDS}"'
+                }
+            }
+        }
+        stage('Phase 2 批量审批门') {
+            options { timeout(time: 6, unit: 'HOURS') }
+            steps {
+                script {
+                    def sf = "${env.WORKSPACE}/.batch-state/summary.txt"
+                    def summary = fileExists(sf) ? readFile(sf) : '(phase1 未产出状态文件)'
+                    env.BATCH_ACTION = input(
+                        message: """全站批量审批（LAYER=${params.LAYER}）——逐行验证 preprod 后决策：
+
+${summary}
+
+deploy_prod = 依次部署全部 ✅ 产品（❌ 自动跳过，失败不拦路）
+abort = 中止批量并清理所有已到门的子班
+⏱ 本门 6 小时超时（记 FAILURE）。单产品补发请用 noda-apps 单班。""",
+                        parameters: [choice(name: 'ACTION', choices: ['deploy_prod', 'abort'],
+                                            description: '批量决策')]
+                    )
+                }
+            }
+        }
+        stage('Phase 3 依次部署 prod') {
+            when { expression { env.BATCH_ACTION == 'deploy_prod' } }
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh 'scripts/jenkins/batch-release.sh phase3 "${COOLDOWN_SECONDS}"'
+                }
+            }
+        }
+        stage('清理全部子班') {
+            when { expression { env.BATCH_ACTION == 'abort' } }
+            steps {
+                sh 'scripts/jenkins/batch-release.sh abort-all'
+            }
+        }
+    }
+    post {
+        failure {
+            script {
+                def sf = "${env.WORKSPACE}/.batch-state/summary.txt"
+                def summary = fileExists(sf) ? readFile(sf) : '(无状态文件)'
+                echo "批量发布失败。状态：\n${summary}"
+                sh 'scripts/jenkins/tg-notify.sh "🛑 noda-release-all #${BUILD_NUMBER} 失败——详情见 Jenkins 控制台"'
+            }
+        }
+        aborted {
+            // 用户中止/审批超时/构建超时：清理所有仍挂着的子班门
+            sh 'scripts/jenkins/batch-release.sh abort-all || true'
+        }
+    }
+}
