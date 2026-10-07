@@ -183,6 +183,9 @@ resource_gate() { # r4s 五项门禁；探针缺失 fail-open（pipeline-stages.
     cd "$REPO_ROOT"
     # shellcheck disable=SC1091
     source scripts/lib/log.sh
+    # 探针只需 SSH。SKIP_LOAD_SECRETS=1：pipeline-stages.sh 第 25 行 source 期即调
+    # load_secrets（#3 spike 实证报 DOPPLER_TOKEN 未设置）——编排班不该持有 prod 密钥
+    export SKIP_LOAD_SECRETS=1
     # shellcheck disable=SC1091
     source scripts/pipeline-stages.sh
     export SSH_KEY_FILE
