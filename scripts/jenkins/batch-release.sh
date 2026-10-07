@@ -133,7 +133,7 @@ pending_count() { # $1=子班构建号 → pending 门数量
 child_state() { # $1=子班构建号 → "building/result"
   curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" \
     "$JENKINS/job/$CHILD_JOB/$1/api/json?tree=building,result" |
-    json_field 'str(d["building"])+"/"+str(d["result"])' 2>/dev/null || echo "parse-error"
+    json_field 'str(d["building"]).lower()+"/"+str(d["result"])' 2>/dev/null || echo "parse-error"
 }
 
 tsv_path() { echo "$BATCH_STATE_DIR/products.tsv"; }
