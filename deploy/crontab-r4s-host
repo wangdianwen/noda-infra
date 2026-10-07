@@ -81,3 +81,13 @@
 #       快照（同盘 IO）与 03:30 百度上传。脚本
 #       r4s:/mnt/mmc1-4/System/Scripts/swap-debt-guard.sh（2026-10-07 部署并试运行验证）=====
 30 5 * * 0 /mnt/mmc1-4/System/Scripts/swap-debt-guard.sh >> /var/log/noda-swap-guard.log 2>&1
+
+# ===== weed 定时 vacuum（每天 02:00）：master garbageThreshold 0.6→0.99 关闭自动
+#       触发后（2026-10-07 #680：snagme 50k 对象时代每次全量发布=42k 垃圾→发布结束
+#       必自动 vacuum→单盘 util 96%/iowait 89%），vacuum 移到凌晨窗口手动执行。
+#       脚本三重守卫：tmp-s3-relay 存在=发布中跳过 / load≥4 跳过 / avail<500MB
+#       跳过；TG 汇报垃圾回收量。02:00 取位理由：避开夜发尾巴（#679 00:56 仍在
+#       发布）与 03:30 百度上传。⚠️ master 阈值改动须重启 weed 容器生效——择低峰
+#       窗口，发布中绝不可重启。脚本 r4s:/mnt/mmc1-4/System/Scripts/
+#       weed-vacuum-nightly.sh（存档 deploy/weed-vacuum-nightly.sh）=====
+0 2 * * * /mnt/mmc1-4/System/Scripts/weed-vacuum-nightly.sh >> /var/log/noda-weed-vacuum.log 2>&1

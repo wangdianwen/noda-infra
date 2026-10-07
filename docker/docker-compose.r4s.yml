@@ -184,10 +184,16 @@ services:
     # 垃圾 needle，默认 0.3 下 master 每 840s 扫描即触发自动 vacuum，vacuum 重建
     # 内存 compact idx 是内存尖峰源；0.6 降频至 ~每 4 发一次。compactionMBps=20
     # 限 vacuum 后台 I/O，避免与百度上传同盘（sda）争抢（10-05 晨 D 状态僵死同型）
+    # 0.6→0.99（2026-10-07 #680）：snagme 50k 对象时代每次全量发布即产生 42k 垃圾，
+    # 0.6 阈值下发布结束必触发自动 vacuum——与后续发布/负载并行时单盘 util 96%/
+    # iowait 89%（ weeds CPU 配额放开后全速暴露）。治法=自动触发事实关闭（0.99）+
+    # 每晚 02:00 定时手动 vacuum（weed-vacuum-nightly.sh，三重守卫：发布中/load/
+    # 内存，TG 汇报）。⚠️ master 参数需重启 weed 容器生效——择低峰窗口执行，
+    # 发布进行中绝不可重启（2026-10-07 immich 9 分钟重启撞车教训）
     command: >-
       server -dir=/data -ip=seaweedfs
       -master.volumeSizeLimitMB=1024
-      -master.garbageThreshold=0.6
+      -master.garbageThreshold=0.99
       -master.volumePreallocate=false
       -volume.max=300
       -volume.compactionMBps=20
