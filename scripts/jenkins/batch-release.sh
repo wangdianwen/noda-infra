@@ -39,9 +39,14 @@ api_probe_for() {
   esac
 }
 
-# admin basic auth（与 trigger-and-approve.sh 同款）
+# admin basic auth：优先环境变量（Jenkins withCredentials 注入），本地 CLI 回退
+# gitignore 的 env 文件（编排班 workspace 是纯 git 检出，无该文件——#1 spike 实证）
 # shellcheck disable=SC1091
-source "$DIR/config/jenkins-admin.env"
+[ -f "$DIR/config/jenkins-admin.env" ] && source "$DIR/config/jenkins-admin.env"
+[ -n "${JENKINS_ADMIN_USER:-}" ] && [ -n "${JENKINS_ADMIN_PASSWORD:-}" ] || {
+  echo "缺 Jenkins admin 凭据（JENKINS_ADMIN_USER/PASSWORD 环境变量或 config/jenkins-admin.env）" >&2
+  exit 1
+}
 AUTH=(-u "${JENKINS_ADMIN_USER}:${JENKINS_ADMIN_PASSWORD}")
 JAR=$(mktemp /tmp/jenkins-batch.XXXXXX) && mv "$JAR" "$JAR.jar" && JAR="$JAR.jar"
 trap 'rm -f "$JAR"' EXIT

@@ -20,7 +20,8 @@ pipeline {
     stages {
         stage('Phase 1 逐产品构建+preprod') {
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                withCredentials([usernamePassword(credentialsId: 'jenkins-admin-basic', usernameVariable: 'JENKINS_ADMIN_USER', passwordVariable: 'JENKINS_ADMIN_PASSWORD'),
+                                 sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh 'scripts/jenkins/batch-release.sh phase1 "${PRODUCTS}" "${LAYER}" "${COOLDOWN_SECONDS}"'
                 }
             }
@@ -48,7 +49,8 @@ abort = 中止批量并清理所有已到门的子班
         stage('Phase 3 依次部署 prod') {
             when { expression { env.BATCH_ACTION == 'deploy_prod' } }
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                withCredentials([usernamePassword(credentialsId: 'jenkins-admin-basic', usernameVariable: 'JENKINS_ADMIN_USER', passwordVariable: 'JENKINS_ADMIN_PASSWORD'),
+                                 sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
                     sh 'scripts/jenkins/batch-release.sh phase3 "${COOLDOWN_SECONDS}"'
                 }
             }
@@ -56,7 +58,9 @@ abort = 中止批量并清理所有已到门的子班
         stage('清理全部子班') {
             when { expression { env.BATCH_ACTION == 'abort' } }
             steps {
-                sh 'scripts/jenkins/batch-release.sh abort-all'
+                withCredentials([usernamePassword(credentialsId: 'jenkins-admin-basic', usernameVariable: 'JENKINS_ADMIN_USER', passwordVariable: 'JENKINS_ADMIN_PASSWORD')]) {
+                    sh 'scripts/jenkins/batch-release.sh abort-all'
+                }
             }
         }
     }
@@ -71,7 +75,9 @@ abort = 中止批量并清理所有已到门的子班
         }
         aborted {
             // 用户中止/审批超时/构建超时：清理所有仍挂着的子班门
-            sh 'scripts/jenkins/batch-release.sh abort-all || true'
+            withCredentials([usernamePassword(credentialsId: 'jenkins-admin-basic', usernameVariable: 'JENKINS_ADMIN_USER', passwordVariable: 'JENKINS_ADMIN_PASSWORD')]) {
+                sh 'scripts/jenkins/batch-release.sh abort-all || true'
+            }
         }
     }
 }
