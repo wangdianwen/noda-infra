@@ -244,8 +244,69 @@ cmd_phase1() {
   done
   write_summary
 }
-cmd_phase3() { echo "TODO-task3"; return 1; }
-cmd_abort_all() { echo "TODO-task3"; return 1; }
+cmd_phase3() { # $1=cooldown；逐个代批 ✅ 产品，任一失败立即停损
+  local cooldown="$1"
+  local tsv; tsv=$(tsv_path)
+  local p build probe url note state ok_count=0 dry
+  dry="${DRY_RUN:-0}"
+  while IFS=$'\t' read -r p build probe url note; do
+    [ -n "$p" ] || continue
+    if [ "$probe" != "ok" ]; then
+      echo "⏭ 跳过 ${p}（preprod 未就绪：${note:-未验证}）"
+      continue
+    fi
+    if [ "$dry" = "1" ]; then
+      echo "[dry-run] 将代批 #${build} ${p} → deploy_prod，随后守望子班完成"
+      continue
+    fi
+    echo "━━━━━ 🚀 ${p} 部署 prod（代批班 #${build}）━━━━━"
+    if ! JOB_NAME="$CHILD_JOB" "$DIR/gate-action.sh" "$build" deploy_prod; then
+      tg "🛑 批量发布中止：${p} 代批失败（班 #${build}）。已上 prod ${ok_count} 个；失败班与 -old 锚点见 Jenkins"
+      echo "❌ ${p} 代批失败——停止后续产品（已发布内容不动，-old 锚点未动，可手工回滚）" >&2
+      exit 1
+    fi
+    beat_start "子班 #${build}（${p}）prod 发布中"
+    state="parse-error"
+    while :; do
+      state=$(child_state "$build")
+      case "$state" in
+        false/*) break ;;
+      esac
+      beat
+      sleep "$GATE_POLL_INTERVAL"
+    done
+    if [ "$state" != "false/SUCCESS" ]; then
+      tg "🛑 批量发布中止：${p} 子班 #${build} 结束=${state}（预期 SUCCESS）。已上 prod ${ok_count} 个；该产品 -old 锚点可回滚，后续产品未动"
+      echo "❌ ${p} prod 发布失败（${state}）——停止后续产品" >&2
+      exit 1
+    fi
+    ok_count=$((ok_count + 1))
+    tg "🚀 批量发布 [${p}] prod 完成（累计 ${ok_count}）"
+    sleep_with_beat "$cooldown"
+  done < "$tsv"
+  if [ "$dry" != "1" ]; then tg "✅ 批量发布全程完成：${ok_count} 个产品已上 prod"; fi
+  echo "✅ phase3 完成（${ok_count} 个产品）"
+}
+
+cmd_abort_all() { # 幂等：只处理仍 pending 的子班门
+  local tsv p build probe url note n=0
+  tsv=$(tsv_path)
+  if [ ! -f "$tsv" ]; then echo "无状态文件，无需清理"; return 0; fi
+  while IFS=$'\t' read -r p build probe url note; do
+    [ -n "$build" ] && [ "$build" != "0" ] || continue
+    if [ "${DRY_RUN:-0}" = "1" ]; then echo "[dry-run] 将 abort 子班 #${build}（${p}）"; continue; fi
+    if [ "$(pending_count "$build")" = "0" ]; then
+      echo "ℹ️ 子班 #${build}（${p}）无 pending 门（已自行结束），跳过"
+      continue
+    fi
+    if JOB_NAME="$CHILD_JOB" "$DIR/gate-action.sh" "$build" abort; then
+      echo "🧹 子班 #${build}（${p}）已 abort"; n=$((n + 1))
+    else
+      echo "⚠️ 子班 #${build} abort 失败（可能刚被处理），请人工核对"
+    fi
+  done < "$tsv"
+  echo "清理完成：abort ${n} 个子班"
+}
 
 main() {
   local cmd="${1:?用法: batch-release.sh phase1|phase3|abort-all}"
