@@ -17,16 +17,27 @@ HEARTBEAT_INTERVAL="${HEARTBEAT_INTERVAL:-60}"
 GATE_WAIT_TOTAL="${GATE_WAIT_TOTAL:-21600}"   # 子班审批门 6h 超时对齐
 GATE_POLL_INTERVAL=15
 ALL_PRODUCTS=(class www admin liuyao nearby auth comment snagme)
-# shellcheck disable=SC2034
-declare -A PREPROD_URL=(
-  [class]="https://class-preprod.noda.co.nz/"   [www]="https://www-preprod.noda.co.nz/"
-  [admin]="https://admin-preprod.noda.co.nz/"   [liuyao]="https://liuyao-preprod.noda.co.nz/"
-  [nearby]="https://nearby-preprod.noda.co.nz/" [auth]="https://auth-preprod.noda.co.nz/"
-  [comment]="https://comments-preprod.noda.co.nz/" [snagme]="https://snagme-preprod.noda.co.nz/"
-)
+# bash 3.2（macOS /bin/bash，Jenkins sh 同款）无关联数组——case 函数查找
+preprod_url_for() {
+  case "$1" in
+    class)  echo "https://class-preprod.noda.co.nz/" ;;
+    www)    echo "https://www-preprod.noda.co.nz/" ;;
+    admin)  echo "https://admin-preprod.noda.co.nz/" ;;
+    liuyao) echo "https://liuyao-preprod.noda.co.nz/" ;;
+    nearby) echo "https://nearby-preprod.noda.co.nz/" ;;
+    auth)   echo "https://auth-preprod.noda.co.nz/" ;;
+    comment) echo "https://comments-preprod.noda.co.nz/" ;;
+    snagme) echo "https://snagme-preprod.noda.co.nz/" ;;
+    *) echo "" ;;
+  esac
+}
 # all 层 API 探针：nearby 未反代 /api/health（nginx 只通 /api/nearby|user/*），与单班同口径
-# shellcheck disable=SC2034
-declare -A API_PROBE=( [nearby]="/sitemap.xml" )
+api_probe_for() {
+  case "$1" in
+    nearby) echo "/sitemap.xml" ;;
+    *) echo "/api/health" ;;
+  esac
+}
 
 # admin basic auth（与 trigger-and-approve.sh 同款）
 # shellcheck disable=SC1091
@@ -87,7 +98,152 @@ tsv_path() { echo "$BATCH_STATE_DIR/products.tsv"; }
 
 tg() { "$DIR/tg-notify.sh" "$1" || true; }
 
-cmd_phase1() { echo "TODO-task2"; return 1; }
+child_trigger() { # $1=product $2=layer → stdout=子班构建号；失败 return 1
+  local product="$1" layer="$2" http crumb hdr qitem n i out build="" p
+  session_init
+  crumb=$(crumb_header)
+  hdr=$(mktemp /tmp/jenkins-batch.XXXXXX) && mv "$hdr" "$hdr.hdr" && hdr="$hdr.hdr"
+  http=$(curl -s "${AUTH[@]}" -b "$JAR" -H "$crumb" -X POST \
+    "$JENKINS/job/$CHILD_JOB/buildWithParameters" \
+    --data "PRODUCT=$product" --data "LAYER=$layer" --data "DEPLOY_MODE=normal" \
+    -D "$hdr" -w '%{http_code}' -o /dev/null) || http=000
+  [ "$http" = "201" ] || { rm -f "$hdr"; echo "触发失败 HTTP=$http" >&2; return 1; }
+  # Location 队列项 = 本次请求专属（防 lastBuild 抢号，trigger-and-approve.sh 同款）
+  qitem=$(grep -i '^location:' "$hdr" | tail -1 | tr -d '\r' | awk '{print $2}' | sed 's:/*$::')
+  rm -f "$hdr"
+  if [ -n "$qitem" ] && [ "$qitem" != "/" ]; then
+    beat_start "子班已受理（${product}，队列排队中）"
+    for i in $(seq 1 60); do
+      out=$(curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" "$qitem/api/json" || true)
+      if [ -n "$out" ]; then
+        n=$(printf '%s' "$out" | json_field '(d.get("executable") or {}).get("number")' 2>/dev/null || true)
+        if [ -n "$n" ] && [ "$n" != "None" ]; then build=$n; break; fi
+      fi
+      beat
+      sleep 10
+    done
+  fi
+  if [ -z "$build" ]; then
+    echo "⚠️ 队列项未出队，回退 lastBuild 并按 PRODUCT 参数核对" >&2
+    build=$(curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" \
+      "$JENKINS/job/$CHILD_JOB/api/json?tree=lastBuild%5Bnumber%5D" | json_field 'd["lastBuild"]["number"]')
+    p=$(curl -s --max-time 10 "${AUTH[@]}" -b "$JAR" \
+      "$JENKINS/job/$CHILD_JOB/$build/api/json?tree=actions%5Bparameters%5Bname,value%5D%5D" |
+      json_field '"|".join(pp["value"] for a in d["actions"] for pp in a.get("parameters", []) if pp["name"] == "PRODUCT")' 2>/dev/null || echo "?")
+    [ "$p" = "$product" ] || { echo "构建#$build PRODUCT=$p ≠ ${product}，疑似并行会话构建" >&2; return 1; }
+  fi
+  echo "$build"
+}
+
+child_wait_gate() { # $1=子班构建号 → 0=已到审批门 / 1=未到门即结束或超时
+  local b="$1" i state
+  beat_start "子班 #$b 构建+发 preprod 中"
+  for i in $(seq 1 $((GATE_WAIT_TOTAL / GATE_POLL_INTERVAL))); do
+    state=$(child_state "$b")
+    case "$state" in
+      false/*) echo "❌ 子班 #$b 未到审批门即结束：$state" >&2; return 1 ;;
+    esac
+    if [ "$(pending_count "$b")" != "0" ]; then return 0; fi
+    beat
+    sleep "$GATE_POLL_INTERVAL"
+  done
+  echo "❌ 子班 #$b 等门超时（${GATE_WAIT_TOTAL}s）" >&2
+  return 1
+}
+
+probe_url() { # $1=url，3 次×10s（公网预发探测；-b 带会话仅为守卫统一，cookie 域名匹配不会发往公网）
+  local url="$1" try
+  for try in 1 2 3; do
+    if curl -sf --max-time 15 -b "$JAR" -o /dev/null "$url"; then return 0; fi
+    sleep 10
+  done
+  return 1
+}
+
+probe_preprod() { # $1=product $2=layer；static=根 URL 200 / all=根 URL+API 探针 200
+  local url; url=$(preprod_url_for "$1")
+  probe_url "$url" || return 1
+  if [ "$2" = "all" ]; then probe_url "${url%/}$(api_probe_for "$1")" || return 1; fi
+  return 0
+}
+
+resource_gate() { # r4s 五项门禁；探针缺失 fail-open（pipeline-stages.sh 同语义）
+  (
+    cd "$REPO_ROOT"
+    # shellcheck disable=SC1091
+    source scripts/lib/log.sh
+    # shellcheck disable=SC1091
+    source scripts/pipeline-stages.sh
+    export SSH_KEY_FILE
+    pipeline_resource_gate
+  )
+}
+
+write_summary() {
+  local tsv; tsv=$(tsv_path)
+  {
+    echo "产品 ｜ 状态 ｜ preprod ｜ 子班"
+    awk -F'\t' '{ printf "%s ｜ %s ｜ %s ｜ %s\n", $1, ($3=="ok" ? "✅ preprod 就绪" : "❌ "($5==""?"未知":$5)), $4, ($2!="" && $2!="0" ? "#"$2 : "-") }' "$tsv"
+  } > "$BATCH_STATE_DIR/summary.txt"
+  cat "$BATCH_STATE_DIR/summary.txt"
+}
+
+cmd_phase1() {
+  local products_str="$1" layer="$2" cooldown="$3"
+  mkdir -p "$BATCH_STATE_DIR"
+  local tsv; tsv=$(tsv_path); : > "$tsv"
+  local items=() products=() item p
+  if [ -z "${products_str// /}" ]; then
+    products=("${ALL_PRODUCTS[@]}")
+  else
+    IFS=',' read -ra items <<< "$products_str"
+    for item in "${items[@]}"; do
+      p=$(printf '%s' "$item" | tr -d '[:space:]')
+      [ -n "$p" ] && products+=("$p")
+    done
+  fi
+  # bash 3.2 + set -u 下空数组展开会崩，且空集必是输入错误——显式报错
+  if [ "${#products[@]}" -eq 0 ]; then
+    echo "PRODUCTS 解析为空（输入：[$products_str]），合法：${ALL_PRODUCTS[*]}" >&2
+    exit 2
+  fi
+  for p in "${products[@]}"; do
+    if [ -z "$(preprod_url_for "$p")" ]; then
+      echo "未知产品：${p}（合法：${ALL_PRODUCTS[*]}）" >&2; exit 2
+    fi
+  done
+  local total=${#products[@]} idx=0 build probe note
+  for p in "${products[@]}"; do
+    idx=$((idx + 1))
+    echo "━━━━━ [$idx/$total] ${p}（LAYER=${layer}）━━━━━"
+    build=""; probe="fail"; note=""
+    if [ "${DRY_RUN:-0}" = "1" ]; then
+      build="0"; probe="ok"; note="dry-run"
+      echo "[dry-run] 跳过触发/等门/探活"
+    else
+      if ! resource_gate; then note="r4s 资源门禁超时（900s 未自愈）"; fi
+      if [ -z "$note" ]; then
+        if build=$(child_trigger "$p" "$layer"); then
+          if child_wait_gate "$build"; then
+            if probe_preprod "$p" "$layer"; then probe="ok"; else note="preprod 探活失败（3 次×10s）"; fi
+          else
+            note="子班未到审批门即失败"
+          fi
+        else
+          note="触发失败"
+        fi
+      fi
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\n' "$p" "$build" "$probe" "$(preprod_url_for "$p")" "$note" >> "$tsv"
+    if [ "$probe" = "ok" ]; then
+      tg "📦 批量发布 [$idx/$total] ${p}：✅ preprod 就绪 $(preprod_url_for "$p")（班 #${build}）"
+    else
+      tg "📦 批量发布 [$idx/$total] ${p}：❌ ${note}（批量门上会标注，继续下一产品）"
+    fi
+    if [ "$idx" -lt "$total" ]; then sleep_with_beat "$cooldown"; fi
+  done
+  write_summary
+}
 cmd_phase3() { echo "TODO-task3"; return 1; }
 cmd_abort_all() { echo "TODO-task3"; return 1; }
 
@@ -97,7 +253,7 @@ main() {
     phase1)    cmd_phase1 "${2:-}" "${3:-static}" "${4:-60}" ;;
     phase3)    cmd_phase3 "${2:-60}" ;;
     abort-all) cmd_abort_all ;;
-    *) echo "未知子命令：$cmd（phase1|phase3|abort-all）"; exit 2 ;;
+    *) echo "未知子命令：${cmd}（phase1|phase3|abort-all）"; exit 2 ;;
   esac
 }
 
