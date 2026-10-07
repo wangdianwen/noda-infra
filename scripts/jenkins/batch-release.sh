@@ -245,7 +245,8 @@ cmd_phase1() {
         fi
       fi
     fi
-    printf '%s\t%s\t%s\t%s\t%s\n' "$p" "$build" "$probe" "$(preprod_url_for "$p")" "$note" >> "$tsv"
+    # build 可为空：占位 - 占位。read 的 IFS=tab 属空白类，空中间字段会并栏左移
+    printf '%s\t%s\t%s\t%s\t%s\n' "$p" "${build:--}" "$probe" "$(preprod_url_for "$p")" "$note" >> "$tsv"
     if [ "$probe" = "ok" ]; then
       tg "📦 批量发布 [$idx/$total] ${p}：✅ preprod 就绪 $(preprod_url_for "$p")（班 #${build}）"
     else
@@ -304,7 +305,7 @@ cmd_abort_all() { # 幂等：只处理仍 pending 的子班门
   tsv=$(tsv_path)
   if [ ! -f "$tsv" ]; then echo "无状态文件，无需清理"; return 0; fi
   while IFS=$'\t' read -r p build probe url note; do
-    [ -n "$build" ] && [ "$build" != "0" ] || continue
+    [ -n "$build" ] && [ "$build" != "0" ] && [ "$build" != "-" ] || continue
     if [ "${DRY_RUN:-0}" = "1" ]; then echo "[dry-run] 将 abort 子班 #${build}（${p}）"; continue; fi
     if [ "$(pending_count "$build")" = "0" ]; then
       echo "ℹ️ 子班 #${build}（${p}）无 pending 门（已自行结束），跳过"
