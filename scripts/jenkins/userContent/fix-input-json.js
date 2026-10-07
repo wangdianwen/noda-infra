@@ -56,3 +56,35 @@
     }
   }, true);
 })();
+
+// ── 未登录横幅（2026-10-08）──────────────────────────────────────────────
+// 事故背景：Jenkins 2.580.1 允许匿名只读，匿名会话下构建页无 Proceed 按钮、
+// /input/ 页静默渲染成无表单空壳——用户点来点去毫无反应（"审批按钮没反应"
+// 根因）。此横幅把"静默死路"变成显式提示：未登录即全程红条提醒，一键带
+// 回跳登录。
+(function () {
+  'use strict';
+  if (/^\/login/.test(location.pathname)) return;
+  if (document.getElementById('noda-auth-banner')) return;
+  fetch('/whoAmI/api/json', { credentials: 'same-origin' })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d || !/^anonymous$/i.test(d.name || '')) return;
+      var bar = document.createElement('div');
+      bar.id = 'noda-auth-banner';
+      bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;'
+        + 'background:#b3261e;color:#fff;padding:8px 16px;font-size:14px;'
+        + 'font-family:system-ui,sans-serif;display:flex;gap:12px;align-items:center;'
+        + 'justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.3);';
+      var msg = document.createElement('span');
+      msg.textContent = '⚠️ 当前未登录（只读模式）：发布 / 审批按钮不会出现或点击无效';
+      var link = document.createElement('a');
+      link.href = '/login?from=' + encodeURIComponent(location.pathname + location.search);
+      link.textContent = '点此登录（登录后自动返回本页）';
+      link.style.cssText = 'color:#fff;font-weight:700;text-decoration:underline;';
+      bar.appendChild(msg);
+      bar.appendChild(link);
+      document.body.appendChild(bar);
+    })
+    .catch(function () { /* 探测失败保持静默，不影响页面 */ });
+})();
