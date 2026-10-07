@@ -77,7 +77,7 @@ crumb_header() {
 child_gate_action() {
   local b="$1" action="$2" gaction gvalue out crumb
   case "$action" in
-    deploy_prod|rebuild_preprod) gaction="proceed"; gvalue='[\"ACTION\": \"'"$action"'\"]' ;;
+    deploy_prod|rebuild_preprod) gaction="proceed"; gvalue='["ACTION": "'"$action"'"]' ;;
     abort) gaction="abort"; gvalue="null" ;;
     *) echo "非法 ACTION：$action" >&2; return 2 ;;
   esac
