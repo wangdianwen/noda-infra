@@ -2459,6 +2459,84 @@ _publish_static_to_prod()
         return 0
     fi
 
+    # ==========================================
+    # 蓝绿发布（2026-10-07，STATIC_BLUEGREEN=1 默认；置 0 回退下方轮转路径）：
+    # Turbopack 放大器时代一次小改动=42k 页重写，旧「轮转 50k copy + 覆盖 42k」
+    # 每次发布产生 ~92k 垃圾 needle 并把单盘打到 util 96%/iowait 89%（#680 实证，
+    # 发布后自动 vacuum 风暴同源）。蓝绿=green 全量上传（零覆盖零垃圾）→ 对账
+    # 通过才切换 → fs.mv 元数据原子切换（旧主前缀天然成回滚锚点，轮转整段删除）
+    # → 夜间 02:00 weed-vacuum-nightly.sh 删 -old + vacuum 清账。
+    # 失败语义：green 上传/对账失败=主前缀未动；mv1 失败=未动；mv2 失败=自动
+    # 反向 mv 回滚。绿桶残留（上次切换失败）会被清单 diff 增量复用，无害。
+    # ==========================================
+    if [ "${STATIC_BLUEGREEN:-1}" = "1" ]; then
+        local bg_prefix="sites/$product-green"
+        if ! _static_manifest_sync "$endpoint" "$s3a" "$s3s" "noda-static" "$bg_prefix" "$web_dir/out"; then
+            log_error "绿桶同步失败（主前缀未动）"
+            _publish_site_cleanup
+            return 1
+        fi
+
+        # 绿桶对账（重试 3 次 + 全量 sync 收敛同旧路径；不平绝不切换）
+        local objs src_objs attempt
+        src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
+        objs=0
+        for attempt in 1 2 3; do
+            objs=$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "SW:noda-static/$bg_prefix/" 2>/dev/null | wc -l | tr -d ' ')
+            if [ "${objs:-0}" -eq "${src_objs:-0}" ]; then
+                break
+            fi
+            log_warn "绿桶列举 ${objs} ≠ 源 ${src_objs}——全量 sync 收敛（第 ${attempt} 次）..."
+            _rc "$endpoint" "$s3a" "$s3s" sync "$web_dir/out/" "SW:noda-static/$bg_prefix/" >/dev/null 2>&1 || true
+        done
+        if [ "${objs:-0}" -ne "${src_objs:-0}" ] || [ "${objs:-0}" -lt "$min_objs" ]; then
+            log_error "绿桶对账失败（源 $src_objs ≠ 桶 ${objs:-0}）——不切换，主前缀保持旧版"
+            _publish_site_cleanup
+            return 1
+        fi
+
+        # 原子切换（spike 2026-10-07：50k 对象预计 50-60s，180s 看门狗）
+        local mv_main="/buckets/noda-static/sites/$product"
+        local mv_old="/buckets/noda-static/sites/$product-old"
+        if [ -n "$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "SW:noda-static/sites/$product/" 2>/dev/null | head -1)" ]; then
+            log_info "蓝绿切换 [1/2]：主前缀 → $product-old（回滚锚点，预计 ~1 分钟静默）..."
+            if ! _weed_fs_mv "$mv_main" "$mv_old"; then
+                log_error "mv 主前缀→old 失败——绿桶保留（下次增量复用），主前缀未动"
+                _publish_site_cleanup
+                return 1
+            fi
+        else
+            log_info "首次发布（主前缀不存在），跳过 mv1"
+        fi
+        if ! _weed_fs_mv "/buckets/noda-static/sites/$product-green" "$mv_main"; then
+            if [ -n "$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "$mv_old/" 2>/dev/null | head -1)" ]; then
+                if _weed_fs_mv "$mv_old" "$mv_main"; then
+                    log_warn "mv green→主前缀失败，已回滚（主前缀=旧版）"
+                else
+                    log_error "mv green→主前缀失败且回滚失败——主前缀缺失！立即人工：fs.mv $mv_old $mv_main"
+                fi
+            fi
+            _publish_site_cleanup
+            return 1
+        fi
+        log_success "蓝绿切换完成（原子 rename，旧版保留于 $product-old 待夜间清理）"
+
+        # 切换后哨兵确认（对账已在绿桶做过，这里只做单点兜底）
+        local sentinel="${STATIC_SENTINEL#out/}"
+        if [ -f "$web_dir/out/$sentinel" ]; then
+            if [ -z "$(_rc "$endpoint" "$s3a" "$s3s" lsf "SW:noda-static/sites/$product/$sentinel" 2>/dev/null)" ]; then
+                log_error "切换后哨兵缺失：sites/${product}/${sentinel}"
+                _publish_site_cleanup
+                return 1
+            fi
+        fi
+
+        _publish_site_cleanup
+        log_success "$product 静态站蓝绿发布完成：noda-static/sites/$product/（$objs 个对象，与源一致，中继已拆除）"
+        return 0
+    fi
+
+    # ---------- 旧路径（STATIC_BLUEGREEN=0 回退用）：轮转 + 覆盖式差量 ----------
     # 发布前快照轮转：走 r4s 本机 rclone（内网直连 seaweedfs，免中继逐对象
     # RTT——经中继 ~200ms/对象×1341×2 层≈10 分钟，r4s 内网 ~1 分钟）
     _static_snapshot_rotate_prod "$product" "noda-static" "$endpoint" "$s3a" "$s3s"
@@ -2862,6 +2940,19 @@ echo ROTATE_DONE"
     if [ "$saw_done" != "true" ]; then
         log_warn "快照轮转输出异常（可能被超时截断）——回滚锚点可能未更新，不影响本次发布"
     fi
+}
+
+# ============================================
+# _weed_fs_mv - r4s weed filer 目录 rename（2026-10-07 蓝绿发布核心）
+# ============================================
+# 元数据级目录换名。spike 实证（5000 对象）：rename 5-6s、外推 50k 对象 50-60s；
+# 744 次高频 GET 横跨切换窗口 404→200 直接翻转、0 次 5xx/挂起/中间态——目录级
+# 原子；S3 网关实时解析新路径，CDN/nginx 零感知。输出含 "move:" 即成功。
+# 路径为 /buckets/<bucket>/sites/<x> 固定格式（无空格，无需引号）。
+_weed_fs_mv()
+{
+    local src="$1" dst="$2"
+    remote_exec "docker exec seaweedfs sh -c \"echo fs.mv $src $dst | weed shell 2>&1\"" 180 2>/dev/null | grep -q "move:"
 }
 
 # ============================================

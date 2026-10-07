@@ -1,9 +1,7 @@
 #!/bin/sh
-# weed 定时 vacuum（2026-10-07）：#680 实证大发布后垃圾比例越过 0.6 阈值即自动
-# vacuum，与发布/其他负载并行时把单盘打到 util 96%/iowait 89%。治法=master 阈值
-# 调 0.99（自动触发事实关闭）+ 每晚 02:00 定时手动 vacuum（守卫保护）。
-# 守卫三重：tmp-s3-relay 存在=发布中跳过；load≥4 跳过；MemAvailable<500MB 跳过。
-# compactionMBps=20（compose 落盘）继续兜底限速。
+# weed 夜间维护（2026-10-07）：①删各产品 -old 前缀（蓝绿发布切换后的旧版，释放
+# 空间）②vacuum 回收垃圾 needle。守卫：发布中继容器存在 / load≥4 / avail<500MB
+# 任一命中跳过；删 -old 前额外守卫=对应主前缀哨兵可访问（防误删唯一版本）。
 LOG=/var/log/noda-weed-vacuum.log
 TS=$(date "+%F %T")
 tg() { /mnt/mmc1-4/System/Scripts/telegram-alert.sh "$*" >/dev/null 2>&1; }
@@ -24,16 +22,29 @@ if [ "$avail" -lt 512000 ]; then
   exit 0
 fi
 
+# ① 蓝绿旧版清理：每个 -old 前缀，主前缀健康（哨兵可列）才删
+for old in $(docker exec seaweedfs sh -c "echo \"fs.ls /buckets/noda-static/sites/\" | weed shell 2>/dev/null" | grep -oE "[a-z-]+-old" | sort -u); do
+  prod=${old%-old}
+  sentinel=$(docker exec seaweedfs sh -c "echo \"fs.ls /buckets/noda-static/sites/$prod/\" | weed shell 2>/dev/null" | head -1)
+  if [ -z "$sentinel" ]; then
+    log "SKIP-old: $prod 主前缀异常（fs.ls 空），保留 $old"
+    continue
+  fi
+  docker exec seaweedfs sh -c "echo \"fs.rm /buckets/noda-static/sites/$old\" | weed shell 2>&1" | grep -q "rm:" || { log "FAIL-old: fs.rm $old"; continue; }
+  log "OK-old: 已删 $old（$prod 旧版）"
+done
+
+# ② vacuum 回收垃圾
 before=$(docker exec seaweedfs sh -c "echo volume.list | weed shell 2>/dev/null" | grep -oE "deleted:[0-9]+" | cut -d: -f2 | awk "{s+=\$1} END {print s+0}")
 start=$(date +%s)
-out=$(docker exec seaweedfs sh -c "echo vacuum | weed shell 2>&1" | tail -2)
+out=$(docker exec seaweedfs sh -c "printf 'lock\nvolume.vacuum 0.3\n' | weed shell 2>&1" | tail -2)
 rc=$?
 elapsed=$(( $(date +%s) - start ))
 after=$(docker exec seaweedfs sh -c "echo volume.list | weed shell 2>/dev/null" | grep -oE "deleted:[0-9]+" | cut -d: -f2 | awk "{s+=\$1} END {print s+0}")
 if [ "$rc" = "0" ]; then
-  log "OK: vacuum 完成 ${elapsed}s，垃圾 needle ${before} -> ${after}；out=$out"
-  tg "weed 夜间 vacuum 完成：${elapsed}s，垃圾 needle ${before}→${after}（凌晨窗口，已确认无发布）"
+  log "OK-vacuum: ${elapsed}s，垃圾 needle ${before} -> ${after}；out=$out"
+  tg "weed 夜间维护完成： vacuum ${elapsed}s，垃圾 ${before}→${after}"
 else
-  log "FAIL: rc=$rc out=$out"
-  tg "weed 夜间 vacuum 失败 rc=$rc，请查 /var/log/noda-weed-vacuum.log"
+  log "FAIL-vacuum: rc=$rc out=$out"
+  tg "weed 夜间维护 vacuum 失败 rc=$rc，查 /var/log/noda-weed-vacuum.log"
 fi
