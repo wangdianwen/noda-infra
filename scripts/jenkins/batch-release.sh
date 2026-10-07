@@ -130,7 +130,7 @@ child_trigger() { # $1=product $2=layer → stdout=子班构建号；失败 retu
         n=$(printf '%s' "$out" | json_field '(d.get("executable") or {}).get("number")' 2>/dev/null || true)
         if [ -n "$n" ] && [ "$n" != "None" ]; then build=$n; break; fi
       fi
-      beat
+      beat >&2   # stdout 被 child_trigger 的调用方命令替换捕获，日志必须走 stderr
       sleep 10
     done
   fi
@@ -142,6 +142,10 @@ child_trigger() { # $1=product $2=layer → stdout=子班构建号；失败 retu
       "$JENKINS/job/$CHILD_JOB/$build/api/json?tree=actions%5Bparameters%5Bname,value%5D%5D" |
       json_field '"|".join(pp["value"] for a in d["actions"] for pp in a.get("parameters", []) if pp["name"] == "PRODUCT")' 2>/dev/null || echo "?")
     [ "$p" = "$product" ] || { echo "构建#$build PRODUCT=$p ≠ ${product}，疑似并行会话构建" >&2; return 1; }
+  fi
+  if ! printf '%s' "$build" | grep -qE '^[0-9]+$'; then
+    echo "子班号非数字 [$build]（stdout 污染?），拒绝返回" >&2
+    return 1
   fi
   echo "$build"
 }
