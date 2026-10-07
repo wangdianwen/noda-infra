@@ -2477,18 +2477,27 @@ _publish_static_to_prod()
             return 1
         fi
 
-        # 绿桶对账（重试 3 次 + 全量 sync 收敛同旧路径；不平绝不切换）
+        # 绿桶对账（重试 3 次 + 全量 sync 收敛同旧路径；不平绝不切换）。
+        # 计数必须走 mc 平铺列举（#711/#712 实证）：rclone 递归 lsf 按目录
+        # delimiter 分页行走，在特定树形下会整子树漏报（snagme 去重后绿桶
+        # 漏 570/11,930，且 3 次 sync 收敛无效——对象其实在桶里，mc 平铺
+        # 11,930/11,930 全中），漏报→对账永假→发布被误杀。mc ls -r 单趟
+        # 平铺分页不受该 bug 影响；sync 仍走 rclone（上传语义正确，漏报对象
+        # 会被当作缺失反复补传，幂等无害）。
         local objs src_objs attempt
         src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
         objs=0
+        local mc_alias="reconcile-${product}"
+        mc alias set "$mc_alias" "$endpoint" "$s3a" "$s3s" >/dev/null 2>&1 || true
         for attempt in 1 2 3; do
-            objs=$(_rc "$endpoint" "$s3a" "$s3s" lsf -R --files-only "SW:noda-static/$bg_prefix/" 2>/dev/null | wc -l | tr -d ' ')
+            objs=$(mc ls --recursive "$mc_alias/noda-static/$bg_prefix/" 2>/dev/null | wc -l | tr -d ' ')
             if [ "${objs:-0}" -eq "${src_objs:-0}" ]; then
                 break
             fi
             log_warn "绿桶列举 ${objs} ≠ 源 ${src_objs}——全量 sync 收敛（第 ${attempt} 次）..."
             _rc "$endpoint" "$s3a" "$s3s" sync "$web_dir/out/" "SW:noda-static/$bg_prefix/" >/dev/null 2>&1 || true
         done
+        mc alias remove "$mc_alias" >/dev/null 2>&1 || true
         if [ "${objs:-0}" -ne "${src_objs:-0}" ] || [ "${objs:-0}" -lt "$min_objs" ]; then
             log_error "绿桶对账失败（源 $src_objs ≠ 桶 ${objs:-0}）——不切换，主前缀保持旧版"
             _publish_site_cleanup
@@ -2689,12 +2698,16 @@ _publish_static_to_stg()
         return 1
     fi
 
-    # stg 对象级对账（策略与 prod 同构；直连无中继截断问题，最终不符判失败）
+    # stg 对象级对账（策略与 prod 同构；直连无中继截断问题，最终不符判失败）。
+    # 计数走 mc 平铺列举——rclone 递归 lsf 分页行走会整子树漏报（#711/#712
+    # snagme 570/11,930 实证，对象其实在桶），漏报→对账永假→发布被误杀
     local stg_src_objs stg_objs stg_attempt
     stg_src_objs=$(find "$web_dir/out" -type f 2>/dev/null | wc -l | tr -d ' ')
     stg_objs=0
+    local stg_mc_alias="reconcile-stg-${product}"
+    mc alias set "$stg_mc_alias" "$endpoint" "$stg_a" "$stg_s" >/dev/null 2>&1 || true
     for stg_attempt in 1 2 3; do
-        stg_objs=$(_rc "$endpoint" "$stg_a" "$stg_s" lsf -R --files-only "SW:noda-static-stg/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
+        stg_objs=$(mc ls --recursive "$stg_mc_alias/noda-static-stg/sites/$product/" 2>/dev/null | wc -l | tr -d ' ')
         if [ "${stg_objs:-0}" -eq "${stg_src_objs:-0}" ] && [ "${stg_objs:-0}" -gt 0 ]; then
             break
         fi
@@ -2702,6 +2715,7 @@ _publish_static_to_stg()
         _rc "$endpoint" "$stg_a" "$stg_s" sync "$web_dir/out/" "SW:noda-static-stg/sites/$product/" >/dev/null 2>&1 || true
         sleep 10
     done
+    mc alias remove "$stg_mc_alias" >/dev/null 2>&1 || true
     if [ "${stg_objs:-0}" -lt "${stg_src_objs:-0}" ] || [ "${stg_objs:-0}" = "0" ]; then
         log_error "stg 桶对账失败：源 $stg_src_objs 个文件 ≠ 桶 ${stg_objs:-0} 个对象——preprod 内容可能不完整"
         rc=1
