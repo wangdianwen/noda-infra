@@ -71,6 +71,37 @@ crumb_header() {
     json_field 'd["crumbRequestField"]+": "+d["crumb"]'
 }
 
+# child_gate_action：代批子班审批门（gate-action.sh 同款 Script Console 路径内联——
+# workspace 无其 gitignore 的 env 文件，且 spec 约束 gate-action.sh 零改动）
+# 用法：child_gate_action <BUILD> <deploy_prod|rebuild_preprod|abort>
+child_gate_action() {
+  local b="$1" action="$2" gaction gvalue out crumb
+  case "$action" in
+    deploy_prod|rebuild_preprod) gaction="proceed"; gvalue='[\"ACTION\": \"'"$action"'\"]' ;;
+    abort) gaction="abort"; gvalue="null" ;;
+    *) echo "非法 ACTION：$action" >&2; return 2 ;;
+  esac
+  session_init
+  crumb=$(crumb_header)
+  out=$(curl -s --max-time 30 "${AUTH[@]}" -b "$JAR" -H "$crumb" -X POST "$JENKINS/scriptText" \
+    --data-urlencode "script=
+def j = Jenkins.instance.getItem(\"$CHILD_JOB\")
+def b = j.getBuildByNumber($b)
+def ia = b.getAction(org.jenkinsci.plugins.workflow.support.steps.input.InputAction.class)
+if (ia == null) { println(\"no-input-action\"); return }
+ia.getExecutions().each { ex ->
+  println(\"applying $action: \" + ex.getInput().getMessage())
+  try { if (\"$gaction\" == \"proceed\") { ex.proceed($gvalue) } else { ex.doAbort() } }
+  catch (e) { println(\"failed: \" + e.message) }
+}
+println(\"done\")") || out=""
+  printf '%s\n' "$out" | tail -3
+  printf '%s' "$out" | grep -q "done" || { echo "代批请求未确认（无 done 回执）" >&2; return 1; }
+  # 复核：pending 应当清零（abort 场景 / deploy 场景同判）
+  sleep 2
+  [ "$(pending_count "$b")" = "0" ] || { echo "代批后子班 #$b 仍有 pending 门" >&2; return 1; }
+}
+
 # beat：一切等待的可见性心跳（用户硬要求：在等什么/已等多久/多久复查）
 BEAT_MSG=""; BEAT_T0=0; BEAT_LAST=0
 beat_start() { BEAT_MSG="$1"; BEAT_T0=$(date +%s); BEAT_LAST=0; }
@@ -279,7 +310,7 @@ cmd_phase3() { # $1=cooldown；逐个代批 ✅ 产品，任一失败立即停�
       continue
     fi
     echo "━━━━━ 🚀 ${p} 部署 prod（代批班 #${build}）━━━━━"
-    if ! JOB_NAME="$CHILD_JOB" "$DIR/gate-action.sh" "$build" deploy_prod; then
+    if ! child_gate_action "$build" deploy_prod; then
       tg "🛑 批量发布中止：${p} 代批失败（班 #${build}）。已上 prod ${ok_count} 个；失败班与 -old 锚点见 Jenkins"
       echo "❌ ${p} 代批失败——停止后续产品（已发布内容不动，-old 锚点未动，可手工回滚）" >&2
       exit 1
@@ -318,7 +349,7 @@ cmd_abort_all() { # 幂等：只处理仍 pending 的子班门
       echo "ℹ️ 子班 #${build}（${p}）无 pending 门（已自行结束），跳过"
       continue
     fi
-    if JOB_NAME="$CHILD_JOB" "$DIR/gate-action.sh" "$build" abort; then
+    if child_gate_action "$build" abort; then
       echo "🧹 子班 #${build}（${p}）已 abort"; n=$((n + 1))
     else
       echo "⚠️ 子班 #${build} abort 失败（可能刚被处理），请人工核对"

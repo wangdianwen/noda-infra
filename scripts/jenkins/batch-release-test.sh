@@ -25,7 +25,7 @@ else
   echo "  ✗ tree 查询存在未编码 []"; FAIL=1
 fi
 need "mktemp macOS 安全（XXXXXX 再 mv 后缀）" "grep -q 'mktemp /tmp/jenkins-batch.XXXXXX' $S"
-need "gate-action.sh 显式 JOB_NAME（防 pipeline JOB_NAME 泄漏）" "grep -q 'JOB_NAME=\"\$CHILD_JOB\"' $S"
+need "代批走内联 Script Console（workspace 无 gate-action env 依赖）" "grep -q 'child_gate_action' $S && grep -q 'Jenkins.instance.getItem' $S"
 need "队列项 Location 主路径" "grep -q 'location:' $S"
 need "lastBuild 回退必须按 PRODUCT 核对" "grep -q '疑似并行会话构建' $S"
 need "等门循环有心跳" "grep -q 'beat_start \"子班 #' $S"
