@@ -3027,7 +3027,11 @@ _static_manifest_sync()
         # 对【函数】调用会持久留存（#564-570 同坑），不得污染后续 _rc 默认值。
         # 传输 16→32（#660 实证：snagme 42k 差量对象 685s≈61 obj/s，单连接
         # ~600ms 延迟主导；加倍并发对折时长，r4s weed 实测扛得住，卡顿可回调）
-        if ! ( RC_TRANSFERS=32 RC_CHECKERS=64 _rc "$endpoint" "$ak" "$sk" copy \
+        # 32→24（2026-10-07 内存削峰）：weed 发布期 RSS=基础 650MB+~34MB/并发流，
+        # 32 流实测峰值 1.76G=限额 88%（GC 抖动区+memcg OOM 只剩 240MB 余量）。
+        # 24 流→峰值 ~1.47G（74%，回到警戒线内），时长 +1-2min——4G 单机内存
+        # 纪律优先于分钟级速度（r4s 内存焊死不可升级）。
+        if ! ( RC_TRANSFERS=24 RC_CHECKERS=48 _rc "$endpoint" "$ak" "$sk" copy \
                 "$out_dir/" "$remote/" --files-from "$work/changed" --no-traverse ); then
             rm -rf "$work"
             return 1
