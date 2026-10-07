@@ -9,7 +9,13 @@
 # 状态：$BATCH_STATE_DIR/products.tsv（product⇥build⇥probe⇥preprod_url⇥note）+ summary.txt
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$DIR/.." && pwd)"
+REPO_ROOT="$(cd "$DIR/../.." && pwd)"
+# 布局哨兵：pipeline-stages.sh 不在预期位置=REPO_ROOT 推导错（#2 spike 实证：少跳
+# 一层时 resource_gate 子 shell 静默失败，产品全记「门禁超时」误导排障）
+[ -f "$REPO_ROOT/scripts/pipeline-stages.sh" ] || {
+  echo "REPO_ROOT 解析异常（$REPO_ROOT 无 scripts/pipeline-stages.sh）——脚本必须位于 <repo>/scripts/jenkins/ 下" >&2
+  exit 1
+}
 CHILD_JOB="noda-apps"
 JENKINS="${JENKINS_URL:-http://localhost:8080}"
 BATCH_STATE_DIR="${BATCH_STATE_DIR:-$PWD/.batch-state}"
@@ -226,7 +232,7 @@ cmd_phase1() {
       build="0"; probe="ok"; note="dry-run"
       echo "[dry-run] 跳过触发/等门/探活"
     else
-      if ! resource_gate; then note="r4s 资源门禁超时（900s 未自愈）"; fi
+      if ! resource_gate; then note="r4s 资源门禁未通过（原因见上方日志）"; fi
       if [ -z "$note" ]; then
         if build=$(child_trigger "$p" "$layer"); then
           if child_wait_gate "$build"; then
