@@ -281,6 +281,13 @@ pipeline {
                         source scripts/pipeline-stages.sh
                         export SSH_KEY_FILE
                         pipeline_release_build_lock "$PRODUCT"
+                        # 静态流在 Pre-prod 桶阶段已取 static-publish——审批前释放，
+                        # 否则审批窗口（最长 6h）占死全局静态锁，且与同产品 api 班
+                        # 构成 ABBA 死锁（#751/#752 实证）；Deploy Prod 经发布包装
+                        # 层重取。LAYER=api 未持此锁，勿误删他人锁。
+                        if [ "${LAYER}" != "api" ]; then
+                            pipeline_release_static_publish_lock
+                        fi
                     '''
                 }
                 script {
@@ -365,6 +372,9 @@ pipeline {
                                 source scripts/pipeline-stages.sh
                                 export SSH_KEY_FILE
                                 pipeline_release_build_lock "$PRODUCT"
+                                if [ "${LAYER}" != "api" ]; then
+                                    pipeline_release_static_publish_lock
+                                fi
                             '''
                         }
                         def again = input(

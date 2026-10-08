@@ -2351,7 +2351,12 @@ pipeline_build_static_artifacts()
     # 日志风暴曾把 durable-task 日志 tailer 打挂（#574：Build 中途控制台全程冻结、
     # 后续所有 stage 无输出，但流水线照常推进——观测断而执行未断）。xargs 单进程
     # 只有一行 trace；-print0/-0 兼容 $ 与空格文件名，输出与旧循环逐字节同格式。
+    # __next.*（Next 16 segment cache 悬停预取 payload；snagme 实测占对象数 66%）
+    # 不入清单=不上传：文件仅服务鼠标悬停预取，缺失只降级为硬导航预取失败回退，
+    # 站内点击仍经页面 .txt 软导航（2026-10-08 拍板剔除）。旧对象由清单 diff 的
+    # deleted 列表随下次 stg 发布清出；蓝绿路径新前缀天然无此文件。
     (cd "$web_dir/out" && find . -type f ! -name '.noda-manifest' ! -name '.noda-artifact-hash' \
+        ! -name '__next.*' \
         -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) \
         > "$web_dir/out/.noda-manifest"
     b_tree=$(shasum -a 256 < "$web_dir/out/.noda-manifest" | awk '{print $1}')
@@ -4351,6 +4356,20 @@ pipeline_release_build_lock()
 {
     release_deploy_lock "build-$1"
     log_info "队列门禁锁已释放（审批窗口不再阻塞同服务后续发布）"
+}
+
+# pipeline_release_static_publish_lock - 审批前主动释放静态全局锁（Deploy 前重取）
+# 背景：stg 发布经 pipeline_publish_static_site 取 static-publish，post always 才
+# 释放——静态班的整个 Human Approval 窗口（最长 6h）都占着全局静态锁，其他产品
+# 静态发布全被堵（batch #9 实证挂起子班占锁 30min 过期）；更糟的是同产品 api 班
+# （fast 持 build-$product）等 static-publish、本班审批后 Deploy Prod 重取
+# build-$product，构成 ABBA 死锁（#751/#752 实证：互等 900s 超时连杀两班）。
+# 审批前释放 + Deploy 前经包装层重取后，static 与 api 两流取锁顺序恢复全局一致
+# （build-$product → static-publish），死锁环不复存在。
+pipeline_release_static_publish_lock()
+{
+    release_deploy_lock "static-publish"
+    log_info "静态全局锁已释放（审批窗口不再阻塞其他静态发布，Deploy 前重取）"
 }
 
 # pipeline_resource_gate - 发版前置资源门禁（2026-10-07）
