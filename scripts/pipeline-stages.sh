@@ -404,7 +404,7 @@ NEXT_PUBLIC_GA4_NEARBY_ID=G-58CDREDT81
 --build-arg
 NEXT_PUBLIC_GA4_SNAGME_ID=G-0617E1CMQY
 --build-arg
-NEXT_PUBLIC_NEARBY_SITE_URL=https://nearby.noda.co.nz
+NEXT_PUBLIC_NEARBY_SITE_URL=https://noda.co.nz
 ARGS
 }
 
@@ -1513,9 +1513,10 @@ https://liuyao.noda.co.nz/zh-TW/divine"
             ;;
         nearby)
             # 根入口（defaultLocale 落地）+ en/zh 壳（zh-TW 同构页面随 Cache-Control 自然过期）
-            urls="https://nearby.noda.co.nz/
-https://nearby.noda.co.nz/en
-https://nearby.noda.co.nz/zh"
+            # 2026-10-10 apex 接管：nearby 发版清的是 apex 域（nearby 子域全站 301，清它无意义）
+            urls="https://noda.co.nz/
+https://noda.co.nz/en
+https://noda.co.nz/zh"
             ;;
         auth)
             # defaultLocale=zh 无前缀：/login /register 即 zh 壳的两个认证入口
@@ -1557,7 +1558,7 @@ https://snagme.noda.co.nz/zh"
             www)     base_host="https://noda.co.nz" ;;
             admin)   base_host="https://admin.noda.co.nz" ;;
             liuyao)  base_host="https://liuyao.noda.co.nz" ;;
-            nearby)  base_host="https://nearby.noda.co.nz" ;;
+            nearby)  base_host="https://noda.co.nz" ;;
             auth)    base_host="https://auth.noda.co.nz" ;;
             comment) base_host="https://comments.noda.co.nz" ;;
             snagme)  base_host="https://snagme.noda.co.nz" ;;
@@ -3677,8 +3678,8 @@ https://noda.co.nz/zh/|www 中文页"
             checks="https://liuyao.noda.co.nz/divine|liuyao 静态壳"
             ;;
         nearby)
-            checks="https://nearby.noda.co.nz/|nearby 静态壳
-https://nearby.noda.co.nz/sitemap.xml|nearby sitemap（反代 Go）"
+            checks="https://noda.co.nz/|nearby 静态壳（apex）
+https://noda.co.nz/sitemap.xml|nearby sitemap（反代 Go，apex）"
             ;;
         auth)
             # 2026-09-19 P4 探针跟进：/api/health 已 410，API 链改 POST /graphql
