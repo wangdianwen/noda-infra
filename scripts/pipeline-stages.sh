@@ -3577,7 +3577,9 @@ pipeline_infra_verify()
                 # GeoIP 哨兵（2026-09-16）：nearby /geo.json 依赖镜像内置 geoip2
                 # 模块 + DBIP 数据 + conf 三件套，任一在发布中丢失该端点即 404——
                 # 上面的 spider 探的是 class 块测不出，此处强制校验（失败 = 本次发布失败）
-                remote_docker_exec "$NGINX_CONTAINER" "wget -qO /dev/null --header 'Host: nearby.noda.co.nz' http://127.0.0.1:81/geo.json"
+                # 2026-10-10 apex 接管：geo.json 改由 apex 块伺服（nearby 子域全站 301，
+                # 探旧 host 会追着重定向直到 too many redirections——#39 实证）
+                remote_docker_exec "$NGINX_CONTAINER" "wget -qO /dev/null --header 'Host: noda.co.nz' http://127.0.0.1:81/geo.json"
                 log_success "Nginx E2E 验证通过（r4s，含 GeoIP /geo.json 哨兵）"
                 ;;
             noda-ops)
@@ -3608,7 +3610,7 @@ pipeline_infra_verify()
             nginx)
                 docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://127.0.0.1:81/ 2>/dev/null
                 # GeoIP 哨兵（同 r4s 分支）：/geo.json 三件套（模块/数据/conf）回归检查
-                docker exec "$NGINX_CONTAINER" wget -qO /dev/null --header 'Host: nearby.noda.co.nz' http://127.0.0.1:81/geo.json
+                docker exec "$NGINX_CONTAINER" wget -qO /dev/null --header 'Host: noda.co.nz' http://127.0.0.1:81/geo.json
                 log_success "Nginx E2E 验证通过（含 GeoIP /geo.json 哨兵）"
                 ;;
             noda-ops)
