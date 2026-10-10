@@ -650,15 +650,13 @@ pipeline_test()
     case "${LAYER_FILTER:-all}" in
         static|web) ;;
         *)
-        local modules="api common common/crawler common/jobs nearby/api class/api liuyao/api admin/api auth/api comment/api snagme/api"
+        local modules="api common common/crawler common/jobs nearby/api class/api admin/api auth/api comment/api"
         case "${PRODUCT_FILTER:-all}" in
             class)            modules="class/api common" ;;
-            liuyao)           modules="liuyao/api common" ;;
             nearby)           modules="nearby/api common" ;;
             admin)            modules="admin/api common" ;;
             auth)             modules="auth/api common" ;;
             comment)          modules="comment/api common" ;;
-            snagme)           modules="snagme/api common" ;;
             www)              modules="" ;;
         esac
         local m
@@ -730,8 +728,8 @@ pipeline_lint_go()
         -e GOFLAGS=-buildvcs=false \
         "$img" \
         run ./api/... ./common/... ./common/crawler/... ./common/jobs/... \
-            ./auth/api/... ./class/api/... ./comment/api/... ./liuyao/api/... \
-            ./nearby/api/... ./snagme/api/... ./admin/api/... ./bff/... \
+            ./auth/api/... ./class/api/... ./comment/api/... \
+            ./nearby/api/... ./admin/api/... ./bff/... \
         || return 1
     log_info "Go 守卫测试（api/smoke：W-01/W-02/W-04，宿主 go）"
     ( cd "$apps_dir/api" && go test -count=1 ./smoke/ ) || return 1
