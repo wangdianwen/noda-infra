@@ -1512,11 +1512,32 @@ https://liuyao.noda.co.nz/zh/divine
 https://liuyao.noda.co.nz/zh-TW/divine"
             ;;
         nearby)
-            # 根入口（defaultLocale 落地）+ en/zh 壳（zh-TW 同构页面随 Cache-Control 自然过期）
-            # 2026-10-10 apex 接管：nearby 发版清的是 apex 域（nearby 子域全站 301，清它无意义）
-            urls="https://noda.co.nz/
-https://noda.co.nz/en
-https://noda.co.nz/zh"
+            # 2026-10-10 晚复盘：apex HTML 是 no-cache（cf-cache-status=DYNAMIC），清 HTML 等于空操作；
+            # 真正被 CF 长缓存的只有 cdn host 静态资产——上线日 hero/favicon 全系旧图事故根因
+            # （新构建同路径替换图片文件、无版本参数，边缘一直回旧对象，靠 purge_everything 收场）。
+            # 故基线表改为 cdn 图片全量（icon-192 无参与 ?v=4 两键都清）；派生 HTML 追加在后，
+            # cap 30 截断时先保图片（HTML 不需要清）。
+            urls="https://cdn.noda.co.nz/sites/nearby/images/og.png
+https://cdn.noda.co.nz/sites/nearby/images/banner/hero.webp
+https://cdn.noda.co.nz/sites/nearby/images/banner/city-auckland.webp
+https://cdn.noda.co.nz/sites/nearby/images/banner/city-christchurch.webp
+https://cdn.noda.co.nz/sites/nearby/images/banner/city-dunedin.webp
+https://cdn.noda.co.nz/sites/nearby/images/banner/city-hamilton.webp
+https://cdn.noda.co.nz/sites/nearby/images/banner/city-queenstown.webp
+https://cdn.noda.co.nz/sites/nearby/images/banner/city-wellington.webp
+https://cdn.noda.co.nz/sites/nearby/images/banner/city-tauranga.webp
+https://cdn.noda.co.nz/sites/nearby/images/cards/default-event.webp
+https://cdn.noda.co.nz/sites/nearby/images/cards/default-news.webp
+https://cdn.noda.co.nz/sites/nearby/images/cards/default-opening.webp
+https://cdn.noda.co.nz/sites/nearby/images/cards/default-place.webp
+https://cdn.noda.co.nz/sites/nearby/images/illustrations/empty-area.webp
+https://cdn.noda.co.nz/sites/nearby/images/logo/mark.png
+https://cdn.noda.co.nz/sites/nearby/images/favicon/icon-192.png
+https://cdn.noda.co.nz/sites/nearby/images/favicon/icon-192.png?v=4
+https://cdn.noda.co.nz/sites/nearby/images/favicon/icon-512.png
+https://cdn.noda.co.nz/sites/nearby/images/favicon/apple-touch-icon.png
+https://cdn.noda.co.nz/sites/nearby/apple-touch-icon.png
+https://cdn.noda.co.nz/sites/nearby/favicon.ico"
             ;;
         auth)
             # defaultLocale=zh 无前缀：/login /register 即 zh 壳的两个认证入口
