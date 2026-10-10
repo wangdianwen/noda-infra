@@ -217,8 +217,10 @@ pipeline {
                 expression { params.DEPLOY_MODE == 'fast' || env.DEPLOY_ACTION == 'deploy_prod' }
             }
             options {
-                // 门禁重取（最长 900s）+ prod 桶发布（蓝绿切换 ~1m）+ 公网冒烟；30m 封顶
-                timeout(time: 30, unit: 'MINUTES')
+                // 门禁重取双 gate 最坏合计 30m（队列 900s + 资源 900s）+ prod 桶发布
+                // （~1m）+ 公网冒烟——30m 封顶会被门禁最坏时延顶穿，部署没开始就被杀
+                //（同 apps Deploy Prod 的等锁教训），放宽 40m
+                timeout(time: 40, unit: 'MINUTES')
             }
             steps {
                 withCredentials([
