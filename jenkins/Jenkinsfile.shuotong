@@ -78,7 +78,7 @@ pipeline {
                         extensions: [[$class: 'CleanBeforeCheckout']],
                         userRemoteConfigs: [[
                             url: 'git@github.com:wangdianwen/shuotong-wang.git',
-                            credentialsId: 'noda-apps-git-credentials'
+                            credentialsId: 'shuotong-git-credentials'
                         ]]
                     ])
                 }
@@ -226,7 +226,7 @@ pipeline {
                 withCredentials([
                     sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
                     // 新鲜度门禁用：部署前 ls-remote origin/main 防过期构建回退覆盖
-                    sshUserPrivateKey(credentialsId: 'noda-apps-git-credentials', keyFileVariable: 'SHUOTONG_GIT_KEY')
+                    sshUserPrivateKey(credentialsId: 'shuotong-git-credentials', keyFileVariable: 'SHUOTONG_GIT_KEY')
                 ]) {
                     sh '''
                         source scripts/lib/log.sh
