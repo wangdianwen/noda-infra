@@ -1,0 +1,292 @@
+#!/usr/bin/env groovy
+// shuotong-wang —— shuotong.wang 静态站发布 Pipeline（2026-10-11 WS4 Task 8）
+// 独立仓（SvelteKit 2 + adapter-static 纯静态，8 页全量 prerender 无 SSR），
+// 复用 noda-infra pipeline-stages.sh 的发布函数链：
+//   checkout shuotong 仓 → pnpm build → build/ → 剔除 precompress 的 .br/.gz
+//   （r4s nginx 未开 brotli_static，纯冗余）→ 垫入 $NODA_APPS_DIR/shuotong-out/out/
+//   + 生成产物指纹（.noda-manifest / .noda-artifact-hash，对齐清单差量机制）
+//   → pipeline_publish_product shuotong [stg|prod] → SeaweedFS 桶 noda-static/sites/shuotong/
+// 与 Jenkinsfile.apps 的差异：
+//   - PRODUCT/LAYER 参数无意义（单产品单层），只保留 DEPLOY_MODE
+//   - pipeline_build_static_artifacts 不适用（web_dir 不是 noda-apps 子目录，
+//     构建/指纹在 Build stage 自带）
+//   - pipeline_verify_static_preprod / pipeline_verify_product 不适用
+//     （未知产品会硬报错，且 shuotong 无 *-preprod 公网域名）——探活自带
+//   - CDN purge 不适用：shuotong.wang 是独立 Cloudflare zone（cf-zone-id 是
+//     noda.co.nz 的），HTML 本身 no-cache、资产带内容哈希，无 purge 需求
+// DEPLOY_MODE: normal（默认）= stg 桶验证 + 人工批准后发 prod；fast = 直发 prod
+// 前置: shuotong 仓 main 分支（首次发布前 GitHub App `noda-apps` 的仓库访问
+//       列表需加入 wangdianwen/shuotong-wang，否则 checkout 凭据无权限）
+
+pipeline {
+    // 4 槽位轮换 workspace（同 Jenkinsfile.apps）——并发构建互不踩踏
+    agent {
+        node {
+            label ''
+            customWorkspace "${env.JOB_NAME}/ws-${env.BUILD_NUMBER.toInteger() % 4}"
+        }
+    }
+
+    environment {
+        PROJECT_ROOT = "${WORKSPACE}"
+        // 发布函数从 $NODA_APPS_DIR/<STATIC_WEB_DIR>/out/ 取产物
+        // （_static_product_config: shuotong → web_dir=shuotong-out）
+        NODA_APPS_DIR = "${WORKSPACE}"
+        // 备份路径占位（本流水线不部署容器，保留与 apps 同形的目录约定）
+        BACKUP_HOST_DIR = "${HOME}/Project/noda-infra/docker/volumes/backup"
+        // 本流水线不构建镜像/不部署容器/不做 CDN purge——发布链的全部凭据来自
+        // r4s /etc/noda/jobs.env（prod S3）与 config/seaweedfs/s3.json（stg），
+        // 无 Doppler 依赖。source pipeline-stages.sh 时默认 load_secrets 会因
+        // DOPPLER_TOKEN 缺失 return 1（set -e 连带中止 sh 步骤）——显式跳过
+        SKIP_LOAD_SECRETS = '1'
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timestamps()
+    }
+
+    parameters {
+        choice(
+            name: 'DEPLOY_MODE',
+            choices: ['normal', 'fast'],
+            description: 'normal: 产物发布到 stg 桶（preprod 验证环境）后人工批准再发 prod 桶；fast: 紧急直发 prod 桶，跳过 stg 与人工批准（仅限确认无风险的变更）'
+        )
+    }
+
+    stages {
+        stage('Build') {
+            options {
+                // pnpm install + svelte build + 指纹，量小（8 页静态）常规 ~2m，20m 封顶
+                timeout(time: 20, unit: 'MINUTES')
+            }
+            steps {
+                // 队列门禁：同产品构建串行（锁 build-shuotong，登记 registry，
+                // post always 兜底释放；审批前主动释放，Deploy 前重取）
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        pipeline_queue_gate "shuotong"
+                    '''
+                }
+                dir('shuotong-wang') {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: '*/main']],
+                        extensions: [[$class: 'CleanBeforeCheckout']],
+                        userRemoteConfigs: [[
+                            url: 'git@github.com:wangdianwen/shuotong-wang.git',
+                            credentialsId: 'noda-apps-git-credentials'
+                        ]]
+                    ])
+                }
+                script {
+                    env.SHA = sh(
+                        script: 'git -C shuotong-wang rev-parse HEAD',
+                        returnStdout: true
+                    ).trim()
+                    currentBuild.displayName = "#${env.BUILD_NUMBER} shuotong.wang ${env.SHA.take(7)}"
+                    currentBuild.description = "shuotong.wang 静态站 · 内容 <b>${env.SHA.take(7)}</b> · 模式 ${params.DEPLOY_MODE}"
+                }
+                // 构建 + 垫产物 + 指纹（Jenkins sh 默认 set -xe，任一步失败即中止）
+                sh '''
+                    # node/pnpm 就绪：Jenkins launchd 环境 PATH 不含 nvm——显式注入
+                    # （与 pipeline_build_static_artifacts 同口径：v24.12.0 优先，corepack 兜底）
+                    export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+                    if ! command -v pnpm >/dev/null 2>&1; then
+                        command -v corepack >/dev/null 2>&1 && corepack enable pnpm >/dev/null 2>&1 || true
+                    fi
+                    command -v pnpm >/dev/null 2>&1 || { echo "❌ pnpm 不可用（nvm/corepack 均未找到）"; exit 1; }
+
+                    echo "▸ shuotong 仓内容: $(git -C shuotong-wang log --oneline -1)"
+                    # 确定性全量：清掉上次构建残留（workspace 槽位轮换复用）
+                    rm -rf shuotong-wang/.svelte-kit shuotong-wang/build
+                    (cd shuotong-wang && pnpm install --frozen-lockfile) || { echo "❌ pnpm install 失败"; exit 1; }
+                    (cd shuotong-wang && pnpm build) || { echo "❌ pnpm build 失败"; exit 1; }
+                    test -f shuotong-wang/build/index.html || { echo "❌ 构建产物缺失 build/index.html（adapter-static 校验失败）"; exit 1; }
+
+                    # precompress 的 .br/.gz 剔除：r4s nginx 无 brotli_static/gzip_static，
+                    # 压缩副本上桶纯属冗余对象（nginx 就地 gzip 承担压缩）
+                    find shuotong-wang/build \( -name '*.br' -o -name '*.gz' \) -delete
+
+                    # 垫入发布函数约定的槽位：$NODA_APPS_DIR/shuotong-out/out/
+                    rm -rf shuotong-out
+                    mkdir -p shuotong-out/out
+                    cp -R shuotong-wang/build/. shuotong-out/out/
+
+                    # 产物指纹 + 逐文件清单（格式对齐 pipeline_build_static_artifacts，
+                    # 供 _static_content_unchanged 未变更跳过与清单差量镜像消费）：
+                    #   .noda-manifest:      "<sha256>  <./path>" 每文件一行
+                    #   .noda-artifact-hash: "<git-sha> <tree-hash> <count>"（count=清单行数+2）
+                    (cd shuotong-out/out && find . -type f ! -name '.noda-manifest' ! -name '.noda-artifact-hash' \
+                        -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) \
+                        > shuotong-out/out/.noda-manifest
+                    _tree=$(shasum -a 256 < shuotong-out/out/.noda-manifest | awk '{print $1}')
+                    _cnt=$(( $(wc -l < shuotong-out/out/.noda-manifest | tr -d ' ') + 2 ))
+                    printf '%s %s %s\n' "$SHA" "$_tree" "$_cnt" > shuotong-out/out/.noda-artifact-hash
+                    echo "✅ 产物就绪：shuotong-out/out/（对象数=$_cnt，含 2 指纹文件；内容 $SHA）"
+                '''
+            }
+        }
+
+        stage('Deploy Pre-prod') {
+            when {
+                expression { params.DEPLOY_MODE == 'normal' }
+            }
+            options {
+                // stg 桶发布（本机 seaweedfs-stg 直连，无中继）常规 ~1m，20m 封顶
+                timeout(time: 20, unit: 'MINUTES')
+            }
+            steps {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        # stg 桶（noda-static-stg/sites/shuotong/）= preprod 验证环境。
+                        # shuotong 无 *-preprod 公网域名（nginx 只通 prod 块），故不做
+                        # pipeline_verify_static_preprod 探活——验证以 stg 发布函数内
+                        # 对账（对象数一致 + 哨兵在位）为准，prod 冒烟在 Deploy Prod 后。
+                        # 函数级重试 1 次（seaweedfs-stg 崩溃循环的历史教训，同 apps）
+                        pub_ok=0
+                        for pub_attempt in 1 2; do
+                            if pipeline_publish_product "shuotong" "stg"; then
+                                pub_ok=1
+                                break
+                            fi
+                            if [ "$pub_attempt" = "1" ]; then
+                                echo "⚠️ stg 发布第 1 次失败（stg S3 抖动?），30s 后整体重试..."
+                                sleep 30
+                            fi
+                        done
+                        [ "$pub_ok" = "1" ] || { echo "❌ stg 发布重试后仍失败"; exit 1; }
+                    '''
+                }
+            }
+        }
+
+        stage('Human Approval') {
+            when {
+                expression { params.DEPLOY_MODE == 'normal' }
+            }
+            options { timeout(time: 6, unit: 'HOURS') }
+            steps {
+                echo "⏳ 获取/释放发布锁（若其他静态站发布中，此处可能等待数分钟——非卡死）"
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        # 审批前释放两把锁（同 apps：审批窗口最长 6h，持锁会堵死全局
+                        # static-publish 且与其他发布构成 ABBA 死锁——#751/#752 实证）。
+                        # Deploy Prod 前经各自入口重取。
+                        pipeline_release_build_lock "shuotong"
+                        pipeline_release_static_publish_lock
+                    '''
+                }
+                script {
+                    def userInput = input(
+                        message: """Pre-prod（stg 桶）发布完成：noda-static-stg/sites/shuotong/
+  内容: ${env.SHA.take(7)}（shuotong 仓 main）
+  本站无公网 preprod 域名——stg 内容可用 rclone/mc 对桶抽查，或直接批准后以 prod 公网冒烟收口。
+  桶侧完整性与哨兵已由发布函数对账兜底。
+
+  ⏱ 本审批 6 小时后自动超时（构建记 FAILURE）。
+
+  请选择下一步操作：""",
+                        parameters: [
+                            choice(name: 'ACTION', choices: ['deploy_prod', 'abort'], description: 'deploy_prod: 发布 prod 桶（noda-static/sites/shuotong/）/ abort: 中止')
+                        ]
+                    )
+                    // input 返回形状随提交方式变化（UI=Map、空参=null/空串、旧版=String）
+                    // ——不做形状假设统一归一化（apps#9/#11/#12/#15 实证教训）
+                    def action = (userInput instanceof Map) ? userInput['ACTION'] : userInput
+                    if (!['deploy_prod', 'abort'].contains(action)) {
+                        echo "DEPLOY_ACTION 归一化: [${action}] -> deploy_prod"
+                        action = 'deploy_prod'
+                    }
+                    env.DEPLOY_ACTION = action
+                }
+            }
+        }
+
+        stage('Deploy Prod') {
+            when {
+                expression { params.DEPLOY_MODE == 'fast' || env.DEPLOY_ACTION == 'deploy_prod' }
+            }
+            options {
+                // 门禁重取（最长 900s）+ prod 桶发布（蓝绿切换 ~1m）+ 公网冒烟；30m 封顶
+                timeout(time: 30, unit: 'MINUTES')
+            }
+            steps {
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE'),
+                    // 新鲜度门禁用：部署前 ls-remote origin/main 防过期构建回退覆盖
+                    sshUserPrivateKey(credentialsId: 'noda-apps-git-credentials', keyFileVariable: 'SHUOTONG_GIT_KEY')
+                ]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        export GIT_SSH_COMMAND="ssh -i ${SHUOTONG_GIT_KEY} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+                        # 审批窗口已释放队列锁——部署前重新获取（同 apps）
+                        pipeline_queue_gate "shuotong"
+                        # 资源门禁复检：审批窗口内 r4s 资源可能被其他负载耗尽
+                        pipeline_resource_gate
+                        # 新鲜度门禁（pipeline_check_freshness 硬编码 noda-apps 路径，
+                        # 对 shuotong 仓内联同语义实现：ls-remote 失败 fail-open 可观测）
+                        head_sha=$(git -C shuotong-wang ls-remote origin -h refs/heads/main 2>/dev/null | awk '{print $1}')
+                        if [ -n "$head_sha" ] && [ "$SHA" != "${head_sha:0:${#SHA}}" ]; then
+                            echo "❌ 新鲜度门禁拦截：本班构建 ${SHA:0:7}，shuotong origin/main 已前移至 ${head_sha:0:7}——继续发布=旧内容覆盖新版本。本班放弃，请直接重新触发发版"
+                            exit 1
+                        fi
+                        pipeline_publish_product "shuotong" "prod"
+                        # 公网冒烟（软门禁，不阻断）：shuotong.wang 首次发布时 Cloudflare
+                        # Tunnel hostname 可能尚未配置（人工项）——桶对账已保证发布完整，
+                        # 探活失败只告警提示补配 hostname 后人工复查
+                        for _url in "https://shuotong.wang/" "https://shuotong.wang/health"; do
+                            _code="000"
+                            for _i in $(seq 1 10); do
+                                _code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "$_url" 2>/dev/null || echo "000")
+                                [ "$_code" = "200" ] && break
+                                sleep 3
+                            done
+                            if [ "$_code" = "200" ]; then
+                                echo "✅ 公网探活 200: $_url"
+                            else
+                                echo "⚠️ 公网探活 ${_code}: $_url（非阻断——若 Cloudflare hostname 未配置请补配后人工复查）"
+                            fi
+                        done
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                    sh '''
+                        source scripts/lib/log.sh
+                        source scripts/pipeline-stages.sh
+                        export SSH_KEY_FILE
+                        # 释放本构建登记的全部锁（build-shuotong / static-publish /
+                        # publish-shuotong 中仍持有的；幂等，无锁则空操作）
+                        pipeline_release_lock
+                    '''
+                }
+            }
+        }
+        failure {
+            script {
+                archiveArtifacts artifacts: 'deploy-failure-*.log', allowEmptyArchive: true
+            }
+        }
+        success {
+            echo "✅ shuotong.wang 发布成功（内容: ${env.SHA?.take(7)}, 模式: ${params.DEPLOY_MODE}）"
+        }
+    }
+}

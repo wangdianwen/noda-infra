@@ -2154,8 +2154,15 @@ _static_product_config()
             # 静态壳（~35 HTML + 资产；阈值 60）；zh 无前缀 canonical（defaultLocale=zh）
             # ——哨兵文件用 out/zh/login.html；API 端点不在静态产物（Go authapi :3004 承接）
             STATIC_WEB_DIR="auth";       STATIC_SENTINEL="out/zh/login.html"; STATIC_MIN_OBJS=60 ;;
+        shuotong)
+            # SvelteKit adapter-static 独立仓 shuotong.wang（2026-10-11 WS4）：
+            # 非 noda-apps 子目录——产物由 Jenkinsfile.shuotong 预构建后垫入
+            # $NODA_APPS_DIR/shuotong-out/out/（平铺 .html + _app/ 资产，56 对象
+            # 含 2 指纹文件；阈值 20 防「整树漏传」类事故），故
+            # pipeline_build_static_artifacts 不适用（构建在 Jenkinsfile 自带）
+            STATIC_WEB_DIR="shuotong-out"; STATIC_SENTINEL="out/index.html";  STATIC_MIN_OBJS=20 ;;
         *)
-            log_error "未知静态站产品: ${1}（可选 class/www/admin/nearby/auth/comment）"
+            log_error "未知静态站产品: ${1}（可选 class/www/admin/nearby/auth/comment/shuotong）"
             return 1
             ;;
     esac
