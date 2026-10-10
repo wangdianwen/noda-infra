@@ -4246,17 +4246,16 @@ pipeline_health_check_preprod()
         log_success "Pre-prod 健康检查通过（r4s 双容器）"
         return 0
     else
-        # 本地模式（Mac）：容器无宿主端口映射，经 static 反代依次探测三条链路：
-        #   1. liuyao /api/health  — static → api 链（preprod-noda-api:3007）
-        #   2. class  /api/health  — static → api 链（preprod-noda-api:3001）
-        #   3. class  /            — static → 桶静态站链（S5：页面 = SeaweedFS stg 桶伺服）
+        # 本地模式（Mac）：容器无宿主端口映射，经 static 反代依次探测链路
+        #（2026-10-10 T11 手术配套：liuyao 探针摘除——新镜像无 liuyao 监听必超时）：
+        #   1. class  /api/health  — static → api 链（preprod-noda-api:3001）
+        #   2. class  /            — static → 桶静态站链（S5：页面 = SeaweedFS stg 桶伺服）
         log_info "Pre-prod 健康检查（本地 Mac, via static 反代）..."
         local retries="${HEALTH_CHECK_MAX_RETRIES:-30}"
         local interval="${HEALTH_CHECK_INTERVAL:-4}"
         local url label url_ok="false"
         # class / 是 302 跳转（静态站 nginx locale 语义，与 prod 同构）——探 /en 取 200
         for check in \
-            "https://liuyao-preprod.noda.co.nz/api/health|liuyao static→api 链" \
             "https://class-preprod.noda.co.nz/api/health|class static→api 链" \
             "https://class-preprod.noda.co.nz/en|class static→桶静态站链"; do
             url="${check%%|*}"
