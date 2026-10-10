@@ -21,17 +21,15 @@ def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
       <parameterDefinitions>
         <hudson.model.ChoiceParameterDefinition>
           <name>PRODUCT</name>
-          <description>选择要部署的产品（class / www / admin / liuyao / nearby / auth / comment / snagme，必选其一项，无 all）</description>
+          <description>选择要部署的产品（class / www / admin / nearby / auth / comment，必选其一项，无 all）。2026-10-24 apex 上线摘除 snagme/liuyao（双站整站下线 410，T10/T11 归档移仓）</description>
           <choices class="java.util.Arrays$ArrayList">
             <a class="string-array">
               <string>class</string>
               <string>www</string>
               <string>admin</string>
-              <string>liuyao</string>
               <string>nearby</string>
               <string>auth</string>
               <string>comment</string>
-              <string>snagme</string>
             </a>
           </choices>
         </hudson.model.ChoiceParameterDefinition>
