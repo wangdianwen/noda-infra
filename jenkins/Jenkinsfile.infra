@@ -2,7 +2,7 @@
 // noda-infra —— 公共基础设施镜像发布 Pipeline（2026-09-13 由 infra-deploy 重构更名）
 // 职责：只发布公共 docker image —— nginx(反代镜像) / seaweedfs / noda-ops / postgres
 //       必须单选一个服务，不提供 all（基础设施无"全量一键发布"，逐项可控）
-// 产品前端静态站（class/www/admin/liuyao/nearby/auth/comment）不在此发布——
+// 产品前端静态站（class/www/admin/nearby/auth/comment）不在此发布——
 // 走 noda-apps Pipeline 的 LAYER=static（前端）路径，桶发布按产品隔离可并行
 // keycloak 已于 2026-09-12 下线；remark42 不经 Pipeline 管理——相关路径全部移除
 // 阶段: Pre-flight -> Backup(postgres) -> Human Approval(postgres) -> Deploy -> Health Check -> Verify

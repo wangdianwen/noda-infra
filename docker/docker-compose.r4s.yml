@@ -114,9 +114,10 @@ services:
   # Noda API（Go 聚合单容器）— 256M / 0.5cpu
   # 服务键 noda-api（Wave 4 compose 收敛）；container_name / 网络 alias 仍为
   # noda-api-prod——env-noda-frontend.env 与 nginx upstream 按 DNS 名引用，零改动
-  # 镜像 = noda-apps 新形态（Wave 3 Go 多模块聚合单二进制：class 3001 / liuyao 3007 /
-  #   email 3010 / admin 3011 / nearby 3014 五 listener + 附加 noda-crawler 子进程二进制，
-  #   构建见 noda-apps/infra/docker/Dockerfile.noda-api，BuildKit GOCACHE 缓存挂载增量编译）
+  # 镜像 = noda-apps 新形态（Wave 3 Go 多模块聚合单二进制：class 3001 /
+  #   email 3010 / admin 3011 / nearby 3014 四 listener + 附加 noda-crawler 子进程二进制，
+  #   liuyao 3007 已随 2026-10-10 v2 清算摘除；构建见 noda-apps/infra/docker/Dockerfile.noda-api，
+  #   BuildKit GOCACHE 缓存挂载增量编译）
   # 生产由 pipeline docker run 注入 env（--env-file /tmp/prod-api.env）；
   # 运行时目录为 tmpfs（read_only 容器）
   # ----------------------------------------

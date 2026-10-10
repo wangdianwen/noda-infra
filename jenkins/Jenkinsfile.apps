@@ -56,8 +56,8 @@ pipeline {
     parameters {
         choice(
             name: 'PRODUCT',
-            choices: ['class', 'www', 'admin', 'liuyao', 'nearby', 'auth', 'comment', 'snagme'],
-            description: '选择要发布的产品（必选其一，无 all）：class 主应用 / www 官网 / admin 管理后台 / liuyao 六爻 / nearby 附近 / auth 认证 / comment 评论 / snagme 捡漏监控（API :3015 + 静态看板）。后端 Go 测试只跑对应产品模块 + common'
+            choices: ['class', 'www', 'admin', 'nearby', 'auth', 'comment'],
+            description: '选择要发布的产品（必选其一，无 all）：class 主应用 / www 官网 / admin 管理后台 / nearby 附近 / auth 认证 / comment 评论。liuyao/snagme 已随 2026-10-10 v2 清算摘除（整站 410）。后端 Go 测试只跑对应产品模块 + common'
         )
         choice(
             name: 'LAYER',
@@ -150,7 +150,7 @@ pipeline {
         }
 
         // 测试挡板独立成 stage（2026-10-04 拆分）：原与 preprod 部署同 stage 并行，
-        // static 层 Test 秒过后（跳 Go、snagme 无 lint/test）stage 迟迟不关闭——
+        // static 层 Test 秒过后（跳 Go、static 产品无 lint/test）stage 迟迟不关闭——
         // 其实在等 stg 发布臂——UI 呈现「Test 完了却卡住不进审批」的假象（#588 用户反馈）。
         // 拆分后 stage 视图始终显示真实动作：Test（门禁）→ Deploy Pre-prod → 审批；
         // 门禁前置=失败连 preprod 都不发（原并行仅省 Test 的 ~2s，无实际收益）。
@@ -294,11 +294,9 @@ pipeline {
                     def preprodUrl = [class  : 'https://class-preprod.noda.co.nz/',
                                       www    : 'https://www-preprod.noda.co.nz/',
                                       admin  : 'https://admin-preprod.noda.co.nz/',
-                                      liuyao : 'https://liuyao-preprod.noda.co.nz/',
                                       nearby : 'https://nearby-preprod.noda.co.nz/',
                                       auth   : 'https://auth-preprod.noda.co.nz/',
-                                      comment: 'https://comments-preprod.noda.co.nz/',
-                                      snagme : 'https://snagme-preprod.noda.co.nz/'][params.PRODUCT]
+                                      comment: 'https://comments-preprod.noda.co.nz/'][params.PRODUCT]
                     // API 探针路径按产品区分：nearby 域名未反代 /api/health（nginx 只通
                     // /api/nearby|user/*），审批提示与 E2E 探针同口径用公开 feed
                     def apiProbe = [nearby: '/sitemap.xml']
@@ -433,8 +431,7 @@ pipeline {
                         if [ "${LAYER}" != "api" ]; then
                             pipeline_publish_product "$PRODUCT" "prod"
                         fi
-                        # 产品维度 E2E：公网链路（Cloudflare → 边缘 → 桶/Go API）；
-                        # snagme 走 r4s 边缘内探（不依赖公网 DNS）
+                        # 产品维度 E2E：公网链路（Cloudflare → 边缘 → 桶/Go API）
                         pipeline_verify_product "$PRODUCT"
                     '''
                 }

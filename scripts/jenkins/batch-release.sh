@@ -22,18 +22,16 @@ BATCH_STATE_DIR="${BATCH_STATE_DIR:-$PWD/.batch-state}"
 HEARTBEAT_INTERVAL="${HEARTBEAT_INTERVAL:-60}"
 GATE_WAIT_TOTAL="${GATE_WAIT_TOTAL:-21600}"   # 子班审批门 6h 超时对齐
 GATE_POLL_INTERVAL=15
-ALL_PRODUCTS=(class www admin liuyao nearby auth comment snagme)
+ALL_PRODUCTS=(class www admin nearby auth comment)
 # bash 3.2（macOS /bin/bash，Jenkins sh 同款）无关联数组——case 函数查找
 preprod_url_for() {
   case "$1" in
     class)  echo "https://class-preprod.noda.co.nz/" ;;
     www)    echo "https://www-preprod.noda.co.nz/" ;;
     admin)  echo "https://admin-preprod.noda.co.nz/" ;;
-    liuyao) echo "https://liuyao-preprod.noda.co.nz/" ;;
     nearby) echo "https://nearby-preprod.noda.co.nz/" ;;
     auth)   echo "https://auth-preprod.noda.co.nz/" ;;
     comment) echo "https://comments-preprod.noda.co.nz/" ;;
-    snagme) echo "https://snagme-preprod.noda.co.nz/" ;;
     *) echo "" ;;
   esac
 }

@@ -21,7 +21,7 @@ source "$PROJECT_ROOT/scripts/lib/image-cleanup.sh"
 source "$PROJECT_ROOT/scripts/lib/cleanup.sh"
 
 # 加载密钥（Doppler 双模式，per D-03/D-04/D-10）
-# SKIP_LOAD_SECRETS=1 时跳过（调用者自行注入 secrets，如 _deploy_liuyao_preprod.sh 用 CLI eval prd_pre）
+# SKIP_LOAD_SECRETS=1 时跳过（调用者自行注入 secrets，如 preprod 部署用 CLI eval prd_pre）
 [ "${SKIP_LOAD_SECRETS:-0}" = "1" ] || load_secrets
 
 # ============================================
@@ -398,11 +398,7 @@ NEXT_PUBLIC_REMARK_URL=https://comments.noda.co.nz
 --build-arg
 NEXT_PUBLIC_GA4_WWW_ID=G-FPEF7LXD2F
 --build-arg
-NEXT_PUBLIC_GA4_LIUYAO_ID=G-ZXK92PWTEF
---build-arg
 NEXT_PUBLIC_GA4_NEARBY_ID=G-58CDREDT81
---build-arg
-NEXT_PUBLIC_GA4_SNAGME_ID=G-0617E1CMQY
 --build-arg
 NEXT_PUBLIC_NEARBY_SITE_URL=https://noda.co.nz
 ARGS
@@ -612,13 +608,9 @@ pipeline_post_publish_cleanup()
 #   class   → @noda-apps/web        (class/web)
 #   www     → @noda-apps/www        (www/web)
 #   admin   → @noda-apps/admin      (admin/web)
-#   liuyao  → @noda-apps/liuyao-web (liuyao/web；注意不是 @noda-apps/liuyao)
 #   nearby  → @noda-apps/nearby-web (nearby/web；包内无 test 脚本，turbo 静默跳过)
 #   auth    → @noda-apps/auth-app   (auth；-app 后缀区分共享包 @noda-apps/auth=packages/auth)
 #   comment → @noda-apps/comment    (comment；包内无 lint 脚本，同上)
-#   snagme  → （空）snagme/{web,scanner,engine,database} 均无 lint/test 脚本
-#             （旧 dashboard 副本 2026-09-16 已删，看板唯一真身 = admin/web
-#             src/features/snagme/）——无 Node lint/test 可跑，调用方明确跳过并 log
 # 未映射值 / PRODUCT_FILTER 未设置 → 返回空，调用方回退全仓跑（行为同旧版，防静默漏测）
 _node_pkg_for_product()
 {
@@ -626,7 +618,6 @@ _node_pkg_for_product()
         class)   echo "@noda-apps/web" ;;
         www)     echo "@noda-apps/www" ;;
         admin)   echo "@noda-apps/admin" ;;
-        liuyao)  echo "@noda-apps/liuyao-web" ;;
         nearby)  echo "@noda-apps/nearby-web" ;;
         auth)    echo "@noda-apps/auth-app" ;;
         comment) echo "@noda-apps/comment" ;;
@@ -684,13 +675,9 @@ pipeline_test()
         set -euo pipefail
         cd "$apps_dir"
         if [ -z "$node_pkg" ]; then
-            if [ "${PRODUCT_FILTER:-}" = "snagme" ]; then
-                log_info "Node lint/test: snagme/* 包均无 lint/test 脚本，跳过"
-            else
-                log_warn "Node lint/test: PRODUCT(${PRODUCT_FILTER:-未设置}) 无包映射，回退全仓 pnpm lint + pnpm test"
-                pnpm lint
-                pnpm test
-            fi
+            log_warn "Node lint/test: PRODUCT(${PRODUCT_FILTER:-未设置}) 无包映射，回退全仓 pnpm lint + pnpm test"
+            pnpm lint
+            pnpm test
         else
             log_info "Node lint/test: turbo 过滤到 $node_pkg 及其 workspace 依赖"
             pnpm exec turbo run lint --filter="$node_pkg..."
@@ -755,17 +742,6 @@ _start_prod_api()
 {
     local mode="$1" image="$2" env_file="$3"
     log_info "启动容器: $PROD_API_CONTAINER ($image)"
-    # snagme env 文件挂载（2026-09-15）：snagmeapi 的 Email 退订校验经
-    # LoadEmailConfig 回读该文件（进程 env 不注入，与 noda-jobs 同一事实源）；
-    # 文件不存在时跳过（本地模式），退订端点自动退化为 503
-    local snagme_mount=""
-    if [ "$mode" = "remote" ]; then
-        if remote_exec "test -f /etc/noda/snagme.env"; then
-            snagme_mount="-v /etc/noda/snagme.env:/etc/noda/snagme.env:ro"
-        fi
-    elif [ -f /etc/noda/snagme.env ]; then
-        snagme_mount="-v /etc/noda/snagme.env:/etc/noda/snagme.env:ro"
-    fi
     if [ "$mode" = "remote" ]; then
         # 蓝绿切换（B4 2026-10-03）：不再先 rm 旧容器——那一步就是 /graphql
         # 停机窗的根源（rm → 新容器起 listener 之间 DNS 无可解析目标）。改为：
@@ -801,7 +777,6 @@ _start_prod_api()
             --log-opt max-size=10m \
             --log-opt max-file=3 \
             --env-file $env_file \
-            $snagme_mount \
             --label com.docker.compose.project=noda-infra \
             --label com.docker.compose.service=noda-api \
             --label noda.service-group=apps \
@@ -841,7 +816,6 @@ _start_prod_api()
             --log-opt max-size=10m \
             --log-opt max-file=3 \
             --env-file "$env_file" \
-            $snagme_mount \
             --label "com.docker.compose.project=noda-infra" \
             --label "com.docker.compose.service=noda-api-prod" \
             --label "noda.service-group=apps" \
@@ -856,25 +830,15 @@ _start_prod_api()
 }
 
 # _start_prod_jobs - 启动 cronjob 调度守护进程容器（2026-09-13 cronjob 集中收口）
-# 与 api 同镜像（noda-api:<sha>，含 noda-jobs / noda-crawler / crawl-snagme 二进制），
+# 与 api 同镜像（noda-api:<sha>，含 noda-jobs / noda-crawler 二进制），
 # 仅 entrypoint 不同。env 同 api 的 /tmp/prod-api.env（DATABASE_URL/ANTHROPIC/EVENTFINDA/NEARBY_*
-# 一应俱全）；snagme 专属配置经 /etc/noda/snagme.env 只读挂载 + SNAGME_ENV_FILE 由
-# 守护进程在 spawn 子进程时隔离注入（不进容器全局 env，避免覆盖 skykiwi 侧同名键）。
+# 一应俱全）。snagme env 挂载已随 2026-10-10 v2 清算摘除（镜像已无 snagme 侧二进制/监听）。
 # 资源配额：192m/0.25cpu（常驻轻载；抓取子进程短时峰值由 scheduler 互斥串行化）。
 # 参数: $1 = mode(remote|local)  $2 = image  $3 = env_file
 _start_prod_jobs()
 {
     local mode="$1" image="$2" env_file="$3"
     log_info "启动容器: $PROD_JOBS_CONTAINER ($image)"
-    # snagme env 挂载仅在源文件存在时追加（本地模式通常无 /etc/noda/snagme.env）
-    local snagme_mount=""
-    if [ "$mode" = "remote" ]; then
-        if remote_exec "test -f /etc/noda/snagme.env"; then
-            snagme_mount="-v /etc/noda/snagme.env:/etc/noda/snagme.env:ro"
-        fi
-    elif [ -f /etc/noda/snagme.env ]; then
-        snagme_mount="-v /etc/noda/snagme.env:/etc/noda/snagme.env:ro"
-    fi
     if [ "$mode" = "remote" ]; then
         remote_exec "docker rm -f $PROD_JOBS_CONTAINER >/dev/null 2>&1 || true"
         remote_exec "docker run -d \
@@ -895,7 +859,6 @@ _start_prod_jobs()
             --log-opt max-size=5m \
             --log-opt max-file=2 \
             --env-file $env_file \
-            $snagme_mount \
             --entrypoint /usr/local/bin/noda-jobs \
             --label com.docker.compose.project=noda-infra \
             --label com.docker.compose.service=noda-jobs \
@@ -927,7 +890,6 @@ _start_prod_jobs()
             --log-opt max-size=5m \
             --log-opt max-file=2 \
             --env-file "$env_file" \
-            $snagme_mount \
             --entrypoint /usr/local/bin/noda-jobs \
             --label "com.docker.compose.project=noda-infra" \
             --label "com.docker.compose.service=noda-jobs-prod" \
@@ -1345,8 +1307,7 @@ pipeline_deploy_prod_inner()
             return 1
         fi
 
-        # jobs 调度守护进程（同 api 镜像；本地模式 snagme env 通常不存在，
-        # _start_prod_jobs 内部按文件存在性决定挂载）
+        # jobs 调度守护进程（同 api 镜像）
         local jobs_failed=0
         if _layer_want_api && ! _start_prod_jobs local "$api_image" "$tmp_api_env"; then
             log_error "jobs 容器启动失败（本地模式）— 仅回滚 jobs 容器"
@@ -1417,7 +1378,7 @@ prepare_prod_api_env_file()
     _prepare_env_file \
         "$PROJECT_ROOT/docker/env-noda-api.env" \
         "$tmp_file" \
-        '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${RENEWAL_TOKEN_SECRET} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${ANTHROPIC_MAX_TOKENS} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY} ${STRIPE_SECRET_KEY} ${STRIPE_WEBHOOK_SECRET} ${STRIPE_PRICE_DEEP_READ} ${LIUYAO_WEB_BASE_URL} ${EVENTFINDA_API_HOST} ${EVENTFINDA_API_USERNAME} ${EVENTFINDA_API_PASSWORD} ${SNAGME_API_PORT} ${GOOGLE_OAUTH_CLIENT_ID} ${GOOGLE_OAUTH_CLIENT_SECRET} ${WECHAT_OAUTH_CLIENT_ID} ${WECHAT_OAUTH_CLIENT_SECRET} ${FACEBOOK_OAUTH_CLIENT_ID} ${FACEBOOK_OAUTH_CLIENT_SECRET} ${APPLE_OAUTH_CLIENT_ID} ${X_OAUTH_CLIENT_ID} ${X_OAUTH_CLIENT_SECRET} ${AUTH_STATE_SECRET} ${COMMENT_SERVICE_KEY} ${S3_ENDPOINT} ${S3_ACCESS_KEY} ${S3_SECRET_KEY} ${TELEGRAM_BOT_TOKEN} ${TELEGRAM_CHAT_ID}' \
+        '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${RENEWAL_TOKEN_SECRET} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${ANTHROPIC_MAX_TOKENS} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY} ${STRIPE_SECRET_KEY} ${STRIPE_WEBHOOK_SECRET} ${STRIPE_PRICE_DEEP_READ} ${EVENTFINDA_API_HOST} ${EVENTFINDA_API_USERNAME} ${EVENTFINDA_API_PASSWORD} ${GOOGLE_OAUTH_CLIENT_ID} ${GOOGLE_OAUTH_CLIENT_SECRET} ${WECHAT_OAUTH_CLIENT_ID} ${WECHAT_OAUTH_CLIENT_SECRET} ${FACEBOOK_OAUTH_CLIENT_ID} ${FACEBOOK_OAUTH_CLIENT_SECRET} ${APPLE_OAUTH_CLIENT_ID} ${X_OAUTH_CLIENT_ID} ${X_OAUTH_CLIENT_SECRET} ${AUTH_STATE_SECRET} ${COMMENT_SERVICE_KEY} ${S3_ENDPOINT} ${S3_ACCESS_KEY} ${S3_SECRET_KEY} ${TELEGRAM_BOT_TOKEN} ${TELEGRAM_CHAT_ID}' \
         || return 1
     echo "$tmp_file"
 }
@@ -1476,7 +1437,7 @@ pipeline_purge_cdn()
 # 环境变量（由 Jenkins withCredentials 注入，同 pipeline_purge_cdn）：
 #   CF_API_TOKEN - Cloudflare API Token
 #   CF_ZONE_ID   - Cloudflare Zone ID
-# 参数: $1 = 产品名（class/www/admin/liuyao/nearby/auth/comment/snagme）
+# 参数: $1 = 产品名（class/www/admin/nearby/auth/comment）
 # 返回: 0=成功或跳过（永远不阻止部署，per D-09/D-11，语义同 pipeline_purge_cdn）
 pipeline_purge_cdn_urls()
 {
@@ -1504,12 +1465,6 @@ https://noda.co.nz/zh-TW/"
             urls="https://admin.noda.co.nz/login
 https://admin.noda.co.nz/dashboard
 https://admin.noda.co.nz/snagme"
-            ;;
-        liuyao)
-            # divine 主入口（en 无前缀）+ zh / zh-TW 变体壳（out/zh|zh-TW/divine.html）
-            urls="https://liuyao.noda.co.nz/divine
-https://liuyao.noda.co.nz/zh/divine
-https://liuyao.noda.co.nz/zh-TW/divine"
             ;;
         nearby)
             # 2026-10-10 晚复盘：apex HTML 是 no-cache（cf-cache-status=DYNAMIC），清 HTML 等于空操作；
@@ -1548,20 +1503,10 @@ https://auth.noda.co.nz/register"
             # 唯一静态占位页壳（其余路径走 Go commentapi 动态响应，不在桶上）
             urls="https://comments.noda.co.nz/admin"
             ;;
-        snagme)
-            # 产品站关键入口（三语 en 落根；价值页 + 数据页 + zh 壳；
-            # 其余 out/*.html 由下方自动派生逻辑补齐）
-            urls="https://snagme.noda.co.nz/
-https://snagme.noda.co.nz/pricing
-https://snagme.noda.co.nz/value
-https://snagme.noda.co.nz/deals
-https://snagme.noda.co.nz/tail
-https://snagme.noda.co.nz/zh"
-            ;;
         *)
             # D-09: 未知产品不阻止部署（打错日志提示修正 _static_product_config 同款清单）
             # ${product} 花括号形式：紧随全角括号时 bash 3.2/C locale 会把多字节字节并入变量名
-            log_error "未知产品: ${product}（可选 class/www/admin/liuyao/nearby/auth/comment/snagme），跳过 CDN URL 精准清除"
+            log_error "未知产品: ${product}（可选 class/www/admin/nearby/auth/comment），跳过 CDN URL 精准清除"
             return 0
             ;;
     esac
@@ -1578,11 +1523,9 @@ https://snagme.noda.co.nz/zh"
             class)   base_host="https://class.noda.co.nz" ;;
             www)     base_host="https://noda.co.nz" ;;
             admin)   base_host="https://admin.noda.co.nz" ;;
-            liuyao)  base_host="https://liuyao.noda.co.nz" ;;
             nearby)  base_host="https://noda.co.nz" ;;
             auth)    base_host="https://auth.noda.co.nz" ;;
             comment) base_host="https://comments.noda.co.nz" ;;
-            snagme)  base_host="https://snagme.noda.co.nz" ;;
         esac
         if [ -n "$base_host" ]; then
             local f rel url _purge_list
@@ -2200,10 +2143,6 @@ _static_product_config()
         admin)
             # 77 对象量级；阈值 20
             STATIC_WEB_DIR="admin/web";  STATIC_SENTINEL="out/login.html";   STATIC_MIN_OBJS=20 ;;
-        liuyao)
-            # 71 个 HTML + 资产 ≈ 数百对象；阈值 200
-            export NEXT_PUBLIC_GA4_LIUYAO_ID=G-ZXK92PWTEF
-            STATIC_WEB_DIR="liuyao/web"; STATIC_SENTINEL="out/en.html";      STATIC_MIN_OBJS=200 ;;
         nearby)
             # 9 个 HTML + 图片/字体资产 ≈ 200 对象量级；阈值 60；sitemap.xml 由 nearbyapi 出
             export NEXT_PUBLIC_GA4_NEARBY_ID=G-58CDREDT81
@@ -2211,18 +2150,12 @@ _static_product_config()
         comment)
             # admin 占位页（阈值 20；API 由 Go commentapi 承接）
             STATIC_WEB_DIR="comment";    STATIC_SENTINEL="out/admin.html";   STATIC_MIN_OBJS=20 ;;
-        snagme)
-            # 产品站（Next.js output:'export'，三语 en 落根 + /zh /zh-TW；数据全客户端
-            # fetch Go API :3015，深链 /deals/[id] /report/[id] 走 nginx 壳页回退）；
-            # 44 HTML + _next 资产 ≈ 200+ 对象量级；阈值 60
-            export NEXT_PUBLIC_GA4_SNAGME_ID=G-0617E1CMQY
-            STATIC_WEB_DIR="snagme/web"; STATIC_SENTINEL="out/en.html"; STATIC_MIN_OBJS=60 ;;
         auth)
             # 静态壳（~35 HTML + 资产；阈值 60）；zh 无前缀 canonical（defaultLocale=zh）
             # ——哨兵文件用 out/zh/login.html；API 端点不在静态产物（Go authapi :3004 承接）
             STATIC_WEB_DIR="auth";       STATIC_SENTINEL="out/zh/login.html"; STATIC_MIN_OBJS=60 ;;
         *)
-            log_error "未知静态站产品: ${1}（可选 class/www/admin/liuyao/nearby/auth/comment）"
+            log_error "未知静态站产品: ${1}（可选 class/www/admin/nearby/auth/comment）"
             return 1
             ;;
     esac
@@ -2441,11 +2374,9 @@ _publish_static_to_prod()
         class)   local relay_port="9333" ;;
         www)     local relay_port="9334" ;;
         admin)   local relay_port="9335" ;;
-        liuyao)  local relay_port="9336" ;;
         nearby)  local relay_port="9337" ;;
         auth)    local relay_port="9338" ;;
         comment) local relay_port="9339" ;;
-        snagme)  local relay_port="9340" ;;
         *)       local relay_port="9341" ;;
     esac
     local endpoint="http://192.168.100.1:${relay_port}"
@@ -2795,13 +2726,11 @@ pipeline_verify_static_preprod()
         class)   checks="https://class-preprod.noda.co.nz/en|class preprod 静态壳" ;;
         www)     checks="https://www-preprod.noda.co.nz/|www preprod 首页" ;;
         admin)   checks="https://admin-preprod.noda.co.nz/login|admin preprod 登录页" ;;
-        liuyao)  checks="https://liuyao-preprod.noda.co.nz/en|liuyao preprod 静态壳" ;;
         nearby)  checks="https://nearby-preprod.noda.co.nz/en|nearby preprod 静态壳" ;;
         auth)    checks="https://auth-preprod.noda.co.nz/login|auth preprod 登录页" ;;
         comment) checks="https://comments-preprod.noda.co.nz/admin|comment preprod 占位页" ;;
-        snagme)  checks="https://snagme-preprod.noda.co.nz/en|snagme preprod 看板" ;;
         *)
-            log_error "未知产品: ${product}（可选 class/www/admin/liuyao/nearby/auth/comment/snagme）"
+            log_error "未知产品: ${product}（可选 class/www/admin/nearby/auth/comment）"
             return 1
             ;;
     esac
@@ -3195,11 +3124,9 @@ _pipeline_rollback_static_site_impl()
         class)   relay_port="9333" ;;
         www)     relay_port="9334" ;;
         admin)   relay_port="9335" ;;
-        liuyao)  relay_port="9336" ;;
         nearby)  relay_port="9337" ;;
         auth)    relay_port="9338" ;;
         comment) relay_port="9339" ;;
-        snagme)  relay_port="9340" ;;
         *)       relay_port="9341" ;;
     esac
     local endpoint="http://192.168.100.1:${relay_port}"
@@ -3666,7 +3593,7 @@ pipeline_infra_verify()
 # 产品维度 E2E 验证（noda-apps Pipeline Verify 阶段）
 # 纯公网链路（Cloudflare → 边缘反代 → 桶静态壳 / Go API），与部署目标无关：
 # LAYER=static 验证「桶页面 + API 直达」，LAYER=api/all 验证所选产品的 API 链路
-# 参数: $1 = PRODUCT (class/www/admin/liuyao/nearby/auth/comment)
+# 参数: $1 = PRODUCT (class/www/admin/nearby/auth/comment)
 # 返回: 0=全部探针 200，1=任一失败
 pipeline_verify_product()
 {
@@ -3694,10 +3621,6 @@ https://noda.co.nz/zh/|www 中文页"
             # 2026-09-19 P4 探针跟进：/api/admin/health 已 410，API 链改 POST /graphql
             checks="https://admin.noda.co.nz/login|admin 登录页"
             ;;
-        liuyao)
-            # 2026-09-19 P4 探针跟进：/api/health 已 410，API 链改 POST /graphql
-            checks="https://liuyao.noda.co.nz/divine|liuyao 静态壳"
-            ;;
         nearby)
             checks="https://noda.co.nz/|nearby 静态壳（apex）
 https://noda.co.nz/sitemap.xml|nearby sitemap（反代 Go，apex）"
@@ -3711,20 +3634,8 @@ https://noda.co.nz/sitemap.xml|nearby sitemap（反代 Go，apex）"
             # 退役移除；保留管理端页面探针
             checks="https://comments.noda.co.nz/admin|comment 占位页"
             ;;
-        snagme)
-            # 公网探针（域名已生效）：产品站首页 + 新手问卷页（静态桶内容面）。
-            # 2026-09-17 P4 退役后 REST /api/* 刻意 410（nginx return 410 gone，
-            # 仅留 /api/snagme/img），GET 型探针已无可用 REST 路由——API 链路
-            # 改由下方 snagme 专属 POST /graphql 冒烟查询覆盖。
-            # 2026-10-06 D-21 localePrefix always 语义：/ 与 /quiz 由 nginx 30x 到
-            # 带前缀 canonical（协商 locale），探针改打 200 面并新增开货列表页探针
-            # （quiz-listings-seo 批新页面；旧 / 探针在 #640 误报 FAILURE 记档）。
-            checks="https://snagme.noda.co.nz/en|snagme 产品站（D-21 canonical）
-https://snagme.noda.co.nz/en/quiz|snagme 问卷页（静态桶）
-https://snagme.noda.co.nz/en/listings|snagme 开货列表总览"
-            ;;
         *)
-            log_error "未知产品: ${product}（可选 class/www/admin/liuyao/nearby/auth/comment/snagme）"
+            log_error "未知产品: ${product}（可选 class/www/admin/nearby/auth/comment）"
             return 1
             ;;
     esac
@@ -3759,10 +3670,9 @@ EOF
     local gq_query=""
     local gq_host="https://${product}.noda.co.nz/graphql"
     case "$product" in
-        snagme) gq_query='{ snagmeShowcase { listingId } }' ;;
         admin)  gq_query='{ me { id } }' ;;
         www)    gq_query='{ featuredCourses(first: 1) { id } }'; gq_host="https://noda.co.nz/graphql" ;;
-        liuyao|auth) gq_query='{ me { id } }' ;;
+        auth)   gq_query='{ me { id } }' ;;
     esac
     if [ -n "$gq_query" ]; then
         local gq_code="000"
@@ -3789,36 +3699,6 @@ EOF
             all_ok="false"
         fi
         rm -f "$gq_body"
-    fi
-
-    # snagme 专属：供给看板 0 行族探针（2026-10-02 G8 (nil,nil) panic 事故回归锁）。
-    # lexus/gs450h 两库均 0 行（preprod noda_preprod / prod noda_prod 实证），
-    # 合法终态 = HTTP 200 且（返回 data 或结构化 INSUFFICIENT_DATA/RATE_LIMITED）——
-    # 数据形态变化不误报；INTERNAL / 502 / 容器崩必挂（#500 部错提交时该探针会当场变红）。
-    if [ "$product" = "snagme" ]; then
-        local sb_code="000"
-        local sb_body
-        sb_body=$(mktemp /tmp/noda-sb-verify.XXXXXX)
-        for i in $(seq 1 "$retries"); do
-            sb_code=$(curl -sk -o "$sb_body" -w '%{http_code}' --connect-timeout 5 --max-time 15 \
-                -H 'content-type: application/json' \
-                -d '{"query":"query($make:String!,$model:String!,$budget:Float!){ snagmeSupplyBoard(make:$make,model:$model,budget:$budget){ activeTotal } }","variables":{"make":"lexus","model":"gs450h","budget":15000}}' \
-                "https://snagme.noda.co.nz/graphql" 2>/dev/null || echo "000")
-            if [ "$sb_code" = "200" ] && \
-               grep -qE '"snagmeSupplyBoard":\{|"code":"(INSUFFICIENT_DATA|RATE_LIMITED)"' "$sb_body" 2>/dev/null; then
-                break
-            fi
-            log_info "等待 snagme 供给看板 0 行族探针（data/INSUFFICIENT_DATA）... (${i}/${retries}, HTTP ${sb_code})"
-            sleep "$interval"
-        done
-        if [ "$sb_code" = "200" ] && \
-           grep -qE '"snagmeSupplyBoard":\{|"code":"(INSUFFICIENT_DATA|RATE_LIMITED)"' "$sb_body" 2>/dev/null; then
-            log_success "snagme 供给看板 0 行族探针 → 结构化终态 (gs450h HTTP $sb_code)"
-        else
-            log_error "E2E 验证失败: snagme 供给看板 0 行族探针最后状态 HTTP ${sb_code} body=$(head -c 200 "$sb_body" 2>/dev/null)"
-            all_ok="false"
-        fi
-        rm -f "$sb_body"
     fi
 
     if [ "$all_ok" != "true" ]; then
@@ -4094,7 +3974,7 @@ pipeline_deploy_preprod_inner()
         if [ -n "${DOPPLER_TOKEN_PREPROD:-}" ]; then
             _preprod_doppler_args="--token ${DOPPLER_TOKEN_PREPROD}"
         fi
-        _preprod_key_override=$(doppler secrets download ${_preprod_doppler_args} --project noda --config prd_pre --no-file --format=env 2>/dev/null | grep -E '^(STRIPE_|ANTHROPIC_|COMMENT_SERVICE_KEY|GOOGLE_OAUTH_|WECHAT_OAUTH_|FACEBOOK_OAUTH_|APPLE_OAUTH_|X_OAUTH_|TOKEN_SECRET|RENEWAL_TOKEN_SECRET|AUTH_STATE_SECRET|EMAIL_SERVICE_API_KEY|EVENTFINDA_|SNAGME_)' || true)
+        _preprod_key_override=$(doppler secrets download ${_preprod_doppler_args} --project noda --config prd_pre --no-file --format=env 2>/dev/null | grep -E '^(STRIPE_|ANTHROPIC_|COMMENT_SERVICE_KEY|GOOGLE_OAUTH_|WECHAT_OAUTH_|FACEBOOK_OAUTH_|APPLE_OAUTH_|X_OAUTH_|TOKEN_SECRET|RENEWAL_TOKEN_SECRET|AUTH_STATE_SECRET|EMAIL_SERVICE_API_KEY|EVENTFINDA_)' || true)
         if [ -z "$_preprod_key_override" ]; then
             log_warn "prd_pre 密钥导出为空，preprod 将无 Stripe/Anthropic 凭据"
         fi
@@ -4199,7 +4079,6 @@ pipeline_deploy_preprod_inner()
         pipeline_post_publish_cleanup
 
         log_success "Pre-prod 部署完成（本地 Mac）: $api_image / $static_image"
-        log_info "  liuyao:    https://liuyao-preprod.noda.co.nz/"
         log_info "  class:     https://class-preprod.noda.co.nz/"
     fi
 }
@@ -4234,7 +4113,7 @@ prepare_preprod_api_env_file()
     _prepare_env_file \
         "$PROJECT_ROOT/docker/env-noda-api-preprod.env" \
         "$tmp_file" \
-        '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${RENEWAL_TOKEN_SECRET} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${ANTHROPIC_MAX_TOKENS} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY} ${STRIPE_SECRET_KEY} ${STRIPE_WEBHOOK_SECRET} ${STRIPE_PRICE_DEEP_READ} ${LIUYAO_WEB_BASE_URL} ${EVENTFINDA_API_HOST} ${EVENTFINDA_API_USERNAME} ${EVENTFINDA_API_PASSWORD} ${SNAGME_API_PORT} ${WECHAT_OAUTH_CLIENT_ID} ${WECHAT_OAUTH_CLIENT_SECRET} ${FACEBOOK_OAUTH_CLIENT_ID} ${FACEBOOK_OAUTH_CLIENT_SECRET} ${APPLE_OAUTH_CLIENT_ID} ${X_OAUTH_CLIENT_ID} ${X_OAUTH_CLIENT_SECRET}' \
+        '${POSTGRES_USER} ${POSTGRES_PASSWORD} ${RESEND_API_KEY} ${RENEWAL_TOKEN_SECRET} ${ANTHROPIC_AUTH_TOKEN} ${ANTHROPIC_BASE_URL} ${ANTHROPIC_API_KEY} ${ANTHROPIC_MAX_TOKENS} ${TOKEN_SECRET} ${EMAIL_SERVICE_API_KEY} ${STRIPE_SECRET_KEY} ${STRIPE_WEBHOOK_SECRET} ${STRIPE_PRICE_DEEP_READ} ${EVENTFINDA_API_HOST} ${EVENTFINDA_API_USERNAME} ${EVENTFINDA_API_PASSWORD} ${WECHAT_OAUTH_CLIENT_ID} ${WECHAT_OAUTH_CLIENT_SECRET} ${FACEBOOK_OAUTH_CLIENT_ID} ${FACEBOOK_OAUTH_CLIENT_SECRET} ${APPLE_OAUTH_CLIENT_ID} ${X_OAUTH_CLIENT_ID} ${X_OAUTH_CLIENT_SECRET}' \
         || return 1
     echo "$tmp_file"
 }

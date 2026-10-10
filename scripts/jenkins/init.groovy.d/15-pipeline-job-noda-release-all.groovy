@@ -17,13 +17,13 @@ def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
       <parameterDefinitions>
         <hudson.model.StringParameterDefinition>
           <name>PRODUCTS</name>
-          <description>逗号分隔产品子集（空=全部 8 站：class,www,admin,liuyao,nearby,auth,comment,snagme）</description>
+          <description>逗号分隔产品子集（空=全部 6 站：class,www,admin,nearby,auth,comment；liuyao/snagme 已随 2026-10-10 v2 清算摘除）</description>
           <defaultValue></defaultValue>
           <trim>true</trim>
         </hudson.model.StringParameterDefinition>
         <hudson.model.ChoiceParameterDefinition>
           <name>LAYER</name>
-          <description>static=8 站前端（默认）/ all=前后端一起（单趟显著更长）</description>
+          <description>static=6 站前端（默认）/ all=前后端一起（单趟显著更长）</description>
           <choices class="java.util.Arrays$ArrayList">
             <a class="string-array">
               <string>static</string>

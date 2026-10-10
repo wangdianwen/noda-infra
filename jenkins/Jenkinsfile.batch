@@ -11,9 +11,9 @@ pipeline {
     }
     parameters {
         string(name: 'PRODUCTS', defaultValue: '',
-               description: '逗号分隔产品子集（空=全部 8 站：class,www,admin,liuyao,nearby,auth,comment,snagme）')
+               description: '逗号分隔产品子集（空=全部 6 站：class,www,admin,nearby,auth,comment；liuyao/snagme 已随 2026-10-10 v2 清算摘除）')
         choice(name: 'LAYER', choices: ['static', 'all'],
-               description: 'static=8 站前端（默认）/ all=前后端一起（单趟显著更长）')
+               description: 'static=6 站前端（默认）/ all=前后端一起（单趟显著更长）')
         string(name: 'COOLDOWN_SECONDS', defaultValue: '60',
                description: '产品间冷却秒数（r4s 单盘喘息窗口）')
     }

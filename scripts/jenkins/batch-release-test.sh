@@ -34,7 +34,7 @@ need "产品名校验（防手滑触发空班）" "grep -q '未知产品' $S"
 
 echo "== DRY_RUN 行为 =="
 TD=$(mktemp -d)
-if BATCH_STATE_DIR="$TD" DRY_RUN=1 bash "$S" phase1 "auth,liuyao" static 0 >/dev/null 2>&1 \
+if BATCH_STATE_DIR="$TD" DRY_RUN=1 bash "$S" phase1 "auth,comment" static 0 >/dev/null 2>&1 \
    && [ "$(wc -l < "$TD/products.tsv" | tr -d ' ')" = "2" ] && [ -f "$TD/summary.txt" ]; then
   echo "  ✓ phase1 dry-run 状态文件（2 行 tsv + summary）"
 else

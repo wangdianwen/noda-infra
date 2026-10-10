@@ -24,12 +24,13 @@ if [ ! -d "$NODA_APPS" ]; then
 fi
 
 # ── 1. 代码读取的键（排除测试文件；字面量 大写常量 才当 env 键）──
+# 2026-10-10 v2 清算：liuyao/snagme 源码目录已不在 noda-apps 源码树（站 410 下线），扫描面同步摘除
 CODE_KEYS=$(grep -rhoE \
     '(os\.Getenv|[^.[:alnum:]]getenv|envBase)\("[A-Z][A-Z0-9_]+"' \
     --include='*.go' --exclude='*_test.go' \
     "$NODA_APPS"/api "$NODA_APPS"/admin "$NODA_APPS"/auth "$NODA_APPS"/class \
-    "$NODA_APPS"/comment "$NODA_APPS"/common "$NODA_APPS"/liuyao \
-    "$NODA_APPS"/nearby "$NODA_APPS"/snagme 2>/dev/null \
+    "$NODA_APPS"/comment "$NODA_APPS"/common \
+    "$NODA_APPS"/nearby 2>/dev/null \
     | grep -oE '"[A-Z][A-Z0-9_]+"' | tr -d '"' | sort -u)
 
 # ── 2. 模板定义的键（prod + preprod + Dockerfile ENV）──
@@ -43,7 +44,7 @@ TPL_KEYS=$(
             sed -E 's/^ENV ([A-Z][A-Z0-9_]+)=.*/\1/'
     } | cut -d= -f1 | sort -u)
 
-# ── 3. 豁免清单（# 注释；三类：snagme.env 文件态配置 / 有代码默认值的可选旋钮 / 非容器消费方）──
+# ── 3. 豁免清单（# 注释；两类：有代码默认值的可选旋钮 / 非容器消费方）──
 ALLOW_FILE="$SELF_DIR/docker/env-allowlist.txt"
 ALLOWED=""
 [ -f "$ALLOW_FILE" ] && ALLOWED=$(grep -vE '^\s*#|^\s*$' "$ALLOW_FILE" | sort -u)

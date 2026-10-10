@@ -1,9 +1,9 @@
 # ============================================
-# 本机 Mac Preprod 环境（含 liuyao + Keycloak）
+# 本机 Mac Preprod 环境（Keycloak 已下线移除；liuyao-preprod 已 410，见 liuyao-local.conf）
 # ============================================
 # 轻量级 preprod：postgres + 应用三容器（keycloak 已随 Keycloak 下线移除，2026-09-12）
 # 三容器拆分（2026-09）：原 noda-apps 单容器拆为
-#   preprod-noda-api（Go API 七 listener）/ preprod-noda-static（nginx 静态+反代）——S5 零 Node
+#   preprod-noda-api（Go API 六 listener）/ preprod-noda-static（nginx 静态+反代）——S5 零 Node
 # 原 preprod-nginx 容器删除——static 容器顶替（监听 80/443，挂载 liuyao-local.conf）
 #
 # 使用：
@@ -11,12 +11,8 @@
 #   NORA_STATIC_IMAGE=noda-static:<sha> \
 #   docker compose -f docker/docker-compose.preprod-local.yml up -d
 #
-# 访问（需 /etc/hosts 加 127.0.0.1 liuyao-preprod.noda.co.nz auth-preprod.noda.co.nz）：
-#   liuyao:   https://liuyao-preprod.noda.co.nz/
-#
-# 也可直接用 localhost:端口：
-#   liuyao-web:  http://localhost:3005
-#   liuyao-api:  http://localhost:3007/api/health（跨容器经 static 反代 /api/）
+# 访问（需 /etc/hosts 加 127.0.0.1 auth-preprod.noda.co.nz）：
+#   class 等经 static 反代；liuyao-preprod 已整站 410（liuyao-local.conf liuyao-preprod 块）
 
 name: preprod
 
@@ -41,8 +37,8 @@ services:
       retries: 5
 
   # ----------------------------------------
-  # Go API（聚合单二进制，五 listener：class 3001 / liuyao 3007 / email 3010 /
-  #   admin 3011 / nearby 3014）
+  # Go API（聚合单二进制，四 listener：class 3001 / email 3010 /
+  #   admin 3011 / nearby 3014；liuyao 3007 已随 2026-10-10 v2 清算摘除）
   # 镜像 = noda-apps Wave 3/4 新形态：Go 多模块聚合单容器（构建见
   #   noda-apps/infra/docker/Dockerfile.noda-api，BuildKit GOCACHE 缓存挂载只重编改动包），
   #   附带 noda-crawler 子进程二进制（NODA_CRAWLER_BIN=/usr/local/bin/noda-crawler 不变）
@@ -68,7 +64,7 @@ services:
       AUTH_BYPASS: "false"
       # 会话 cookie 名（Go API 校验 cookie 用；preprod 独立名避免污染 prod 会话）
       NEXT_PUBLIC_SESSION_COOKIE_NAME: "noda_session_preprod"
-      NEXT_PUBLIC_ALLOWED_ORIGINS: "https://class-preprod.noda.co.nz,https://auth-preprod.noda.co.nz,https://www-preprod.noda.co.nz,https://admin-preprod.noda.co.nz,https://liuyao-preprod.noda.co.nz,https://comments-preprod.noda.co.nz"
+      NEXT_PUBLIC_ALLOWED_ORIGINS: "https://class-preprod.noda.co.nz,https://auth-preprod.noda.co.nz,https://www-preprod.noda.co.nz,https://admin-preprod.noda.co.nz,https://comments-preprod.noda.co.nz"
       TOKEN_SECRET: "${TOKEN_SECRET:-}"
       EMAIL_SERVICE_API_KEY: "${EMAIL_SERVICE_API_KEY:-}"
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
@@ -88,7 +84,6 @@ services:
       STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:-}"
       STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:-}"
       STRIPE_PRICE_DEEP_READ: "${STRIPE_PRICE_DEEP_READ:-}"
-      LIUYAO_WEB_BASE_URL: "${LIUYAO_WEB_BASE_URL:-https://liuyao-preprod.noda.co.nz}"
       # Nearby（2026-09 M1）：:3014 listener + Eventfinda 凭证（prd_pre 经 pipeline 导出）
       NEARBY_API_PORT: "3014"
       EVENTFINDA_API_HOST: "${EVENTFINDA_API_HOST:-}"
@@ -103,7 +98,7 @@ services:
       GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
       GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
       AUTH_STATE_SECRET: "${AUTH_STATE_SECRET:-}"
-      ALLOWED_ORIGINS: "https://class-preprod.noda.co.nz,https://auth-preprod.noda.co.nz,https://www-preprod.noda.co.nz,https://admin-preprod.noda.co.nz,https://liuyao-preprod.noda.co.nz,https://comments-preprod.noda.co.nz"
+      ALLOWED_ORIGINS: "https://class-preprod.noda.co.nz,https://auth-preprod.noda.co.nz,https://www-preprod.noda.co.nz,https://admin-preprod.noda.co.nz,https://comments-preprod.noda.co.nz"
       ADMIN_ALLOWED_EMAILS: "wangdw2012@gmail.com,dryrun-admin@noda.test"
       COMMENT_SERVICE_KEY: "${COMMENT_SERVICE_KEY:-}"
       REMARK_WORDS_BAN_LIST: "赌博,代开发票,casino-spam"

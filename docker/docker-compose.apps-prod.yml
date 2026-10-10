@@ -4,8 +4,9 @@
 # 项目名: noda-apps-prod（参考定义；r4s 生产实际由 pipeline_deploy_prod 以 docker run 管理）
 # 部署: Jenkins apps-deploy Pipeline（scripts/pipeline-stages.sh）
 # 容器名: noda-api-prod / noda-static-prod
-#   1. noda-api-prod      Go 七 listener API（class 3001 / auth 3004 / liuyao 3007 / email 3010
+#   1. noda-api-prod      Go 六 listener API（class 3001 / auth 3004 / email 3010
 #                          / admin 3011 / comment 3012 / nearby 3014），启动时执行迁移
+#                          （liuyao 3007 已随 2026-10-10 v2 清算摘除）
 #   2. noda-static-prod   nginx 反代（六个站点由 SeaweedFS 桶伺服；r4s 栈内合并原
 #                          noda-infra-nginx 反代角色，保留网络别名 noda-infra-nginx）
 # 兼容: noda-api-prod 保留网络别名 noda-apps-prod（残留引用平滑过渡）
@@ -17,7 +18,7 @@ name: noda-apps-prod
 services:
   # ----------------------------------------
   # Go API — 256M（三容器拆分 D-06）
-  # class-api 3001 / liuyao-api 3007 / email-service 3010 / admin-api 3011
+  # class-api 3001 / email-service 3010 / admin-api 3011
   # 健康检查使用 127.0.0.1 避免 IPv6 解析问题（r4s Alpine）
   # ----------------------------------------
   noda-api-prod:
@@ -43,19 +44,18 @@ services:
       DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod
       # Go API 会话/CORS（与退役 frontend 容器同名变量，各容器独立注入）
       NEXT_PUBLIC_SESSION_COOKIE_NAME: noda_session
-      NEXT_PUBLIC_ALLOWED_ORIGINS: https://class.noda.co.nz,https://auth.noda.co.nz,https://www.noda.co.nz,https://admin.noda.co.nz,https://liuyao.noda.co.nz,https://comments.noda.co.nz
+      NEXT_PUBLIC_ALLOWED_ORIGINS: https://class.noda.co.nz,https://auth.noda.co.nz,https://www.noda.co.nz,https://admin.noda.co.nz,https://comments.noda.co.nz
       # Keycloak 内网端点（token introspection / admin）；noda-infra-nginx 别名由 static 容器承载
       KEYCLOAK_INTERNAL_URL: http://noda-infra-nginx
-      # LLM（liuyao 起卦解卦）
+      # LLM（Anthropic 兼容网关）
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MAX_TOKENS: ${ANTHROPIC_MAX_TOKENS:-24000}
-      # Stripe（liuyao 支付）
+      # Stripe
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       STRIPE_PRICE_DEEP_READ: ${STRIPE_PRICE_DEEP_READ:-}
-      LIUYAO_WEB_BASE_URL: ${LIUYAO_WEB_BASE_URL:-https://liuyao.noda.co.nz}
       # Email（email-service 3010）
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM_EMAIL: Noda <noreply@email.noda.co.nz>
@@ -72,7 +72,7 @@ services:
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       AUTH_STATE_SECRET: ${AUTH_STATE_SECRET:-}
-      ALLOWED_ORIGINS: https://noda.co.nz,https://class.noda.co.nz,https://auth.noda.co.nz,https://www.noda.co.nz,https://admin.noda.co.nz,https://liuyao.noda.co.nz,https://comments.noda.co.nz
+      ALLOWED_ORIGINS: https://noda.co.nz,https://class.noda.co.nz,https://auth.noda.co.nz,https://www.noda.co.nz,https://admin.noda.co.nz,https://comments.noda.co.nz
       ADMIN_ALLOWED_EMAILS: wangdw2012@gmail.com
       COMMENT_SERVICE_KEY: ${COMMENT_SERVICE_KEY:-}
       # 头像桶（authapi avatar 写 SeaweedFS；blobstore 同款变量名）

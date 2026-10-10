@@ -37,8 +37,8 @@ pipeline {
     parameters {
         choice(
             name: 'PRODUCT',
-            choices: ['class', 'www', 'admin', 'liuyao', 'nearby', 'auth', 'comment', 'snagme'],
-            description: '选择要回滚的产品（必选其一，与 noda-apps 的产品清单一致）'
+            choices: ['class', 'www', 'admin', 'nearby', 'auth', 'comment'],
+            description: '选择要回滚的产品（必选其一，与 noda-apps 的产品清单一致；liuyao/snagme 已随 2026-10-10 v2 清算摘除）'
         )
         choice(
             name: 'SCOPE',

@@ -21,17 +21,15 @@ def configXml = '''<?xml version='1.1' encoding='UTF-8'?>
       <parameterDefinitions>
         <hudson.model.ChoiceParameterDefinition>
           <name>PRODUCT</name>
-          <description>选择要回滚的产品（class / www / admin / liuyao / nearby / auth / comment / snagme，必选其一）</description>
+          <description>选择要回滚的产品（class / www / admin / nearby / auth / comment，必选其一；liuyao/snagme 已随 2026-10-10 v2 清算摘除）</description>
           <choices class="java.util.Arrays$ArrayList">
             <a class="string-array">
               <string>class</string>
               <string>www</string>
               <string>admin</string>
-              <string>liuyao</string>
               <string>nearby</string>
               <string>auth</string>
               <string>comment</string>
-              <string>snagme</string>
             </a>
           </choices>
         </hudson.model.ChoiceParameterDefinition>
