@@ -109,7 +109,8 @@ pipeline {
 
                     # precompress 的 .br/.gz 剔除：r4s nginx 无 brotli_static/gzip_static，
                     # 压缩副本上桶纯属冗余对象（nginx 就地 gzip 承担压缩）
-                    find shuotong-wang/build \( -name '*.br' -o -name '*.gz' \) -delete
+                    find shuotong-wang/build -name '*.br' -delete
+                    find shuotong-wang/build -name '*.gz' -delete
 
                     # 垫入发布函数约定的槽位：$NODA_APPS_DIR/shuotong-out/out/
                     rm -rf shuotong-out
@@ -125,7 +126,7 @@ pipeline {
                         > shuotong-out/out/.noda-manifest
                     _tree=$(shasum -a 256 < shuotong-out/out/.noda-manifest | awk '{print $1}')
                     _cnt=$(( $(wc -l < shuotong-out/out/.noda-manifest | tr -d ' ') + 2 ))
-                    printf '%s %s %s\n' "$SHA" "$_tree" "$_cnt" > shuotong-out/out/.noda-artifact-hash
+                    printf '%s %s %s\\n' "$SHA" "$_tree" "$_cnt" > shuotong-out/out/.noda-artifact-hash
                     echo "✅ 产物就绪：shuotong-out/out/（对象数=$_cnt，含 2 指纹文件；内容 $SHA）"
                 '''
             }
