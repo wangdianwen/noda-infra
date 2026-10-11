@@ -45,7 +45,7 @@ for i in $(seq 1 60); do
   sleep 10
 done
 [ -n "$BUILD" ] || { echo "队列项 10 分钟未出队"; exit 1; }
-echo "shuotong-wang build#$BUILD 已触发（MODE=$MODE）"
+echo "shuotong-wang build#$BUILD 已触发 (MODE=${MODE})"
 
 pending_count() {
   local pend
