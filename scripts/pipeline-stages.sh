@@ -1454,10 +1454,11 @@ https://class.noda.co.nz/zh-TW
 https://class.noda.co.nz/api/health"
             ;;
         www)
-            # 规范域首页 + zh/zh-TW 目录壳（www 301 → noda.co.nz，与 verify 一样只探规范域）
+            # 规范域首页 + zh/zh-TW 目录壳（www 301 → noda.co.nz，与 verify 一样只探规范域；
+            # 2026-10-11 尾斜杠一致性（9a805b6 F5/F7）后 canonical=无斜杠，/zh/ 会 301）
             urls="https://noda.co.nz/
-https://noda.co.nz/zh/
-https://noda.co.nz/zh-TW/"
+https://noda.co.nz/zh
+https://noda.co.nz/zh-TW"
             ;;
         admin)
             # 登录页壳（发布哨兵 out/login.html）+ 登录后落地 dashboard 壳
@@ -3621,8 +3622,10 @@ https://class.noda.co.nz/sitemap.xml|class sitemap（反代 Go API）"
         www)
             # www.noda.co.nz 301 → noda.co.nz（规范域）；直接探规范域。
             # P4 退役后 /api/* 410，API 链改下方 POST /graphql 冒烟
+            # 2026-10-11：/zh/ 已 301 收敛到无斜杠 canonical（9a805b6），探 /zh。
+            # 本行未随 9a805b6 同批更新，#812 www 发版 E2E 误红实证。
             checks="https://noda.co.nz/|www 首页
-https://noda.co.nz/zh/|www 中文页"
+https://noda.co.nz/zh|www 中文页"
             ;;
         admin)
             # 2026-09-19 P4 探针跟进：/api/admin/health 已 410，API 链改 POST /graphql
