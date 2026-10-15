@@ -2749,8 +2749,12 @@ pipeline_verify_static_preprod()
         url="${entry%%|*}"
         label="${entry#*|}"
         code="000"
+        # sitemap 反代 Go 动态渲染（3.3 万 URL，20MB 级），10s 窗口恒超时假阴性
+        # （2026-10-16 #850/#851 发版实证）——该类 URL 放宽到 40s
+        local mt=10
+        case "$url" in *sitemap.xml*) mt=40 ;; esac
         for i in $(seq 1 "$retries"); do
-            code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "$url" 2>/dev/null || echo "000")
+            code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time "$mt" "$url" 2>/dev/null || echo "000")
             if [ "$code" = "200" ]; then
                 break
             fi
@@ -3656,8 +3660,12 @@ https://noda.co.nz/sitemap.xml|nearby sitemap（反代 Go，apex）"
         url="${entry%%|*}"
         label="${entry#*|}"
         code="000"
+        # sitemap 反代 Go 动态渲染（3.3 万 URL，20MB 级），10s 窗口恒超时假阴性
+        # （2026-10-16 #850/#851 发版实证）——该类 URL 放宽到 40s
+        local mt=10
+        case "$url" in *sitemap.xml*) mt=40 ;; esac
         for i in $(seq 1 "$retries"); do
-            code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "$url" 2>/dev/null || echo "000")
+            code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time "$mt" "$url" 2>/dev/null || echo "000")
             if [ "$code" = "200" ]; then
                 break
             fi
