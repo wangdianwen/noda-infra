@@ -667,28 +667,33 @@ pipeline_test()
     # auth/comment 无 lint，实测 exit 0 + WARNING），依赖包先 ^build 再 test。
     local node_pkg
     node_pkg=$(_node_pkg_for_product "${PRODUCT_FILTER:-}")
+    # ⚠️ 失败传播必须用 && 链，不能用 set -e：`( ... ) || return 1` 上下文里
+    # bash 对被检测退出码的复合命令关闭 errexit——子 shell 内显式 `set -e` 也
+    # 被 POSIX/bash 规定同样忽略（「-e being ignored」语境延续到内部）。
+    # #854/#858 实证：turbo test 失败被吞、继续打 ✅ 直达部署段（#45 时代的
+    # set -e 修复无效）。&& 链与 Go 段同机制，不依赖 errexit 语义。
+    local node_test_ok=0
     (
-        # ⚠️ 必须显式 set -e：`( ... ) || return 1` 上下文会让子 shell 内部忽略
-        # 全局 errexit（bash 对被检测退出码的复合命令关闭 -e），turbo 失败会被
-        # 吞掉继续打 ✅——实证 #45 带坏 typecheck 直达 prod 批准门（#42 静态
-        # 发布挡板同样失效）。Go 段用 && 链不受影响。
-        set -euo pipefail
-        cd "$apps_dir"
+        cd "$apps_dir" &&
         if [ -z "$node_pkg" ]; then
-            log_warn "Node lint/test: PRODUCT(${PRODUCT_FILTER:-未设置}) 无包映射，回退全仓 pnpm lint + pnpm test"
-            pnpm lint
+            log_warn "Node lint/test: PRODUCT(${PRODUCT_FILTER:-未设置}) 无包映射，回退全仓 pnpm lint + pnpm test" &&
+            pnpm lint &&
             pnpm test
         else
-            log_info "Node lint/test: turbo 过滤到 $node_pkg 及其 workspace 依赖"
-            pnpm exec turbo run lint --filter="$node_pkg..."
-            pnpm exec turbo run test --filter="$node_pkg..."
+            log_info "Node lint/test: turbo 过滤到 $node_pkg 及其 workspace 依赖" &&
+            pnpm exec turbo run lint --filter="$node_pkg..." &&
+            pnpm exec turbo run test --filter="$node_pkg..." &&
             # test:i18n 为根级跨产品脚本（i18n parity 校验，秒级），无法按产品切分，保留全跑；
             # typecheck 原随全仓 pnpm test 尾部执行，此处收窄到同一产品切片，保持挡板强度
-            pnpm test:i18n
+            pnpm test:i18n &&
             pnpm exec turbo run typecheck --filter="$node_pkg..."
         fi
-        log_success "Node lint/test 完成（PRODUCT=${PRODUCT_FILTER:-未设置}）"
-    ) || return 1
+    ) && node_test_ok=1
+    if [ "$node_test_ok" != "1" ]; then
+        log_error "Node lint/test 失败（PRODUCT=${PRODUCT_FILTER:-未设置}）"
+        return 1
+    fi
+    log_success "Node lint/test 完成（PRODUCT=${PRODUCT_FILTER:-未设置}）"
 }
 
 # pipeline_lint_go - Go 门禁第二层（2026-10-05 T6 收尾批）：golangci-lint + 全仓守卫。
