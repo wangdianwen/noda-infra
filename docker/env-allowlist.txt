@@ -105,3 +105,5 @@ RENEWAL_TOKEN_SECRET
 #   可选旋钮：未配置 = 代码默认 100ms（= docs/sql-performance-gate.md 门禁线），
 #   仅调日志灵敏度不改门禁线；生产默认即正确，故豁免模板对账（同型先例见 git 史 SNAGME_FIRE_FATIGUE_DAYS）。
 DB_SLOW_LOG_MS
+NEARBY_OPS_METRICS_ENABLED
+GSC_SA_KEY_JSON
