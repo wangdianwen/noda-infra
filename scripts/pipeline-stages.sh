@@ -2302,6 +2302,12 @@ pipeline_build_static_artifacts()
     # 增量构建静默产出旧代码（class #356/#360/#362 三连实证——编译 7.4s 全走
     # 缓存，GA 埋点代码丢失、mirror 忠实上桶）。构建前整删 .next 换确定性全量。
     rm -rf "$web_dir/.next"
+    # issue#16 专题互通桥（TopicNearbyBridge）构建期预取 BFF GraphQL——Jenkins
+    # 宿主无本地 BFF，缺省回落 localhost:3060 会让桥在静态导出中静默缺席，
+    # 故 nearby 构建显式指向线上公网端点（按城缓存，仅 ~21 次 /graphql 请求）
+    if [ "$product" = "nearby" ]; then
+        export BFF_URL="${NEARBY_BUILD_BFF_URL:-https://noda.co.nz}"
+    fi
     if ! (cd "$web_dir" && pnpm build); then
         log_error "$product 静态站构建失败: $web_dir"
         return 1
