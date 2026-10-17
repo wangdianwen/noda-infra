@@ -124,3 +124,7 @@ NEARBY_NEWS_FULLTEXT_ENABLED
 NEARBY_NEWS_FULLTEXT_LIMIT
 NEARBY_PLACE_POOL_LIMIT
 NEARBY_PLACE_POOL_BUDGET_MIN
+# RL429_DIR：adminapi 反爬限流观测的 429 JSON 日志目录（bot-hardening 2026-10-17）。
+# 代码默认 /ops-logs（pipeline-stages.sh _start_prod_* 恒挂载该 RO 卷），模板不配、
+# 代码默认值兜底；preprod/本地未挂卷 → source=disabled 优雅空态（ratelimit.go）。
+RL429_DIR
