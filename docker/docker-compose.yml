@@ -59,6 +59,10 @@ services:
       - ../config/nginx/conf.d:/etc/nginx/conf.d:ro
       - ../config/nginx/snippets:/etc/nginx/snippets:ro
       - ../config/nginx/ssl:/etc/nginx/ssl:ro
+      # 429 观测日志（conf.d/ratelimit.conf access_log）share 给宿主 cron 告警与
+      # noda-api 只读聚合；prod 线真正生效的是 pipeline-stages.sh _start_prod_static
+      # 的 docker run 挂载，此行保 compose 形态一致（引擎自动建缺省目录）
+      - ../docker/volumes/ops-logs:/var/log/rl429:rw
     networks:
       - noda-network
     depends_on:

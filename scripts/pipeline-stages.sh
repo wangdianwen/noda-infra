@@ -775,6 +775,7 @@ _start_prod_api()
             --tmpfs /tmp \
             --tmpfs /app/crawl-output:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/crawler-logs:uid=1001,gid=1001,mode=0755 \
+            -v /opt/noda/noda-infra/docker/volumes/ops-logs:/ops-logs:ro \
             --memory 256m \
             --memory-reservation 64m \
             --cpus 0.5 \
@@ -814,6 +815,7 @@ _start_prod_api()
             --tmpfs /tmp \
             --tmpfs /app/crawl-output:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/crawler-logs:uid=1001,gid=1001,mode=0755 \
+            -v "$PROJECT_ROOT/docker/volumes/ops-logs:/ops-logs:ro" \
             --memory 256m \
             --memory-reservation 64m \
             --cpus 0.5 \
@@ -951,6 +953,7 @@ _start_prod_static()
             -v $config_dir/snippets:/etc/nginx/snippets:ro \
             -v $config_dir/ssl:/etc/nginx/ssl:ro \
             -v $config_dir/errors:/etc/nginx/errors:ro \
+            -v /opt/noda/noda-infra/docker/volumes/ops-logs:/var/log/rl429:rw \
             --memory 128m \
             --memory-reservation 32m \
             --cpus 0.25 \
@@ -993,6 +996,7 @@ _start_prod_static()
             -v "$config_dir/snippets:/etc/nginx/snippets:ro" \
             -v "$config_dir/ssl:/etc/nginx/ssl:ro" \
             -v "$config_dir/errors:/etc/nginx/errors:ro" \
+            -v "$PROJECT_ROOT/docker/volumes/ops-logs:/var/log/rl429:rw" \
             --memory 128m \
             --memory-reservation 32m \
             --cpus 0.25 \

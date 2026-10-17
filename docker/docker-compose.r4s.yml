@@ -143,6 +143,11 @@ services:
       - /tmp
       - /app/crawl-output:uid=1001,gid=1001,mode=0755
       - /app/crawler-logs:uid=1001,gid=1001,mode=0755
+    # 429 观测日志只读挂载（pipeline-stages.sh _start_prod_* 的 docker run 为 prod
+    # 真正生效路径，同样注入；此行保 manual compose 场景）——adminapi
+    # /api/admin/ratelimit/overview 读 /ops-logs/rl429*.log 聚合
+    volumes:
+      - /opt/noda/noda-infra/docker/volumes/ops-logs:/ops-logs:ro
     networks:
       noda-network:
         aliases:

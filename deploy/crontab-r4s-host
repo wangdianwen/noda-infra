@@ -54,6 +54,14 @@
 #       进度条(↑)由上传脚本改写到 /tmp/.baidu-progress 侧文件，主日志不再膨胀。=====
 */10 * * * * /mnt/mmc1-4/System/Scripts/baidu-upload-watchdog.sh
 
+# ===== 反爬限流（429）风暴 TG 告警（每 10 分钟）：noda-static-prod 的 429 JSON
+#       access log（真实访客 IP）增量聚合，单 IP×面 ≥20 次/窗 TG 告警（按小时
+#       去重）。脚本 r4s:/mnt/mmc1-4/System/Scripts/rl429-alert.sh
+#       （存档 deploy/rl429-alert.sh）；数据卷 /opt/noda/noda-infra/docker/
+#       volumes/ops-logs（noda-static-prod 写、noda-api-prod 只读聚合）。
+#       2026-10-17 bot-hardening 阶段 2 监控新增 =====
+*/10 * * * * /mnt/mmc1-4/System/Scripts/rl429-alert.sh >> /var/log/noda-rl-alert.log 2>&1
+
 # ===== 日志瘦身（每日 04:50）：/var/log 是内存盘，noda 日志超 2MB 保留末尾 200KB，
 #       进度条侧文件超 1MB 清空（2026-10-07 进度条曾把单日志刷到 39MB 挤占 RAM）=====
 50 4 * * * /mnt/mmc1-4/System/Scripts/log-trim.sh
