@@ -45,7 +45,9 @@ import time
 import urllib.request
 
 # ---- 配置 ----
-ZONES = ("noda.co.nz", "class.noda.co.nz")  # 黑名单同步到全部 zone（token 需各 zone WAF Edit）
+# class.noda.co.nz 是主站 zone 的子域（同一 zone，规则天然覆盖），无需单列。
+# 多 zone 能力保留：未来若新增独立 zone，把名字加进 ZONES 即可（token 需其 WAF Edit）。
+ZONES = ("noda.co.nz",)
 PHASE = "http_request_firewall_custom"
 RULE_MARKER = "ip-range-blacklist"          # 规则 description 前缀 / ref
 NGINX_CONTAINER = "noda-static-prod"
