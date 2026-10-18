@@ -99,3 +99,14 @@
 #       窗口，发布中绝不可重启。脚本 r4s:/mnt/mmc1-4/System/Scripts/
 #       weed-vacuum-nightly.sh（存档 deploy/weed-vacuum-nightly.sh）=====
 0 2 * * * /mnt/mmc1-4/System/Scripts/weed-vacuum-nightly.sh >> /var/log/noda-weed-vacuum.log 2>&1
+
+# ===== IP 段黑名单（2026-10-18 通用化重写，取代搜狗专用版 sogou-ban.py）=====
+#       自动发现 spam 网段（/24 行为指纹 6h 滚动窗 + 单 IP 洪水 /32 + 机密探测路径攻击惯犯）
+#       → CF WAF 封禁（普通 7 天 / 攻击型 30 天）→ 静默满自动解封
+#       欢迎名单：真 Googlebot(UA+段双验证)/自报身份爬虫/站主 IP；规则 ref=ip-range-blacklist；全 API 操作
+*/5 * * * * python3 /mnt/mmc1-4/System/Scripts/ip-ban.py >> /var/log/noda-ip-ban.log 2>&1
+
+# ===== immich 任务队列解除暂停（live 补录，2026-10-18 对账时发现存量缺失）=====
+0 21 * * * docker exec immich_redis redis-cli eval "for i,q in ipairs({\"thumbnailGeneration\",\"videoConversion\",\"smartSearch\",\"faceDetection\",\"duplicateDetection\"}) do redis.call(\"HDEL\", \"immich_bull:\"..q..\":meta\", \"paused\") while redis.call(\"LLEN\", \"immich_bull:\"..q..\":paused\") > 0 do redis.call(\"LMOVE\", \"immich_bull:\"..q..\":paused\", \"immich_bull:\"..q..\":wait\", \"LEFT\", \"RIGHT\") end end" 0
+20 5 * * * sh /mnt/mmc1-4/System/Scripts/b2-quota-tg-guard.sh
+*/10 * * * * /mnt/mmc1-4/System/Scripts/pd-watchdog.sh # placedesc 看护一次性（达标删）
