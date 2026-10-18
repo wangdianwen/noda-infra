@@ -100,9 +100,10 @@ services:
       HISTORY_DIR: /app/history
       # 备份保留天数（B2 端 min-age 清理；2026-09-13 由 7 收敛到 3 控 B2 免费额度）
       RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-3}
-      # 文件系统备份（2026-09-13 S3 逻辑备份：SeaweedFS S3 API → B2，
-      # 只备素材（avatars/nearby 爬取图片），sites/ 前端编译产物经 Jenkins 可重建不备份）
-      BACKUP_FS_SOURCES: ${BACKUP_FS_SOURCES:-s3weed:noda-static/avatars,s3weed:noda-static/nearby}
+      # 文件系统备份（2026-09-13 S3 逻辑备份：SeaweedFS S3 API → B2，只备 avatars；
+      # nearby 爬取素材 2026-10-18 挪百度云（r4s nearby-baidu-backup.sh → /noda备份/nearby），
+      # B2 免费额度 10GB 装不下 nearby 源 ×4 滚动窗（10-18 实证触 75%）；sites/ 前端编译产物经 Jenkins 可重建不备份）
+      BACKUP_FS_SOURCES: ${BACKUP_FS_SOURCES:-s3weed:noda-static/avatars}
       FS_B2_PATH: ${FS_B2_PATH:-backups/filesystem/}
       FS_RETENTION_DAYS: ${FS_RETENTION_DAYS:-3}
       SEAWEED_S3_ENDPOINT: ${SEAWEED_S3_ENDPOINT:-http://seaweedfs:8333}
@@ -114,8 +115,9 @@ services:
       B2_APPLICATION_KEY: ${B2_APPLICATION_KEY}
       B2_BUCKET_NAME: ${B2_BUCKET_NAME:-noda-backups}
       B2_PATH: ${B2_PATH:-backups/postgres/}
-      # 告警邮件通道（2026-09-26 修复容器内告警从未发出）：Resend HTTP API，
-      # 与 adminapi/emailapi 同通道；ALERT_EMAIL/RESEND_API_KEY 经 Doppler 注入
+      # 告警邮件通道（Resend HTTP API，与 adminapi/emailapi 同通道）。
+      # 2026-10-18 起 ALERT_EMAIL/RESEND_API_KEY 固化在 r4s docker/.env——勿只依赖 Doppler
+      # 部署时注入（9-30 重建未带 Doppler 致空串、45%/60% 预警静默丢失，10-18 复盘）
       ALERT_EMAIL: ${ALERT_EMAIL:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM_EMAIL: "${RESEND_FROM_EMAIL:-Noda <noreply@noda.co.nz>}"

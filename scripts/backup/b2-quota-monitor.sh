@@ -6,10 +6,11 @@ set -euo pipefail
 # ============================================
 # 背景：2026-09-26 桶内隐藏旧版本堆积 8.25/10 GB 触发 Backblaze 75% 告警
 #       （rclone 对 B2 的 delete 只打 hide marker 不释放数据，详见
-#       backup-filesystem.sh 头注与 git 0ea0080）。修复后稳态约 2.5-3 GB，
-#       但 nearby 爬取素材持续净增（~12 MB/日），FS 全量镜像 × 4 天滚动窗口
-#       的稳态用量随源大小线性上涨——本监控在远早于 75% 处两级预警，留出
-#       处置时间（FS_RETENTION_DAYS 3→2 可立减约四分之一稳态用量）。
+#       backup-filesystem.sh 头注与 git 0ea0080）。修复后稳态约 2.5-3 GB。
+#       2026-10-18 二次触 75%（真实增长：nearby 源翻倍 ×4 滚动窗），nearby
+#       已挪百度云（r4s nearby-baidu-backup.sh → /noda备份/nearby），B2 只备
+#       postgres/avatars/doppler，稳态约 0.4-0.7 GB；桶内 10-15~18 的 nearby
+#       历史日目录保留作过渡副本（用户拍板先不删，百度基线核验后可择机 purge）。
 # 口径：rclone size --b2-versions，含隐藏旧版本 = 真实计费字节
 #       （默认 size 只算当前版本会严重低估，2026-09-26 排查实证）。
 # 阈值：B2_QUOTA_BYTES（默认 10 GiB）/ B2_QUOTA_WARN_PCT（默认 45）/
@@ -78,7 +79,7 @@ main()
         log_error "B2 用量达到严重阈值（${pct}% ≥ ${B2_QUOTA_CRIT_PCT}%）"
         prefix_breakdown "$rclone_config" "$bucket"
         cleanup_rclone_config "$rclone_config"
-        send_alert "b2_quota_critical" "$bucket" "B2 桶 ${bucket} 用量 ${pct}%（≥${B2_QUOTA_CRIT_PCT}%，${bytes}/${B2_QUOTA_BYTES} bytes）。处置：① FS_RETENTION_DAYS 3→2（docker-compose 环境变量，约减 1/4 稳态）② 查 filesystem.log 保留清理与 b2-cleanup.log 每日 cleanup 是否正常 ③ 查桶生命周期规则是否被改（应为 7d 隐藏/1d 删除）"
+        send_alert "b2_quota_critical" "$bucket" "B2 桶 ${bucket} 用量 ${pct}%（≥${B2_QUOTA_CRIT_PCT}%，${bytes}/${B2_QUOTA_BYTES} bytes）。处置：① 用 prefix_breakdown 定位涨源（nearby 已挪百度云，若 filesystem/nearby 再增长=挪移回归）② 查 filesystem.log 保留清理与 b2-cleanup.log 每日 cleanup 是否正常 ③ 查桶生命周期规则是否被改（应为 7d 隐藏/1d 删除）④ nearby 历史日目录（2026-10-15~18 过渡副本）可在百度基线核验后 purge"
         exit 0
     fi
 
