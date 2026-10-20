@@ -278,36 +278,38 @@ verify_data_exists()
     pg_port=$(get_postgres_port)
     pg_user=$(get_postgres_user)
 
-    # 获取第一个有数据的表
-    local table
-    table=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
+    # 任一表有数据即通过（2026-10-21 修复：原「字母序第一张表必须有数据」在
+    # 第一张表是合法空表时必误报——noda_prod 的 auth_login_link_tokens 是瞬时
+    # 登录令牌表，过期清理后恒空，verify 周报连败的最后一环）。扫前 10 张
+    # 基表，全部为空才判失败。
+    local tables
+    tables=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
         -d "$test_db" -t -c "
       SELECT table_name
       FROM information_schema.tables
       WHERE table_schema = 'public'
       AND table_type = 'BASE TABLE'
-      LIMIT 1;
+      ORDER BY table_name
+      LIMIT 10;
     " 2>/dev/null | xargs || echo "")
 
-    if [[ -z "$table" ]]; then
+    if [[ -z "$tables" ]]; then
         log_error "未找到任何表"
         return $EXIT_VERIFY_TEST_FAILED
     fi
 
-    # 检查记录数
-    local count
-    count=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
-        -d "$test_db" -t -c "
-      SELECT COUNT(*) FROM $table;
-    " 2>/dev/null | xargs || echo "0")
+    local table count
+    for table in $tables; do
+        count=$(PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
+            -d "$test_db" -t -c "SELECT COUNT(*) FROM $table;" 2>/dev/null | xargs || echo "0")
+        if [[ $count -gt 0 ]]; then
+            log_success "数据验证通过: 表 $table 有 $count 条记录"
+            return 0
+        fi
+    done
 
-    if [[ $count -gt 0 ]]; then
-        log_success "数据验证通过: 表 $table 有 $count 条记录"
-        return 0
-    else
-        log_error "数据验证失败: 表 $table 无数据"
-        return $EXIT_VERIFY_TEST_FAILED
-    fi
+    log_error "数据验证失败: 前 10 张基表均无数据（$tables）"
+    return $EXIT_VERIFY_TEST_FAILED
 }
 
 # verify_test_restore - 综合验证
