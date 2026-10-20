@@ -1,0 +1,6 @@
+#!/bin/sh
+# hb — r4s 宿主机 cron 心跳 wrapper（2026-10-21 cron 全量盘点接入）。
+# 运行时唯一副本：/mnt/mmc1-4/System/Scripts/hb；本文件是其 repo 档案。
+# 用法与参数原样透传容器内 /app/backup/hb.sh：hb ok|fail <job> [schedule] [err]
+# service 名固定 noda-ops-cron（HB_SERVICE 默认值），job 名建议带 r4s: 前缀分组。
+docker exec noda-ops /app/backup/hb.sh "$@"

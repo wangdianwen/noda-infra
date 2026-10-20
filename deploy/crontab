@@ -4,14 +4,18 @@
 #     + /etc/crontabs（-c）两处——本文件烤入 /etc/cron.d/nodaops 即生效；
 #     勿把内容复制到 /etc/crontabs，两处同读会双跑（2026-09-13 排查留档）
 
+# 心跳接线说明（2026-10-21 cron 全量盘点）：六个实质任务行尾追加 hb.sh 上报
+# （成功 ok / 失败 fail），admin/cronjobs 页经 noda-ops-cron service 可见；
+# metrics cleanup / find-delete / 日志 truncate 三条静默清理行按设计不接。
+
 # 每天凌晨 3:00 执行备份
 # 日志统一写 /var/log/noda-backup（卷挂载 docker/volumes/logs，持久化到宿主机）
-0 3 * * * /app/backup/backup-postgres.sh >> /var/log/noda-backup/backup.log 2>&1
+0 3 * * * /app/backup/backup-postgres.sh >> /var/log/noda-backup/backup.log 2>&1 && /app/backup/hb.sh ok backup-postgres '0 3 * * *' || /app/backup/hb.sh fail backup-postgres '0 3 * * *'
 
 # 每周日凌晨 4:30 执行验证测试（2026-09-13 从 3:00 挪出：与每日备份同点撞车，
 # verify 的 test_restore_* 库清理与 discover_databases 并发竞争导致双方互踩失败，
 # 且遗留 test_restore_* 空库混入 discover 清单致每日备份整轮失败）
-30 4 * * 0 /app/backup/test-verify-weekly.sh >> /var/log/noda-backup/test.log 2>&1
+30 4 * * 0 /app/backup/test-verify-weekly.sh >> /var/log/noda-backup/test.log 2>&1 && /app/backup/hb.sh ok test-verify-weekly '30 4 * * 0' || /app/backup/hb.sh fail test-verify-weekly '30 4 * * 0'
 
 # 每 6 小时清理旧历史记录
 0 */6 * * * /app/backup/lib/metrics.sh cleanup 2>/dev/null || true
@@ -20,14 +24,14 @@
 0 4 * * * find /tmp/postgres_backups -type f -name "*.dump" -mtime +3 -delete 2>/dev/null || true
 
 # 每天凌晨 3:30 执行 Doppler 密钥备份（错开数据库备份 3:00）
-30 3 * * * /app/backup/backup-doppler-secrets.sh --project noda --config prd >> /var/log/noda-backup/doppler-backup.log 2>&1
+30 3 * * * /app/backup/backup-doppler-secrets.sh --project noda --config prd >> /var/log/noda-backup/doppler-backup.log 2>&1 && /app/backup/hb.sh ok backup-doppler-secrets '30 3 * * *' || /app/backup/hb.sh fail backup-doppler-secrets '30 3 * * *'
 
 # 文件系统备份（2026-09-13 改版并收编进容器内 crond）：S3 逻辑备份——rclone 直连
 # SeaweedFS S3 API（s3weed remote，SEAWEED_S3_* 由 compose 注入）镜像 avatars/nearby
 # 素材到 B2，剔除了可经 Jenkins 重建的 sites/ 前端编译产物；备份后按
 # FS_RETENTION_DAYS（默认 3 天）清理 B2 端超期对象。原 tar 整卷方案废弃
 # （活动写入一致性风险 + 无法剔除可重建数据），宿主机 crontab 的一次性容器行已删除。
-30 4 * * * /app/backup/backup-filesystem.sh >> /var/log/noda-backup/filesystem.log 2>&1
+30 4 * * * /app/backup/backup-filesystem.sh >> /var/log/noda-backup/filesystem.log 2>&1 && /app/backup/hb.sh ok backup-filesystem '30 4 * * *' || /app/backup/hb.sh fail backup-filesystem '30 4 * * *'
 
 # 每周日 4:50 收敛备份日志（防 /var/log/noda-backup 卷无限增长；单文件 >5MB 截到 1MB）
 50 4 * * 0 find /var/log/noda-backup -name "*.log" -size +5000k -exec truncate -s 1M {} \; 2>/dev/null || true
@@ -36,12 +40,12 @@
 # marker，数据版本继续计费——2026-09-26 排查实证：4 月以来从未真正释放，堆到
 # 8.25 GB 触发免费额度 75% 告警；cleanup 永久删除旧版本、保留当前版本。与桶
 # 生命周期规则（7 天自动隐藏/隐藏 1 天后删除/未完成上传 2 天取消）双保险）
-0 5 * * * rclone cleanup b2remote:noda-backups --config /home/nodaops/.config/rclone/rclone.conf >> /var/log/noda-backup/b2-cleanup.log 2>&1
+0 5 * * * rclone cleanup b2remote:noda-backups --config /home/nodaops/.config/rclone/rclone.conf >> /var/log/noda-backup/b2-cleanup.log 2>&1 && /app/backup/hb.sh ok b2-cleanup '0 5 * * *' || /app/backup/hb.sh fail b2-cleanup '0 5 * * *'
 
 # 每天凌晨 5:10 B2 免费额度用量监控（备份 04:30 / cleanup 05:00 之后度量稳态；
 # --b2-versions 含隐藏旧版本的真实计费口径——默认口径会严重低估。45% 预警 /
 # 60% 严重两级邮件告警，远早于 Backblaze 75% 邮件留出处置时间）
-10 5 * * * /app/backup/b2-quota-monitor.sh >> /var/log/noda-backup/b2-quota.log 2>&1
+10 5 * * * /app/backup/b2-quota-monitor.sh >> /var/log/noda-backup/b2-quota.log 2>&1 && /app/backup/hb.sh ok b2-quota-monitor '10 5 * * *' || /app/backup/hb.sh fail b2-quota-monitor '10 5 * * *'
 
 # 爬虫任务（2026-09-13 定案）：全部产品 cronjob（skykiwi 抓取/nearby/snagme/
 # lifecycle/vitals）由 noda-api 镜像的 noda-jobs 守护进程容器承载

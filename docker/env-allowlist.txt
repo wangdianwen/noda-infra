@@ -5,13 +5,8 @@
 # 新键进代码时：硬依赖 → 加进 env 模板；软依赖/文件态 → 加到这里并写明理由。
 # ── 2026-10-10 v2 清算：snagme/liuyao 文件态豁免整块移除（站已 410、镜像已无
 #    snagme 侧二进制，/etc/noda/snagme.env 挂载同步摘除）。
-#    common/go/config/config.go 仍 getenv 以下 5 键（代码默认值=原模板值，运行时零变化），
-#    故保留 B 类豁免防对账门误报：
-LIUYAO_API_PORT
-LIUYAO_GRPC_PORT
-LIUYAO_WEB_BASE_URL
-SNAGME_API_PORT
-SNAGME_GRPC_PORT
+#    （已移除 2026-10-21）LIUYAO_*/SNAGME_API_PORT/SNAGME_GRPC_PORT 五条死豁免：
+#    站点 2026-10-10 v2 清算后 config.go 已无 getenv，对账门不再需要豁免。
 TRADEME_
 # ── B) 可选旋钮（有默认值）──
 COMMENT_API_BASE

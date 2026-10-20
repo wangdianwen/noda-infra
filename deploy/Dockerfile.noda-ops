@@ -66,6 +66,9 @@ RUN addgroup -S nodaops && adduser -S -G nodaops -s /bin/sh nodaops
 # 修复 crond 权限：dcron 安装后 crond 仅 root 可执行，nodaops 用户需要执行权限
 RUN chmod 755 /usr/sbin/crond
 
+# cron 心跳目录（hb.sh 写 status JSON，cronhb-httpd 服务它；见 deploy/hb.sh）
+RUN mkdir -p /var/cronhb/api/cron && chown -R nodaops:nodaops /var/cronhb
+
 # 复制备份脚本
 COPY --chown=nodaops:nodaops scripts/backup/ /app/backup/
 RUN find /app/backup -name "*.sh" -exec chmod +x {} \; 2>/dev/null || true
