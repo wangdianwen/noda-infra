@@ -13,6 +13,9 @@ echo "=========================================="
 
 # 创建日志和运行目录
 mkdir -p /tmp/supervisor /var/log/noda-backup /app/history
+# cron 心跳目录（supervisord 启动 cronhb-httpd 前必须存在：/tmp tmpfs 遮蔽镜像层，
+# httpd -h 对缺失 docroot 直接 exit 1 → FATAL，2026-10-21 ops#55 实证）
+mkdir -p /tmp/cronhb/api/cron && chown -R nodaops:nodaops /tmp/cronhb
 touch /var/log/noda-backup/cron.log /var/log/noda-backup/cloudflared.log
 
 # 注：定时调度由 dcron 承担——/usr/sbin/crond（dillon's cron 4.5）默认读
