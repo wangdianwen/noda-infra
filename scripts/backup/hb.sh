@@ -18,6 +18,7 @@
 # durationMs 恒 null（shell 行尾上报无起点锚，展示层可容忍）；isRunning 恒 false。
 # 原子性：flock 串行 + tmp 文件 mv；容器重建后状态从零自然重建（心跳语义，无历史诉求）。
 set -euo pipefail
+umask 022  # docker exec 默认 root 写入：文件须全局可读（httpd 跑在 nodaops）
 
 # noda-ops 运行时根文件系统只读（pipeline docker run --read-only）：心跳落 /tmp tmpfs
 STATUS_FILE=/tmp/cronhb/api/cron/status
@@ -61,4 +62,5 @@ jq --arg svc "$SERVICE" --arg job "$job" --arg sched "$sched" \
                             error: (if $err == "" then "" else $err end)}}])
 ' "$STATUS_FILE" > "$tmp" 2>/dev/null || \
     echo "{\"service\":\"$SERVICE\",\"jobs\":[]}" > "$tmp"
+chmod 644 "$tmp"
 mv -f "$tmp" "$STATUS_FILE"
