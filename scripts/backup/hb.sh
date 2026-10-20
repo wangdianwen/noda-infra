@@ -3,7 +3,7 @@
 #
 # 背景：adminapi 的 cron-pull 环只认 HTTP GET /api/cron/status（CronStatus JSON），
 # 容器外/宿主机的 shell 型 cron 无法原生接入。本脚本把单次执行结果合并进
-# /var/cronhb/api/cron/status 静态 JSON（路径直映射 URL），由 supervisord 的
+# /tmp/cronhb/api/cron/status 静态 JSON（路径直映射 URL），由 supervisord 的
 # busybox httpd(:3017) 对外提供；SERVICE_ENDPOINTS 注册 noda-ops-cron 后
 # admin/cronjobs 页 60s 内可见（job 级 lastExecution = 最近一次成功/失败）。
 #
@@ -19,9 +19,10 @@
 # 原子性：flock 串行 + tmp 文件 mv；容器重建后状态从零自然重建（心跳语义，无历史诉求）。
 set -euo pipefail
 
-STATUS_FILE=/var/cronhb/api/cron/status
+# noda-ops 运行时根文件系统只读（pipeline docker run --read-only）：心跳落 /tmp tmpfs
+STATUS_FILE=/tmp/cronhb/api/cron/status
 SERVICE="${HB_SERVICE:-noda-ops-cron}"
-LOCK_DIR=/var/cronhb
+LOCK_DIR=/tmp/cronhb
 mkdir -p "$LOCK_DIR/api/cron"
 
 if [ "$#" -lt 2 ]; then
