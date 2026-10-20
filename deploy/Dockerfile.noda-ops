@@ -68,7 +68,7 @@ RUN addgroup -S nodaops && adduser -S -G nodaops -s /bin/sh nodaops
 RUN chmod 755 /usr/sbin/crond
 
 # cron 心跳目录（hb.sh 写 status JSON，cronhb-httpd 服务它；见 deploy/hb.sh）
-RUN mkdir -p /var/cronhb/api/cron && chown -R nodaops:nodaops /var/cronhb
+RUN mkdir -p /tmp/cronhb/api/cron && chown -R nodaops:nodaops /tmp/cronhb
 
 # 复制备份脚本
 COPY --chown=nodaops:nodaops scripts/backup/ /app/backup/
