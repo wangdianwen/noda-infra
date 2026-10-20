@@ -189,14 +189,19 @@ restore_to_test_database()
     local file_ext="${backup_file##*.}"
 
     if [[ "$file_ext" == "dump" ]]; then
-        # 使用 pg_restore 恢复 custom format
+        # 使用 pg_restore 恢复 custom format（stderr 落临时文件：失败时带出尾部
+        # 错误行——2026-10-18 restore_failed 只有结论无根因，排障全靠盲猜）
+        local restore_err
+        restore_err=$(mktemp /tmp/restore-err.XXXXXX)
         if PGPASSWORD="$POSTGRES_PASSWORD" pg_restore -h "$pg_host" -p "$pg_port" -U "$pg_user" \
-            -d "$test_db" -j 4 "$backup_file" >/dev/null 2>&1; then
+            -d "$test_db" -j 4 "$backup_file" >/dev/null 2>"$restore_err"; then
             log_success "数据恢复成功（pg_restore）"
         else
-            log_error "数据恢复失败（pg_restore）"
+            log_error "数据恢复失败（pg_restore）：$(tail -5 "$restore_err" | tr '\n' ' ')"
+            rm -f "$restore_err"
             return $EXIT_RESTORE_TEST_FAILED
         fi
+        rm -f "$restore_err"
     elif [[ "$file_ext" == "sql" ]]; then
         # 使用 psql 恢复 plain SQL
         if PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \

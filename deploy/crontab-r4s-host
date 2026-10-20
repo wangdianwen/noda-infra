@@ -7,14 +7,19 @@
 #   - 本文件只剩宿主机职责项：docker 镜像清理 + noda 日志收敛
 #     + hermes 残留会话看门狗 + OpenClash 周重启（2026-09-29 内存治理新增）
 #
+# 心跳接线（2026-10-21 cron 全量盘点）：各行尾 && hb ok || hb fail 上报进
+# noda-ops:3017 静态心跳（admin/cronjobs 页 noda-ops-cron service 可见）；
+# wrapper 存档 deploy/hb（运行时 /mnt/mmc1-4/System/Scripts/hb）。
+# openclash / hermes 看门狗为个人/私有职责，不接。
+#
 # 安装：scp 本文件到 r4s 后执行 `crontab deploy/crontab-r4s-host`
 # 注意：iStoreOS 无 logrotate，日志收敛用 find + truncate；BusyBox crond
 
 # ===== Docker 镜像清理（每周日 05:00，防止 / 1.9G 分区被旧镜像吃满）=====
-0 5 * * 0 /opt/noda/cleanup-docker-images.sh >> /var/log/noda-cleanup-docker.log 2>&1
+0 5 * * 0 /opt/noda/cleanup-docker-images.sh >> /var/log/noda-cleanup-docker.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:cleanup-docker-images '0 5 * * 0' || /mnt/mmc1-4/System/Scripts/hb fail r4s:cleanup-docker-images '0 5 * * 0'
 
 # ===== noda 日志收敛（每天 04:45；>5MB 截到 1MB，30 天前的删除）=====
-45 4 * * * find /var/log -name "noda-*.log" -size +5000k -exec truncate -s 1M {} \; 2>/dev/null; find /var/log -name "noda-*.log" -mtime +30 -delete 2>/dev/null
+45 4 * * * find /var/log -name "noda-*.log" -size +5000k -exec truncate -s 1M {} \; 2>/dev/null; find /var/log -name "noda-*.log" -mtime +30 -delete 2>/dev/null && /mnt/mmc1-4/System/Scripts/hb ok r4s:log-trim '45 4 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:log-trim '45 4 * * *'
 
 # ===== （已移除，2026-09-13 集中化）=====
 # snagme tick / nearby 五 job / skykiwi 四 job → noda-jobs 守护进程容器
@@ -30,13 +35,13 @@
 # ===== 数据盘→备份盘整盘快照（每天 05:10；硬链接增量，保留 2 代，脚本在
 #       r4s:/mnt/mmc1-4/System/Scripts/backup-snapshot.sh；2026-10-02 目录功能化
 #       重组后路径由 /mnt/mmc1-4/scripts/ 迁至 System/Scripts/）=====
-10 5 * * * /mnt/mmc1-4/System/Scripts/backup-snapshot.sh >> /var/log/noda-snapshot.log 2>&1
+10 5 * * * /mnt/mmc1-4/System/Scripts/backup-snapshot.sh >> /var/log/noda-snapshot.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:backup-snapshot '10 5 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:backup-snapshot '10 5 * * *'
 
 # ===== Immich 缩略图自愈（每小时；修上传链路不写 asset_job_status 的产品 bug：
 #       回填状态行 + 视频缺流信息二次提取 + missing-only 补队；负载>8 自动跳过。
 #       脚本 r4s:/mnt/mmc1-4/System/Scripts/immich-thumb-heal.sh，
 #       凭证 .immich-ops-token（同目录 600）。2026-10-03 缩略图缺失排查新增）=====
-40 * * * * /mnt/mmc1-4/System/Scripts/immich-thumb-heal.sh >> /var/log/noda-immich-heal.log 2>&1
+40 * * * * /mnt/mmc1-4/System/Scripts/immich-thumb-heal.sh >> /var/log/noda-immich-heal.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:immich-thumb-heal '40 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:immich-thumb-heal '40 * * * *'
 
 # ===== 统一百度云同步（每天 03:30）：配置整树增量（先，秒级）+ 照片两树增量/DB 转储（后；
 #       纯单文件架构——BaiduPCS-Go v4.0.2 目录上传全灭，本地状态差集只传新/变文件，秒传防重复；
@@ -44,7 +49,7 @@
 #       入口 r4s:/mnt/mmc1-4/System/Scripts/baidu-sync-all.sh，分见
 #       system-config-backup.sh（v4 整树单副本）与 immich-cloud-upload.sh（v2 增量）。
 #       2026-10-03 由单一照片 cron 升级为统一入口）=====
-30 3 * * * /mnt/mmc1-4/System/Scripts/baidu-sync-all.sh >> /var/log/noda-baidu-sync-all.log 2>&1
+30 3 * * * /mnt/mmc1-4/System/Scripts/baidu-sync-all.sh >> /var/log/noda-baidu-sync-all.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:baidu-sync-all '30 3 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:baidu-sync-all '30 3 * * *'
 
 # ===== 百度上传僵死看门狗（每 10 分钟）：实例在跑但 90 分钟无文件完成且进度条字节冻结
 #       （连接僵死，BaiduPCS-Go 对吊死连接不超时）→ 杀掉重启（断点续传+秒传）+ Telegram 告警。
@@ -52,7 +57,7 @@
 #       2026-10-06 v2：完成数 OR 进度条字节 任一变化即判活（27GB 级单文件正常传数小时，
 #       v1 只看完成数会把健康大文件传输误杀重启、进度清零死循环）。
 #       进度条(↑)由上传脚本改写到 /tmp/.baidu-progress 侧文件，主日志不再膨胀。=====
-*/10 * * * * /mnt/mmc1-4/System/Scripts/baidu-upload-watchdog.sh
+*/10 * * * * /mnt/mmc1-4/System/Scripts/baidu-upload-watchdog.sh && /mnt/mmc1-4/System/Scripts/hb ok r4s:baidu-upload-watchdog '*/10 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:baidu-upload-watchdog '*/10 * * * *'
 
 # ===== 反爬限流（429）风暴 TG 告警（每 10 分钟）：noda-static-prod 的 429 JSON
 #       access log（真实访客 IP）增量聚合，单 IP×面 ≥20 次/窗 TG 告警（按小时
@@ -60,25 +65,25 @@
 #       （存档 deploy/rl429-alert.sh）；数据卷 /opt/noda/noda-infra/docker/
 #       volumes/ops-logs（noda-static-prod 写、noda-api-prod 只读聚合）。
 #       2026-10-17 bot-hardening 阶段 2 监控新增 =====
-*/10 * * * * /mnt/mmc1-4/System/Scripts/rl429-alert.sh >> /var/log/noda-rl-alert.log 2>&1
+*/10 * * * * /mnt/mmc1-4/System/Scripts/rl429-alert.sh >> /var/log/noda-rl-alert.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:rl429-alert '*/10 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:rl429-alert '*/10 * * * *
 
 # ===== 日志瘦身（每日 04:50）：/var/log 是内存盘，noda 日志超 2MB 保留末尾 200KB，
 #       进度条侧文件超 1MB 清空（2026-10-07 进度条曾把单日志刷到 39MB 挤占 RAM）=====
-50 4 * * * /mnt/mmc1-4/System/Scripts/log-trim.sh
+50 4 * * * /mnt/mmc1-4/System/Scripts/log-trim.sh && /mnt/mmc1-4/System/Scripts/hb ok r4s:weed-log-trim '50 4 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:weed-log-trim '50 4 * * *'
 
 # ===== weed swap 债守卫（每 10 分钟）：核对 seaweedfs cgroup memory.swap.max=0，
 #       漂移（recreate/带外启动）自动重设 + TG 告警。背景：2026-10-04 33s manifest
 #       GET 事故——weed 149MB 热内存压在与数据同盘（sda2）的 swapfile 上；本机
 #       docker 不支持 swap limit（memswap_limit 被引擎丢弃），禁 swap 只能 cgroup
 #       直写且容器 recreate 会重置。脚本 r4s:/mnt/mmc1-4/System/Scripts/weed-swap-guard.sh =====
-*/10 * * * * /mnt/mmc1-4/System/Scripts/weed-swap-guard.sh >> /var/log/noda-weed-guard.log 2>&1
+*/10 * * * * /mnt/mmc1-4/System/Scripts/weed-swap-guard.sh >> /var/log/noda-weed-guard.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:weed-swap-guard '*/10 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:weed-swap-guard '*/10 * * * *'
 
 # ===== weed S3 假死守卫（每 5 分钟）：直探 S3 :8333，连续 2 轮连不上/超时
 #       （403/404 等应用层响应=活着）自动 docker restart + TG。背景：2026-10-04
 #       #571 发版 26k PUT 风暴触发 vacuum 卡死整个 weed 进程，线上 502 22 分钟
 #       ——healthcheck 早已报 unhealthy 但无人响应。脚本
 #       r4s:/mnt/mmc1-4/System/Scripts/weed-watchdog.sh（存档 deploy/weed-watchdog.sh）=====
-*/5 * * * * /mnt/mmc1-4/System/Scripts/weed-watchdog.sh >> /var/log/noda-weed-guard.log 2>&1
+*/5 * * * * /mnt/mmc1-4/System/Scripts/weed-watchdog.sh >> /var/log/noda-weed-guard.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:weed-watchdog '*/5 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:weed-watchdog '*/5 * * * *'
 
 # ===== swap 债周清（周日 05:30）：swapfile 1G 曾连续 99.9% 满（immich 栈 ~470MB
 #       冷页 + postgres + clash/hermes；Linux 不主动换回），满载时新换页需求=OOM/
@@ -88,7 +93,7 @@
 #       immich_server 直接丢弃其 ~470MB 匿名页最快）。排周日 05:30 避开 05:10
 #       快照（同盘 IO）与 03:30 百度上传。脚本
 #       r4s:/mnt/mmc1-4/System/Scripts/swap-debt-guard.sh（2026-10-07 部署并试运行验证）=====
-30 5 * * 0 /mnt/mmc1-4/System/Scripts/swap-debt-guard.sh >> /var/log/noda-swap-guard.log 2>&1
+30 5 * * 0 /mnt/mmc1-4/System/Scripts/swap-debt-guard.sh >> /var/log/noda-swap-guard.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:swap-debt-guard '30 5 * * 0' || /mnt/mmc1-4/System/Scripts/hb fail r4s:swap-debt-guard '30 5 * * 0'
 
 # ===== weed 定时 vacuum（每天 02:00）：master garbageThreshold 0.6→0.99 关闭自动
 #       触发后（2026-10-07 #680：snagme 50k 对象时代每次全量发布=42k 垃圾→发布结束
@@ -98,15 +103,15 @@
 #       发布）与 03:30 百度上传。⚠️ master 阈值改动须重启 weed 容器生效——择低峰
 #       窗口，发布中绝不可重启。脚本 r4s:/mnt/mmc1-4/System/Scripts/
 #       weed-vacuum-nightly.sh（存档 deploy/weed-vacuum-nightly.sh）=====
-0 2 * * * /mnt/mmc1-4/System/Scripts/weed-vacuum-nightly.sh >> /var/log/noda-weed-vacuum.log 2>&1
+0 2 * * * /mnt/mmc1-4/System/Scripts/weed-vacuum-nightly.sh >> /var/log/noda-weed-vacuum.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:weed-vacuum-nightly '0 2 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:weed-vacuum-nightly '0 2 * * *'
 
 # ===== IP 段黑名单（2026-10-18 通用化重写，取代搜狗专用版 sogou-ban.py）=====
 #       自动发现 spam 网段（/24 行为指纹 6h 滚动窗 + 单 IP 洪水 /32 + 机密探测路径攻击惯犯）
 #       → CF WAF 封禁（普通 7 天 / 攻击型 30 天）→ 静默满自动解封
 #       欢迎名单：真 Googlebot(UA+段双验证)/自报身份爬虫/站主 IP；规则 ref=ip-range-blacklist；全 API 操作
-*/5 * * * * python3 /mnt/mmc1-4/System/Scripts/ip-ban.py >> /var/log/noda-ip-ban.log 2>&1
+*/5 * * * * python3 /mnt/mmc1-4/System/Scripts/ip-ban.py >> /var/log/noda-ip-ban.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:ip-ban '*/5 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:ip-ban '*/5 * * * *'
 
 # ===== immich 任务队列解除暂停（live 补录，2026-10-18 对账时发现存量缺失）=====
 0 21 * * * docker exec immich_redis redis-cli eval "for i,q in ipairs({\"thumbnailGeneration\",\"videoConversion\",\"smartSearch\",\"faceDetection\",\"duplicateDetection\"}) do redis.call(\"HDEL\", \"immich_bull:\"..q..\":meta\", \"paused\") while redis.call(\"LLEN\", \"immich_bull:\"..q..\":paused\") > 0 do redis.call(\"LMOVE\", \"immich_bull:\"..q..\":paused\", \"immich_bull:\"..q..\":wait\", \"LEFT\", \"RIGHT\") end end" 0
-20 5 * * * sh /mnt/mmc1-4/System/Scripts/b2-quota-tg-guard.sh
-*/10 * * * * /mnt/mmc1-4/System/Scripts/pd-watchdog.sh # placedesc 看护一次性（达标删）
+20 5 * * * sh /mnt/mmc1-4/System/Scripts/b2-quota-tg-guard.sh && /mnt/mmc1-4/System/Scripts/hb ok r4s:b2-quota-tg-guard '20 5 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:b2-quota-tg-guard '20 5 * * *'
+# （已移除 2026-10-21）pd-watchdog 一次性看护：脚本已自删、行残留每天 144 次静默失败

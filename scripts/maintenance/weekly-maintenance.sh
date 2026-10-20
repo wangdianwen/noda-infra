@@ -113,3 +113,10 @@ main()
 
 main "$@"
 exit $?
+
+# -------------------------------------------
+# 心跳上报（2026-10-21 cron 全量盘点接入）：尽力而为——上报失败不算维护失败
+# -------------------------------------------
+ssh -o ConnectTimeout=15 -o BatchMode=yes r4s \
+    'docker exec noda-ops /app/backup/hb.sh ok mac:weekly-maintenance "Sun 03:30"' \
+    || log_warn "心跳上报失败（不影响维护结果）"

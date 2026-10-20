@@ -22,9 +22,12 @@ CURB=$(echo "$BAR" | sed -n 's/.*↑ \([0-9.]*\)\([KMG]\)B\/.*/\1\2/p')
 [ -n "$CURB" ] || CURB="0K"
 CURB=$(awk -v b="$CURB" 'BEGIN{v=b+0;u=substr(b,length(b),1);r=v; if(u=="G")r=v*1048576; else if(u=="M")r=v*1024; printf "%d", r}')
 
-LAST_N=$(cut -d"|" -f1 "$HB" 2>/dev/null || echo -1)
-LAST_B=$(cut -d"|" -f2 "$HB" 2>/dev/null || echo 0)
-LAST_T=$(cut -d"|" -f3 "$HB" 2>/dev/null || echo "$NOW")
+# 旧版/杀分支曾写两段式（count|time）心跳：字段错位会让 LAST_T 取到空串，
+# busybox test 空串比较恒假 → 下一轮必误杀。缺段一律按「刚见过」兜底重建。
+LAST_N=$(cut -d"|" -f1 "$HB" 2>/dev/null); [ -n "$LAST_N" ] || LAST_N=-1
+LAST_B=$(cut -d"|" -f2 "$HB" 2>/dev/null); [ -n "$LAST_B" ] || LAST_B=0
+LAST_T=$(cut -d"|" -f3 "$HB" 2>/dev/null); [ -n "$LAST_T" ] || LAST_T=$NOW
+case "$LAST_N$LAST_B$LAST_T" in *[!0-9-]*) LAST_N=-1; LAST_B=0; LAST_T=$NOW ;; esac
 
 if [ "$CUR" != "$LAST_N" ] || [ "$CURB" != "$LAST_B" ]; then
   echo "$CUR|$CURB|$NOW" > "$HB"   # 有进展（新文件 或 传输中字节增长），刷新心跳
@@ -42,4 +45,4 @@ sleep 2
 rmdir /tmp/immich-cloud-upload.lock 2>/dev/null
 ( setsid sh "$SCRIPT" </dev/null >/dev/null 2>&1 & )
 "$ALERT" "⚠️ 百度上传停滞 $((STALL/60)) 分钟无进展（字节冻结），看门狗已自动重启实例（断点续传，已传文件不受影响）"
-echo "$CUR|$(date +%s)" > "$HB"
+echo "$CUR|$CURB|$NOW" > "$HB"

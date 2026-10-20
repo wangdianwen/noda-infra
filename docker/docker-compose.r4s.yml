@@ -103,6 +103,12 @@ services:
     volumes:
       - /opt/noda/noda-infra/docker/volumes/backup/config.sh:/app/backup/lib/config.sh:ro
       - /opt/noda/noda-infra/docker/volumes/backup/test-verify.sh:/app/backup/lib/test-verify.sh:ro
+    # 2026-10-21 cron 盘点接入：加入 noda-network 供 noda-api-prod 的 cron-pull 环
+    # 拉取 :3017 心跳 httpd（SERVICE_ENDPOINTS=noda-ops-cron=http://noda-ops:3017）
+    networks:
+      noda-network:
+        aliases:
+          - noda-ops
     deploy:
       resources:
         limits:

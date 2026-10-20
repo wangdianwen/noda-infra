@@ -6,8 +6,10 @@ set -euo pipefail
 
 echo "===== Docker 镜像清理开始 $(date) ====="
 
-# 获取当前正在运行容器的镜像 ID
-RUNNING_IMAGES=$(docker ps --format '{{.ImageID}}' | sort -u | tr '\n' '|')
+# 获取当前正在运行容器的镜像 ID（2026-10-21 修复：docker ps 无 {{.ImageID}} 字段——
+# 该模板错误导致脚本 set -e 首命令即退、镜像清理三周从未执行；改 inspect .Image
+# 取 sha256 全 ID，与后续 12 位短 ID 的 grep 前缀匹配兼容）
+RUNNING_IMAGES=$(docker ps -q | xargs -r docker inspect --format '{{.Image}}' | sed 's/^sha256://' | sort -u | tr '\n' '|')
 RUNNING_IMAGES="${RUNNING_IMAGES%|}"  # 移除最后的 |
 echo "当前运行的镜像: $(echo "$RUNNING_IMAGES" | tr '|' '\n' | wc -l | tr -d ' ') 个"
 
