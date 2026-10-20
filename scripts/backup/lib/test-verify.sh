@@ -51,7 +51,10 @@ create_test_database()
     if PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$pg_host" -p "$pg_port" -U "$pg_user" \
         -d postgres -t -c "SELECT 1 FROM pg_database WHERE datname='$test_db'" 2>/dev/null | grep -q 1; then
         log_warn "测试数据库已存在，将删除重建: $test_db" >&2
-        drop_test_database "$test_db"
+        # drop 的日志必须走 stderr：本函数经 \$(...) 捕获，stdout 只允许最终的
+        # echo "\$test_db"（2026-10-21 根因修复——残留库触发 drop 路径时其 stdout
+        # 日志被捕获进变量，pg_restore 连向日志文本当库名，verify 连败自此始）
+        drop_test_database "$test_db" 1>&2
     fi
 
     # 创建测试数据库
@@ -60,7 +63,7 @@ create_test_database()
         log_success "测试数据库创建成功: $test_db" >&2
         echo "$test_db"
     else
-        log_error "测试数据库创建失败: $test_db"
+        log_error "测试数据库创建失败: $test_db" 1>&2
         return $EXIT_RESTORE_TEST_FAILED
     fi
 }
