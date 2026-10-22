@@ -80,3 +80,7 @@ docker cp "$CID:/etc/nginx/mime.types" "$TMP/nginx/" && mkdir -p "$TMP/nginx/geo
 docker run --rm -v "$TMP/nginx:/etc/nginx:ro" --entrypoint nginx noda-static:714ffa5 -t
 # → syntax is ok / test is successful（官方 nginx:alpine 缺 geoip2 动态模块，不可用）
 ```
+
+## 2026-10-22 追补（主线协调修正）
+
+- A2-④ 收窄为 `/{city}/(event|place)`：`news|deals` 城市页新旧同 URL（批2 桶静态页原地承接），代理给 Go 会同路径回环。已同步 noda.test 镜像块；`nginx -t` 复验通过。
