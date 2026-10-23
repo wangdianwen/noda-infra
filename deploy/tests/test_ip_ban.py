@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""ip-ban.py 单元测试（2026-10-23 误封 Googlebot 修复的回归防线）
+
+不打真网络：官方网段走内置 fallback 常量 / monkeypatch；XFF/SAFETY/classify
+全部纯函数级验证。运行：pytest deploy/tests/test_ip_ban.py
+"""
+
+import importlib.util
+import ipaddress
+import os
+import subprocess
+import sys
+
+import pytest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+MOD_PATH = os.path.join(os.path.dirname(HERE), "ip-ban.py")
+
+
+def load_ip_ban(monkeypatch, env_file=None, allow_env=None):
+    """按需隔离 ENV_FILE / ALLOW_CIDRS 后加载模块（每次全新 import）"""
+    if env_file is None:
+        env_file = os.path.join(os.path.dirname(HERE), "tests",
+                                "nonexistent-ip-ban.env")
+    if allow_env is None:
+        monkeypatch.delenv("ALLOW_CIDRS", raising=False)
+    else:
+        monkeypatch.setenv("ALLOW_CIDRS", allow_env)
+    spec = importlib.util.spec_from_file_location("ip_ban", MOD_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["ip_ban"] = mod
+    spec.loader.exec_module(mod)
+    # 测试环境没有 r4s 的 /etc/noda/ip-ban.env，指到不存在的路径避免读到本机文件
+    monkeypatch.setattr(mod, "ENV_FILE", env_file, raising=False)
+    return mod
+
+
+@pytest.fixture
+def ip_ban(monkeypatch):
+    mod = load_ip_ban(monkeypatch)
+    mod._crawler_ip_cache.clear()
+    return mod
+
+
+# ---- ① 官方爬虫段 IP 优先：UA 不含 bot 也 skip（本次误封根因）----
+
+def test_google_ip_without_bot_ua_skips(ip_ban):
+    """66.249.73.x + Chrome UA（Prefetch Proxy/真人样式）→ skip，不进枚举统计"""
+    ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/153.0.8010.12 Safari/537.36")
+    assert ip_ban.classify("66.249.73.10", ua) == "skip"
+    assert ip_ban.classify("66.249.73.254", ua) == "skip"
+    assert ip_ban.classify("66.249.64.1", ua) == "skip"
+
+
+def test_google_ip_v6_skips(ip_ban):
+    assert ip_ban.classify("2001:4860:4801:10::1234",
+                           "Mozilla/5.0 Chrome/153.0") == "skip"
+
+
+def test_bing_ip_without_bot_ua_skips(ip_ban):
+    assert ip_ban.classify("157.55.39.7", "Mozilla/5.0 Chrome/153.0") == "skip"
+    assert ip_ban.classify("40.77.167.99", "Mozilla/5.0 Chrome/153.0") == "skip"
+
+
+def test_prefetch_proxy_ip_outside_json_skips_via_legacy_19(ip_ban):
+    """googlebot.json 只发布 crawl IP 的 /27 明细，不含 66.249.84.x（Chrome
+    Prefetch Proxy 出口，2026-10 真实日志多级 XFF 出现过）——靠保留的
+    66.249.64.0/19 并集兜底 skip，否则同类误封会复发"""
+    assert ip_ban.classify("66.249.84.133",
+                           "Mozilla/5.0 Chrome/153.0") == "skip"
+    assert ip_ban.classify("66.249.90.1", "Mozilla/5.0 Chrome/153.0") == "skip"
+
+
+def test_safety_rejects_prefetch_proxy_24(ip_ban):
+    proposals = {"66.249.84.0/24": ("24h-enum", 604800)}
+    ip_ban.apply_safety(proposals)
+    assert proposals == {}
+
+
+def test_fake_googlebot_outside_ranges_is_bot(ip_ban):
+    """UA 自称 Googlebot 但 IP 不在 Google 段 = 伪装，仍计入 bot"""
+    assert ip_ban.classify("1.2.3.4",
+                           "Mozilla/5.0 (compatible; Googlebot/2.1)") == "bot"
+
+
+def test_normal_human_still_counted(ip_ban):
+    ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/153.0 Safari/537.36")
+    assert ip_ban.classify("203.0.113.9", ua) == "human"
+    assert ip_ban.classify("203.0.113.9", "curl/8.0") == "bot"
+
+
+def test_misbanned_googlebot_24_fully_covered_by_fallback(ip_ban):
+    """误封的 66.249.73.0/24 全部 256 地址都被内置 fallback 覆盖"""
+    nets = ip_ban.GOOGLE_NETS
+    for i in range(256):
+        a = ipaddress.ip_address("66.249.73.%d" % i)
+        assert any(a in n for n in nets), "66.249.73.%d not covered" % i
+
+
+def test_fallback_snapshot_sizes(ip_ban):
+    assert len(ip_ban.GOOGLEBOT_FALLBACK) == 317
+    assert len(ip_ban.BINGBOT_FALLBACK) == 28
+
+
+# ---- ② SAFETY 闸：提案与官方爬虫段 / ALLOW_CIDRS 交集 → 拒绝 ----
+
+def test_safety_rejects_google_range_proposal(ip_ban):
+    proposals = {"66.249.73.0/24": ("24h-enum", 604800)}
+    ip_ban.apply_safety(proposals)
+    assert proposals == {}
+
+
+def test_safety_rejects_google_ip_32_proposal(ip_ban):
+    proposals = {"66.249.74.129/32": ("single-ip flood 99 req/300s", 604800)}
+    ip_ban.apply_safety(proposals)
+    assert proposals == {}
+
+
+def test_safety_rejects_bing_and_allow_proposals(ip_ban, monkeypatch):
+    monkeypatch.setattr(ip_ban, "ALLOW_CIDRS", "150.249.214.0/24")
+    proposals = {"157.55.39.0/24": ("24h-enum", 604800),
+                 "150.249.214.0/24": ("24h-enum", 604800),
+                 "198.51.100.0/24": ("24h-enum", 604800)}
+    ip_ban.apply_safety(proposals)
+    assert list(proposals) == ["198.51.100.0/24"]
+
+
+def test_safety_keeps_owner_and_normal_proposals(ip_ban):
+    proposals = {"47.72.0.0/16": ("24h-enum", 604800)}   # 含站主 IP 47.72.103.104
+    ip_ban.apply_safety(proposals)
+    assert proposals == {}
+    proposals = {"203.0.113.0/24": ("24h-enum", 604800)}
+    ip_ban.apply_safety(proposals)
+    assert list(proposals) == ["203.0.113.0/24"]
+
+
+# ---- ③ 多级 XFF：取 CF 追加的最后一跳，非法跳过不崩溃 ----
+
+def test_xff_multihop_takes_last(ip_ban):
+    assert ip_ban.client_ip_from_xff("63.141.225.35,66.249.84.133") \
+        == "66.249.84.133"
+    assert ip_ban.client_ip_from_xff(" 1.2.3.4 , 5.6.7.8 ") == "5.6.7.8"
+
+
+def test_xff_single_and_invalid(ip_ban):
+    assert ip_ban.client_ip_from_xff("66.249.74.129") == "66.249.74.129"
+    assert ip_ban.client_ip_from_xff("-") is None
+    assert ip_ban.client_ip_from_xff("") is None
+    assert ip_ban.client_ip_from_xff("garbage") is None
+    assert ip_ban.client_ip_from_xff("unknown, 203.0.113.5") == "203.0.113.5"
+
+
+def test_scan_window_survives_multihop_xff(ip_ban, monkeypatch):
+    """修前该输入让 ip_address() 抛 ValueError 整轮崩溃（ip-ban.log L1038-1078）"""
+    lines = (
+        '172.18.0.7 - - [23/Oct/2026:11:00:00 +0000] "GET /a HTTP/1.1" 200 10 '
+        '"-" "Mozilla/5.0 Chrome/153.0" "63.141.225.35,66.249.84.133"\n'
+        '172.18.0.7 - - [23/Oct/2026:11:00:01 +0000] "GET /b HTTP/1.1" 200 10 '
+        '"-" "Mozilla/5.0 Chrome/153.0" "-"\n'
+        '172.18.0.7 - - [23/Oct/2026:11:00:02 +0000] "GET /c HTTP/1.1" 200 10 '
+        '"-" "curl/8.0" "203.0.113.5"\n'
+    )
+
+    class FakeOut:
+        stdout = lines
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: FakeOut())
+    events = ip_ban.scan_window(0)
+    assert [e[0] for e in events] == ["66.249.84.133", "203.0.113.5"]
+
+
+# ---- ④ ALLOW_CIDRS 硬白名单 ----
+
+def test_allow_cidrs_from_env(ip_ban, monkeypatch):
+    monkeypatch.setattr(ip_ban, "ALLOW_CIDRS", "150.249.214.0/24")
+    assert ip_ban.classify("150.249.214.99", "Mozilla/5.0 Chrome/153.0") \
+        == "whitelist"
+    assert ip_ban.classify("150.249.215.1", "curl/8.0") == "bot"  # 段外不受影响
+
+
+def test_allow_cidrs_read_from_env_file(monkeypatch, tmp_path):
+    env = tmp_path / "ip-ban.env"
+    env.write_text("DOPPLER_SERVICE_TOKEN=xxx\nALLOW_CIDRS=150.249.214.0/24\n")
+    mod = load_ip_ban(monkeypatch, env_file=str(env))
+    assert mod.env_settings()["ALLOW_CIDRS"] == "150.249.214.0/24"
+    assert [str(n) for n in mod.allow_nets()] == ["150.249.214.0/24"]
+    assert mod.classify("150.249.214.1", "curl/8.0") == "whitelist"
+
+
+def test_invalid_cidrs_logged_and_dropped(ip_ban, monkeypatch):
+    monkeypatch.setattr(ip_ban, "ALLOW_CIDRS", "not-a-cidr, ,192.0.2.0/24")
+    nets = ip_ban.allow_nets()
+    assert [str(n) for n in nets] == ["192.0.2.0/24"]
+
+
+# ---- ⑤ load_crawler_ranges：缓存回写/命中 + 下载失败回退 ----
+
+GOOGLE_JSON = ('{"prefixes":[{"ipv4Prefix":"66.249.64.0/19"},'
+               '{"ipv6Prefix":"2001:4860:4801:10::/64"}]}')
+BING_JSON = '{"prefixes":[{"ipv4Prefix":"157.55.39.0/24"}]}'
+
+
+def test_ranges_download_cache_and_fallback(monkeypatch, tmp_path):
+    env = tmp_path / "ip-ban.env"
+    env.write_text("")
+    mod = load_ip_ban(monkeypatch, env_file=str(env))
+    cache = tmp_path / "net-ranges.json"
+    monkeypatch.setattr(mod, "RANGES_CACHE", str(cache))
+    urls = {mod.GOOGLEBOT_URL: GOOGLE_JSON, mod.BINGBOT_URL: BING_JSON}
+    monkeypatch.setattr(mod, "fetch_text",
+                        lambda url, timeout=15: urls[url])
+    mod.load_crawler_ranges()                       # 首次：下载 + 写缓存
+    assert len(mod.GOOGLE_NETS) == 2 and len(mod.BING_NETS) == 1
+    assert cache.exists()
+
+    def boom(url, timeout=15):
+        raise OSError("network down")
+
+    monkeypatch.setattr(mod, "fetch_text", boom)
+    mod.load_crawler_ranges()                       # 缓存 24h 内：不再联网
+    assert len(mod.GOOGLE_NETS) == 2 and len(mod.BING_NETS) == 1
+
+    cache.unlink()                                  # 缓存删掉 + 断网 → 内置快照
+    mod.load_crawler_ranges()
+    assert mod.GOOGLE_NETS == [ipaddress.ip_network(c)
+                               for c in mod.GOOGLEBOT_FALLBACK]
+    assert mod.BING_NETS == [ipaddress.ip_network(c)
+                             for c in mod.BINGBOT_FALLBACK]
+
+
+def test_stale_cache_triggers_refetch(monkeypatch, tmp_path):
+    import json as _json
+    import time as _time
+    env = tmp_path / "ip-ban.env"
+    env.write_text("")
+    mod = load_ip_ban(monkeypatch, env_file=str(env))
+    cache = tmp_path / "net-ranges.json"
+    stale = {"fetched_at": int(_time.time()) - 2 * mod.RANGES_CACHE_TTL,
+             "googlebot": ["66.249.64.0/19"], "bingbot": ["157.55.39.0/24"]}
+    cache.write_text(_json.dumps(stale))
+    monkeypatch.setattr(mod, "RANGES_CACHE", str(cache))
+    calls = []
+
+    def fake_fetch(url, timeout=15):
+        calls.append(url)
+        return GOOGLE_JSON if "googlebot" in url else BING_JSON
+
+    monkeypatch.setattr(mod, "fetch_text", fake_fetch)
+    mod.load_crawler_ranges()
+    assert len(calls) == 2                           # 过期 → 重新下载
+
+
+def test_parse_prefix_json_key_styles(ip_ban):
+    assert ip_ban.parse_prefix_json(GOOGLE_JSON) == [
+        "66.249.64.0/19", "2001:4860:4801:10::/64"]
+    assert ip_ban.parse_prefix_json(
+        '{"prefixes":[{"ipv4-prefix":"192.0.2.0/24"}]}') == ["192.0.2.0/24"]
+
+
+# ---- ⑥ 向后兼容：老 state 结构原样可读 ----
+
+def test_old_state_shape_untouched(ip_ban, monkeypatch, tmp_path):
+    import json as _json
+    state = tmp_path / "state.json"
+    state.write_text(_json.dumps({
+        "bans": {"203.0.113.0/24": {"until": 9999999999, "banned_at": 1,
+                                    "reason": "24h-enum", "ttl": 604800}},
+        "tracks": {"203.0.113.0/24": [[1, "203.0.113.1", 0, 0, "/x"]]},
+        "last_run": 123, "unsynced": []}))
+    monkeypatch.setattr(ip_ban, "STATE_FILE", str(state))
+    s = ip_ban.load_state()
+    assert set(s) == {"bans", "tracks", "last_run", "unsynced"}
+    assert "203.0.113.0/24" in s["bans"]

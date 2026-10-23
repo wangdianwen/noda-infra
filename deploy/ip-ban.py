@@ -6,8 +6,12 @@ ip-ban.py — 通用 IP 段黑名单（自动发现 spam 网段 → CF WAF 封�
 设计（2026-10-18 用户拍板的 8 点要求）：
 - 不限于搜狗：任何「伪装浏览器/无头/枚举式抓取」的网段都自动进黑名单
 - 区分机器人与真人（traffic 少，规则可解释）：
-  * 欢迎（永不计入、永不封）：真 Googlebot（UA+Google 网段双验证）、
-    其他自报身份的爬虫（UA 含 bot/spider/slurp——守规矩才敢自报家门）、站主 IP
+  * 欢迎（永不计入、永不封）：官方爬虫网段 IP 优先（googlebot.json/bingbot.json
+    全量段命中即放行，2026-10-23 起——此前只认 UA 含 googlebot 的 Google 段内
+    流量，Chrome Prefetch Proxy/GoogleOther/Read-Aloud 等无 bot UA 的 Google
+    合法出口被当真人计入 /24 枚举指纹，反手封了 Google 自己的 /24）、
+    其他自报身份的爬虫（UA 含 bot/spider/slurp——守规矩才敢自报家门）、
+    站主 IP、ALLOW_CIDRS 硬白名单
   * 假 Googlebot（UA 报 Googlebot 但 IP 不在 Google 段）= 伪装，计入 bot
   * 明显 bot UA：HeadlessChrome / python-requests / curl / wget / Go-http-client …
   * 伪造老浏览器：Chrome 主版本 < 100（2026 年不存在的人类用户）
@@ -33,6 +37,18 @@ ip-ban.py — 通用 IP 段黑名单（自动发现 spam 网段 → CF WAF 封�
 状态：  ops-logs/ip-ban.state.json（封禁表 + /24 行为滚动计数）
 cron：  */5 * * * *（deploy/crontab-r4s-host）
 用法：  ip-ban.py [--dry-run] [--status]
+
+2026-10-23 修复（误封 66.249.73.0/24 Google 官方段 / 150.249.214.0/24 日本家宽）：
+- 爬虫白名单改 IP 优先：请求 IP 命中 googlebot.json（317 段）/bingbot.json（28 段）
+  即 skip 枚举统计，不看 UA；另保留老 66.249.64.0/19 并集兜底（json 只发布 crawl
+  IP 的 /27 明细，不含 Prefetch Proxy/GoogleOther 出口如 66.249.84.x）；
+  运行时下载 + 缓存 24h，下载失败回退内置全量快照常量
+- SAFETY 闸补齐：提案网段与官方爬虫段/ALLOW_CIDRS 任意交集 → 拒绝并记日志
+  （原注释声称防 Google 段但只实现了站主 IP 检查，是本次误封的直接通道）
+- 多级 XFF 取 CF 追加的最后一跳（CF 把访客真实 IP 追加到 XFF 尾部，等价
+  CF-Connecting-IP）；解析失败跳过该行而非抛异常（此前 "a,b" 串使整轮崩溃）
+- 新增 ALLOW_CIDRS 硬白名单（cron 不 source env，从 /etc/noda/ip-ban.env 或
+  环境变量读取，命中请求 IP 完全跳过）；state 结构不变，老 state 直接兼容
 """
 
 import ipaddress
@@ -51,12 +67,125 @@ ZONES = ("noda.co.nz",)
 PHASE = "http_request_firewall_custom"
 RULE_MARKER = "ip-range-blacklist"          # 规则 description 前缀 / ref
 NGINX_CONTAINER = "noda-static-prod"
-ENV_FILE = "/etc/noda/ip-ban.env"           # DOPPLER_SERVICE_TOKEN
+ENV_FILE = "/etc/noda/ip-ban.env"           # DOPPLER_SERVICE_TOKEN / ALLOW_CIDRS
 STATE_FILE = "/opt/noda/noda-infra/docker/volumes/ops-logs/ip-ban.state.json"
 TG_ALERT = "/mnt/mmc1-4/System/Scripts/telegram-alert.sh"
 
 OWNER_IPS = {"47.72.103.104"}               # 站主出口（nginx 白名单同源）
-GOOGLE_RANGES = ["66.249.64.0/19"]          # 真 Googlebot 网段
+
+# 官方爬虫网段真值源：googlebot.json / bingbot.json，运行时下载 + 缓存 24h，
+# 任一源失败回退内置全量快照（GOOGLEBOT_FALLBACK 317 段 / BINGBOT_FALLBACK 28 段，
+# 2026-10-22 抓取）。白名单 IP 优先、不看 UA：Google 段内也有 Chrome Privacy
+# Preserving Prefetch Proxy / GoogleOther 等不含 bot 字样的合法爬虫出口。
+GOOGLEBOT_URL = ("https://developers.google.com/static/search/apis/"
+                 "ipranges/googlebot.json")
+BINGBOT_URL = "https://www.bing.com/toolbox/bingbot.json"
+RANGES_CACHE = os.path.join(os.path.dirname(STATE_FILE),
+                            "ip-ban.net-ranges.json")
+RANGES_CACHE_TTL = 24 * 3600
+# 额外兜底：googlebot.json 只发布 crawl IP 的 /27 明细，不含 Chrome Privacy
+# Preserving Prefetch Proxy / GoogleOther 等同属 Google 的出口（如 66.249.84.x，
+# 2026-10 真实日志的多级 XFF 里出现过），保留老 GOOGLE_RANGES=66.249.64.0/19
+# 与官方 json 取并集（全部属 Google AS15169；伪造 XFF 头跳无效——取的是尾跳）。
+EXTRA_CRAWLER_RANGES = ["66.249.64.0/19"]
+GOOGLEBOT_FALLBACK = [
+                         "2001:4860:4801:10::/64", "2001:4860:4801:11::/64", "2001:4860:4801:12::/64", "2001:4860:4801:13::/64",
+                         "2001:4860:4801:14::/64", "2001:4860:4801:15::/64", "2001:4860:4801:16::/64", "2001:4860:4801:17::/64",
+                         "2001:4860:4801:18::/64", "2001:4860:4801:19::/64", "2001:4860:4801:1a::/64", "2001:4860:4801:1b::/64",
+                         "2001:4860:4801:1c::/64", "2001:4860:4801:1d::/64", "2001:4860:4801:1e::/64", "2001:4860:4801:1f::/64",
+                         "2001:4860:4801:20::/64", "2001:4860:4801:21::/64", "2001:4860:4801:22::/64", "2001:4860:4801:23::/64",
+                         "2001:4860:4801:24::/64", "2001:4860:4801:25::/64", "2001:4860:4801:26::/64", "2001:4860:4801:27::/64",
+                         "2001:4860:4801:28::/64", "2001:4860:4801:29::/64", "2001:4860:4801:2::/64", "2001:4860:4801:2a::/64",
+                         "2001:4860:4801:2b::/64", "2001:4860:4801:2c::/64", "2001:4860:4801:2d::/64", "2001:4860:4801:2e::/64",
+                         "2001:4860:4801:2f::/64", "2001:4860:4801:30::/64", "2001:4860:4801:31::/64", "2001:4860:4801:32::/64",
+                         "2001:4860:4801:33::/64", "2001:4860:4801:34::/64", "2001:4860:4801:35::/64", "2001:4860:4801:36::/64",
+                         "2001:4860:4801:37::/64", "2001:4860:4801:38::/64", "2001:4860:4801:39::/64", "2001:4860:4801:3a::/64",
+                         "2001:4860:4801:3b::/64", "2001:4860:4801:3c::/64", "2001:4860:4801:3d::/64", "2001:4860:4801:3e::/64",
+                         "2001:4860:4801:3f::/64", "2001:4860:4801:40::/64", "2001:4860:4801:41::/64", "2001:4860:4801:42::/64",
+                         "2001:4860:4801:43::/64", "2001:4860:4801:44::/64", "2001:4860:4801:45::/64", "2001:4860:4801:46::/64",
+                         "2001:4860:4801:47::/64", "2001:4860:4801:48::/64", "2001:4860:4801:49::/64", "2001:4860:4801:4a::/64",
+                         "2001:4860:4801:4b::/64", "2001:4860:4801:4c::/64", "2001:4860:4801:4d::/64", "2001:4860:4801:4e::/64",
+                         "2001:4860:4801:50::/64", "2001:4860:4801:51::/64", "2001:4860:4801:52::/64", "2001:4860:4801:53::/64",
+                         "2001:4860:4801:54::/64", "2001:4860:4801:55::/64", "2001:4860:4801:56::/64", "2001:4860:4801:57::/64",
+                         "2001:4860:4801:58::/64", "2001:4860:4801:59::/64", "2001:4860:4801:60::/64", "2001:4860:4801:61::/64",
+                         "2001:4860:4801:62::/64", "2001:4860:4801:63::/64", "2001:4860:4801:64::/64", "2001:4860:4801:65::/64",
+                         "2001:4860:4801:66::/64", "2001:4860:4801:67::/64", "2001:4860:4801:68::/64", "2001:4860:4801:69::/64",
+                         "2001:4860:4801:6a::/64", "2001:4860:4801:6b::/64", "2001:4860:4801:6c::/64", "2001:4860:4801:6d::/64",
+                         "2001:4860:4801:6e::/64", "2001:4860:4801:6f::/64", "2001:4860:4801:70::/64", "2001:4860:4801:71::/64",
+                         "2001:4860:4801:72::/64", "2001:4860:4801:73::/64", "2001:4860:4801:74::/64", "2001:4860:4801:75::/64",
+                         "2001:4860:4801:76::/64", "2001:4860:4801:77::/64", "2001:4860:4801:78::/64", "2001:4860:4801:79::/64",
+                         "2001:4860:4801:7a::/64", "2001:4860:4801:7b::/64", "2001:4860:4801:7c::/64", "2001:4860:4801:7d::/64",
+                         "2001:4860:4801:7e::/64", "2001:4860:4801:7f::/64", "2001:4860:4801:80::/64", "2001:4860:4801:81::/64",
+                         "2001:4860:4801:82::/64", "2001:4860:4801:83::/64", "2001:4860:4801:84::/64", "2001:4860:4801:85::/64",
+                         "2001:4860:4801:86::/64", "2001:4860:4801:87::/64", "2001:4860:4801:88::/64", "2001:4860:4801:90::/64",
+                         "2001:4860:4801:91::/64", "2001:4860:4801:92::/64", "2001:4860:4801:93::/64", "2001:4860:4801:94::/64",
+                         "2001:4860:4801:95::/64", "2001:4860:4801:96::/64", "2001:4860:4801:97::/64", "2001:4860:4801:a0::/64",
+                         "2001:4860:4801:a1::/64", "2001:4860:4801:a2::/64", "2001:4860:4801:a3::/64", "2001:4860:4801:a4::/64",
+                         "2001:4860:4801:a5::/64", "2001:4860:4801:a6::/64", "2001:4860:4801:a7::/64", "2001:4860:4801:a8::/64",
+                         "2001:4860:4801:a9::/64", "2001:4860:4801:aa::/64", "2001:4860:4801:ab::/64", "2001:4860:4801:ac::/64",
+                         "2001:4860:4801:ad::/64", "2001:4860:4801:ae::/64", "2001:4860:4801:b0::/64", "2001:4860:4801:b1::/64",
+                         "2001:4860:4801:b2::/64", "2001:4860:4801:b3::/64", "2001:4860:4801:b4::/64", "2001:4860:4801:b5::/64",
+                         "2001:4860:4801:b6::/64", "2001:4860:4801:c::/64", "2001:4860:4801:f::/64", "192.178.4.0/27",
+                         "192.178.4.128/27", "192.178.4.160/27", "192.178.4.192/27", "192.178.4.224/27",
+                         "192.178.4.32/27", "192.178.4.64/27", "192.178.4.96/27", "192.178.5.0/27",
+                         "192.178.6.0/27", "192.178.6.128/27", "192.178.6.160/27", "192.178.6.192/27",
+                         "192.178.6.224/27", "192.178.6.32/27", "192.178.6.64/27", "192.178.6.96/27",
+                         "192.178.7.0/27", "192.178.7.128/27", "192.178.7.160/27", "192.178.7.192/27",
+                         "192.178.7.224/27", "192.178.7.32/27", "192.178.7.64/27", "192.178.7.96/27",
+                         "34.100.182.96/28", "34.101.50.144/28", "34.118.254.0/28", "34.118.66.0/28",
+                         "34.126.178.96/28", "34.146.150.144/28", "34.147.110.144/28", "34.151.74.144/28",
+                         "34.152.50.64/28", "34.154.114.144/28", "34.155.98.32/28", "34.165.18.176/28",
+                         "34.175.160.64/28", "34.176.130.16/28", "34.22.85.0/27", "34.64.82.64/28",
+                         "34.65.242.112/28", "34.80.50.80/28", "34.88.194.0/28", "34.89.10.80/28",
+                         "34.89.198.80/28", "34.96.162.48/28", "35.247.243.240/28", "66.249.64.0/27",
+                         "66.249.64.128/27", "66.249.64.160/27", "66.249.64.192/27", "66.249.64.224/27",
+                         "66.249.64.32/27", "66.249.64.64/27", "66.249.64.96/27", "66.249.65.0/27",
+                         "66.249.65.128/27", "66.249.65.160/27", "66.249.65.192/27", "66.249.65.224/27",
+                         "66.249.65.32/27", "66.249.65.64/27", "66.249.65.96/27", "66.249.66.0/27",
+                         "66.249.66.128/27", "66.249.66.160/27", "66.249.66.192/27", "66.249.66.224/27",
+                         "66.249.66.32/27", "66.249.66.64/27", "66.249.66.96/27", "66.249.67.0/27",
+                         "66.249.67.32/27", "66.249.67.64/27", "66.249.68.0/27", "66.249.68.128/27",
+                         "66.249.68.160/27", "66.249.68.192/27", "66.249.68.224/27", "66.249.68.32/27",
+                         "66.249.68.64/27", "66.249.68.96/27", "66.249.69.0/27", "66.249.69.128/27",
+                         "66.249.69.160/27", "66.249.69.192/27", "66.249.69.224/27", "66.249.69.32/27",
+                         "66.249.69.64/27", "66.249.69.96/27", "66.249.70.0/27", "66.249.70.128/27",
+                         "66.249.70.160/27", "66.249.70.192/27", "66.249.70.224/27", "66.249.70.32/27",
+                         "66.249.70.64/27", "66.249.70.96/27", "66.249.71.0/27", "66.249.71.128/27",
+                         "66.249.71.160/27", "66.249.71.192/27", "66.249.71.224/27", "66.249.71.32/27",
+                         "66.249.71.64/27", "66.249.71.96/27", "66.249.72.0/27", "66.249.72.128/27",
+                         "66.249.72.160/27", "66.249.72.192/27", "66.249.72.224/27", "66.249.72.32/27",
+                         "66.249.72.64/27", "66.249.72.96/27", "66.249.73.0/27", "66.249.73.128/27",
+                         "66.249.73.160/27", "66.249.73.192/27", "66.249.73.224/27", "66.249.73.32/27",
+                         "66.249.73.64/27", "66.249.73.96/27", "66.249.74.0/27", "66.249.74.128/27",
+                         "66.249.74.160/27", "66.249.74.192/27", "66.249.74.224/27", "66.249.74.32/27",
+                         "66.249.74.64/27", "66.249.74.96/27", "66.249.75.0/27", "66.249.75.128/27",
+                         "66.249.75.160/27", "66.249.75.192/27", "66.249.75.224/27", "66.249.75.32/27",
+                         "66.249.75.64/27", "66.249.75.96/27", "66.249.76.0/27", "66.249.76.128/27",
+                         "66.249.76.160/27", "66.249.76.192/27", "66.249.76.224/27", "66.249.76.32/27",
+                         "66.249.76.64/27", "66.249.76.96/27", "66.249.77.0/27", "66.249.77.128/27",
+                         "66.249.77.160/27", "66.249.77.192/27", "66.249.77.224/27", "66.249.77.32/27",
+                         "66.249.77.64/27", "66.249.77.96/27", "66.249.78.0/27", "66.249.78.128/27",
+                         "66.249.78.160/27", "66.249.78.192/27", "66.249.78.224/27", "66.249.78.32/27",
+                         "66.249.78.64/27", "66.249.78.96/27", "66.249.79.0/27", "66.249.79.128/27",
+                         "66.249.79.160/27", "66.249.79.192/27", "66.249.79.224/27", "66.249.79.32/27",
+                         "66.249.79.64/27",
+                     ]
+BINGBOT_FALLBACK = [
+                       "157.55.39.0/24", "207.46.13.0/24", "40.77.167.0/24", "13.66.139.0/24",
+                       "13.66.144.0/24", "52.167.144.0/24", "13.67.10.16/28", "13.69.66.240/28",
+                       "13.71.172.224/28", "139.217.52.0/28", "191.233.204.224/28", "20.36.108.32/28",
+                       "20.43.120.16/28", "40.79.131.208/28", "40.79.186.176/28", "52.231.148.0/28",
+                       "20.79.107.240/28", "51.105.67.0/28", "20.125.163.80/28", "40.77.188.0/22",
+                       "65.55.210.0/24", "199.30.24.0/23", "40.77.202.0/24", "40.77.139.0/25",
+                       "20.74.197.0/28", "20.15.133.160/27", "40.77.177.0/24", "40.77.178.0/23",
+                   ]
+
+# 可配置硬白名单：cron 不 source env 文件，ALLOW_CIDRS 依次从 os.environ（测试/
+# 手动注入优先）与 /etc/noda/ip-ban.env 读取，逗号分隔 CIDR，命中请求 IP 即完全跳过。
+ALLOW_CIDRS = os.environ.get("ALLOW_CIDRS") or ""
+GOOGLE_NETS = [ipaddress.ip_network(c) for c in GOOGLEBOT_FALLBACK]
+BING_NETS = [ipaddress.ip_network(c) for c in BINGBOT_FALLBACK]
+EXTRA_CRAWLER_NETS = [ipaddress.ip_network(c) for c in EXTRA_CRAWLER_RANGES]
 
 WINDOW_CAP = 1800                            # 单次扫描窗口上限 30 分钟
 WINDOW_DEFAULT = 300                         # 首次运行/状态缺失默认 5 分钟
@@ -114,6 +243,37 @@ def tg(msg):
             log("tg failed: %s" % e)
 
 
+def env_settings():
+    """读 ENV_FILE 的 KEY=VALUE（cron 不 source 该文件，脚本自查；不存在返回空）"""
+    out = {}
+    if os.path.exists(ENV_FILE):
+        with open(ENV_FILE) as f:
+            for line in f:
+                m = re.match(r"([A-Z][A-Z0-9_]*)=(.*)", line.strip())
+                if m:
+                    out[m.group(1)] = m.group(2).strip().strip('"').strip("'")
+    return out
+
+
+def parse_cidrs(raw):
+    """逗号分隔 CIDR 串 → 合法 ip_network 列表（非法项记日志丢弃）"""
+    nets = []
+    for c in (raw or "").split(","):
+        c = c.strip()
+        if not c:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(c))
+        except ValueError:
+            log("warn: ignore invalid CIDR %r" % c)
+    return nets
+
+
+def allow_nets():
+    """ALLOW_CIDRS（os.environ 优先，其次 ENV_FILE）→ 解析后的网段列表"""
+    return parse_cidrs(ALLOW_CIDRS or env_settings().get("ALLOW_CIDRS", ""))
+
+
 def http_json(url, token, method="GET", body=None):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -124,13 +284,7 @@ def http_json(url, token, method="GET", body=None):
 
 
 def load_cf_token():
-    tok = None
-    if os.path.exists(ENV_FILE):
-        with open(ENV_FILE) as f:
-            for line in f:
-                m = re.match(r"DOPPLER_SERVICE_TOKEN=(\S+)", line.strip())
-                if m:
-                    tok = m.group(1)
+    tok = env_settings().get("DOPPLER_SERVICE_TOKEN")
     if not tok:
         raise RuntimeError("no DOPPLER_SERVICE_TOKEN in %s" % ENV_FILE)
     r = http_json("https://api.doppler.com/v3/configs/config/secret"
@@ -139,6 +293,64 @@ def load_cf_token():
     if not v.startswith("cfat_"):
         raise RuntimeError("CF token from doppler looks wrong")
     return v
+
+
+def fetch_text(url, timeout=15):
+    req = urllib.request.Request(url, headers={"User-Agent": "noda-ip-ban/2"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read().decode()
+
+
+def parse_prefix_json(text):
+    """googlebot.json / bingbot.json → CIDR 串列表（camelCase/连字符键名都兼容）"""
+    out = []
+    for p in json.loads(text).get("prefixes", []):
+        for k in ("ipv4Prefix", "ipv6Prefix", "ipv4-prefix", "ipv6-prefix"):
+            v = p.get(k)
+            if v:
+                out.append(v)
+    return out
+
+
+def load_crawler_ranges():
+    """刷新官方爬虫网段到全局 GOOGLE_NETS/BING_NETS（缓存 24h；任一源下载或解析
+    失败回退该源的内置快照——宁可白名单过宽也不丢保护）"""
+    global GOOGLE_NETS, BING_NETS
+    now = int(time.time())
+    try:
+        cache = json.load(open(RANGES_CACHE))
+        if now - cache.get("fetched_at", 0) < RANGES_CACHE_TTL:
+            g = parse_cidrs(",".join(cache.get("googlebot", [])))
+            b = parse_cidrs(",".join(cache.get("bingbot", [])))
+            if g and b:
+                GOOGLE_NETS, BING_NETS = g, b
+                return
+    except Exception:
+        pass
+    fetched = {}
+    for name, url in (("googlebot", GOOGLEBOT_URL), ("bingbot", BINGBOT_URL)):
+        try:
+            fetched[name] = parse_prefix_json(fetch_text(url))
+            if not fetched[name]:
+                raise ValueError("empty prefix list")
+        except Exception as e:
+            log("warn: fetch %s.json failed (%s), builtin fallback" % (name, e))
+    data = {"fetched_at": now,
+            "googlebot": fetched.get("googlebot") or GOOGLEBOT_FALLBACK,
+            "bingbot": fetched.get("bingbot") or BINGBOT_FALLBACK}
+    try:
+        tmp = RANGES_CACHE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f, separators=(",", ":"))
+        os.replace(tmp, RANGES_CACHE)
+    except Exception as e:
+        log("warn: ranges cache write failed: %s" % e)
+    GOOGLE_NETS = parse_cidrs(",".join(data["googlebot"]))
+    BING_NETS = parse_cidrs(",".join(data["bingbot"]))
+    fallback = [n for n in ("googlebot", "bingbot") if n not in fetched]
+    log("crawler ranges loaded: googlebot=%d bingbot=%d%s"
+        % (len(GOOGLE_NETS), len(BING_NETS),
+           (" (fallback: %s)" % ",".join(fallback)) if fallback else ""))
 
 
 def entrypoint_url(zone_id):
@@ -192,6 +404,20 @@ def apply_blacklist(rules, bans):
     return rules
 
 
+def client_ip_from_xff(raw):
+    """XFF 串 → 客户端 IP。多级 XFF 取最后一跳：CF 会把访客真实 IP 追加到 XFF
+    尾部（等价 CF-Connecting-IP），头部可能是客户端自带的伪造值；从尾往前取
+    第一个合法 IP；无合法 IP 返回 None（调用方跳过该行，不抛异常——修
+    2026-10 多级 XFF 整轮 ValueError 崩溃）"""
+    for hop in reversed([h.strip() for h in raw.split(",")]):
+        try:
+            ipaddress.ip_address(hop)
+            return hop
+        except ValueError:
+            continue
+    return None
+
+
 def scan_window(since_epoch):
     """返回解析后的访问事件列表 [(ip, path, ua)]，解析失败的行丢弃"""
     out = subprocess.run(
@@ -201,23 +427,53 @@ def scan_window(since_epoch):
     for line in (out.stdout + out.stderr).splitlines():
         m = LINE_RE.match(line)
         if m:
-            events.append((m.group(5).strip(), m.group(2).split("?", 1)[0],
-                           m.group(4)))
+            ip = client_ip_from_xff(m.group(5))
+            if ip:                          # XFF 无合法 IP（含 "-"）→ 跳过该行
+                events.append((ip, m.group(2).split("?", 1)[0], m.group(4)))
     return events
 
 
+def in_nets(ip, nets):
+    """IP 是否命中预解析网段列表；非法 IP 串返回 False 不抛异常"""
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(a in n for n in nets)
+
+
 def in_ranges(ip, cidrs):
-    a = ipaddress.ip_address(ip)
-    return any(a in ipaddress.ip_network(c) for c in cidrs)
+    """字符串 CIDR 列表版 in_nets（保留旧接口）"""
+    return in_nets(ip, [ipaddress.ip_network(c) for c in cidrs])
 
 
-def classify(ip, ua):
+_crawler_ip_cache = {}
+
+
+def is_crawler_ip(ip):
+    """请求 IP 是否命中官方爬虫网段（googlebot/bingbot 全量 + Google /19 兜底，
+    IP 优先不看 UA）"""
+    hit = _crawler_ip_cache.get(ip)
+    if hit is None:
+        hit = (in_nets(ip, GOOGLE_NETS) or in_nets(ip, BING_NETS)
+               or in_nets(ip, EXTRA_CRAWLER_NETS))
+        _crawler_ip_cache[ip] = hit
+    return hit
+
+
+def classify(ip, ua, allowed=None):
     """返回 'whitelist' | 'bot' | 'skip'（skip=受欢迎的守规矩爬虫，不计入）"""
     if ip in OWNER_IPS:
         return "whitelist"
+    if allowed is None:
+        allowed = allow_nets()
+    if in_nets(ip, allowed):
+        return "whitelist"                   # ALLOW_CIDRS 硬白名单，完全跳过
+    if is_crawler_ip(ip):
+        return "skip"                        # 官方爬虫段 IP 优先，不看 UA
     u = ua.lower()
     if "googlebot" in u:
-        return "skip" if in_ranges(ip, GOOGLE_RANGES) else "bot"  # 假 Googlebot
+        return "bot"                         # 假 Googlebot（真段已在上面 skip）
     if any(m in u for m in SELFID_MARKERS):
         return "skip"                                             # 自报家门的爬虫，欢迎
     if not ua.strip() or any(m in u for m in OBVIOUS_BOT_UA):
@@ -246,6 +502,28 @@ def save_state(s):
     os.replace(tmp, STATE_FILE)
 
 
+def apply_safety(proposals):
+    """白名单防误伤闸：提案网段含站主 IP、或与官方爬虫段/ALLOW_CIDRS 有交集 →
+    拒绝提案并记日志。2026-10-23 补齐：原实现只查了站主 IP（注释却声称防
+    Google 段），66.249.73.0/24 由此被误封——这是防再犯的关键闸。"""
+    allowed = allow_nets()
+    for cidr in list(proposals):
+        net = ipaddress.ip_network(cidr)
+        if any(ipaddress.ip_address(o) in net for o in OWNER_IPS):
+            log("SAFETY: %s contains owner IP, skip" % cidr)
+            del proposals[cidr]
+            continue
+        for name, nets in (("googlebot", GOOGLE_NETS), ("bingbot", BING_NETS),
+                           ("google-legacy /19", EXTRA_CRAWLER_NETS),
+                           ("allow", allowed)):
+            hit = next((n for n in nets if net.overlaps(n)), None)
+            if hit:
+                log("SAFETY: %s overlaps %s %s, skip" % (cidr, name, hit))
+                del proposals[cidr]
+                break
+    return proposals
+
+
 def main():
     now = int(time.time())
     since = now - WINDOW_DEFAULT
@@ -266,6 +544,10 @@ def main():
         print("tracked /24: %d" % len(s["tracks"]))
         return
 
+    load_crawler_ranges()                     # 官方爬虫段（缓存 24h，失败回退内置）
+    allowed = allow_nets()
+    _crawler_ip_cache.clear()
+
     try:
         events = scan_window(since)
     except Exception as e:
@@ -281,7 +563,7 @@ def main():
     # ---- 事件入轨 ----
     window_ip_stats = {}                         # ip -> [请求数, 生命周期信号, bot-UA 数]
     for ip, path, ua in events:
-        cls = classify(ip, ua)
+        cls = classify(ip, ua, allowed)
         if cls == "whitelist" or cls == "skip":
             continue
         st = window_ip_stats.setdefault(ip, [0, 0, 0])
@@ -373,12 +655,8 @@ def main():
                                ATTACK_TTL)
             log("candidate %s: attack-url hits=%d" % (cidr, ah))
 
-    # 白名单防误伤：提案网段内不得包含站主 IP / Google 段
-    for cidr in list(proposals):
-        net = ipaddress.ip_network(cidr)
-        if any(ipaddress.ip_address(o) in net for o in OWNER_IPS):
-            log("SAFETY: %s contains owner IP, skip" % cidr)
-            del proposals[cidr]
+    # 白名单防误伤闸：含站主 IP / 与官方爬虫段或 ALLOW_CIDRS 交集 → 拒绝
+    apply_safety(proposals)
 
     new_bans = []
     for cidr, (reason, ttl) in proposals.items():
