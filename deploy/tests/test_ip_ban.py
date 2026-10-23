@@ -396,3 +396,18 @@ def test_dc_managed_challenge_not_block(ip_ban):
     """action 必须 managed_challenge（云上真人可过挑战，误伤面最小——用户裁定的
     「不误伤」边界延伸到非 Google 的机房真人出口）"""
     assert ip_ban.DC_ACTION == "managed_challenge"
+
+
+def test_dc_expression_exempts_selfid_ai_crawlers(ip_ban):
+    """UA 自报家门豁免:Amazonbot(实测 34 req 全 AWS 段)与 ChatGPT-User(GEO 漏斗)
+    必须豁免;原始 800x600 爬虫的纯 Chrome UA 不含任何豁免串,仍被挑战"""
+    expr = ip_ban.build_dc_expression(ip_ban.parse_cidrs(""))
+    assert 'contains "Amazonbot"' not in expr      # 不点名,走通用 bot 串
+    assert 'contains "bot"' in expr and 'contains "Bot"' in expr
+    assert 'contains "ChatGPT-User"' in expr
+    assert 'contains "Claude-User"' in expr
+    assert 'contains "Perplexity-User"' in expr
+    # 原爬虫 UA 不命中任何豁免串(教义回归:Chrome 串里无 bot/spider/slurp/crawler/-User)
+    chrome_ua = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+                 " (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+    assert not any(u.lower() in chrome_ua.lower() for u in ip_ban.DC_UA_EXEMPTS)

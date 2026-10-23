@@ -93,6 +93,12 @@ RULE_MARKER = "ip-range-blacklist"          # 规则 description 前缀 / ref
 # ②66.249.64.0/19 老段兜底（Prefetch Proxy 判例段）；③站主 IP + ALLOW_CIDRS。
 DC_MARKER = "datacenter-asn-block"
 DC_ACTION = "managed_challenge"    # 爬虫过不了挑战=等同封；云上真人一键可过，误伤面最小
+# UA 自报家门豁免（大小写都写死：CF contains 不保证大小写不敏感）。"bot"/"Crawler"
+# 系覆盖 GPTBot/OAI-SearchBot/ClaudeBot/PerplexityBot/Amazonbot/Applebot/CCBot；
+# 三个 "-User" 是各引擎的「用户发起实时抓取」变体——GEO 引用漏斗本体，UA 里没有
+# bot 字样，必须点名。伪报 bot UA 换挑战豁免=接受（公开页，且速率闸/攻击闸仍拦）。
+DC_UA_EXEMPTS = ("bot", "Bot", "Spider", "spider", "Slurp", "Crawler", "crawler",
+                 "ChatGPT-User", "Claude-User", "Perplexity-User")
 DATACENTER_ASNS = (
     16509, 14618,   # Amazon AWS
     396982,         # Google Cloud（googlebot 的 GCP 抓取出口靠 cf.client.bot 豁免）
@@ -451,12 +457,17 @@ def apply_blacklist(rules, bans):
 def build_dc_expression(allowed=None):
     """机房 ASN 常驻封禁规则表达式（纯函数，单测直接打）。
 
-    例外集（防误伤三层）随表达式烘死：cf.client.bot（CF 验证爬虫主闸）+
-    66.249.64.0/19 兜底 + 站主 IP + ALLOW_CIDRS。"""
+    例外集（防误伤四层）随表达式烘死：cf.client.bot（CF 验证爬虫主闸，Google/Bing
+    稳保）+ UA 自报家门（与 classify 的 SELFID_MARKERS 同一教义：守规矩才敢自报
+    家门——Amazonbot 实测 14h 34 req 全 AWS 段、ChatGPT-User 是 GEO 引用漏斗，
+    AI 爬虫不在 cf.client.bot 名单里，必须 UA 豁免）+ 66.249.64.0/19 兜底 +
+    站主 IP + ALLOW_CIDRS。"""
     cidrs = ["66.249.64.0/19"] + sorted(OWNER_IPS) \
         + [str(n) for n in (allowed if allowed is not None else allow_nets())]
-    return ("(ip.src.asnum in {%s}) and not cf.client.bot and not ip.src in {%s}"
-            % (" ".join(str(a) for a in DATACENTER_ASNS), " ".join(cidrs)))
+    ua = " or ".join('http.user_agent contains "%s"' % u for u in DC_UA_EXEMPTS)
+    return ("(ip.src.asnum in {%s}) and not cf.client.bot and not (%s) "
+            "and not ip.src in {%s}"
+            % (" ".join(str(a) for a in DATACENTER_ASNS), ua, " ".join(cidrs)))
 
 
 def apply_dc_rule(rules, expr):
