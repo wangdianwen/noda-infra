@@ -136,6 +136,7 @@ NEARBY_ATTRACTION_ENRICH_LIMIT
 NEARBY_MARKET_ENRICH_LIMIT
 NEARBY_ATTRACTION_MANIFEST_URL
 NEARBY_MARKET_MANIFEST_URL
+NEARBY_ENRICH_PARALLEL
 # RL429_DIR：adminapi 反爬限流观测的 429 JSON 日志目录（bot-hardening 2026-10-17）。
 # 代码默认 /ops-logs（pipeline-stages.sh _start_prod_* 恒挂载该 RO 卷），模板不配、
 # 代码默认值兜底；preprod/本地未挂卷 → source=disabled 优雅空态（ratelimit.go）。
