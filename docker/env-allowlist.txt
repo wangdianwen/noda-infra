@@ -127,6 +127,15 @@ NEARBY_PLACE_POOL_BUDGET_MIN
 NEARBY_CAMPSITE_ENRICH_LIMIT
 NEARBY_PARK_ENRICH_LIMIT
 NEARBY_CAMPSITE_MANIFEST_URL
+# ── 2026-10-24 issue#38 enrich v2 全量地点富化可选旋钮 ──
+#   NEARBY_ATTRACTION_ENRICH_LIMIT（景点富化 30 条/轮）、
+#   NEARBY_MARKET_ENRICH_LIMIT（集市富化 15 条/轮）、
+#   NEARBY_ATTRACTION_MANIFEST_URL（景点清单源，默认 https://noda.co.nz/attractions-manifest.json）、
+#   NEARBY_MARKET_MANIFEST_URL（集市清单源，默认 https://noda.co.nz/markets-manifest.json）。
+NEARBY_ATTRACTION_ENRICH_LIMIT
+NEARBY_MARKET_ENRICH_LIMIT
+NEARBY_ATTRACTION_MANIFEST_URL
+NEARBY_MARKET_MANIFEST_URL
 # RL429_DIR：adminapi 反爬限流观测的 429 JSON 日志目录（bot-hardening 2026-10-17）。
 # 代码默认 /ops-logs（pipeline-stages.sh _start_prod_* 恒挂载该 RO 卷），模板不配、
 # 代码默认值兜底；preprod/本地未挂卷 → source=disabled 优雅空态（ratelimit.go）。
