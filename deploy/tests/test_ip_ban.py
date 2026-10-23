@@ -357,3 +357,42 @@ def test_flood32_botua_disables_exempt(ip_ban):
     """有 bot-UA 时生命周期信号不构成豁免（豁免要求零 bot-UA）"""
     reason, ttl = ip_ban.decide_flood32(90, 1, 3, 0, 0, NOW, 216)
     assert ttl == 24 * 3600          # 严档封禁而非豁免
+
+
+# ---- 机房 ASN 常驻规则（2026-10-24 #38，GA4 低慢速分布式爬虫，用户裁定）----
+
+def test_dc_expression_has_asns_and_all_exemptions(ip_ban, monkeypatch):
+    """表达式=ASN 集 + cf.client.bot 主闸 + 66.249.64.0/19 兜底 + 站主 + ALLOW_CIDRS"""
+    monkeypatch.setattr(ip_ban, "OWNER_IPS", {"1.2.3.4"})
+    expr = ip_ban.build_dc_expression(ip_ban.parse_cidrs("5.6.7.0/24"))
+    for asn in ip_ban.DATACENTER_ASNS:
+        assert str(asn) in expr
+    assert "not cf.client.bot" in expr
+    assert "66.249.64.0/19" in expr
+    assert "1.2.3.4" in expr and "5.6.7.0/24" in expr
+
+
+def test_dc_asns_cover_observed_bot_clouds(ip_ban):
+    """10-24 实证出口（AWS Ashburn/San Jose/Santa Clara + GCP 等）必须在封禁集内"""
+    assert {16509, 14618, 396982, 8075, 24940} <= set(ip_ban.DATACENTER_ASNS)
+
+
+def test_dc_rule_create_noop_update(ip_ban):
+    """首轮创建→同表达式幂等→表达式漂移（含 Dashboard 手改）触发更新"""
+    rules, changed = ip_ban.apply_dc_rule([], "EXPR")
+    assert changed and len(rules) == 1
+    assert rules[0]["ref"] == ip_ban.DC_MARKER
+    assert rules[0]["action"] == ip_ban.DC_ACTION
+    assert rules[0]["enabled"] is True
+    rules2, changed = ip_ban.apply_dc_rule(rules, "EXPR")
+    assert not changed and len(rules2) == 1
+    stale = [dict(rules2[0], expression="dashboard-edited", action="block")]
+    rules3, changed = ip_ban.apply_dc_rule(stale, "EXPR")
+    assert changed and rules3[0]["expression"] == "EXPR"
+    assert rules3[0]["action"] == ip_ban.DC_ACTION and rules3[0]["enabled"] is True
+
+
+def test_dc_managed_challenge_not_block(ip_ban):
+    """action 必须 managed_challenge（云上真人可过挑战，误伤面最小——用户裁定的
+    「不误伤」边界延伸到非 Google 的机房真人出口）"""
+    assert ip_ban.DC_ACTION == "managed_challenge"

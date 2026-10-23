@@ -20,7 +20,7 @@
 
 | 脚本 | 用途 | 调度 | 日志 |
 |---|---|---|---|
-| `ip-ban.py` | 通用 IP 段黑名单：/24 行为指纹（6h 滚动窗）+ 单 IP 洪水 /32·/128 + 攻击 URL 惯犯（机密探测路径 ≥5 次/6h）自动发现 → CF WAF 封禁（普通 7 天 / 攻击型 30 天）→ 静默自动解封；**真人浏览器爆发豁免**（零 bot-UA 且命中 ≥3 个 PWA 生命周期端点 sw.js/manifest/_next chunk/__next RSC 不封，防冷缓存首访误伤）；进出黑名单 TG 通报；全 API 操作；多 zone 能力保留（class.noda.co.nz 属主站 zone 子域天然覆盖，ZONES 现仅主站）；**官方爬虫段 IP 优先白名单**（googlebot.json+bingbot.json 运行时下载缓存 24h＋内置快照回退＋66.249.64.0/19 兜底并集，不看 UA）＋SAFETY 交集闸（提案与官方段/ALLOW_CIDRS 交集即拒绝）＋多级 XFF 取尾跳＋ALLOW_CIDRS 硬白名单（/etc/noda/ip-ban.env 注入；2026-10-23 误封 Google 官方段事故修复，单测 `deploy/tests/test_ip_ban.py`） | `*/5 * * * *` | `/var/log/noda-ip-ban.log` |
+| `ip-ban.py` | 通用 IP 段黑名单：/24 行为指纹（6h 滚动窗）+ 单 IP 洪水 /32·/128 + 攻击 URL 惯犯（机密探测路径 ≥5 次/6h）自动发现 → CF WAF 封禁（普通 7 天 / 攻击型 30 天）→ 静默自动解封；**真人浏览器爆发豁免**（零 bot-UA 且命中 ≥3 个 PWA 生命周期端点 sw.js/manifest/_next chunk/__next RSC 不封，防冷缓存首访误伤）；进出黑名单 TG 通报；全 API 操作；多 zone 能力保留（class.noda.co.nz 属主站 zone 子域天然覆盖，ZONES 现仅主站）；**官方爬虫段 IP 优先白名单**（googlebot.json+bingbot.json 运行时下载缓存 24h＋内置快照回退＋66.249.64.0/19 兜底并集，不看 UA）＋SAFETY 交集闸（提案与官方段/ALLOW_CIDRS 交集即拒绝）＋多级 XFF 取尾跳＋ALLOW_CIDRS 硬白名单（/etc/noda/ip-ban.env 注入；2026-10-23 误封 Google 官方段事故修复，单测 `deploy/tests/test_ip_ban.py`）；**机房 ASN 常驻规则**（datacenter-asn-block：13 个云/hosting ASN managed_challenge，cf.client.bot 验证爬虫+站主白名单豁免——低慢速分布式爬虫速率闸盲区补位，2026-10-24 #38） | `*/5 * * * *` | `/var/log/noda-ip-ban.log` |
 | `rl429-alert.sh` | 429 观测面：JSON access log 真实 IP 卷限流告警 | `*/10 * * * *` | `/var/log/noda-rl-alert.log` |
 | `telegram-alert.sh` | 全部运维告警的统一 TG 出口（Zcode For Ben bot → 站主 DM） | 被动调用 | — |
 | `backup-snapshot.sh` | 数据盘 → /mnt/backup 硬链接增量快照（保 2 代、空间紧张自动降代、发版锁避让、闪存配置第三副本） | `10 5 * * *` | `/var/log/noda-snapshot.log` |

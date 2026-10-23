@@ -27,6 +27,11 @@ ip-ban.py — 通用 IP 段黑名单（自动发现 spam 网段 → CF WAF 封�
 - 攻击 URL 惯犯：同 IP 6h 内命中 ≥5 次机密探测路径（.env/.aws/wp-/.git/id_rsa/
   application.properties …——真人和守规矩爬虫永远不会请求这类路径，零误伤可能）
   → 封 /32、TTL 升级 30 天；/24 行为封禁若夹带攻击流量同样升级 30 天
+- 机房 ASN 常驻封禁（2026-10-24 #38）：主流云/hosting ASN（AWS/GCP/Azure/Hetzner/
+  DO/Linode/Vultr/OVH/Oracle/Scaleway/阿里国际/腾讯国际）命中即 managed_challenge——
+  与速率闸正交的常驻规则，堵低慢速分布式爬虫（800x600 headless 指纹族）速率永远够
+  不上阈值的盲区；cf.client.bot 官方验证爬虫整体豁免（googlebot 从 GCP 段抓取不误伤）
+  + 66.249.64.0/19 兜底 + 站主/ALLOW_CIDRS 豁免
 - 封禁粒度 /24（自动化上限，/16 及以上永不自动封）；普通 TTL：/32 洪水首犯
   1 天/复犯与 /24 行为封禁 7 天（#37）、攻击型 30 天，静默满自动解封
 - TG 通知：进入封禁 / 自动解封都发消息（telegram-alert.sh）
@@ -79,6 +84,29 @@ import urllib.request
 ZONES = ("noda.co.nz",)
 PHASE = "http_request_firewall_custom"
 RULE_MARKER = "ip-range-blacklist"          # 规则 description 前缀 / ref
+
+# ---- 机房 ASN 常驻封禁（2026-10-24，用户裁定「直接禁掉机房 IP，不误伤 google 爬虫」）----
+# 与 5min/6h 速率闸正交的常驻 CF 规则，堵「低慢速分布式爬虫速率永远够不上阈值」的结构
+# 盲区（GA4 实证族：800x600 headless / direct 深链 sitemap 页 / 0 互动 / AWS+GCP 出口
+# 轮换 / 同 URL 跨国家重抓）。防误伤三层：①cf.client.bot=CF 官方验证爬虫整体豁免
+# （googlebot/bingbot 反向 DNS 实名，GCP/Azure 段内的 Google/Bing 抓取出口全在此列）；
+# ②66.249.64.0/19 老段兜底（Prefetch Proxy 判例段）；③站主 IP + ALLOW_CIDRS。
+DC_MARKER = "datacenter-asn-block"
+DC_ACTION = "managed_challenge"    # 爬虫过不了挑战=等同封；云上真人一键可过，误伤面最小
+DATACENTER_ASNS = (
+    16509, 14618,   # Amazon AWS
+    396982,         # Google Cloud（googlebot 的 GCP 抓取出口靠 cf.client.bot 豁免）
+    8075,           # Microsoft Azure（bingbot 出口同样靠豁免）
+    24940,          # Hetzner
+    14061,          # DigitalOcean
+    63949,          # Linode / Akamai cloud
+    20473,          # Vultr
+    16276,          # OVH
+    31898,          # Oracle Cloud
+    12876,          # Scaleway
+    45102,          # Alibaba Cloud 国际（站主出口 47.72.103.104 在 OWNER_IPS 豁免）
+    132203,         # Tencent Cloud 国际
+)
 NGINX_CONTAINER = "noda-static-prod"
 ENV_FILE = "/etc/noda/ip-ban.env"           # DOPPLER_SERVICE_TOKEN / ALLOW_CIDRS
 STATE_FILE = "/opt/noda/noda-infra/docker/volumes/ops-logs/ip-ban.state.json"
@@ -420,6 +448,43 @@ def apply_blacklist(rules, bans):
     return rules
 
 
+def build_dc_expression(allowed=None):
+    """机房 ASN 常驻封禁规则表达式（纯函数，单测直接打）。
+
+    例外集（防误伤三层）随表达式烘死：cf.client.bot（CF 验证爬虫主闸）+
+    66.249.64.0/19 兜底 + 站主 IP + ALLOW_CIDRS。"""
+    cidrs = ["66.249.64.0/19"] + sorted(OWNER_IPS) \
+        + [str(n) for n in (allowed if allowed is not None else allow_nets())]
+    return ("(ip.src.asnum in {%s}) and not cf.client.bot and not ip.src in {%s}"
+            % (" ".join(str(a) for a in DATACENTER_ASNS), " ".join(cidrs)))
+
+
+def apply_dc_rule(rules, expr):
+    """在规则列表中原位维护机房 ASN 常驻规则，返回 (同一列表, 是否有变化)。
+
+    action=managed_challenge：爬虫过不了挑战=等同封禁；云上真人（VPN 出口撞 ASN）
+    一键可过——「禁掉机房」与「不误伤」的最优交点。"""
+    rule = next((r for r in rules
+                 if str(r.get("description", "")).startswith(DC_MARKER)
+                 or r.get("ref") == DC_MARKER), None)
+    if (rule and rule.get("expression") == expr
+            and rule.get("action") == DC_ACTION and rule.get("enabled", True)):
+        return rules, False
+    created = rule is None
+    desc = "%s auto (%d ASNs; managed by ip-ban.py)" % (DC_MARKER, len(DATACENTER_ASNS))
+    if rule:
+        rule["expression"] = expr
+        rule["action"] = DC_ACTION
+        rule["description"] = desc
+        rule["enabled"] = True
+    else:
+        rules.append({"action": DC_ACTION, "action_parameters": {}, "expression": expr,
+                      "description": desc, "enabled": True, "ref": DC_MARKER})
+    log("dc-rule: %s (%d ASNs, %s)" % ("created" if created else "updated",
+                                       len(DATACENTER_ASNS), DC_ACTION))
+    return rules, True
+
+
 def client_ip_from_xff(raw):
     """XFF 串 → 客户端 IP。多级 XFF 取最后一跳：CF 会把访客真实 IP 追加到 XFF
     尾部（等价 CF-Connecting-IP），头部可能是客户端自带的伪造值；从尾往前取
@@ -735,36 +800,44 @@ def main():
     for c, _ in unbanned:
         del bans[c]
 
-    # ---- 同步 CF 规则（多 zone：黑名单同步到 ZONES 全部站点）----
+    # ---- 同步 CF 规则（多 zone：黑名单 + 机房 ASN 常驻规则同步到 ZONES 全部站点）----
+    # 每轮都 GET 对账：除封禁变化外，还要校验 dc 常驻规则未被 Dashboard 手改漂移。
     unsynced = sorted(set(state.get("unsynced") or []))
-    need_put = bool(new_bans or unbanned or unsynced)
-    if need_put:
-        try:
-            cf = load_cf_token()
-            ids = {}
-            for zname in ZONES:
-                r = http_json(
-                    "https://api.cloudflare.com/client/v4/zones?name=" + zname, cf)
-                z = (r.get("result") or [None])[0]
-                if z:
-                    ids[zname] = z["id"]
-            if len(ids) < len(ZONES):
-                log("warn: zone 不可达（token 缺该 zone 权限?）: %s — 黑名单暂不覆盖"
-                    % ",".join(z for z in ZONES if z not in ids))
-            for zname in ZONES:
-                zid = ids.get(zname)
-                if not zid:
-                    unsynced = sorted(set(unsynced) | {zname})
-                    continue
-                try:
-                    put_rules(cf, zid, apply_blacklist(get_rules(cf, zid), bans))
-                    unsynced = [z for z in unsynced if z != zname]
-                except Exception as e:
-                    log("CF sync failed for %s: %s (kept, will retry)" % (zname, e))
-                    unsynced = sorted(set(unsynced) | {zname})
-        except Exception as e:
-            log("CF token/zone 解析失败: %s (kept, will retry)" % e)
-            unsynced = sorted(set(unsynced) | set(ZONES))
+    dc_expr = build_dc_expression(allowed)
+    try:
+        cf = load_cf_token()
+        ids = {}
+        for zname in ZONES:
+            r = http_json(
+                "https://api.cloudflare.com/client/v4/zones?name=" + zname, cf)
+            z = (r.get("result") or [None])[0]
+            if z:
+                ids[zname] = z["id"]
+        if len(ids) < len(ZONES):
+            log("warn: zone 不可达（token 缺该 zone 权限?）: %s — 黑名单暂不覆盖"
+                % ",".join(z for z in ZONES if z not in ids))
+        need_put = bool(new_bans or unbanned or unsynced)
+        for zname in ZONES:
+            zid = ids.get(zname)
+            if not zid:
+                unsynced = sorted(set(unsynced) | {zname})
+                continue
+            try:
+                rules = apply_blacklist(get_rules(cf, zid), bans)
+                rules, dc_changed = apply_dc_rule(rules, dc_expr)
+                if need_put or dc_changed:
+                    put_rules(cf, zid, rules)
+                    if dc_changed and not DRY_RUN and not need_put:
+                        tg("ip-ban: 机房 ASN 常驻规则已启用——%d 个云/hosting ASN 走 %s，"
+                           "CF 验证爬虫(googlebot/bingbot)+站主白名单豁免"
+                           % (len(DATACENTER_ASNS), DC_ACTION))
+                unsynced = [z for z in unsynced if z != zname]
+            except Exception as e:
+                log("CF sync failed for %s: %s (kept, will retry)" % (zname, e))
+                unsynced = sorted(set(unsynced) | {zname})
+    except Exception as e:
+        log("CF token/zone 解析失败: %s (kept, will retry)" % e)
+        unsynced = sorted(set(unsynced) | set(ZONES))
     state["unsynced"] = unsynced
 
     # ---- 通知 ----
