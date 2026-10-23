@@ -1610,6 +1610,83 @@ EOF
         log_error "CDN 入口 URL 清除失败 (HTTP ${http_code:-timeout})，不影响部署 ($product)"
     fi
 
+    # ---- 变更长缓存资产补清（#37 营地4 教训）----
+    # 入口 URL 精准清不覆盖「同路径换内容」的长缓存资产（public/ 图片等，
+    # Cache-Control 长）：2026-10-10 与 2026-10-24 两次图片陈旧缓存事故同
+    # 根因。按 git diff 上次成功提交→HEAD 的该产品 public/ 清单补清，30/批
+    # 分次请求（CF purge files 上限 30/次），上限 600 URL 防失控。HTML 本身
+    # no-cache 无需在此清。
+    local domain assets_root
+    case "$product" in
+        class) domain="class.noda.co.nz"; assets_root="class/web/public" ;;
+        nearby) domain="noda.co.nz"; assets_root="nearby/web/public" ;;
+        *) domain="" ;;
+    esac
+    if [ -n "$domain" ] && [ -n "${WORKSPACE:-}" ] && [ -d "$WORKSPACE/noda-apps" ]; then
+        local base_ref=""
+        if [ -n "${GIT_PREVIOUS_SUCCESSFUL_COMMIT:-}" ] \
+            && git -C "$WORKSPACE/noda-apps" cat-file -e "${GIT_PREVIOUS_SUCCESSFUL_COMMIT}^{commit}" 2>/dev/null; then
+            base_ref="$GIT_PREVIOUS_SUCCESSFUL_COMMIT"
+        else
+            base_ref="$(git -C "$WORKSPACE/noda-apps" rev-parse HEAD~1 2>/dev/null)" || base_ref=""
+        fi
+        if [ -n "$base_ref" ]; then
+            local changed f i
+            changed="$(git -C "$WORKSPACE/noda-apps" diff --name-only "$base_ref" HEAD -- "${assets_root}/" 2>/dev/null | head -600)"
+            if [ -n "$changed" ]; then
+                log_info "补清变更静态资产 (product: $product, base: ${base_ref:0:8}, $(printf '%s\n' "$changed" | grep -c .) 个)..."
+                i=0
+                while IFS= read -r f; do
+                    [ -z "$f" ] && continue
+                    if [ $((i % 30)) -eq 0 ]; then
+                        rm -f "$tmp_body"
+                        tmp_body="$(mktemp)"
+                        printf '{"files":[' >"$tmp_body"
+                        _purge_sep=""
+                    fi
+                    printf '%s"https://%s/%s"' "$_purge_sep" "$domain" "${f#${assets_root}/}" >>"$tmp_body"
+                    _purge_sep=","
+                    i=$((i + 1))
+                    if [ $((i % 30)) -eq 0 ]; then
+                        printf ']}' >>"$tmp_body"
+                        http_code="$(curl -s -o /dev/null -w '%{http_code}' \
+                            -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+                            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+                            -H "Content-Type: application/json" \
+                            -d @"$tmp_body" \
+                            --connect-timeout 10 \
+                            --max-time 30 2>/dev/null)" || true
+                        if [ "$http_code" = "200" ]; then
+                            log_info "  资产批次清缓存 OK（累计 $i）"
+                        else
+                            log_error "  资产批次清缓存失败 (HTTP ${http_code:-timeout})，不影响部署"
+                        fi
+                    fi
+                done <<EOF
+$changed
+EOF
+                # 尾批（不足 30 的余量）
+                if [ $((i % 30)) -ne 0 ] && [ -f "$tmp_body" ]; then
+                    printf ']}' >>"$tmp_body"
+                    http_code="$(curl -s -o /dev/null -w '%{http_code}' \
+                        -X POST "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/purge_cache" \
+                        -H "Authorization: Bearer ${CF_API_TOKEN}" \
+                        -H "Content-Type: application/json" \
+                        -d @"$tmp_body" \
+                        --connect-timeout 10 \
+                        --max-time 30 2>/dev/null)" || true
+                    if [ "$http_code" = "200" ]; then
+                        log_info "  资产尾批清缓存 OK（共 $i）"
+                    else
+                        log_error "  资产尾批清缓存失败 (HTTP ${http_code:-timeout})，不影响部署"
+                    fi
+                fi
+                rm -f "$tmp_body"
+            fi
+        fi
+    fi
+    unset _purge_sep
+
     return 0
 }
 
