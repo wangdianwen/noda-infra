@@ -98,7 +98,8 @@ DC_ACTION = "managed_challenge"    # 爬虫过不了挑战=等同封；云上真
 # 三个 "-User" 是各引擎的「用户发起实时抓取」变体——GEO 引用漏斗本体，UA 里没有
 # bot 字样，必须点名。伪报 bot UA 换挑战豁免=接受（公开页，且速率闸/攻击闸仍拦）。
 DC_UA_EXEMPTS = ("bot", "Bot", "Spider", "spider", "Slurp", "Crawler", "crawler",
-                 "ChatGPT-User", "Claude-User", "Perplexity-User")
+                 "ChatGPT-User", "Claude-User", "Perplexity-User",
+                 "MistralAI-User", "cohere-ai")
 DATACENTER_ASNS = (
     16509, 14618,   # Amazon AWS
     396982,         # Google Cloud（googlebot 的 GCP 抓取出口靠 cf.client.bot 豁免）
@@ -112,6 +113,7 @@ DATACENTER_ASNS = (
     12876,          # Scaleway
     45102,          # Alibaba Cloud 国际（站主出口 47.72.103.104 在 OWNER_IPS 豁免）
     132203,         # Tencent Cloud 国际
+    18779,          # EGIHosting（10-24 实证：800x600 爬虫家族换用的小托管商出口）
 )
 NGINX_CONTAINER = "noda-static-prod"
 ENV_FILE = "/etc/noda/ip-ban.env"           # DOPPLER_SERVICE_TOKEN / ALLOW_CIDRS

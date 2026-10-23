@@ -375,6 +375,8 @@ def test_dc_expression_has_asns_and_all_exemptions(ip_ban, monkeypatch):
 def test_dc_asns_cover_observed_bot_clouds(ip_ban):
     """10-24 实证出口（AWS Ashburn/San Jose/Santa Clara + GCP 等）必须在封禁集内"""
     assert {16509, 14618, 396982, 8075, 24940} <= set(ip_ban.DATACENTER_ASNS)
+    # 10-24 中午实证换出口：EGIHosting AS18779（192.177.143.202，名单外畅通一波）
+    assert 18779 in ip_ban.DATACENTER_ASNS
 
 
 def test_dc_rule_create_noop_update(ip_ban):
@@ -407,6 +409,9 @@ def test_dc_expression_exempts_selfid_ai_crawlers(ip_ban):
     assert 'contains "ChatGPT-User"' in expr
     assert 'contains "Claude-User"' in expr
     assert 'contains "Perplexity-User"' in expr
+    # issue #3 ②：MistralAI-User / cohere-ai 同为无 bot 字样的 "-User" 系 GEO 漏斗
+    assert 'contains "MistralAI-User"' in expr
+    assert 'contains "cohere-ai"' in expr
     # 原爬虫 UA 不命中任何豁免串(教义回归:Chrome 串里无 bot/spider/slurp/crawler/-User)
     chrome_ua = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
                  " (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
