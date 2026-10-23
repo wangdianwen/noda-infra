@@ -18,14 +18,17 @@ ip-ban.py — 通用 IP 段黑名单（自动发现 spam 网段 → CF WAF 封�
 - /24 行为指纹（6 小时滚动窗口，低慢速爬取在 5 分钟窗内攒不够阈值）：
   请求 ≥40 且不同 IP ≥3 且（静态资源占比 ≤5% 或 bot-UA 占比 ≥50% 或去重路径 ≥15）
   → 真人浏览器必然带资源请求、单 IP 真人过不了「3 个不同 IP」门槛
-- 单 IP 洪水：5 分钟窗内 ≥60 请求 → 封 /32（外科手术式）；真人浏览器爆发豁免——
-  窗口内零 bot-UA 且命中 ≥3 次浏览器生命周期端点（sw.js/manifest/_next chunk/
-  __next RSC/geo.json）即视为真 PWA 冷缓存首访，不封（WARP 真人误封事件教训）
+- 单 IP 洪水（#37 2026-10-24 分档）：5 分钟窗内按档位阈值 → 封 /32（外科
+  手术式）——严档 60（夹 bot-UA 或 6h 内有攻击 URL 命中）、浏览器档 300
+  （零 bot-UA 且零攻击命中）；真人浏览器爆发豁免——窗口内零 bot-UA 且命中
+  ≥3 次浏览器生命周期端点（sw.js/manifest/_next chunk/__next RSC/geo.json）
+  即视为真 PWA 冷缓存首访，不封（WARP 真人误封事件教训）；洪水 TTL 首犯
+  1 天、7 天内复犯 7 天（state.history 记前科）
 - 攻击 URL 惯犯：同 IP 6h 内命中 ≥5 次机密探测路径（.env/.aws/wp-/.git/id_rsa/
   application.properties …——真人和守规矩爬虫永远不会请求这类路径，零误伤可能）
   → 封 /32、TTL 升级 30 天；/24 行为封禁若夹带攻击流量同样升级 30 天
-- 封禁粒度 /24（自动化上限，/16 及以上永不自动封）；普通 TTL 7 天、攻击型 30 天，
-  静默满自动解封
+- 封禁粒度 /24（自动化上限，/16 及以上永不自动封）；普通 TTL：/32 洪水首犯
+  1 天/复犯与 /24 行为封禁 7 天（#37）、攻击型 30 天，静默满自动解封
 - TG 通知：进入封禁 / 自动解封都发消息（telegram-alert.sh）
 - 纯 API：Doppler REST 取 CF token → Rulesets API 管理规则（无浏览器操作）
 - 多 zone：黑名单同步写入 ZONES 全部站点（noda 主站 + class）；某 zone 暂不可达
@@ -49,6 +52,16 @@ cron：  */5 * * * *（deploy/crontab-r4s-host）
   CF-Connecting-IP）；解析失败跳过该行而非抛异常（此前 "a,b" 串使整轮崩溃）
 - 新增 ALLOW_CIDRS 硬白名单（cron 不 source env，从 /etc/noda/ip-ban.env 或
   环境变量读取，命中请求 IP 完全跳过）；state 结构不变，老 state 直接兼容
+
+2026-10-24 调整（#37 误封 136.70.78.248——真人快速翻页 90req/216s 被洪水线
+拉黑 7 天；根因：HTML 源站 no-cache 每次导航都计数 + 老用户生命周期端点被
+CF/浏览器缓存挡住 → 豁免信号攒不够 3 个）：
+- /32 洪水分档：零 bot-UA 且 6h 零攻击命中 → 浏览器档 BAN32_BROWSER_REQ=300，
+  其余仍 BAN32_REQ=60 严档
+- /32 洪水 TTL：首犯 BAN_TTL_FIRST=1 天，7 天内复犯升 BAN_TTL=7 天
+  （state.history 记 cidr→上次洪水封禁 epoch，容量 500 裁最旧；老 state 无
+  history 键自动补，结构兼容）
+- /24 行为封禁 7 天、攻击 URL 30 天、浏览器爆发豁免、SAFETY 闸均不变
 """
 
 import ipaddress
@@ -190,18 +203,21 @@ EXTRA_CRAWLER_NETS = [ipaddress.ip_network(c) for c in EXTRA_CRAWLER_RANGES]
 WINDOW_CAP = 1800                            # 单次扫描窗口上限 30 分钟
 WINDOW_DEFAULT = 300                         # 首次运行/状态缺失默认 5 分钟
 ROLL_HOURS = 6                               # /24 行为滚动窗口
-BAN_TTL = 7 * 24 * 3600                      # 封禁 7 天
+BAN_TTL = 7 * 24 * 3600                      # 封禁 7 天（/24 行为封禁；/32 洪水 7 天内复犯）
+BAN_TTL_FIRST = 24 * 3600                    # #37 /32 洪水首犯 1 天（原 7 天降档）
 BAN24_MIN_REQ = 40                           # /24 封禁：6h 请求下限
 BAN24_MIN_IPS = 3                            #   不同 IP 下限（轮换签名）
 BAN24_MAX_ASSET_RATIO = 0.05                 #   静态资源占比上限（真浏览器必带资源）
 BAN24_MIN_PATHS = 15                         #   或去重路径数下限（枚举签名）
-BAN32_REQ = 60                               # 单 IP 5 分钟窗洪水阈值
+BAN32_REQ = 60                               # 单 IP 5 分钟窗洪水阈值（严档：夹 bot-UA 或 6h 内有攻击命中）
+BAN32_BROWSER_REQ = 300                      # #37 浏览器档阈值：零 bot-UA 且零攻击命中（5 分钟窗）
 BROWSER_SIGNAL_MIN = 3                       # 真人豁免：浏览器生命周期信号下限
 ATTACK_MIN = 5                               # 攻击 URL 命中下限（6h 滚动窗内按源 IP）
 ATTACK_TTL = 30 * 24 * 3600                  # 攻击型封禁 30 天
 MAX_ENTRIES = 64                             # 黑名单容量上限
 MAX_TRACKS = 500                             # 最多跟踪 /24 数
 MAX_EVENTS_PER_TRACK = 400                   # 每 /24 最多保留事件数
+MAX_FLOOD_HISTORY = 500                      # #37 洪水前科档案（state.history）容量上限
 
 TRACK_TTL = ROLL_HOURS * 3600
 
@@ -524,6 +540,42 @@ def apply_safety(proposals):
     return proposals
 
 
+def decide_flood32(cnt, botua, signals, attack_hits, last_flood_at, now,
+                   window_secs):
+    """#37 /32 洪水判定（纯函数，主循环据返回值提案；单测直接打这里）。
+
+    返回 (reason, ttl) 或 None（不封）。优先级与档位（顺序不变：攻击 >
+    浏览器豁免 > 洪水阈值）：
+      1. attack_hits ≥ ATTACK_MIN → 攻击 URL 优先，升级 30 天（不变）
+      2. 零 bot-UA 且 signals ≥ BROWSER_SIGNAL_MIN → None，真人浏览器爆发
+         豁免（WARP 事件 2026-10-18 教训，不变）
+      3. 阈值分档（#37 2026-10-24 误封 136.70.78.248 根因修复）：零 bot-UA
+         且 6h 零攻击命中 → 浏览器档 BAN32_BROWSER_REQ=300——HTML 源站
+         no-cache 每次导航都计数 + 老用户生命周期端点被 CF/浏览器缓存挡住，
+         豁免信号攒不够 3 个，真人快速翻页 90req/216s 被误封；夹 bot-UA 或
+         有攻击前科 → 仍 BAN32_REQ=60 严档
+      4. TTL：last_flood_at（state.history[cidr]，无前科 0）在 7 天内 →
+         复犯 BAN_TTL=7 天，否则首犯 BAN_TTL_FIRST=1 天；reason 带档位与
+         首犯/复犯标记，如 "single-ip flood 90 req/216s (browser-tier, first)"
+    """
+    if attack_hits >= ATTACK_MIN:                 # 攻击 URL 优先：升级 30 天
+        return ("attack-urls %d hits + flood %d req" % (attack_hits, cnt),
+                ATTACK_TTL)
+    if botua == 0 and signals >= BROWSER_SIGNAL_MIN:
+        return None                               # 真人浏览器爆发豁免（不变）
+    browser_tier = (botua == 0 and attack_hits == 0)
+    threshold = BAN32_BROWSER_REQ if browser_tier else BAN32_REQ
+    if cnt < threshold:
+        return None
+    repeat = last_flood_at > now - 7 * 24 * 3600
+    ttl = BAN_TTL if repeat else BAN_TTL_FIRST
+    reason = ("single-ip flood %d req/%ds (%s-tier, %s)"
+              % (cnt, window_secs,
+                 "browser" if browser_tier else "strict",
+                 "repeat" if repeat else "first"))
+    return (reason, ttl)
+
+
 def main():
     now = int(time.time())
     since = now - WINDOW_DEFAULT
@@ -625,6 +677,8 @@ def main():
                 "paths=%d attack=%d"
                 % (p24, hits, len(ips), 100.0 * assets / hits,
                    100.0 * botua / hits, len(paths), attack))
+    # #37 洪水前科档案：cidr→上次洪水封禁 epoch（老 state 无 history 键自动补）
+    flood_history = state.setdefault("history", {})
     for ip, st in window_ip_stats.items():
         cidr = ip + "/%s" % ("128" if ipaddress.ip_address(ip).version == 6
                              else "32")
@@ -632,19 +686,24 @@ def main():
         if cnt < BAN32_REQ or cidr in bans or ip in OWNER_IPS:
             continue
         ah = ip_attack.get(ip, 0)
-        if ah >= ATTACK_MIN:                    # 攻击 URL 优先：升级 30 天
-            proposals[cidr] = ("attack-urls %d hits + flood %d req"
-                               % (ah, cnt), ATTACK_TTL)
+        hit = decide_flood32(cnt, st[2], st[1], ah,
+                             flood_history.get(cidr, 0), now, now - since)
+        if hit is None:
+            if st[2] == 0 and st[1] >= BROWSER_SIGNAL_MIN:
+                # 真人浏览器爆发豁免（WARP 事件 2026-10-18：iPhone 冷缓存首访
+                # 19 秒 82 请求触发洪水线误封 7 天）。零 bot-UA + 命中生命周期
+                # 端点（sw.js/manifest/_next chunk/__next RSC）= 真浏览器指纹。
+                log("exempt %s: browser-burst %d req (signals=%d, botua=0, "
+                    "attack=0)" % (cidr, cnt, st[1]))
             continue
-        if st[2] == 0 and st[1] >= BROWSER_SIGNAL_MIN:
-            # 真人浏览器爆发豁免（WARP 事件 2026-10-18：iPhone 冷缓存首访
-            # 19 秒 82 请求触发洪水线误封 7 天）。零 bot-UA + 命中生命周期
-            # 端点（sw.js/manifest/_next chunk/__next RSC）= 真浏览器指纹。
-            log("exempt %s: browser-burst %d req (signals=%d, botua=0, "
-                "attack=0)" % (cidr, cnt, st[1]))
-            continue
-        proposals[cidr] = ("single-ip flood %d req/%ds"
-                           % (cnt, now - since), BAN_TTL)
+        reason, ttl = hit
+        proposals[cidr] = (reason, ttl)
+        if ttl != ATTACK_TTL:                  # #37 洪水封禁记前科（攻击 30d 不记）
+            flood_history[cidr] = now
+    if len(flood_history) > MAX_FLOOD_HISTORY:  # #37 前科档案容量防护：裁最旧
+        for k in sorted(flood_history, key=flood_history.get)[
+                :len(flood_history) - MAX_FLOOD_HISTORY]:
+            del flood_history[k]
     for ip, ah in ip_attack.items():            # 低慢速机密探测（不够洪水线也封）
         if ah < ATTACK_MIN:
             continue

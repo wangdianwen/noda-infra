@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""ip-ban.py 单元测试（2026-10-23 误封 Googlebot 修复的回归防线）
+"""ip-ban.py 单元测试（2026-10-23 误封 Googlebot 修复 + 2026-10-24 #37
+洪水分档/首犯降档的回归防线）
 
 不打真网络：官方网段走内置 fallback 常量 / monkeypatch；XFF/SAFETY/classify
-全部纯函数级验证。运行：pytest deploy/tests/test_ip_ban.py
+/ 洪水判定全部纯函数级验证。运行：pytest deploy/tests/test_ip_ban.py
 """
 
 import importlib.util
@@ -275,3 +276,84 @@ def test_old_state_shape_untouched(ip_ban, monkeypatch, tmp_path):
     s = ip_ban.load_state()
     assert set(s) == {"bans", "tracks", "last_run", "unsynced"}
     assert "203.0.113.0/24" in s["bans"]
+
+
+# ---- ⑦ #37 /32 洪水分档阈值 + 首犯降档/复犯升级（误封 136.70.78.248 修复）----
+
+NOW = 1790000000                        # 固定 epoch，测首犯/复犯 7 天窗口
+
+
+def test_flood32_browser_tier_90req_not_banned(ip_ban):
+    """今晨误封场景：零 bot-UA+零攻击 90req/216s（快速翻页真人）→ 不封"""
+    assert ip_ban.decide_flood32(90, 0, 0, 0, 0, NOW, 216) is None
+
+
+def test_flood32_browser_tier_edge_299_not_banned(ip_ban):
+    """浏览器档阈值边贴：299（<300）仍不封"""
+    assert ip_ban.decide_flood32(299, 0, 0, 0, 0, NOW, 300) is None
+
+
+def test_flood32_browser_tier_350_first_ban_1day(ip_ban):
+    """零 bot-UA+零攻击 350req → 封 1 天，reason 带 browser-tier/first"""
+    reason, ttl = ip_ban.decide_flood32(350, 0, 0, 0, 0, NOW, 300)
+    assert ttl == ip_ban.BAN_TTL_FIRST == 24 * 3600
+    assert "browser-tier" in reason and "first" in reason
+    assert "350 req/300s" in reason
+
+
+def test_flood32_repeat_within_7d_upgraded_7day(ip_ban):
+    """同 cidr 7 天内二次洪水 → 升 7 天（复犯标记）"""
+    reason, ttl = ip_ban.decide_flood32(350, 0, 0, 0, NOW - 24 * 3600,
+                                        NOW, 300)
+    assert ttl == ip_ban.BAN_TTL == 7 * 24 * 3600
+    assert "repeat" in reason
+
+
+def test_flood32_prior_over_7d_counts_as_first(ip_ban):
+    """前科超过 7 天 → 重新按首犯 1 天"""
+    reason, ttl = ip_ban.decide_flood32(350, 0, 0, 0, NOW - 8 * 24 * 3600,
+                                        NOW, 300)
+    assert ttl == 24 * 3600 and "first" in reason
+
+
+def test_flood32_mixed_botua_90req_still_60_tier(ip_ban):
+    """混 1 条 bot-UA 90req → 仍按 60 严档封（首犯 1 天）"""
+    reason, ttl = ip_ban.decide_flood32(90, 1, 0, 0, 0, NOW, 216)
+    assert ttl == 24 * 3600
+    assert "strict-tier" in reason and "first" in reason
+
+
+def test_flood32_sub_threshold_botua_not_banned(ip_ban):
+    """夹 bot-UA 但不足严档阈值（59<60）→ 不封"""
+    assert ip_ban.decide_flood32(59, 1, 0, 0, 0, NOW, 300) is None
+
+
+def test_flood32_attack_history_below_min_blocks_browser_tier(ip_ban):
+    """6h 内 1-4 次攻击命中（不够 30d 线）→ 不享受浏览器档，按 60 严档"""
+    reason, ttl = ip_ban.decide_flood32(90, 0, 0, 2, 0, NOW, 216)
+    assert ttl == 24 * 3600 and "strict-tier" in reason
+
+
+def test_flood32_attack_min_30d_unchanged(ip_ban):
+    """attack≥5 → 30d 不变（夹 bot-UA 形态）"""
+    reason, ttl = ip_ban.decide_flood32(90, 1, 0, 5, 0, NOW, 216)
+    assert ttl == ip_ban.ATTACK_TTL == 30 * 24 * 3600
+    assert reason.startswith("attack-urls")
+
+
+def test_flood32_attack_priority_over_browser_shape(ip_ban):
+    """零 bot-UA + 攻击≥5 → 仍 30d（攻击优先级最高，不进浏览器档）"""
+    reason, ttl = ip_ban.decide_flood32(90, 0, 0, 5, 0, NOW, 216)
+    assert ttl == 30 * 24 * 3600 and reason.startswith("attack-urls")
+
+
+def test_flood32_browser_exempt_unchanged(ip_ban):
+    """signals≥3+零 bot-UA → exempt 不变（WARP 事件教训；超浏览器档阈值也豁免）"""
+    assert ip_ban.decide_flood32(90, 0, 3, 0, 0, NOW, 216) is None
+    assert ip_ban.decide_flood32(400, 0, 3, 0, NOW - 24 * 3600, NOW, 300) is None
+
+
+def test_flood32_botua_disables_exempt(ip_ban):
+    """有 bot-UA 时生命周期信号不构成豁免（豁免要求零 bot-UA）"""
+    reason, ttl = ip_ban.decide_flood32(90, 1, 3, 0, 0, NOW, 216)
+    assert ttl == 24 * 3600          # 严档封禁而非豁免
