@@ -30,7 +30,8 @@ ip-ban.py — 通用 IP 段黑名单（自动发现 spam 网段 → CF WAF 封�
   application.properties …——真人和守规矩爬虫永远不会请求这类路径，零误伤可能）
   → 封 /32、TTL 升级 30 天；/24 行为封禁若夹带攻击流量同样升级 30 天
 - 机房 ASN 常驻封禁（2026-10-24 #38）：主流云/hosting ASN（AWS/GCP/Azure/Hetzner/
-  DO/Linode/Vultr/OVH/Oracle/Scaleway/阿里国际/腾讯国际）命中即 managed_challenge——
+  DO/Linode/Vultr/OVH/Oracle/Scaleway/阿里国际/腾讯国际）命中即 block（2026-10-25
+  用户裁定，原 managed_challenge——无头浏览器能过挑战，拦不住 800x600 家族）——
   与速率闸正交的常驻规则，堵低慢速分布式爬虫（800x600 headless 指纹族）速率永远够
   不上阈值的盲区；cf.client.bot 官方验证爬虫整体豁免（googlebot 从 GCP 段抓取不误伤）
   + 66.249.64.0/19 兜底 + 站主/ALLOW_CIDRS 豁免
@@ -92,9 +93,20 @@ _next 静态资源，零攻击路径）：
   键=v4 /32、v6 /64（家宽 v6 后缀逐日轮换）
 - 判定 decide_persistent：14 天窗口 ≥4 个不同到访日 + 累计 ≥8 请求 + 全程零
   浏览器生命周期信号 + 零 304（signals/n304 任一非零即真人铁证放行=原则②）
-- 命中 → 并入 dc 规则（OR 子句，managed_challenge 真人一键可过）+ cf.client.bot/
+- 命中 → 并入 dc 规则（OR 子句，继承 dc action=block）+ cf.client.bot/
   站主双豁免兜底；名单空=子句不存在。**不建独立规则**：Free 版自定义规则上限
   5 条（2026-10-25 实测 "6 out of 5"），名单空自动 disable=原则③ 收口
+2026-10-25 调整（DC_ACTION managed_challenge→block，用户裁定「机房 IP 直接 ban，
+UA 路线不做——容易糊弄」；前提实证：GA「今天 2 条美国数据」= 800x600 家族，9 个
+出口全部落在已列 19 个机房 ASN 里（AS212238×7 含伪装成 BR/TR/IT ISP 的注册段、
+AS46635/AS62874 各 1）；12h 日志 234 个浏览器 UA 的 IP 无一命中 19 ASN=零真人；
+GEO/SEO 爬虫实测全靠豁免存活：GPTBot/ChatGPT-User/OAI-SearchBot 全 Azure(AS8075)、
+Amazonbot/PerplexityBot 全 AWS、Ahrefs 主力 OVH(AS16276)、Bravebot Hetzner，
+cf.client.bot+官方段+UA 自报家门三层豁免原样保留即不受影响；PERSIST_ACTION 常量
+随并入设计删除，persist 名单继承 block）：
+- 豁免不变（cf.client.bot 验证爬虫 / 66.249.64.0/19 / 站主+ALLOW_CIDRS /
+  DC_UA_EXEMPTS 自报家门）——UA 豁免的伪造面今天已存在（豁免本就跳过挑战），
+  block 不扩大暴露；家族实测素浏览器 UA，撞 block 即 403
 """
 
 import ipaddress
@@ -123,7 +135,13 @@ RULE_MARKER = "ip-range-blacklist"          # 规则 description 前缀 / ref
 # （googlebot/bingbot 反向 DNS 实名，GCP/Azure 段内的 Google/Bing 抓取出口全在此列）；
 # ②66.249.64.0/19 老段兜底（Prefetch Proxy 判例段）；③站主 IP + ALLOW_CIDRS。
 DC_MARKER = "datacenter-asn-block"
-DC_ACTION = "managed_challenge"    # 爬虫过不了挑战=等同封；云上真人一键可过，误伤面最小
+DC_ACTION = "block"    # 2026-10-25 用户裁定升级：无头浏览器能过 managed_challenge
+                        # （GA 两条美国会话实证），挑战对 800x600 家族无效；12h 实测
+                        # 19 个机房 ASN 上零真人（234 个浏览器 UA 的 IP 无一命中），
+                        # 家族 9 个出口全在其中。豁免三层原样保留，GEO/SEO 爬虫实证
+                        # 存活：GPTBot/ChatGPT-User/OAI-SearchBot(全 Azure)、
+                        # Amazonbot/PerplexityBot(AWS)、Ahrefs(OVH)、Bravebot(Hetzner)。
+                        # 残余代价：云 VPN 真人从一键可过变 403（用户原则 3 接受）
 
 # ---- 坚持不懈来访者挑战网（2026-10-25 用户三原则 #3：机器访问可疑，且「换着出口
 # 每天都来的同一访客」可疑——堵 Mac-UA 深链低慢速爬虫家族换到未知 ASN/家宽出口时
@@ -131,10 +149,9 @@ DC_ACTION = "managed_challenge"    # 爬虫过不了挑战=等同封；云上真
 # 判定（同一 IP，v6 按 /64）：14 天内 ≥4 个不同日到访 + 累计 ≥8 请求 + 全程零
 # 浏览器生命周期信号（sw.js/manifest/_next chunk/geo.json 一个不拉）+ 零 304
 # （真浏览器缓存校验必回源；无头族每天全新上下文永不发 If-None-Match）。
-# 命中 → 独立 CF 规则 managed_challenge（真人一键可过，非 block——原则 2）；
+# 命中 → 并入 dc 规则 OR 子句（继承 action=block，2026-10-25 随 dc 升级）；
 # 档案只收 classify=human 的流量，官方爬虫/自报家门/白名单（原则 1）从不入档。
-PERSIST_MARKER = "persistent-visitor-challenge"
-PERSIST_ACTION = "managed_challenge"
+PERSIST_MARKER = "persistent-visitor-challenge"   # 并入 dc 规则共用 action，无独立项
 PERSIST_WINDOW = 14 * 86400          # 滚动窗口 14 天
 PERSIST_MIN_DAYS = 4                 # 窗口内不同到访日下限
 PERSIST_MIN_REQS = 40                # 累计请求下限：真人日访 1-3 条源站请求（资产全
@@ -173,7 +190,7 @@ DATACENTER_ASNS = (
     132203,         # Tencent Cloud 国际
     18779,          # EGIHosting（10-24 实证：800x600 爬虫家族换用的小托管商出口）
     36352,          # ColoCrossing（10-24 实证：Java-HttpClient 爬虫 198.46.132.34 拉 item 页，
-                    #  CF AI Labyrinth 已伺候；入列后整段 managed_challenge）
+                    #  CF AI Labyrinth 已伺候；入列后整段 block）
     212238,         # Datacamp/CDN77（10-24 实证：browser-burst 豁免×2 + Mac-UA 低慢速
                     #  爬虫出口同属此 ASN——CDN/VPN 基础设施，单日 5 次现身）
     46635,          # AviationAI 小众代理出口（10-24 实证：Mac-UA 深链爬虫 9.151.196.47）
@@ -560,8 +577,8 @@ def build_dc_expression(allowed=None, persist_cidrs=None):
     AI 爬虫不在 cf.client.bot 名单里，必须 UA 豁免）+ 66.249.64.0/19 兜底 +
     站主 IP + ALLOW_CIDRS。
 
-    persist_cidrs 非空时 OR 进坚持不懈来访者挑战子句（同一 managed_challenge，
-    语义不变）：Free 版自定义规则上限 5 条，无第 6 条配额（2026-10-25 实测
+    persist_cidrs 非空时 OR 进坚持不懈来访者子句（继承 dc action=block）：
+    Free 版自定义规则上限 5 条，无第 6 条配额（2026-10-25 实测
     "6 out of 5"），两名单必须共用本规则；子句独立带 cf.client.bot + 站主豁免。"""
     cidrs = ["66.249.64.0/19"] + sorted(OWNER_IPS) \
         + [str(n) for n in (allowed if allowed is not None else allow_nets())]
@@ -579,8 +596,9 @@ def build_dc_expression(allowed=None, persist_cidrs=None):
 def apply_dc_rule(rules, expr):
     """在规则列表中原位维护机房 ASN 常驻规则，返回 (同一列表, 是否有变化)。
 
-    action=managed_challenge：爬虫过不了挑战=等同封禁；云上真人（VPN 出口撞 ASN）
-    一键可过——「禁掉机房」与「不误伤」的最优交点。"""
+    action=block（2026-10-25 用户裁定）：无头浏览器能过 managed_challenge（实证：
+    家族 GA 会话），挑战对机器无效；豁免三层保 SEO/GEO（cf.client.bot+官方段+
+    UA 自报家门），12h 实测机房 ASN 零真人。"""
     rule = next((r for r in rules
                  if str(r.get("description", "")).startswith(DC_MARKER)
                  or r.get("ref") == DC_MARKER), None)
@@ -1080,8 +1098,8 @@ def main():
                 if need_put or dc_changed:
                     put_rules(cf, zid, rules)
                     if dc_changed and not DRY_RUN and not need_put:
-                        tg("ip-ban: 机房 ASN 常驻规则已启用——%d 个云/hosting ASN 走 %s，"
-                           "CF 验证爬虫(googlebot/bingbot)+站主白名单豁免"
+                        tg("ip-ban: 机房 ASN 规则更新——%d 个云/hosting ASN 直接 %s。"
+                           "豁免：CF 验证爬虫+UA 自报家门+官方段+站主白名单"
                            % (len(DATACENTER_ASNS), DC_ACTION))
                 unsynced = [z for z in unsynced if z != zname]
             except Exception as e:
@@ -1107,8 +1125,8 @@ def main():
         tg("ip-ban: %s" % msg)
     for k in new_persist:
         if not unsynced:
-            tg("ip-ban: 坚持不懈来访者进挑战名单 %s（14 天内≥4 日到访且零浏览器"
-               "信号/零304，managed_challenge 真人可过）" % k)
+            tg("ip-ban: 坚持不懈来访者列入封禁 %s（14 天内≥4 日到访且零浏览器"
+               "信号/零304；随 dc 规则 action=block）" % k)
     if not new_bans and not unbanned and not verify_alerts:
         log("no action: %d events scanned, blacklist=%d, tracks=%d"
             % (len(events), len(bans), len(tracks)))

@@ -291,7 +291,7 @@ def test_apply_dc_rule_carries_persist_clause(ip_ban):
     rules = []
     expr = ip_ban.build_dc_expression([], persist_cidrs=["203.0.113.9/32"])
     rules, ch = ip_ban.apply_dc_rule(rules, expr)
-    assert ch and rules[0]["action"] == "managed_challenge"
+    assert ch and rules[0]["action"] == ip_ban.DC_ACTION
     rules, ch = ip_ban.apply_dc_rule(rules, expr)            # 幂等
     assert ch is False
     expr2 = ip_ban.build_dc_expression([])                    # 名单清空 → 更新
@@ -602,10 +602,11 @@ def test_dc_rule_create_noop_update(ip_ban):
     assert rules3[0]["action"] == ip_ban.DC_ACTION and rules3[0]["enabled"] is True
 
 
-def test_dc_managed_challenge_not_block(ip_ban):
-    """action 必须 managed_challenge（云上真人可过挑战，误伤面最小——用户裁定的
-    「不误伤」边界延伸到非 Google 的机房真人出口）"""
-    assert ip_ban.DC_ACTION == "managed_challenge"
+def test_dc_action_is_block(ip_ban):
+    """action 必须 block（2026-10-25 用户裁定：800x600 无头家族能过
+    managed_challenge——GA 美国会话实证；12h 实测 19 ASN 上零真人，
+    豁免三层保 SEO/GEO 爬虫）"""
+    assert ip_ban.DC_ACTION == "block"
 
 
 def test_dc_expression_exempts_selfid_ai_crawlers(ip_ban):

@@ -15,7 +15,7 @@
 | 2 | block empty/fake/script user agent | block | 手工（本次加严，见下） |
 | 3 | cn-traffic-managed-challenge（cf.client.bot 豁免，10-25 补） | managed_challenge | 手工 |
 | 4 | ip-range-blacklist auto（10-25 精简至 7 段） | block | ip-ban.py 自动 |
-| 5 | datacenter-asn-block auto (N ASNs；名单非空时 OR 进坚持不懈挑战子句) | managed_challenge | ip-ban.py 自动 |
+| 5 | datacenter-asn-block auto (19 ASNs；名单非空时 OR 进坚持不懈子句；10-25 升 block) | block | ip-ban.py 自动 |
 | RL | content-nav-burst-guard：150 req/10s（http_ratelimit 阶段，HTML 路径） | block | 手工（#37 放宽） |
 
 ### shuotong.wang（3 条）
@@ -23,7 +23,7 @@
 | # | 描述 | action | 维护方 |
 |---|---|---|---|
 | 1 | ip-range-blacklist auto | block | ip-ban.py 自动 |
-| 2 | datacenter-asn-block auto（名单非空时含坚持不懈子句） | managed_challenge | ip-ban.py 自动 |
+| 2 | datacenter-asn-block auto（名单非空时含坚持不懈子句；10-25 升 block） | block | ip-ban.py 自动 |
 | 3 | block empty/fake/script user agent（ref=ua-block） | block | 手工（10-24 从 noda 同步） |
 
 ## UA 规则（block empty/fake/script user agent）
@@ -160,6 +160,20 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
 - 机房 ASN 规则补 AS36352（ColoCrossing，Java 爬虫实证）→ noda-infra `5260c88`。
 - 内置层实测快照：AI Labyrinth=开（工作正常）；Bot Fight Mode=关
   （**勿开**：免费版无 IP 豁免，会拦站主自有 HeadlessChrome 测试栈）；AI bot policies 4 条配置。
+
+### 2026-10-25（DC_ACTION managed_challenge → block，用户裁定）
+起因：GA「今天 2 条美国数据」复核=800x600 家族（9.151.196.78/AS46635 + 172.252.155.132/AS212238，
+都能过 managed_challenge）。用户裁定：机房 IP 直接 ban、UA 拦截路线不做（易伪造）。
+前提实证：
+- 家族 12h 内 9 个出口**全部**落在已列 19 个机房 ASN（AS212238×7——含伪装成 BR/TR/IT ISP 的
+  注册段 201.24.178.0/23、189.104.106.0/23、189.81.226.0/23；AS62874/AS46635 各 1）。
+- 12h 日志 234 个浏览器 UA 的 IP 落在 19 ASN 上=**0**（机房零真人，block 误伤面空）。
+- GEO/SEO 爬虫实测全靠豁免存活（豁免原样保留）：GPTBot/ChatGPT-User/OAI-SearchBot 全 Azure
+  (AS8075，OpenAI 跑 Azure)；Amazonbot/PerplexityBot 全 AWS；AhrefsBot 主力 OVH(AS16276)+
+  自有 AS140577；Bravebot Hetzner。cf.client.bot 覆盖 Googlebot(GCP)/Bingbot(Azure)。
+- UA 豁免的伪造面今天已存在（豁免本就跳过挑战），block 不扩大暴露；家族实测素浏览器 UA。
+残余代价：云 VPN 真人从一键可过变 403（用户原则 3 接受）。persist 名单继承 block
+（PERSIST_ACTION 常量删除）。API 读回双 zone action=block、四层豁免完整。noda-infra commit 见 git。
 
 ## 核验命令（r4s 上跑）
 ```bash
