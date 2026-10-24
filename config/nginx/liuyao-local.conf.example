@@ -577,7 +577,6 @@ server {
     location / { return 404; }
 }
 
-\
 # ── HTTPS: class-preprod — 整站 410（2026-10-25 class 下线，与 prod default.conf
 # class 块同步改；先例 liuyao-preprod 2026-10-24；原 S3 stg 桶静态壳全套随块退役）──
 server {
