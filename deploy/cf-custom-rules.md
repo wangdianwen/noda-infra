@@ -66,6 +66,29 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
 ```
 
 ## 变更记录
+### 2026-10-26（misban-watch 误封哨兵 + admin 安全报表上线）
+用户需求：报表上 admin 随时看 + 主动消息 + 误封自动发现（「不要等 Google 发邮件」）。
+- **报表**：https://admin.noda.co.nz/security/ （nginx admin 块 `/security/` 静态 location，
+  alias ops-logs 卷 `security-report/`，misban-watch cron */10 每轮回写 page.html+
+  report.json；保护层=CF admin non-NZ challenge + robots.txt 全站 Disallow；
+  无应用鉴权，数据敏感度=防御姿态摘要，v2 可迁 BFF Keycloak 后面）。
+- **D1 事件流检测**（token 到位即启用）：`firewallEventsAdaptive` 双 zone 增量
+  （CF_BAN_API_TOKEN/CF_API_TOKEN 均无 zone.analytics.read，实测；需新建
+  `CF_REPORT_API_TOKEN`：My Profile→API Tokens→Create——权限 Zone/Zone/Read +
+  Zone/Analytics/Read，Zone Resources Include All zones，加进 `/etc/noda/ip-ban.env`）
+  → 官方爬虫段 IP（与 ip-ban 白名单同源）被封/被挑战 = 实锤误封，TG 即时告警，
+  同事件去重。admin./auth./comments./api./health. 后台 host 被挑战不计（robots
+  Disallow 全站，守规矩爬虫本就不该来）。
+- **D2 源站心跳**（零权限已活）：Googlebot 源站 36h、Bingbot 72h 无官方段请求
+  即 TG（反向哨兵：心跳在=Google/Bing 能进的持续证明），恢复自动解除。
+- 事件 schema 判例：数据集真名 `firewallEventsAdaptive`/`firewallEventsAdaptiveGroups`
+  （`firewallAdaptiveEvents`/`firewallAdaptiveGroups` 不存在）；事件级**无 clientASN
+  字段**（schema 校验先于 authz 报错，两个错误别混淆）；GraphQL 内省 Viewer/Zone
+  类型被封（__type 返回 null），字段靠别名探测。
+- 部署：deploy/misban-watch.py + security-report.html → r4s /mnt/mmc1-4/System/Scripts/；
+  crontab-r4s-host + hb 心跳；nginx default.conf admin 块加 `/security/` location
+  （reload 验证 200）。单测 16 个（分类/心跳/去重/报表组装）。
+
 ### 2026-10-25（ALLOW_CIDRS 撤成员：150.249.214.0/24 回归正常闸门）
 用户裁定「不能走白名单，该怎么封怎么封」：日本 So-net 家宽段（AS2527，10-23 误封
 判例入列 ALLOW_CIDRS）撤出硬白名单——白名单=该段永久免疫，真被滥用反而无手段；

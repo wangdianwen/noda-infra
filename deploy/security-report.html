@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>noda 安全报表</title>
+<style>
+  :root { --bg:#0f1419; --card:#1a2129; --line:#2a3441; --fg:#d8dee6; --dim:#8a97a5;
+          --red:#ff5c5c; --green:#3fbf7f; --amber:#f0b429; --blue:#5ca7ff; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,"PingFang SC",sans-serif; padding:16px; max-width:980px; margin:0 auto; }
+  h1 { font-size:18px; margin-bottom:4px; }
+  h2 { font-size:15px; margin:22px 0 8px; color:var(--blue); }
+  .sub { color:var(--dim); font-size:12px; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; margin-left:8px; }
+  .ok { background:#123527; color:var(--green); }
+  .bad { background:#3d1414; color:var(--red); }
+  .warn { background:#3a2e10; color:var(--amber); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; margin-top:8px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; color:var(--dim); font-weight:normal; padding:4px 8px; border-bottom:1px solid var(--line); }
+  td { padding:4px 8px; border-bottom:1px solid #222b35; word-break:break-all; }
+  tr:last-child td { border-bottom:none; }
+  .mono { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  .mis { color:var(--red); font-weight:600; }
+  .kv { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; }
+  .kv div b { display:block; font-size:16px; }
+  .kv div span { color:var(--dim); font-size:12px; }
+  #stale { display:none; }
+  .empty { color:var(--dim); padding:6px 8px; }
+  a { color:var(--blue); }
+</style>
+</head>
+<body>
+<h1>noda 安全报表 <span id="fresh" class="badge">…</span></h1>
+<div class="sub">误封哨兵 · 10 分钟刷新（cron */10）· 自动加载 <span class="mono">/security/report.json</span> ·
+<a href="https://dash.cloudflare.com/77d235e87803d808cbc89e0c8f5f5904/noda.co.nz/security/events" target="_blank">CF Security Events ↗</a></div>
+<div id="stale" class="card" style="border-color:var(--red)">⚠️ 报表超过 30 分钟未更新 —— watcher 可能挂了（hb 心跳应已告警）</div>
+
+<h2>🚨 告警（最新在前）</h2>
+<div class="card" id="alerts"><div class="empty">加载中…</div></div>
+
+<h2>❤️ 官方爬虫心跳（源站实测——反向误封哨兵）</h2>
+<div class="card" id="canary"><div class="empty">加载中…</div></div>
+
+<h2>🛡️ 当前封禁（CF 黑名单）</h2>
+<div class="card" id="bans"><div class="empty">加载中…</div></div>
+
+<h2>📡 24h 拦截事件概览（D1 事件流）</h2>
+<div class="card" id="events"><div class="empty">加载中…</div></div>
+
+<h2>👁️ 坚持不懈名单 / 执行观察</h2>
+<div class="card" id="persist"><div class="empty">加载中…</div></div>
+
+<script>
+const BADGE = {misban:"误封", fake:"伪装爬虫", selfid:"自报爬虫", script:"脚本UA", human:"浏览器UA"};
+function esc(s){return (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+async function load(){
+  try{
+    const r = await fetch("report.json?_="+Date.now());
+    const d = await r.json();
+    render(d);
+  }catch(e){
+    document.getElementById("fresh").textContent="加载失败";document.getElementById("fresh").className="badge bad";
+  }
+}
+function render(d){
+  const age=(Math.floor(Date.now()/1000)-d.generated_epoch);
+  const fb=document.getElementById("fresh");
+  fb.textContent = age<60?"刚刚更新":(age<3600?Math.floor(age/60)+" 分钟前更新":Math.floor(age/3600)+" 小时前更新");
+  fb.className="badge "+(age<1800?"ok":(age<7200?"warn":"bad"));
+  document.getElementById("stale").style.display = age>1800?"block":"none";
+
+  // alerts
+  const al=document.getElementById("alerts");
+  al.innerHTML = (d.alerts&&d.alerts.length) ?
+    "<table><tr><th>时间</th><th>内容</th></tr>"+d.alerts.map(a=>{
+      const t=new Date(a.t*1000).toLocaleString("zh-CN",{hour12:false});
+      return "<tr><td class='mono'>"+esc(t)+"</td><td>"+esc(a.msg)+"</td></tr>";
+    }).join("")+"</table>" : "<div class='empty'>无告警——检测链路健康</div>";
+
+  // canary
+  const c=d.canary||{};
+  document.getElementById("canary").innerHTML =
+    "<div class='kv'>"+Object.keys(c).map(k=>{
+      const x=c[k], silent=x.status==="SILENT";
+      return "<div><b class='"+(silent?"mis":"")+"'>"+(silent?"静默 "+x.hours_quiet+"h":"心跳正常")+"</b>"+
+        "<span>"+esc(k)+" · 阈值 "+x.threshold_h+"h · 最后到访 "+esc(x.last_seen||"48h 窗内未见")+"</span></div>";
+    }).join("")+"</div>";
+
+  // bans
+  const b=d.bans||[];
+  document.getElementById("bans").innerHTML = b.length ?
+    "<table><tr><th>网段</th><th>原因</th><th>封于</th><th>解封</th></tr>"+b.map(x=>
+      "<tr><td class='mono'>"+esc(x.cidr)+"</td><td>"+esc(x.reason)+"</td><td class='mono'>"+esc(x.banned_at||"")+"</td><td class='mono'>"+esc(x.until)+"</td></tr>"
+    ).join("")+"</table><div class='sub' style='margin-top:6px'>容量 "+esc(d.blacklist)+" · 洪水前科 "+esc(d.history_count)+" 条 · 行为跟踪 /24 "+esc(d.tracks)+" 个</div>"
+    : "<div class='empty'>黑名单空</div>";
+
+  // events
+  const e=d.events||{};
+  const evEl=document.getElementById("events");
+  if(!e.available){
+    evEl.innerHTML="<div class='empty'>事件流未启用："+esc(e.note||"")+"（需 CF_REPORT_API_TOKEN，Zone→Analytics→Read；D2 心跳哨兵不受影响）</div>";
+  }else{
+    const counts=e.counts||{};
+    let html="<div class='kv'>"+Object.keys(BADGE).map(k=>
+      "<div><b class='"+(k==="misban"&&counts[k]?"mis":"")+"'>"+(counts[k]||0)+"</b><span>"+BADGE[k]+"</span></div>").join("")+"</div>";
+    html+="<div class='sub' style='margin:8px 0 4px'>按来源："+esc(Object.entries(e.by_source||{}).map(([k,v])=>k+"×"+v).join(" · ")||"无")+
+      "（窗口 "+esc(e.window_hours)+"h"+(e.truncated?"，已达单轮上限截断":"")+"）</div>";
+    const rc=e.recent||[];
+    html+= rc.length? "<table><tr><th>时间(UTC)</th><th>动作</th><th>IP</th><th>类</th><th>host/path</th></tr>"+
+      rc.slice(0,15).map(x=>{
+        const cls=(x.ip&&false)?"":"";
+        return "<tr><td class='mono'>"+esc((x.ts||"").replace("T"," ").slice(0,19))+"</td><td>"+esc(x.action)+
+        "</td><td class='mono'>"+esc(x.ip)+"</td><td>"+esc(BADGE[x._cls]||"")+"</td><td class='mono'>"+esc(x.host)+esc(x.path)+"</td></tr>";
+      }).join("")+"</table>" : "<div class='empty'>窗口内内容站零拦截事件</div>";
+    evEl.innerHTML=html;
+  }
+
+  // persist
+  const pl=d.persist_listed||[];
+  document.getElementById("persist").innerHTML =
+    "<div class='kv'><div><b>"+esc(pl.length)+"</b><span>坚持不懈名单（已封）</span></div>"+
+    "<div><b>"+esc(d.persist_tracked)+"</b><span>档案跟踪中</span></div>"+
+    "<div><b>"+esc(Object.keys(d.verify||{}).length)+"</b><span>封禁生效观察中</span></div></div>"+
+    (pl.length? "<div class='mono' style='margin-top:6px'>"+esc(pl.join("  "))+"</div>" : "");
+}
+load(); setInterval(load, 60000);
+</script>
+</body>
+</html>
