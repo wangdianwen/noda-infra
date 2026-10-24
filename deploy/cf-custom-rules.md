@@ -7,7 +7,7 @@
 
 ## 规则清单（2026-10-25 快照）
 
-### noda.co.nz（5 条+1 潜在，按求值顺序）
+### noda.co.nz（5 条自定义 + 1 条限速，按求值顺序）
 
 | # | 描述 | action | 维护方 |
 |---|---|---|---|
@@ -16,6 +16,7 @@
 | 3 | cn-traffic-managed-challenge（cf.client.bot 豁免，10-25 补） | managed_challenge | 手工 |
 | 4 | ip-range-blacklist auto (N active) | block | ip-ban.py 自动 |
 | 5 | datacenter-asn-block auto (N ASNs；名单非空时 OR 进坚持不懈挑战子句) | managed_challenge | ip-ban.py 自动 |
+| RL | content-nav-burst-guard：150 req/10s（http_ratelimit 阶段，HTML 路径） | block | 手工（#37 放宽） |
 
 ### shuotong.wang（3 条）
 
@@ -65,6 +66,31 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
 ```
 
 ## 变更记录
+### 2026-10-25 深夜（第三轮 review：运行态+证据复盘）
+1. **persist 判据反向失效修复（关键）**：实测爬虫家族昨天拉满 `_next/static×89
+   +geo.json×3`（JS 执行≠真人）——原判据把 BROWSER_SIGNAL_RE（含 _next）当真人
+   否决信号，目标家族会被反向豁免，永不进名单；而真实老用户资产全走 CF/浏览器
+   缓存（源站 1-3 条/天、零信号）反而会被累积误伤——方向完全反了。重构：
+   否决信号改 PERSIST_VETO_RE 只认 PWA 生命周期端点（sw.js/manifest/offline，
+   家族实测零触碰）；PERSIST_MIN_REQS 8→40（真人日访源站 1-3 条 14 天最多 ~40，
+   家族每天整页冷加载 45+ 条 4 天即 180）。
+2. **平台链接预览抓取器豁免（原则①）**：persist 档案实测混入 Meta 2a03:2880::/32
+   段 facebookexternalhit（UA 无 bot 字样被归 human）——4 天后将误挑战 FB/WhatsApp
+   分享预览。SELFID_MARKERS 补 externalhit/meta-externalagent/whatsapp/telegram/
+   skypeuripreview（Twitterbot/Slackbot/Discordbot/LinkedInBot 带 bot 已覆盖）。
+3. 家族指纹留档：UA=Chrome/125.0.0.0（2024 年中版本；真实现网 145/142）——
+   暂不做 UA 版本拦截（误伤真实老旧浏览器），CHROME_VER_RE<100 门槛维持。
+4. 尺寸回归测试：dc 表达式在 MAX_PERSIST_LIST=80×最长压缩 /64（24 字符）下
+   =2752 字符 < 4095-200 余量。
+5. **盘点补遗：noda zone 另有一条 http_ratelimit 阶段规则**（此前文档漏记）：
+   `content-nav-burst-guard`：150 req/10s block，`not cf.client.bot`，覆盖
+   //zh//en//item//city//category//login HTML 路径（2026-10-24 #37 放宽，
+   ip-ban 源站闸兜底）。与全规则体系无豁免冲突（150/10s 远超任何礼貌爬虫速率）。
+6. 其余清查全净：两 zone 无其他规则阶段内容（cache_settings=default 无规则）、
+   遗留 firewall access_rules/lockdowns/ua_rules 全 0；state unsynced=[]、
+   verify 空、黑名单 30 段、tracks 141/500、persist 20 条全 days=1。
+   第三轮未再发现新问题，review 收敛。
+
 ### 2026-10-25 晚（全量规则 review 轮，review 至无新问题）
 逐条复审两 zone 全部表达式 + 黑名单 30 段理由 + ip-ban.py 各判定闸，修复 5 处：
 1. **persist 名单并入 dc 规则**（严重）：Free 版自定义规则上限 5 条，实测第 6 条

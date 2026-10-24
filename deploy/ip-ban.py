@@ -137,11 +137,20 @@ PERSIST_MARKER = "persistent-visitor-challenge"
 PERSIST_ACTION = "managed_challenge"
 PERSIST_WINDOW = 14 * 86400          # 滚动窗口 14 天
 PERSIST_MIN_DAYS = 4                 # 窗口内不同到访日下限
-PERSIST_MIN_REQS = 8                 # 累计请求下限（排除每天一发的良性拨测）
+PERSIST_MIN_REQS = 40                # 累计请求下限：真人日访 1-3 条源站请求（资产全
+                                    # 走 CF/浏览器缓存）14 天最多 ~40；无头族每天全新
+                                    # 上下文整页冷加载 45+ 条，4 天即 ~180（2026-10-25
+                                    # 三出口实测：_next×89+geo.json×3+graphql×9）
 MAX_PERSIST_TRACK = 3000             # 档案容量（按 last 裁最旧）
 MAX_PERSIST_LIST = 80                # 名单上限：与 dc 规则共用表达式，须留余量
                                     # （CF 单规则表达式 4095 字符；Free 版自定义
                                     #  规则上限 5 条，2026-10-25 实测 "6 out of 5"）
+# 坚持不懈判定的「真人否决信号」只认 PWA 生命周期端点——2026-10-25 实测爬虫家族
+# 会拉满 _next/static×89+geo.json×3（JS 执行≠真人），但 sw.js/manifest 从 0 触碰
+# （真浏览器每次导航都做 SW 更新检查/注册，且 SW 脚本按规范绕过 HTTP 缓存）。
+# BROWSER_SIGNAL_RE（含 _next）只用于洪水真人豁免，两套口径勿混。
+PERSIST_VETO_RE = re.compile(
+    r"/sw\.js$|/manifest\.webmanifest$|/manifest\.json$|/offline\.html?$", re.I)
 # UA 自报家门豁免（大小写都写死：CF contains 不保证大小写不敏感）。"bot"/"Crawler"
 # 系覆盖 GPTBot/OAI-SearchBot/ClaudeBot/PerplexityBot/Amazonbot/Applebot/CCBot；
 # 三个 "-User" 是各引擎的「用户发起实时抓取」变体——GEO 引用漏斗本体，UA 里没有
@@ -333,7 +342,13 @@ SELFID_MARKERS = ["bot", "spider", "slurp", "crawler",
                   # AdsBot-Google/Bravebot 等已被 "bot" 覆盖，不重复列
                   "mediapartners-google", "apis-google", "feedfetcher",
                   "google-read-aloud", "googleother", "google-safety",
-                  "google-inspectiontool"]
+                  "google-inspectiontool",
+                  # 平台链接预览抓取器（同样无 bot 字样；2026-10-25 persist 档案
+                  # 实测 Meta 2a03:2880::/32 段 facebookexternalhit 被归 human 入档，
+                  # 4 天后将误挑战 FB/WhatsApp 分享预览——违反原则①）。Twitterbot/
+                  # Slackbot/Discordbot/LinkedInBot/Pinterestbot 带 bot 已覆盖
+                  "externalhit", "meta-externalagent", "whatsapp", "telegram",
+                  "skypeuripreview"]
 ASSET_RE = re.compile(
     r"\.(js|css|mjs|png|jpe?g|webp|svg|gif|ico|woff2?|ttf|otf|map|mp4|avif)$"
     r"|/_next/static/", re.I)
@@ -597,8 +612,10 @@ def decide_persistent(days, reqs, signals, n304):
     """坚持不懈来访者判定（纯函数，单测直接打）。
 
     门槛=窗口内不同到访日 ≥PERSIST_MIN_DAYS 且累计请求 ≥PERSIST_MIN_REQS 且
-    signals==0 且 n304==0。signals/n304 是「真人铁证」：任一非零即不挑战
-    （真浏览器必然带生命周期端点或缓存校验回源，原则 2 的防误伤闸）。"""
+    signals==0 且 n304==0。signals 只认 PWA 生命周期端点（PERSIST_VETO_RE：
+    sw.js/manifest——2026-10-25 实测爬虫家族拉满 _next 但 sw.js 零触碰）；
+    n304=真浏览器缓存校验回源（无头族每天全新上下文永不发 If-None-Match）。
+    任一非零即真人铁证不挑战（原则 2 防误伤闸）。"""
     return (days >= PERSIST_MIN_DAYS and reqs >= PERSIST_MIN_REQS
             and signals == 0 and n304 == 0)
 
@@ -885,8 +902,8 @@ def main():
                 pkey, {"days": {}, "reqs": 0, "signals": 0, "n304": 0, "last": 0})
             pf["days"][str(now // 86400)] = 1
             pf["reqs"] += 1
-            if BROWSER_SIGNAL_RE.search(path):
-                pf["signals"] += 1
+            if PERSIST_VETO_RE.search(path):
+                pf["signals"] += 1            # PWA 生命周期=真人铁证（见 PERSIST_VETO_RE 注释）
             if status == "304":
                 pf["n304"] += 1            # 真浏览器缓存校验回源；无头族每天全新上下文永不发
             pf["last"] = now

@@ -209,7 +209,8 @@ def test_scan_window_emits_status(ip_ban, monkeypatch):
 
 def test_decide_persistent_four_days_zero_evidence_passes(ip_ban):
     assert ip_ban.decide_persistent(4, 49, 0, 0) is True
-    assert ip_ban.decide_persistent(6, 300, 0, 0) is True
+    assert ip_ban.decide_persistent(6, 180, 0, 0) is True
+    assert ip_ban.decide_persistent(4, 40, 0, 0) is True   # 新门槛边界
 
 
 def test_decide_persistent_three_days_not_enough(ip_ban):
@@ -217,18 +218,51 @@ def test_decide_persistent_three_days_not_enough(ip_ban):
 
 
 def test_decide_persistent_low_reqs_not_enough(ip_ban):
-    """每天一发的良性拨测（4 天 4 发）不进名单"""
+    """真人忠实用户：1-3 条源站请求/天 × 4 天（资产全走缓存）远低于 40 门槛"""
+    assert ip_ban.decide_persistent(4, 12, 0, 0) is False
     assert ip_ban.decide_persistent(4, 4, 0, 0) is False
 
 
 def test_decide_persistent_browser_signals_veto(ip_ban):
-    """拉过一次 sw.js/_next = 真浏览器铁证，永不挑战（原则 2）"""
+    """PWA 生命周期端点（sw.js/manifest）任一命中 = 真人铁证，永不挑战"""
     assert ip_ban.decide_persistent(5, 100, 1, 0) is False
 
 
 def test_decide_persistent_304_veto(ip_ban):
     """真浏览器缓存校验回源（If-None-Match→304），无头族每天全新上下文永不发"""
     assert ip_ban.decide_persistent(5, 100, 0, 1) is False
+
+
+def test_persist_veto_re_excludes_next_includes_pwa(ip_ban):
+    """2026-10-25 实测：爬虫家族 _next/static×89+geo.json×3 但 sw.js/manifest 零
+    触碰——否决信号必须只认 PWA 生命周期，含 _next 会把目标家族反向豁免掉"""
+    r = ip_ban.PERSIST_VETO_RE
+    assert r.search("/sw.js") and r.search("/manifest.webmanifest")
+    assert r.search("/zh/manifest.json")
+    assert not r.search("/_next/static/chunks/xyz.js")
+    assert not r.search("/geo.json")
+    assert not r.search("/zh/__next/whatever")
+
+
+def test_classify_platform_preview_fetchers_skip(ip_ban):
+    """平台链接预览抓取器（无 bot 字样）= 守规矩爬虫，不入任何机器判定（原则①）。
+    2026-10-25 实测 Meta 2a03:2880::/32 的 facebookexternalhit 已混入 persist 档案"""
+    for ua in ("facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+               "meta-externalagent/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)",
+               "WhatsApp/2.23.20.0",
+               "TelegramLike/4.0",
+               "SkypeUriPreview Preview/0.5"):
+        assert ip_ban.classify("203.0.113.77", ua) == "skip", ua
+
+
+def test_dc_expression_within_cf_limit_at_persist_cap(ip_ban):
+    """dc 规则单表达式 CF 上限 4095 字符：名单打满 MAX_PERSIST_LIST 个最长形态
+    条目（persist_key 产出的压缩 /64=24 字符是真实上界）仍须留余量。
+    回归：Free 版 5 条规则上限判例的同族防线。"""
+    worst_v6 = "2a02:8071:22a1:a981::/64"        # 4 满组+/64=压缩形态最长 24 字符
+    e = ip_ban.build_dc_expression(
+        [], persist_cidrs=[worst_v6] * ip_ban.MAX_PERSIST_LIST)
+    assert len(e) < 4095 - 200, len(e)   # 200 字符安全余量
 
 
 def test_persist_key_v6_uses_64(ip_ban):
