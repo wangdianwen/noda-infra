@@ -68,7 +68,7 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
 ## 变更记录
 ### 2026-10-26（misban-watch 误封哨兵 + admin 安全报表上线）
 用户需求：报表上 admin 随时看 + 主动消息 + 误封自动发现（「不要等 Google 发邮件」）。
-- **报表**：https://admin.noda.co.nz/security/ （nginx admin 块 `/security/` 静态 location，
+- **报表**：已内嵌 admin 应用 UI（noda-apps admin/web `/security` 页，direct-fetch 同源 JSON）；数据端点=nginx admin 块 `/security-report/` 静态 location（**前缀不可用 /security——会遮蔽应用路由，2026-10-26 判例**），
   alias ops-logs 卷 `security-report/`，misban-watch cron */10 每轮回写 page.html+
   report.json；保护层=CF admin non-NZ challenge + robots.txt 全站 Disallow；
   无应用鉴权，数据敏感度=防御姿态摘要，v2 可迁 BFF Keycloak 后面）。

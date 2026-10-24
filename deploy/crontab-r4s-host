@@ -111,7 +111,7 @@
 #       欢迎名单：真 Googlebot(UA+段双验证)/自报身份爬虫/站主 IP；规则 ref=ip-range-blacklist；全 API 操作
 */5 * * * * python3 /mnt/mmc1-4/System/Scripts/ip-ban.py >> /var/log/noda-ip-ban.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:ip-ban '*/5 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:ip-ban '*/5 * * * *'
 
-# ===== misban-watch 误封哨兵+admin 安全报表（2026-10-26，报表 https://admin.noda.co.nz/security/）=====
+# ===== misban-watch 误封哨兵+admin 安全报表（2026-10-26，UI 内嵌 admin /security 页,数据端点 /security-report/）=====
 # D1 事件流误封检测（需 CF_REPORT_API_TOKEN 加进 /etc/noda/ip-ban.env，Zone→Analytics→Read）
 # D2 源站心跳（零权限）：Googlebot/Bingbot 官方段源站消失即 TG——不等 Google 发邮件
 */10 * * * * python3 /mnt/mmc1-4/System/Scripts/misban-watch.py >> /var/log/noda-misban-watch.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:misban-watch '*/10 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:misban-watch '*/10 * * * *'
