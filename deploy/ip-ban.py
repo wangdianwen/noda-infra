@@ -81,6 +81,17 @@ _next 静态资源，零攻击路径）：
 - DATACENTER_ASNS 补 212238（Datacamp/CDN77，当日 browser-burst 豁免×2 + Mac-UA
   低慢速爬虫出口共 5 次现身）、46635（AviationAI 代理出口）、62874（Web2Objects
   代理出口）——Mac-UA 深链爬虫家族当日的三个代理出口 ASN
+
+2026-10-25 新增坚持不懈来访者挑战网（用户三原则：①不误封 SEO/GEO/守规矩爬虫
+②不误封正常用户 ③机器访问/机房攻击/天天坚持来的访客皆可疑）：
+- 事件元组扩为 (ip, path, ua, status)（LINE_RE 增捕状态码，304=真浏览器缓存
+  校验回源的铁证）
+- 档案只收 classify=human 流量（官方爬虫段/自报家门/白名单 skip 从不入档=原则①）；
+  键=v4 /32、v6 /64（家宽 v6 后缀逐日轮换）
+- 判定 decide_persistent：14 天窗口 ≥4 个不同到访日 + 累计 ≥8 请求 + 全程零
+  浏览器生命周期信号 + 零 304（signals/n304 任一非零即真人铁证放行=原则②）
+- 命中 → 独立 CF 规则 persistent-visitor-challenge（managed_challenge，真人一键
+  可过）+ cf.client.bot/站主双豁免兜底；名单空自动 disable=原则③ 收口
 """
 
 import ipaddress
@@ -110,6 +121,21 @@ RULE_MARKER = "ip-range-blacklist"          # 规则 description 前缀 / ref
 # ②66.249.64.0/19 老段兜底（Prefetch Proxy 判例段）；③站主 IP + ALLOW_CIDRS。
 DC_MARKER = "datacenter-asn-block"
 DC_ACTION = "managed_challenge"    # 爬虫过不了挑战=等同封；云上真人一键可过，误伤面最小
+
+# ---- 坚持不懈来访者挑战网（2026-10-25 用户三原则 #3：机器访问可疑，且「换着出口
+# 每天都来的同一访客」可疑——堵 Mac-UA 深链低慢速爬虫家族换到未知 ASN/家宽出口时
+# 速率闸与 ASN 名单都够不上的最后缺口）----
+# 判定（同一 IP，v6 按 /64）：14 天内 ≥4 个不同日到访 + 累计 ≥8 请求 + 全程零
+# 浏览器生命周期信号（sw.js/manifest/_next chunk/geo.json 一个不拉）+ 零 304
+# （真浏览器缓存校验必回源；无头族每天全新上下文永不发 If-None-Match）。
+# 命中 → 独立 CF 规则 managed_challenge（真人一键可过，非 block——原则 2）；
+# 档案只收 classify=human 的流量，官方爬虫/自报家门/白名单（原则 1）从不入档。
+PERSIST_MARKER = "persistent-visitor-challenge"
+PERSIST_ACTION = "managed_challenge"
+PERSIST_WINDOW = 14 * 86400          # 滚动窗口 14 天
+PERSIST_MIN_DAYS = 4                 # 窗口内不同到访日下限
+PERSIST_MIN_REQS = 8                 # 累计请求下限（排除每天一发的良性拨测）
+MAX_PERSIST_TRACK = 3000             # 档案容量（按 last 裁最旧）
 # UA 自报家门豁免（大小写都写死：CF contains 不保证大小写不敏感）。"bot"/"Crawler"
 # 系覆盖 GPTBot/OAI-SearchBot/ClaudeBot/PerplexityBot/Amazonbot/Applebot/CCBot；
 # 三个 "-User" 是各引擎的「用户发起实时抓取」变体——GEO 引用漏斗本体，UA 里没有
@@ -315,7 +341,7 @@ BROWSER_SIGNAL_RE = re.compile(              # 真 PWA 浏览器生命周期端�
     r"|/_next/static/|/__next\.|/geo\.json$", re.I)
 CHROME_VER_RE = re.compile(r"chrome/(\d+)\.", re.I)
 LINE_RE = re.compile(
-    r'^\S+ \S+ \S+ \[[^\]]+\] "(\S+) ([^"]*) HTTP/[^"]*" \d{3} \d+ '
+    r'^\S+ \S+ \S+ \[[^\]]+\] "(\S+) ([^"]*) HTTP/[^"]*" (\d{3}) \d+ '
     r'"([^"]*)" "([^"]*)" "([^"]+)"')
 
 DRY_RUN = "--dry-run" in sys.argv
@@ -544,6 +570,67 @@ def apply_dc_rule(rules, expr):
     return rules, True
 
 
+def persist_key(ip):
+    """坚持不懈档案键：v4 用 /32，v6 用 /64（家宽 v6 后缀逐日轮换，/64 才追得上）"""
+    a = ipaddress.ip_address(ip)
+    if a.version == 6:
+        return str(ipaddress.ip_network((a, 64), strict=False))
+    return "%s/32" % ip
+
+
+def decide_persistent(days, reqs, signals, n304):
+    """坚持不懈来访者判定（纯函数，单测直接打）。
+
+    门槛=窗口内不同到访日 ≥PERSIST_MIN_DAYS 且累计请求 ≥PERSIST_MIN_REQS 且
+    signals==0 且 n304==0。signals/n304 是「真人铁证」：任一非零即不挑战
+    （真浏览器必然带生命周期端点或缓存校验回源，原则 2 的防误伤闸）。"""
+    return (days >= PERSIST_MIN_DAYS and reqs >= PERSIST_MIN_REQS
+            and signals == 0 and n304 == 0)
+
+
+def build_persist_expression(cidrs):
+    """坚持不懈挑战规则表达式；空名单返回 ""（规则转 disabled）。
+    cf.client.bot + 站主 IP 双豁免兜底（入档集本就不含官方爬虫/白名单）。"""
+    if not cidrs:
+        return ""
+    owners = " ".join(sorted(OWNER_IPS))
+    return ("(ip.src in {%s}) and not cf.client.bot and not ip.src in {%s}"
+            % (" ".join(cidrs), owners))
+
+
+def apply_persist_rule(rules, expr):
+    """在规则列表中原位维护坚持不懈挑战规则，返回 (同一列表, 是否有变化)。
+    名单空 → 规则存在则 disable（对象保留 Dashboard 可见），不存在则不动。"""
+    rule = next((r for r in rules
+                 if str(r.get("description", "")).startswith(PERSIST_MARKER)
+                 or r.get("ref") == PERSIST_MARKER), None)
+    n = expr.count("/")                      # ip.src in {...} 里的 CIDR 数
+    if not expr:
+        if rule and rule.get("enabled", True):
+            rule["enabled"] = False
+            log("persist-rule: disabled (empty list)")
+            return rules, True
+        return rules, False
+    if (rule and rule.get("expression") == expr
+            and rule.get("action") == PERSIST_ACTION
+            and rule.get("enabled", True)):
+        return rules, False
+    created = rule is None
+    desc = "%s auto (%d IPs; managed by ip-ban.py)" % (PERSIST_MARKER, n)
+    if rule:
+        rule["expression"] = expr
+        rule["action"] = PERSIST_ACTION
+        rule["description"] = desc
+        rule["enabled"] = True
+    else:
+        rules.append({"action": PERSIST_ACTION, "action_parameters": {},
+                      "expression": expr, "description": desc,
+                      "enabled": True, "ref": PERSIST_MARKER})
+    log("persist-rule: %s (%d IPs, %s)" % ("created" if created else "updated",
+                                           n, PERSIST_ACTION))
+    return rules, True
+
+
 def client_ip_from_xff(raw):
     """XFF 串 → 客户端 IP。多级 XFF 取最后一跳：CF 会把访客真实 IP 追加到 XFF
     尾部（等价 CF-Connecting-IP），头部可能是客户端自带的伪造值；从尾往前取
@@ -559,7 +646,7 @@ def client_ip_from_xff(raw):
 
 
 def scan_window(since_epoch):
-    """返回解析后的访问事件列表 [(ip, path, ua)]，解析失败的行丢弃"""
+    """返回解析后的访问事件列表 [(ip, path, ua, status)]，解析失败的行丢弃"""
     out = subprocess.run(
         ["docker", "logs", "--since", str(since_epoch), NGINX_CONTAINER],
         capture_output=True, text=True, timeout=120)
@@ -567,9 +654,10 @@ def scan_window(since_epoch):
     for line in (out.stdout + out.stderr).splitlines():
         m = LINE_RE.match(line)
         if m:
-            ip = client_ip_from_xff(m.group(5))
+            ip = client_ip_from_xff(m.group(6))
             if ip:                          # XFF 无合法 IP（含 "-"）→ 跳过该行
-                events.append((ip, m.group(2).split("?", 1)[0], m.group(4)))
+                events.append((ip, m.group(2).split("?", 1)[0], m.group(5),
+                               m.group(3)))
     return events
 
 
@@ -605,7 +693,7 @@ def step_verification(verify, events, new_bans, log):
         v["left"] -= 1
         if v.pop("skip_first", False):
             continue
-        seen = sum(1 for ip, _path, _ua in events if in_ranges(ip, [cidr]))
+        seen = sum(1 for ip, _p, _u, _s in events if in_ranges(ip, [cidr]))
         v["hits"] += seen
         if seen:
             v["alerted"] = True
@@ -757,6 +845,14 @@ def main():
                 cidr, time.strftime("%F %T", time.localtime(b["until"])),
                 b.get("ttl", BAN_TTL) // 86400, b.get("reason", "")))
         print("tracked /24: %d" % len(s["tracks"]))
+        pf = s.get("persist") or {}
+        hits = s.get("persist_listed") or []
+        print("persist tracked: %d, challenged: %d" % (len(pf), len(hits)))
+        for k in hits:
+            p = pf.get(k) or {}
+            print("  %-40s days=%d reqs=%d signals=%d n304=%d"
+                  % (k, len(p.get("days", {})), p.get("reqs", 0),
+                     p.get("signals", 0), p.get("n304", 0)))
         v = s.get("verify") or {}
         if v:
             print("verifying (%d):" % len(v))
@@ -780,11 +876,12 @@ def main():
     state["last_run"] = last_run
     bans = state["bans"]
     tracks = state["tracks"]
+    persist = state.setdefault("persist", {})
     cutoff = now - TRACK_TTL
 
     # ---- 事件入轨 ----
     window_ip_stats = {}                         # ip -> [请求数, 生命周期信号, bot-UA 数]
-    for ip, path, ua in events:
+    for ip, path, ua, status in events:
         cls = classify(ip, ua, allowed)
         if cls == "whitelist" or cls == "skip":
             continue
@@ -794,6 +891,19 @@ def main():
             st[1] += 1
         if cls == "bot":
             st[2] += 1
+        # 坚持不懈来访者档案（只记「伪装成人的机器」：human 类；whitelist/skip/
+        # bot 类不入档——bot 类要么已被 UA 规则边缘拦截，要么该走速率闸）
+        if cls == "human":
+            pkey = persist_key(ip)
+            pf = persist.setdefault(
+                pkey, {"days": {}, "reqs": 0, "signals": 0, "n304": 0, "last": 0})
+            pf["days"][str(now // 86400)] = 1
+            pf["reqs"] += 1
+            if BROWSER_SIGNAL_RE.search(path):
+                pf["signals"] += 1
+            if status == "304":
+                pf["n304"] += 1            # 真浏览器缓存校验回源；无头族每天全新上下文永不发
+            pf["last"] = now
         if ipaddress.ip_address(ip).version != 4:
             continue                     # /24 聚合仅支持 IPv4；IPv6 只走 /32 洪水检测
         p24 = ".".join(ip.split(".")[:3]) + ".0/24"
@@ -884,6 +994,28 @@ def main():
                                ATTACK_TTL)
             log("candidate %s: attack-url hits=%d" % (cidr, ah))
 
+    # ---- 坚持不懈来访者（原则 3 收口网）：档案裁剪 + 评估 ----
+    persist_cut = now - PERSIST_WINDOW
+    for k in list(persist):
+        if persist[k]["last"] < persist_cut:
+            del persist[k]
+    if len(persist) > MAX_PERSIST_TRACK:
+        for k in sorted(persist, key=lambda x: persist[x]["last"])[
+                :len(persist) - MAX_PERSIST_TRACK]:
+            del persist[k]
+    min_day = (now - PERSIST_WINDOW) // 86400
+    persist_hits = sorted(
+        k for k, p in persist.items()
+        if k not in bans and decide_persistent(
+            len([d for d in p["days"] if int(d) >= min_day]),
+            p["reqs"], p["signals"], p["n304"]))
+    persist_listed = state.get("persist_listed") or []
+    new_persist = [k for k in persist_hits if k not in persist_listed]
+    for k in new_persist:
+        p = persist[k]
+        log("PERSIST: %s 进挑战名单（%d 天到访 %d req 零信号零304）"
+            % (k, len(p["days"]), p["reqs"]))
+
     # 白名单防误伤闸：含站主 IP / 与官方爬虫段或 ALLOW_CIDRS 交集 → 拒绝
     apply_safety(proposals)
 
@@ -926,7 +1058,10 @@ def main():
         if len(ids) < len(ZONES):
             log("warn: zone 不可达（token 缺该 zone 权限?）: %s — 黑名单暂不覆盖"
                 % ",".join(z for z in ZONES if z not in ids))
-        need_put = bool(new_bans or unbanned or unsynced)
+        need_put = bool(new_bans or unbanned or unsynced
+                        or new_persist
+                        or [k for k in persist_listed if k not in persist_hits])
+        persist_expr = build_persist_expression(persist_hits)
         for zname in ZONES:
             zid = ids.get(zname)
             if not zid:
@@ -935,7 +1070,8 @@ def main():
             try:
                 rules = apply_blacklist(get_rules(cf, zid), bans)
                 rules, dc_changed = apply_dc_rule(rules, dc_expr)
-                if need_put or dc_changed:
+                rules, pc_changed = apply_persist_rule(rules, persist_expr)
+                if need_put or dc_changed or pc_changed:
                     put_rules(cf, zid, rules)
                     if dc_changed and not DRY_RUN and not need_put:
                         tg("ip-ban: 机房 ASN 常驻规则已启用——%d 个云/hosting ASN 走 %s，"
@@ -949,6 +1085,8 @@ def main():
         log("CF token/zone 解析失败: %s (kept, will retry)" % e)
         unsynced = sorted(set(unsynced) | set(ZONES))
     state["unsynced"] = unsynced
+    if not unsynced:
+        state["persist_listed"] = persist_hits   # 全 zone 同步成功才记账，失败下轮重试
 
     # ---- 通知 ----
     for cidr, reason, ttl in new_bans:
@@ -961,6 +1099,10 @@ def main():
         tg("ip-ban: %s 静默满 %d 天，自动解封" % (c, ttl // 86400))
     for msg in verify_alerts:
         tg("ip-ban: %s" % msg)
+    for k in new_persist:
+        if not unsynced:
+            tg("ip-ban: 坚持不懈来访者进挑战名单 %s（14 天内≥4 日到访且零浏览器"
+               "信号/零304，managed_challenge 真人可过）" % k)
     if not new_bans and not unbanned and not verify_alerts:
         log("no action: %d events scanned, blacklist=%d, tracks=%d"
             % (len(events), len(bans), len(tracks)))

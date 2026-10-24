@@ -7,7 +7,7 @@
 
 ## 规则清单（2026-10-25 快照）
 
-### noda.co.nz（5 条，按求值顺序）
+### noda.co.nz（5 条+1 潜在，按求值顺序）
 
 | # | 描述 | action | 维护方 |
 |---|---|---|---|
@@ -16,6 +16,7 @@
 | 3 | cn-traffic-managed-challenge | managed_challenge | 手工 |
 | 4 | ip-range-blacklist auto (N active) | block | ip-ban.py 自动 |
 | 5 | datacenter-asn-block auto (N ASNs) | managed_challenge | ip-ban.py 自动 |
+| 6* | persistent-visitor-challenge auto | managed_challenge | ip-ban.py 自动（**名单非空才创建**，空=不存在） |
 
 ### shuotong.wang（3 条）
 
@@ -24,6 +25,7 @@
 | 1 | ip-range-blacklist auto | block | ip-ban.py 自动 |
 | 2 | datacenter-asn-block auto | managed_challenge | ip-ban.py 自动 |
 | 3 | block empty/fake/script user agent（ref=ua-block） | block | 手工（10-24 从 noda 同步） |
+| 4* | persistent-visitor-challenge auto | managed_challenge | ip-ban.py 自动（名单非空才创建） |
 
 ## UA 规则（block empty/fake/script user agent）
 
@@ -65,6 +67,20 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
 ```
 
 ## 变更记录
+### 2026-10-25（下午：坚持不懈来访者挑战网，用户三原则）
+用户定三原则：①不误封 SEO/GEO/守规矩爬虫 ②不误封正常用户 ③机器访问/机房攻击/
+天天坚持来的访客皆可疑。新增 ip-ban.py 第 6 条自动规则 **persistent-visitor-challenge**：
+- 档案只收 classify=human 的源站流量（官方爬虫段/自报家门 UA/白名单 skip 从不入档）；
+  键=v4 /32、v6 /64（家宽 v6 后缀逐日轮换追得上）
+- 判定=14 天窗口 ≥4 个不同到访日 + 累计 ≥8 请求 + 全程零浏览器生命周期信号
+  （sw.js/manifest/_next chunk/geo.json 一个不拉）+ 零 304（真浏览器缓存校验必回源，
+  无头族每天全新上下文永不发 If-None-Match）；signals/304 任一非零=真人铁证永不挑战
+- action=managed_challenge（真人一键可过）；cf.client.bot+站主 IP 表达式双豁免；
+  名单空=规则不创建/自动 disable；进名单 TG 通报
+- 背景：Mac-UA 深链低慢速爬虫家族每天换代理出口（已挑战其已知 ASN 212238/46635/62874），
+  此网收口「下一次换到未知 ASN/家宽出口」的场景；同日上午核实 07:30 美国 IP=AS14618
+  AWS 敲门，全部被 dc 规则边缘挑战、零源站命中——面板里的美国事件=拦截成功记录非漏防
+
 ### 2026-10-25（次日全天复查判例）
 - **误封 Google /24 已回滚**：10-24 23:35 ip-ban 的 24h-enum 闸把 209.85.238.0/24 拉黑 7 天——
   实为 Mediapartners-Google（AdSense 官方爬虫，AS15169），不在 googlebot.json、UA 无 bot 字样，

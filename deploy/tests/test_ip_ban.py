@@ -182,6 +182,87 @@ def test_dc_asns_cover_datacamp_and_proxy_exits(ip_ban):
     assert 62874 in ip_ban.DATACENTER_ASNS
 
 
+# ---- ②c 2026-10-25 坚持不懈来访者挑战网（用户三原则 #3）----
+
+def test_line_re_captures_status(ip_ban):
+    """事件元组扩为 (ip, path, ua, status)：304 计数依赖状态码捕获"""
+    line = ('172.18.0.7 - - [24/Oct/2026:10:00:00 +0000] "GET /a HTTP/1.1" '
+            '304 0 "-" "Mozilla/5.0 Chrome/153.0" "203.0.113.9"')
+    m = ip_ban.LINE_RE.match(line)
+    assert m and m.group(3) == "304" and m.group(5).startswith("Mozilla")
+    line2 = line.replace("304 0", "200 10")
+    assert ip_ban.LINE_RE.match(line2).group(3) == "200"
+
+
+def test_scan_window_emits_status(ip_ban, monkeypatch):
+    lines = ('172.18.0.7 - - [23/Oct/2026:11:00:00 +0000] "GET /a HTTP/1.1" '
+             '200 10 "-" "Mozilla/5.0 Chrome/153.0" "203.0.113.5"\n')
+
+    class FakeOut:
+        stdout = lines
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: FakeOut())
+    events = ip_ban.scan_window(0)
+    assert events == [("203.0.113.5", "/a", "Mozilla/5.0 Chrome/153.0", "200")]
+
+
+def test_decide_persistent_four_days_zero_evidence_passes(ip_ban):
+    assert ip_ban.decide_persistent(4, 49, 0, 0) is True
+    assert ip_ban.decide_persistent(6, 300, 0, 0) is True
+
+
+def test_decide_persistent_three_days_not_enough(ip_ban):
+    assert ip_ban.decide_persistent(3, 60, 0, 0) is False
+
+
+def test_decide_persistent_low_reqs_not_enough(ip_ban):
+    """每天一发的良性拨测（4 天 4 发）不进名单"""
+    assert ip_ban.decide_persistent(4, 4, 0, 0) is False
+
+
+def test_decide_persistent_browser_signals_veto(ip_ban):
+    """拉过一次 sw.js/_next = 真浏览器铁证，永不挑战（原则 2）"""
+    assert ip_ban.decide_persistent(5, 100, 1, 0) is False
+
+
+def test_decide_persistent_304_veto(ip_ban):
+    """真浏览器缓存校验回源（If-None-Match→304），无头族每天全新上下文永不发"""
+    assert ip_ban.decide_persistent(5, 100, 0, 1) is False
+
+
+def test_persist_key_v6_uses_64(ip_ban):
+    assert ip_ban.persist_key("2407:7000:b051:ed00:1465:32ee:5bb:4a6d") \
+        == "2407:7000:b051:ed00::/64"
+    assert ip_ban.persist_key("203.0.113.9") == "203.0.113.9/32"
+
+
+def test_build_persist_expression(ip_ban):
+    e = ip_ban.build_persist_expression(["203.0.113.9/32", "198.51.100.7/32"])
+    assert e.startswith("(ip.src in {203.0.113.9/32 198.51.100.7/32})")
+    assert "not cf.client.bot" in e and "47.72.103.104" in e
+    assert ip_ban.build_persist_expression([]) == ""
+
+
+def test_apply_persist_rule_create_update_disable(ip_ban, capsys):
+    rules = []
+    expr1 = ip_ban.build_persist_expression(["203.0.113.9/32"])
+    rules, ch = ip_ban.apply_persist_rule(rules, expr1)
+    assert ch and rules[0]["ref"] == ip_ban.PERSIST_MARKER
+    assert rules[0]["action"] == "managed_challenge" and rules[0]["enabled"]
+    assert "1 IPs" in rules[0]["description"]
+    rules, ch = ip_ban.apply_persist_rule(rules, expr1)      # 幂等
+    assert ch is False
+    expr2 = ip_ban.build_persist_expression(
+        ["203.0.113.9/32", "198.51.100.7/32"])
+    rules, ch = ip_ban.apply_persist_rule(rules, expr2)      # 更新
+    assert ch and "2 IPs" in rules[0]["description"]
+    rules, ch = ip_ban.apply_persist_rule(rules, "")         # 名单空 → disable
+    assert ch and rules[0]["enabled"] is False
+    rules, ch = ip_ban.apply_persist_rule(rules, "")         # 再空 → 不动
+    assert ch is False
+
+
 # ---- ③ 多级 XFF：取 CF 追加的最后一跳，非法跳过不崩溃 ----
 
 def test_xff_multihop_takes_last(ip_ban):
@@ -481,7 +562,7 @@ def test_dc_expression_exempts_selfid_ai_crawlers(ip_ban):
 # 人肉看日志才发现——此功能把该发现自动化为 TG 告警）----
 
 def _ev(ip):
-    return (ip, "/x", "curl/8.7.1")
+    return (ip, "/x", "curl/8.7.1", "200")
 
 
 def test_verify_first_cycle_skips_preban_traffic(ip_ban):
