@@ -5,7 +5,7 @@
 > 手工改规则走 API 或面板均可，改完无需动 ip-ban.py。
 > 核验命令：见文末。
 
-## 规则清单（2026-10-24 晚）
+## 规则清单（2026-10-25 快照）
 
 ### noda.co.nz（5 条，按求值顺序）
 
@@ -64,7 +64,21 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
   and ( ((AppleWebKit 无 Safari/) or (Mozilla/5.0 无任何引擎标记)) or (脚本UA名单 OR 链) ))
 ```
 
-## 同日相关变更
+## 变更记录
+### 2026-10-25（次日全天复查判例）
+- **误封 Google /24 已回滚**：10-24 23:35 ip-ban 的 24h-enum 闸把 209.85.238.0/24 拉黑 7 天——
+  实为 Mediapartners-Google（AdSense 官方爬虫，AS15169），不在 googlebot.json、UA 无 bot 字样，
+  classify 归 human（与 10-23 误封 66.249.73.0/24 同型）。处置=state 摘除+CF 黑名单同步清两 zone；
+  判据修复=EXTRA_CRAWLER_RANGES 补 209.85.128.0/17 + SELFID_MARKERS 补 Google 特种爬虫 UA
+  （mediapartners-google/apis-google/feedfetcher/google-read-aloud/googleother/google-safety/
+  google-inspectiontool），apply_safety 现会 veto 该段提案，tests 53 绿。
+- 机房 ASN 规则 15→18：补 AS212238（Datacamp/CDN77，单日 browser-burst 豁免×2 + Mac-UA 低慢速
+  爬虫出口共 5 次现身）、AS46635（AviationAI 代理出口）、AS62874（Web2Objects 代理出口）。
+- 边缘实测（Security Events, last 24h, Country=US）：美国命中事件全部=dc 规则 Managed Challenge
+  （AWS 出口 34.x/44.x/3.232.x/98.84.x/100.5x），无一漏到源站的恶意美国 IP；Singapore 47.79.x
+  script UA 被 UA 规则 Block；AI Labyrinth 正常喂爬虫。
+
+### 2026-10-24
 - 机房 ASN 规则补 AS36352（ColoCrossing，Java 爬虫实证）→ noda-infra `5260c88`。
 - 内置层实测快照：AI Labyrinth=开（工作正常）；Bot Fight Mode=关
   （**勿开**：免费版无 IP 豁免，会拦站主自有 HeadlessChrome 测试栈）；AI bot policies 4 条配置。

@@ -67,6 +67,20 @@ CF/浏览器缓存挡住 → 豁免信号攒不够 3 个）：
   （state.history 记 cidr→上次洪水封禁 epoch，容量 500 裁最旧；老 state 无
   history 键自动补，结构兼容）
 - /24 行为封禁 7 天、攻击 URL 30 天、浏览器爆发豁免、SAFETY 闸均不变
+
+2026-10-24 深夜补充（次日复查全天美国 IP 源站日志发现的误封判例：209.85.238.0/24
+被 24h-enum 拉黑 7 天——Mediapartners-Google（AdSense 官方爬虫，AS15169）不在
+googlebot.json、UA 无 bot 字样，classify 归 human 攒出 /24 枚举指纹，与
+66.249.73.0/24 同型；当日源站日志实证 209.85.238.129/.130 打 /graphql//geo.json/
+_next 静态资源，零攻击路径）：
+- EXTRA_CRAWLER_RANGES 补 209.85.128.0/17（整段属 Google AS15169 AdSense/特种
+  爬虫出口；不与 GCP 客户段 34.x/35.x 重叠，SAFETY 闸不会误 veto 云上攻击封禁）
+- SELFID_MARKERS 补 Google 特种爬虫 UA（mediapartners-google/apis-google/
+  feedfetcher/google-read-aloud/googleother/google-safety/google-inspectiontool
+  ——均无 bot 字样），IP 段真值源未覆盖或下载失败时 UA 兜底
+- DATACENTER_ASNS 补 212238（Datacamp/CDN77，当日 browser-burst 豁免×2 + Mac-UA
+  低慢速爬虫出口共 5 次现身）、46635（AviationAI 代理出口）、62874（Web2Objects
+  代理出口）——Mac-UA 深链爬虫家族当日的三个代理出口 ASN
 """
 
 import ipaddress
@@ -119,6 +133,10 @@ DATACENTER_ASNS = (
     18779,          # EGIHosting（10-24 实证：800x600 爬虫家族换用的小托管商出口）
     36352,          # ColoCrossing（10-24 实证：Java-HttpClient 爬虫 198.46.132.34 拉 item 页，
                     #  CF AI Labyrinth 已伺候；入列后整段 managed_challenge）
+    212238,         # Datacamp/CDN77（10-24 实证：browser-burst 豁免×2 + Mac-UA 低慢速
+                    #  爬虫出口同属此 ASN——CDN/VPN 基础设施，单日 5 次现身）
+    46635,          # AviationAI 小众代理出口（10-24 实证：Mac-UA 深链爬虫 9.151.196.47）
+    62874,          # Web2Objects 代理出口（10-24 实证：Mac-UA 深链爬虫 176.20.202.169）
 )
 NGINX_CONTAINER = "noda-static-prod"
 ENV_FILE = "/etc/noda/ip-ban.env"           # DOPPLER_SERVICE_TOKEN / ALLOW_CIDRS
@@ -146,7 +164,12 @@ RANGES_CACHE_TTL = 24 * 3600
 # Preserving Prefetch Proxy / GoogleOther 等同属 Google 的出口（如 66.249.84.x，
 # 2026-10 真实日志的多级 XFF 里出现过），保留老 GOOGLE_RANGES=66.249.64.0/19
 # 与官方 json 取并集（全部属 Google AS15169；伪造 XFF 头跳无效——取的是尾跳）。
-EXTRA_CRAWLER_RANGES = ["66.249.64.0/19"]
+EXTRA_CRAWLER_RANGES = ["66.249.64.0/19",
+                        # Mediapartners-Google（AdSense 官方爬虫）出口段，
+                        # 2026-10-24 判例：不在 googlebot.json、UA 无 bot 字样，
+                        # 整段被 24h-enum 误封一周（209.85.238.129/.130 实证）；
+                        # 全 /17 属 Google AS15169，与 GCP 客户段 34.x/35.x 不重叠
+                        "209.85.128.0/17"]
 GOOGLEBOT_FALLBACK = [
                          "2001:4860:4801:10::/64", "2001:4860:4801:11::/64", "2001:4860:4801:12::/64", "2001:4860:4801:13::/64",
                          "2001:4860:4801:14::/64", "2001:4860:4801:15::/64", "2001:4860:4801:16::/64", "2001:4860:4801:17::/64",
@@ -272,7 +295,13 @@ OBVIOUS_BOT_UA = [
     "go-http-client", "node-fetch", "axios/", "scrapy", "okhttp",
     "java/", "libwww", "fasthttp", "postman", "httpclient", "aiohttp",
 ]
-SELFID_MARKERS = ["bot", "spider", "slurp", "crawler"]
+SELFID_MARKERS = ["bot", "spider", "slurp", "crawler",
+                  # Google 特种爬虫 UA（均无 bot 字样；2026-10-24 Mediapartners
+                  # 判例补——IP 段真值源未覆盖/下载失败时的 UA 兜底）。
+                  # AdsBot-Google/Bravebot 等已被 "bot" 覆盖，不重复列
+                  "mediapartners-google", "apis-google", "feedfetcher",
+                  "google-read-aloud", "googleother", "google-safety",
+                  "google-inspectiontool"]
 ASSET_RE = re.compile(
     r"\.(js|css|mjs|png|jpe?g|webp|svg|gif|ico|woff2?|ttf|otf|map|mp4|avif)$"
     r"|/_next/static/", re.I)

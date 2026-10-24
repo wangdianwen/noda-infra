@@ -138,6 +138,50 @@ def test_safety_keeps_owner_and_normal_proposals(ip_ban):
     assert list(proposals) == ["203.0.113.0/24"]
 
 
+# ---- ②b 2026-10-24 Mediapartners-Google 误封判例（209.85.238.0/24）----
+
+def test_mediapartners_google_ip_skips(ip_ban):
+    """AdSense 爬虫 209.85.238.x（AS15169，不在 googlebot.json）→ EXTRA /17 兜底"""
+    assert ip_ban.classify("209.85.238.129", "Mediapartners-Google") == "skip"
+    assert ip_ban.classify(
+        "209.85.238.130",
+        "Mediapartners-Google (+http://www.google.com/adsense.html)") == "skip"
+
+
+def test_google_special_crawler_uas_skip_anywhere(ip_ban):
+    """无 bot 字样的 Google 特种爬虫 UA 全部 skip（IP 段数据失效也兜住）"""
+    for ua in ("Mediapartners-Google",
+               "APIs-Google; +https://developers.google.com/",
+               "FeedFetcher-Google; +http://www.google.com/feedfetcher.html",
+               "Google-Read-Aloud",
+               "GoogleOther",
+               "Mozilla/5.0 (compatible; Google-Safety; +https://developers"
+               ".google.com/search/docs/crawling-indexing/overview-google"
+               "-crawlers)"):
+        assert ip_ban.classify("203.0.113.77", ua) == "skip", ua
+
+
+def test_safety_rejects_mediapartners_24(ip_ban):
+    proposals = {"209.85.238.0/24": ("24h-enum", 604800)}
+    ip_ban.apply_safety(proposals)
+    assert proposals == {}
+
+
+def test_safety_keeps_gcp_attack_32(ip_ban):
+    """/17 加入后 GCP 客户段（34.x/35.x）攻击封禁不得被 SAFETY 误 veto"""
+    proposals = {"34.32.24.153/32": ("attack-urls 205 hits + flood", 2592000)}
+    ip_ban.apply_safety(proposals)
+    assert list(proposals) == ["34.32.24.153/32"]
+
+
+def test_dc_asns_cover_datacamp_and_proxy_exits(ip_ban):
+    """2026-10-24 判例：browser-burst 豁免×2 + Mac-UA 低慢速爬虫出口 =
+    AS212238 Datacamp（CDN77/VPN 基础设施）；AS46635/AS62874 = 同族代理出口"""
+    assert 212238 in ip_ban.DATACENTER_ASNS
+    assert 46635 in ip_ban.DATACENTER_ASNS
+    assert 62874 in ip_ban.DATACENTER_ASNS
+
+
 # ---- ③ 多级 XFF：取 CF 追加的最后一跳，非法跳过不崩溃 ----
 
 def test_xff_multihop_takes_last(ip_ban):
