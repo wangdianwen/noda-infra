@@ -14,7 +14,7 @@
 | 1 | admin non-NZ managed challenge | managed_challenge | 手工（后台入口仅 NZ 访问） |
 | 2 | block empty/fake/script user agent | block | 手工（本次加严，见下） |
 | 3 | cn-traffic-managed-challenge（cf.client.bot 豁免，10-25 补） | managed_challenge | 手工 |
-| 4 | ip-range-blacklist auto (N active) | block | ip-ban.py 自动 |
+| 4 | ip-range-blacklist auto（10-25 精简至 7 段） | block | ip-ban.py 自动 |
 | 5 | datacenter-asn-block auto (N ASNs；名单非空时 OR 进坚持不懈挑战子句) | managed_challenge | ip-ban.py 自动 |
 | RL | content-nav-burst-guard：150 req/10s（http_ratelimit 阶段，HTML 路径） | block | 手工（#37 放宽） |
 
@@ -66,6 +66,20 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
 ```
 
 ## 变更记录
+### 2026-10-25 深夜二（黑名单精简：30→7 段，dc 名单 18→19）
+用户裁定：已有机房 ASN 全量挑战，黑名单可精简。30 段逐一解析 ASN：
+- **移除 23 段**（22 段 ASN 已在 dc 挑战名单：GCP 396982×16 / AWS×4 / Alibaba 国际
+  AS45102×1 / Datacamp AS212238×1 + 185.177.72.69——其 ASN 211590 Bucklog 本轮
+  按判例补进 dc 名单）。机器人过不了挑战→到不了源站→黑名单 block 完全重复；
+  即便真人在 VPS 上点过挑战回访，洪水/攻击/UA/限速四闸仍会自动重封，自愈闭环。
+- **保留 7 段**（无其他防线覆盖）：205.169.39.0/24（AS3356 Level3/Lumen 主干传输，
+  **绝不可整段挑战**——承载真实用户，只能 /24 精封）、45.88.217.88（AS206092）、
+  176.65.132.251（AS197170）、47.102.184.31（AS37963 阿里中国云——CN 规则在 noda
+  覆盖但 shuotong 无 CN 规则，保留）、169.40.142.177（AS215599）、93.123.109.107
+  （AS48090）、143.244.57.86（AS60068 手动 wp-probe）。全部自然到期自清。
+- 教训：黑名单是历史自动封禁的堆积面，dc 名单每扩一家 ASN 就应回头清一次
+  被覆盖的存量段；state.bans 与 CF 必须同删（unsynced 强制下轮 PUT）。
+
 ### 2026-10-25 深夜（第三轮 review：运行态+证据复盘）
 1. **persist 判据反向失效修复（关键）**：实测爬虫家族昨天拉满 `_next/static×89
    +geo.json×3`（JS 执行≠真人）——原判据把 BROWSER_SIGNAL_RE（含 _next）当真人

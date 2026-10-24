@@ -176,10 +176,12 @@ def test_safety_keeps_gcp_attack_32(ip_ban):
 
 def test_dc_asns_cover_datacamp_and_proxy_exits(ip_ban):
     """2026-10-24 判例：browser-burst 豁免×2 + Mac-UA 低慢速爬虫出口 =
-    AS212238 Datacamp（CDN77/VPN 基础设施）；AS46635/AS62874 = 同族代理出口"""
+    AS212238 Datacamp（CDN77/VPN 基础设施）；AS46635/AS62874 = 同族代理出口；
+    AS211590 Bucklog = 800x600 家族出口（10-25 黑名单精简轮补）"""
     assert 212238 in ip_ban.DATACENTER_ASNS
     assert 46635 in ip_ban.DATACENTER_ASNS
     assert 62874 in ip_ban.DATACENTER_ASNS
+    assert 211590 in ip_ban.DATACENTER_ASNS
 
 
 # ---- ②c 2026-10-25 坚持不懈来访者挑战网（用户三原则 #3）----

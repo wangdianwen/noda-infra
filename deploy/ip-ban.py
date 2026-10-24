@@ -178,6 +178,8 @@ DATACENTER_ASNS = (
                     #  爬虫出口同属此 ASN——CDN/VPN 基础设施，单日 5 次现身）
     46635,          # AviationAI 小众代理出口（10-24 实证：Mac-UA 深链爬虫 9.151.196.47）
     62874,          # Web2Objects 代理出口（10-24 实证：Mac-UA 深链爬虫 176.20.202.169）
+    211590,         # Bucklog SARL（10-24 实证：800x600 家族出口 185.177.72.69 洪水
+                    #  161req/300s strict 档；hosting 商，同 212238/46635/62874 判例）
 )
 NGINX_CONTAINER = "noda-static-prod"
 ENV_FILE = "/etc/noda/ip-ban.env"           # DOPPLER_SERVICE_TOKEN / ALLOW_CIDRS
