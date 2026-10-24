@@ -117,6 +117,8 @@ DATACENTER_ASNS = (
     45102,          # Alibaba Cloud 国际（站主出口 47.72.103.104 在 OWNER_IPS 豁免）
     132203,         # Tencent Cloud 国际
     18779,          # EGIHosting（10-24 实证：800x600 爬虫家族换用的小托管商出口）
+    36352,          # ColoCrossing（10-24 实证：Java-HttpClient 爬虫 198.46.132.34 拉 item 页，
+                    #  CF AI Labyrinth 已伺候；入列后整段 managed_challenge）
 )
 NGINX_CONTAINER = "noda-static-prod"
 ENV_FILE = "/etc/noda/ip-ban.env"           # DOPPLER_SERVICE_TOKEN / ALLOW_CIDRS
