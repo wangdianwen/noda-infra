@@ -120,6 +120,11 @@ ENV_FILE = "/etc/noda/ip-ban.env"           # DOPPLER_SERVICE_TOKEN / ALLOW_CIDR
 STATE_FILE = "/opt/noda/noda-infra/docker/volumes/ops-logs/ip-ban.state.json"
 TG_ALERT = "/mnt/mmc1-4/System/Scripts/telegram-alert.sh"
 
+# 封禁后源站验证（2026-10-24 #3 判例：13:50 封禁后 800x600 族出口 185.177.72.69
+# 仍经 CF 通道打到源站 15 分钟，人肉看日志才发现）。新封禁进观察名单连续
+# VERIFY_CYCLES 轮：被封 IP 仍现于源站日志 = CF 执行缺口，log+TG 告警。
+VERIFY_CYCLES = 6
+
 OWNER_IPS = {"47.72.103.104"}               # 站主出口（nginx 白名单同源）
 
 # 官方爬虫网段真值源：googlebot.json / bingbot.json，运行时下载 + 缓存 24h，
@@ -541,6 +546,45 @@ def in_ranges(ip, cidrs):
     return in_nets(ip, [ipaddress.ip_network(c) for c in cidrs])
 
 
+def step_verification(verify, events, new_bans, log):
+    """封禁后源站验证（2026-10-24 执行缺口判例的自动化）。
+
+    新封禁 CIDR 进观察名单（首跳 skip_first 跳过当轮——当轮 events 还含封禁前
+    流量，直接计数会假告警）；此后每轮统计被封 IP 仍现于源站日志的次数，
+    命中即告警（CF 边缘未拦住 = 执行缺口，需查防火墙事件）。观察窗满
+    VERIFY_CYCLES 轮出队并总结。返回 (更新后 verify dict, 本轮告警列表)。
+    """
+    for cidr, _reason, _ttl in new_bans:
+        if cidr not in verify:
+            verify[cidr] = {"left": VERIFY_CYCLES + 1, "hits": 0,
+                            "alerted": False, "skip_first": True}
+    alerts = []
+    expired = []
+    for cidr, v in verify.items():
+        v["left"] -= 1
+        if v.pop("skip_first", False):
+            continue
+        seen = sum(1 for ip, _path, _ua in events if in_ranges(ip, [cidr]))
+        v["hits"] += seen
+        if seen:
+            v["alerted"] = True
+            alerts.append("封禁未生效: %s 本轮仍命中源站 %d 次（累计 %d，剩余观察 %d 轮）"
+                          % (cidr, seen, v["hits"], max(v["left"], 0)))
+        if v["left"] <= 0:
+            expired.append(cidr)
+    for cidr in expired:
+        v = verify.pop(cidr)
+        if v["alerted"]:
+            log("verify end: %s 观察窗共见 %d 次——执行缺口，查 CF 防火墙事件"
+                % (cidr, v["hits"]))
+        elif v["hits"]:
+            log("verify end: %s 观察窗见 %d 次（封禁后前段流量，未见持续命中）"
+                % (cidr, v["hits"]))
+        else:
+            log("verify end: %s 观察窗干净，封禁生效" % cidr)
+    return verify, alerts
+
+
 _crawler_ip_cache = {}
 
 
@@ -672,6 +716,13 @@ def main():
                 cidr, time.strftime("%F %T", time.localtime(b["until"])),
                 b.get("ttl", BAN_TTL) // 86400, b.get("reason", "")))
         print("tracked /24: %d" % len(s["tracks"]))
+        v = s.get("verify") or {}
+        if v:
+            print("verifying (%d):" % len(v))
+            for cidr, e in sorted(v.items()):
+                print("  %-22s left=%s hits=%d%s"
+                      % (cidr, e.get("left"), e.get("hits", 0),
+                         " skip-first" if e.get("skip_first") else ""))
         return
 
     load_crawler_ranges()                     # 官方爬虫段（缓存 24h，失败回退内置）
@@ -813,6 +864,11 @@ def main():
     for c, _ in unbanned:
         del bans[c]
 
+    # ---- 封禁后源站验证（观察窗内被封 IP 仍现于源站=CF 执行缺口，TG 告警）----
+    verify = state.get("verify") or {}
+    verify, verify_alerts = step_verification(verify, events, new_bans, log)
+    state["verify"] = verify
+
     # ---- 同步 CF 规则（多 zone：黑名单 + 机房 ASN 常驻规则同步到 ZONES 全部站点）----
     # 每轮都 GET 对账：除封禁变化外，还要校验 dc 常驻规则未被 Dashboard 手改漂移。
     unsynced = sorted(set(state.get("unsynced") or []))
@@ -862,7 +918,9 @@ def main():
     for c, ttl in unbanned:
         log("UNBAN: %s silent %dd reached" % (c, ttl // 86400))
         tg("ip-ban: %s 静默满 %d 天，自动解封" % (c, ttl // 86400))
-    if not new_bans and not unbanned:
+    for msg in verify_alerts:
+        tg("ip-ban: %s" % msg)
+    if not new_bans and not unbanned and not verify_alerts:
         log("no action: %d events scanned, blacklist=%d, tracks=%d"
             % (len(events), len(bans), len(tracks)))
 

@@ -921,7 +921,10 @@ _start_prod_static()
     # 过渡期宿主端口绑高位：旧 noda-infra-nginx 在退役前一直占用 8080/8081/8443，
     # 新 static 先行高位并存（流量经 docker DNS 别名 noda-infra-nginx 分流），
     # 旧 nginx 退役后由运维将宿主端口切到本容器（一次性操作，不在 pipeline 内）。
-    local ports="-p 18080:80 -p 18081:81 -p 18443:443"
+    # 2026-10-24 收口：绑定只落 loopback+LAN IP（socket 层不对 WAN 开，IPv4/IPv6
+    # 皆不可达），配合 r4s fw4 显式 DROP 规则 block-wan-docker-published-ports 兜底；
+    # docker 此机为 userland-proxy 模式（无 DNAT），WAN 入站本就被 wan zone REJECT。
+    local ports="-p 127.0.0.1:18080:80 -p 192.168.100.1:18080:80 -p 127.0.0.1:18081:81 -p 192.168.100.1:18081:81 -p 127.0.0.1:18443:443 -p 192.168.100.1:18443:443"
     if [ "$mode" != "remote" ]; then
         config_dir="$PROJECT_ROOT/config/nginx"
         # 本地模式不占宿主端口（infra nginx 可能占用 80/81/443），仅容器网络内服务

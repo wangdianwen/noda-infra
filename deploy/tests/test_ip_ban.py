@@ -416,3 +416,63 @@ def test_dc_expression_exempts_selfid_ai_crawlers(ip_ban):
     chrome_ua = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
                  " (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
     assert not any(u.lower() in chrome_ua.lower() for u in ip_ban.DC_UA_EXEMPTS)
+
+
+# ---- 封禁后源站验证（2026-10-24 执行缺口判例：13:50 封禁后出口仍打穿 CF 15 分钟，
+# 人肉看日志才发现——此功能把该发现自动化为 TG 告警）----
+
+def _ev(ip):
+    return (ip, "/x", "curl/8.7.1")
+
+
+def test_verify_first_cycle_skips_preban_traffic(ip_ban):
+    """新封禁当轮不计数：当轮 events 还含封禁前流量，直接计数=假告警"""
+    logs = []
+    ev = [_ev("185.177.72.69")] * 50
+    verify, alerts = ip_ban.step_verification({}, ev, [("185.177.72.69/32", "flood", 86400)], logs.append)
+    assert alerts == [] and not verify["185.177.72.69/32"]["alerted"]
+    assert "skip_first" not in verify["185.177.72.69/32"]      # 已消费
+    assert verify["185.177.72.69/32"]["hits"] == 0
+
+
+def test_verify_alerts_when_banned_ip_still_hits(ip_ban):
+    """观察窗内被封 IP 仍现于源站日志 = 执行缺口，本轮必须告警"""
+    logs = []
+    verify, _ = ip_ban.step_verification({}, [], [("9.9.9.9/32", "flood", 86400)], logs.append)
+    ev = [_ev("9.9.9.9")] * 7
+    verify2, alerts = ip_ban.step_verification(verify, ev, [], logs.append)
+    assert len(alerts) == 1 and "9.9.9.9" in alerts[0] and "7 次" in alerts[0]
+    assert verify2["9.9.9.9/32"]["alerted"] and verify2["9.9.9.9/32"]["hits"] == 7
+
+
+def test_verify_expires_clean_after_window(ip_ban, capsys):
+    """观察窗 VERIFY_CYCLES 轮走完且零命中 → 出队 + 干净总结日志"""
+    logs = []
+    verify, _ = ip_ban.step_verification({}, [], [("9.9.9.9/32", "flood", 86400)], logs.append)
+    for _ in range(ip_ban.VERIFY_CYCLES):
+        verify, alerts = ip_ban.step_verification(verify, [_ev("8.8.8.8")], [], logs.append)
+    assert alerts == [] and "9.9.9.9/32" not in verify
+    assert any("观察窗干净" in l for l in logs)
+
+
+def test_verify_end_reports_enforcement_gap(ip_ban):
+    """窗内告警过 → 出队总结必须点明执行缺口"""
+    logs = []
+    verify, _ = ip_ban.step_verification({}, [], [("9.9.9.9/32", "flood", 86400)], logs.append)
+    verify, _ = ip_ban.step_verification(verify, [_ev("9.9.9.9")], [], logs.append)
+    for _ in range(ip_ban.VERIFY_CYCLES - 1):
+        verify, _ = ip_ban.step_verification(verify, [], [], logs.append)
+    assert any("执行缺口" in l for l in logs) and "9.9.9.9/32" not in verify
+
+
+def test_verify_counts_whole_cidr_not_exact_ip(ip_ban):
+    """/24 封禁：网段内任一出口命中都算（换出口重试也逃不掉）"""
+    verify, _ = ip_ban.step_verification({}, [], [("203.0.113.0/24", "attack", 86400)], lambda m: None)
+    _verify, alerts = ip_ban.step_verification(verify, [_ev("203.0.113.55")], [], lambda m: None)
+    assert len(alerts) == 1 and "203.0.113.55" not in alerts[0]  # 告警按 CIDR 口径
+
+
+def test_verify_tolerates_legacy_state_without_key(ip_ban):
+    """旧 state JSON 无 verify 键 → main 用 .get 兜底，此处验证空字典直入不炸"""
+    verify, alerts = ip_ban.step_verification({}, [], [], lambda m: None)
+    assert verify == {} and alerts == []
