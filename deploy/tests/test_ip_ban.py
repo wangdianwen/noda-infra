@@ -476,3 +476,13 @@ def test_verify_tolerates_legacy_state_without_key(ip_ban):
     """旧 state JSON 无 verify 键 → main 用 .get 兜底，此处验证空字典直入不炸"""
     verify, alerts = ip_ban.step_verification({}, [], [], lambda m: None)
     assert verify == {} and alerts == []
+
+
+def test_get_rules_tolerates_missing_entrypoint(ip_ban, monkeypatch):
+    """shuotong.wang 首次同步时 custom phase 无 entrypoint ruleset(GET 404)
+    → 返回空列表让 PUT 自动创建,不得抛异常卡死整轮同步"""
+    import urllib.error
+    def fake_http_json(url, token, **kw):
+        raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+    monkeypatch.setattr(ip_ban, "http_json", fake_http_json)
+    assert ip_ban.get_rules("tok", "zoneid") == []

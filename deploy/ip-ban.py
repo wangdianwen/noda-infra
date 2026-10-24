@@ -76,12 +76,15 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 
 # ---- 配置 ----
 # class.noda.co.nz 是主站 zone 的子域（同一 zone，规则天然覆盖），无需单列。
 # 多 zone 能力保留：未来若新增独立 zone，把名字加进 ZONES 即可（token 需其 WAF Edit）。
-ZONES = ("noda.co.nz",)
+ZONES = ("noda.co.nz", "shuotong.wang")   # 隧道 15 个 hostname 共用同一源站,
+                                         # shuotong.wang 是独立 zone,黑名单/dc 规则必须双 zone 同步
+                                         # (2026-10-24 判例:扫描器经 www.shuotong.wang 打穿 noda 黑名单盲区)
 PHASE = "http_request_firewall_custom"
 RULE_MARKER = "ip-range-blacklist"          # 规则 description 前缀 / ref
 
@@ -416,7 +419,14 @@ def entrypoint_url(zone_id):
 
 
 def get_rules(cf, zone_id):
-    r = http_json(entrypoint_url(zone_id), cf)
+    """404 = 该 zone 此 phase 尚无 entrypoint ruleset(如 shuotong.wang 首次同步),
+    返回空列表,随后的 PUT 会自动创建"""
+    try:
+        r = http_json(entrypoint_url(zone_id), cf)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return []
+        raise
     if not r.get("success"):
         raise RuntimeError("CF get: %s" % r.get("errors"))
     return r["result"]["rules"] or []
