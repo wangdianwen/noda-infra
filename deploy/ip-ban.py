@@ -107,6 +107,10 @@ cf.client.bot+官方段+UA 自报家门三层豁免原样保留即不受影响�
 - 豁免不变（cf.client.bot 验证爬虫 / 66.249.64.0/19 / 站主+ALLOW_CIDRS /
   DC_UA_EXEMPTS 自报家门）——UA 豁免的伪造面今天已存在（豁免本就跳过挑战），
   block 不扩大暴露；家族实测素浏览器 UA，撞 block 即 403
+- 同日第二步（用户裁定）：ABUSE_ASNS(6)/CLOUD_ASNS(13) 拆分——滥用分支撤 UA
+  豁免（伪造 bot 字样也 403，家族 100% 出口在此），大云分支保留（GEO/SEO 爬虫
+  实证全在大云）；官方清单 OpenAI 252 段全 Azure+Perplexity 8 段全 AWS，0 段
+  落滥用 ASN；cf.client.bot/官方段/站主两分支都保留
 """
 
 import ipaddress
@@ -175,29 +179,42 @@ PERSIST_VETO_RE = re.compile(
 DC_UA_EXEMPTS = ("bot", "Bot", "Spider", "spider", "Slurp", "Crawler", "crawler",
                  "ChatGPT-User", "Claude-User", "Perplexity-User",
                  "MistralAI-User", "cohere-ai")
-DATACENTER_ASNS = (
-    16509, 14618,   # Amazon AWS
+# 2026-10-25 拆分（用户裁定：滥用 ASN 撤 UA 豁免，伪造 bot 字样也 403）。安全依据：
+# ①官方爬虫 IP 清单 260 段（OpenAI chatgpt-user/gptbot + Perplexity）0 段落在滥用
+# ASN——全部 Azure/AWS；②12h 全量普查：欢迎爬虫只出现在大云（Azure/AWS/OVH/
+# Hetzner），滥用 ASN 上零欢迎爬虫零真人；③7 天动作日志：滥用 ASN 段唯一历史
+# 痕迹=800x600 家族。cf.client.bot（IP 级验证不可伪造）两分支都保留。
+ABUSE_ASNS = (
+    18779,          # EGIHosting（10-24 实证：800x600 爬虫家族换用的小托管商出口）
+    36352,          # ColoCrossing（10-24 实证：Java-HttpClient 爬虫 198.46.132.34 拉 item 页，
+                    #  CF AI Labyrinth 已伺候；入列后整段 block）
+    212238,         # Datacamp/CDN77（家族主力出口：12h 内 7/9 个出口在此，含买来的
+                    #  BR/TR/IT 老 ISP 段 201.24.178.0/23 等当住宅代理池；CF Labyrinth+挑
+                    #  战都拦不住——能解 JS；block 后唯一免死路径=伪造 bot UA，本拆分封掉）
+    46635,          # AviationAI 小众代理出口（10-24/25 实证：Mac-UA 深链爬虫 9.151.196.x）
+    62874,          # Web2Objects 代理出口（10-24/25 实证：Mac-UA 深链爬虫 176.20.202.169）
+    211590,         # Bucklog SARL（10-24 实证：800x600 家族出口 185.177.72.69 洪水
+                    #  161req/300s strict 档；hosting 商，同 212238/46635/62874 判例）
+)
+# 大云 ASN：保留 UA 自报家门豁免——GEO/SEO 爬虫实证全在此（GPTBot/ChatGPT-User/
+# OAI-SearchBot 全 Azure、Amazonbot/PerplexityBot 全 AWS、AhrefsBot 主力 OVH、
+# Bravebot Hetzner；Anthropic 无公开清单按大云对待）。搬到大云+伪造 bot UA+低速率
+# 与真 SEO 爬虫不可区分=结构性残余，接受（速率闸/CF Labyrinth 仍在）。
+CLOUD_ASNS = (
+    16509, 14618,   # Amazon AWS（Amazonbot ~700req/12h、PerplexityBot）
     396982,         # Google Cloud（googlebot 的 GCP 抓取出口靠 cf.client.bot 豁免）
-    8075,           # Microsoft Azure（bingbot 出口同样靠豁免）
-    24940,          # Hetzner
+    8075,           # Microsoft Azure（bingbot cf.client.bot；OpenAI 全家 252 官方段在此）
+    24940,          # Hetzner（Bravebot）
     14061,          # DigitalOcean
     63949,          # Linode / Akamai cloud
     20473,          # Vultr
-    16276,          # OVH
+    16276,          # OVH（AhrefsBot 主力 ~450req/12h）
     31898,          # Oracle Cloud
     12876,          # Scaleway
     45102,          # Alibaba Cloud 国际（站主出口 47.72.103.104 在 OWNER_IPS 豁免）
     132203,         # Tencent Cloud 国际
-    18779,          # EGIHosting（10-24 实证：800x600 爬虫家族换用的小托管商出口）
-    36352,          # ColoCrossing（10-24 实证：Java-HttpClient 爬虫 198.46.132.34 拉 item 页，
-                    #  CF AI Labyrinth 已伺候；入列后整段 block）
-    212238,         # Datacamp/CDN77（10-24 实证：browser-burst 豁免×2 + Mac-UA 低慢速
-                    #  爬虫出口同属此 ASN——CDN/VPN 基础设施，单日 5 次现身）
-    46635,          # AviationAI 小众代理出口（10-24 实证：Mac-UA 深链爬虫 9.151.196.47）
-    62874,          # Web2Objects 代理出口（10-24 实证：Mac-UA 深链爬虫 176.20.202.169）
-    211590,         # Bucklog SARL（10-24 实证：800x600 家族出口 185.177.72.69 洪水
-                    #  161req/300s strict 档；hosting 商，同 212238/46635/62874 判例）
 )
+DATACENTER_ASNS = ABUSE_ASNS + CLOUD_ASNS
 NGINX_CONTAINER = "noda-static-prod"
 ENV_FILE = "/etc/noda/ip-ban.env"           # DOPPLER_SERVICE_TOKEN / ALLOW_CIDRS
 STATE_FILE = "/opt/noda/noda-infra/docker/volumes/ops-logs/ip-ban.state.json"
@@ -569,23 +586,28 @@ def apply_blacklist(rules, bans):
 
 
 def build_dc_expression(allowed=None, persist_cidrs=None):
-    """机房 ASN 常驻封禁规则表达式（纯函数，单测直接打）。
+    """机房 ASN 常驻封禁规则表达式（纯函数，单测直接打）。2026-10-25 起两分支：
 
-    例外集（防误伤四层）随表达式烘死：cf.client.bot（CF 验证爬虫主闸，Google/Bing
-    稳保）+ UA 自报家门（与 classify 的 SELFID_MARKERS 同一教义：守规矩才敢自报
-    家门——Amazonbot 实测 14h 34 req 全 AWS 段、ChatGPT-User 是 GEO 引用漏斗，
-    AI 爬虫不在 cf.client.bot 名单里，必须 UA 豁免）+ 66.249.64.0/19 兜底 +
-    站主 IP + ALLOW_CIDRS。
+    - 滥用分支（ABUSE_ASNS，block 且**无 UA 豁免**）：这些 ASN 实测/历史只有攻击
+      流量，官方爬虫清单 0 命中——伪造 bot 字样也 403（堵 UA 伪造绕过 block 的洞）。
+    - 大云分支（CLOUD_ASNS，block 且保留 UA 自报家门豁免）：GEO/SEO 爬虫实证全在
+      此（cf.client.bot 不覆盖 AI 爬虫，靠 UA 豁免活——守规矩才敢自报家门）。
+    - 两分支共同豁免：cf.client.bot（IP 级验证不可伪造，Googlebot/Bingbot 稳保）
+      + 66.249.64.0/19 兜底 + 站主 IP + ALLOW_CIDRS。
 
     persist_cidrs 非空时 OR 进坚持不懈来访者子句（继承 dc action=block）：
     Free 版自定义规则上限 5 条，无第 6 条配额（2026-10-25 实测
     "6 out of 5"），两名单必须共用本规则；子句独立带 cf.client.bot + 站主豁免。"""
-    cidrs = ["66.249.64.0/19"] + sorted(OWNER_IPS) \
-        + [str(n) for n in (allowed if allowed is not None else allow_nets())]
-    ua = " or ".join('http.user_agent contains "%s"' % u for u in DC_UA_EXEMPTS)
-    dc = ("(ip.src.asnum in {%s}) and not cf.client.bot and not (%s) "
-          "and not ip.src in {%s}"
-          % (" ".join(str(a) for a in DATACENTER_ASNS), ua, " ".join(cidrs)))
+    ip_ex = "ip.src in {%s}" % " ".join(
+        ["66.249.64.0/19"] + sorted(OWNER_IPS)
+        + [str(n) for n in (allowed if allowed is not None else allow_nets())])
+    abuse = ("(ip.src.asnum in {%s}) and not cf.client.bot and not %s"
+             % (" ".join(str(a) for a in ABUSE_ASNS), ip_ex))
+    ua = "(%s)" % " or ".join('http.user_agent contains "%s"' % u
+                              for u in DC_UA_EXEMPTS)
+    cloud = ("(ip.src.asnum in {%s}) and not cf.client.bot and not %s and not %s"
+             % (" ".join(str(a) for a in CLOUD_ASNS), ua, ip_ex))
+    dc = "(%s) or (%s)" % (abuse, cloud)
     if not persist_cidrs:
         return dc
     owners = " ".join(sorted(OWNER_IPS))
@@ -1098,9 +1120,10 @@ def main():
                 if need_put or dc_changed:
                     put_rules(cf, zid, rules)
                     if dc_changed and not DRY_RUN and not need_put:
-                        tg("ip-ban: 机房 ASN 规则更新——%d 个云/hosting ASN 直接 %s。"
-                           "豁免：CF 验证爬虫+UA 自报家门+官方段+站主白名单"
-                           % (len(DATACENTER_ASNS), DC_ACTION))
+                        tg("ip-ban: 机房 ASN 规则更新——%d 个 ASN 直接 %s"
+                           "（滥用 %d 个无 UA 豁免，伪造 bot UA 也 403）。"
+                           "豁免：CF验证爬虫+官方段+站主；大云另留 UA 自报家门"
+                           % (len(DATACENTER_ASNS), DC_ACTION, len(ABUSE_ASNS)))
                 unsynced = [z for z in unsynced if z != zname]
             except Exception as e:
                 log("CF sync failed for %s: %s (kept, will retry)" % (zname, e))

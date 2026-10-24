@@ -15,7 +15,7 @@
 | 2 | block empty/fake/script user agent | block | 手工（本次加严，见下） |
 | 3 | cn-traffic-managed-challenge（cf.client.bot 豁免，10-25 补） | managed_challenge | 手工 |
 | 4 | ip-range-blacklist auto（10-25 精简至 7 段） | block | ip-ban.py 自动 |
-| 5 | datacenter-asn-block auto (19 ASNs；名单非空时 OR 进坚持不懈子句；10-25 升 block) | block | ip-ban.py 自动 |
+| 5 | datacenter-asn-block auto（19 ASN 两分支：滥用 6 个无 UA 豁免/大云 13 个保留；10-25 升 block+拆分） | block | ip-ban.py 自动 |
 | RL | content-nav-burst-guard：150 req/10s（http_ratelimit 阶段，HTML 路径） | block | 手工（#37 放宽） |
 
 ### shuotong.wang（3 条）
@@ -23,7 +23,7 @@
 | # | 描述 | action | 维护方 |
 |---|---|---|---|
 | 1 | ip-range-blacklist auto | block | ip-ban.py 自动 |
-| 2 | datacenter-asn-block auto（名单非空时含坚持不懈子句；10-25 升 block） | block | ip-ban.py 自动 |
+| 2 | datacenter-asn-block auto（两分支同 noda；10-25 升 block+拆分） | block | ip-ban.py 自动 |
 | 3 | block empty/fake/script user agent（ref=ua-block） | block | 手工（10-24 从 noda 同步） |
 
 ## UA 规则（block empty/fake/script user agent）
@@ -174,6 +174,17 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
 - UA 豁免的伪造面今天已存在（豁免本就跳过挑战），block 不扩大暴露；家族实测素浏览器 UA。
 残余代价：云 VPN 真人从一键可过变 403（用户原则 3 接受）。persist 名单继承 block
 （PERSIST_ACTION 常量删除）。API 读回双 zone action=block、四层豁免完整。noda-infra commit 见 git。
+
+### 2026-10-25 第二步（ABUSE/CLOUD 拆分，用户裁定「攻击者伪造 UA 是否能漏进来」后）
+漏洞：UA 加 "bot" 字样可绕过 dc block + UA 规则豁免 + 源站全部六道闸（classify skip）。
+拆分：ABUSE_ASNS 6 个（18779/36352/212238/46635/62874/211590）**撤 UA 豁免**——伪造
+bot UA 也 403；CLOUD_ASNS 13 个保留 UA 豁免（GEO/SEO 爬虫实证全在此）。仍是同一条规则。
+安全依据（研究结论）：①OpenAI/Perplexity 官方 IP 清单 260 段 0 命中滥用 ASN（全 Azure/
+AWS）；②12h 普查滥用 ASN 零欢迎爬虫零真人；③7 天动作日志滥用 ASN 段唯一痕迹=家族；
+④cf.client.bot/官方段/站主豁免两分支都保留。家族 12h 内 9 出口 100% 在滥用 6 ASN。
+监控盲区：若未来有欢迎爬虫迁到滥用 ASN 会被 403 且源站看不到——月度抽查 CF Security
+Events 滥用 ASN 的 block 事件 UA 列。残余不可关死：搬大云+伪造 bot UA+低速率=与真 SEO
+爬虫不可区分。73 测试绿，API 读回双 zone 两分支生效（滥用分支零 UA 豁免验证过）。
 
 ## 核验命令（r4s 上跑）
 ```bash

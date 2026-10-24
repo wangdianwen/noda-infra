@@ -610,21 +610,43 @@ def test_dc_action_is_block(ip_ban):
 
 
 def test_dc_expression_exempts_selfid_ai_crawlers(ip_ban):
-    """UA 自报家门豁免:Amazonbot(实测 34 req 全 AWS 段)与 ChatGPT-User(GEO 漏斗)
-    必须豁免;原始 800x600 爬虫的纯 Chrome UA 不含任何豁免串,仍被挑战"""
+    """大云分支 UA 自报家门豁免:Amazonbot(实测全 AWS 段)与 ChatGPT-User(GEO 漏斗)
+    必须豁免;纯 Chrome UA 不含任何豁免串,仍被 block。
+    滥用分支(2026-10-25 拆分):零 UA 豁免——伪造 bot 字样也 403,但 cf.client.bot/
+    官方段/站主豁免保留"""
     expr = ip_ban.build_dc_expression(ip_ban.parse_cidrs(""))
-    assert 'contains "Amazonbot"' not in expr      # 不点名,走通用 bot 串
-    assert 'contains "bot"' in expr and 'contains "Bot"' in expr
-    assert 'contains "ChatGPT-User"' in expr
-    assert 'contains "Claude-User"' in expr
-    assert 'contains "Perplexity-User"' in expr
+    parts = expr.split(") or (")
+    assert len(parts) == 2                          # 无 persist 名单=恰好两支
+    abuse, cloud = parts[0], parts[1]
+    # 滥用分支:6 个滥用 ASN、零 UA 豁免、豁免三层保留
+    assert "asnum in {18779" in abuse and "212238" in abuse
+    assert "asnum in {16509" not in abuse           # 大云不混入滥用分支
+    assert "user_agent" not in abuse
+    assert "cf.client.bot" in abuse and "66.249.64.0/19" in abuse \
+        and "47.72.103.104" in abuse
+    # 大云分支:13 个大云、UA 豁免保留、豁免三层保留
+    assert "asnum in {16509" in cloud and "8075" in cloud
+    assert "18779" not in cloud
+    assert 'contains "bot"' in cloud and 'contains "Bot"' in cloud
+    assert 'contains "Amazonbot"' not in cloud      # 不点名,走通用 bot 串
+    assert 'contains "ChatGPT-User"' in cloud
+    assert 'contains "Claude-User"' in cloud
+    assert 'contains "Perplexity-User"' in cloud
     # issue #3 ②：MistralAI-User / cohere-ai 同为无 bot 字样的 "-User" 系 GEO 漏斗
-    assert 'contains "MistralAI-User"' in expr
-    assert 'contains "cohere-ai"' in expr
+    assert 'contains "MistralAI-User"' in cloud
+    assert 'contains "cohere-ai"' in cloud
+    assert "cf.client.bot" in cloud and "66.249.64.0/19" in cloud
     # 原爬虫 UA 不命中任何豁免串(教义回归:Chrome 串里无 bot/spider/slurp/crawler/-User)
     chrome_ua = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
                  " (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
     assert not any(u.lower() in chrome_ua.lower() for u in ip_ban.DC_UA_EXEMPTS)
+
+
+def test_abuse_and_cloud_asns_partition(ip_ban):
+    """6+13 拆分恰好覆盖原 19 个,无交集无遗漏(拆分日回归锁)"""
+    assert len(ip_ban.ABUSE_ASNS) == 6 and len(ip_ban.CLOUD_ASNS) == 13
+    assert set(ip_ban.ABUSE_ASNS) & set(ip_ban.CLOUD_ASNS) == set()
+    assert set(ip_ban.DATACENTER_ASNS) == set(ip_ban.ABUSE_ASNS) | set(ip_ban.CLOUD_ASNS)
 
 
 # ---- 封禁后源站验证（2026-10-24 执行缺口判例：13:50 封禁后出口仍打穿 CF 15 分钟，
