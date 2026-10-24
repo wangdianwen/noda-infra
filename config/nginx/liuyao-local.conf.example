@@ -577,8 +577,9 @@ server {
     location / { return 404; }
 }
 
-# ── HTTPS: Class（S3 静态桶版，与 prod class 块同构）──
-# localePrefix:'always'：无前缀一律 302 到带前缀等价路径
+\
+# ── HTTPS: class-preprod — 整站 410（2026-10-25 class 下线，与 prod default.conf
+# class 块同步改；先例 liuyao-preprod 2026-10-24；原 S3 stg 桶静态壳全套随块退役）──
 server {
     listen 443 ssl;
     server_name class-preprod.noda.co.nz;
@@ -586,120 +587,7 @@ server {
     ssl_certificate /etc/nginx/ssl/noda.dev.crt;
     ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
 
-    include /etc/nginx/snippets/upstream-graphql.conf;
-    include /etc/nginx/snippets/upstream-seaweedfs.conf;
-    resolver 127.0.0.11 valid=10s ipv6=off;
-
-    absolute_redirect off;
-    client_max_body_size 100M;
-
-    include /etc/nginx/snippets/security-headers-class.conf;
-
-    gzip on;
-    gzip_vary on;
-    gzip_min_length 1024;
-    gzip_types text/plain text/css text/xml text/javascript
-               application/x-javascript application/xml+rss
-               application/json application/javascript
-               image/svg+xml;
-
-    # 管理 API 不暴露公网（前缀最长匹配优先于 /api/）
-    location /api/admin/ {
-        return 403 '{"error":"forbidden"}';
-        add_header Content-Type application/json always;
-    }
-
-    # GraphQL BFF（同源反代，与 prod class 块同构）
-    location = /graphql {
-        client_max_body_size 1m;          # GraphQL 查询体上限（防滥用第一道）
-        proxy_pass http://$bff_upstream_preprod;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_buffering off;
-        proxy_set_header Connection "";
-        proxy_read_timeout 30s;
-        proxy_send_timeout 30s;
-    }
-
-    # sitemap 由 Go API 生成
-    location = /sitemap.xml {
-        proxy_pass http://preprod-noda-api:3001;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # Go API（preprod-noda-api:3001）— /api/ 分流
-    location /api/ {
-        proxy_pass http://preprod-noda-api:3001;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_buffering off;
-        proxy_set_header Connection "";
-        proxy_read_timeout 60s;
-        proxy_send_timeout 60s;
-    }
-
-    # .txt（RSC 载荷）净 404（先于 course/category 深链壳，regex 顺序敏感）
-    location ~ \.txt$ {
-        include /etc/nginx/snippets/seaweedfs-class-static-stg.conf;
-    }
-
-    # 受保护路径：课程编辑（cookie 门槛 → auth-preprod 登录）
-    location ~ ^/(en|zh|zh-TW)/course/[^/]+/edit(/|$) {
-        if ($cookie_noda_session = "") {
-            return 302 "https://auth-preprod.noda.co.nz/$1/login?from=https://class-preprod.noda.co.nz$request_uri";
-        }
-        include /etc/nginx/snippets/seaweedfs-class-static-stg.conf;
-        # 条件请求剥离见 snippets/strip-conditional-get.conf 头注（深链壳 304×error_page=200 → 空 200 白页）
-        include /etc/nginx/snippets/strip-conditional-get.conf;
-        error_page 403 404 =200 /$class_loc/course/app-shell/edit.html;
-    }
-
-    # 受保护路径：publish / dashboard / admin
-    location ~ ^/(en|zh|zh-TW)/(publish|dashboard|admin)(/|$) {
-        if ($cookie_noda_session = "") {
-            return 302 "https://auth-preprod.noda.co.nz/$1/login?from=https://class-preprod.noda.co.nz$request_uri";
-        }
-        include /etc/nginx/snippets/seaweedfs-class-static-stg.conf;
-        error_page 403 404 /404.html;
-    }
-
-    # 课程详情（动态段 [id]）→ app-shell 壳页
-    location ~ ^/(en|zh|zh-TW)/course/ {
-        include /etc/nginx/snippets/seaweedfs-class-static-stg.conf;
-        # 条件请求剥离见 snippets/strip-conditional-get.conf 头注（深链壳 304×error_page=200 → 空 200 白页）
-        include /etc/nginx/snippets/strip-conditional-get.conf;
-        error_page 403 404 =200 /$class_loc/course/app-shell.html;
-    }
-
-    # 分类页（动态段 [...slug]）→ app-shell 壳页
-    location ~ ^/(en|zh|zh-TW)/category/ {
-        include /etc/nginx/snippets/seaweedfs-class-static-stg.conf;
-        # 条件请求剥离见 snippets/strip-conditional-get.conf 头注（深链壳 304×error_page=200 → 空 200 白页）
-        include /etc/nginx/snippets/strip-conditional-get.conf;
-        error_page 403 404 =200 /$class_loc/category/app-shell.html;
-    }
-
-    # 其余全部（locale 页面 / _next 资产 / robots / 兜底）
-    location / {
-        if ($class_needs_locale_redirect) {
-            return 302 /$class_locale$request_uri;
-        }
-        include /etc/nginx/snippets/seaweedfs-class-static-stg.conf;
-        error_page 403 404 /404.html;
-    }
-
-    location = /health {
-        access_log off;
-        return 200 "healthy\n";
-        add_header Content-Type text/plain;
-    }
+    return 410;
 }
 
 # ── HTTPS: Noda 官网（S3 桶伺服版，与 prod www 块同构）──
