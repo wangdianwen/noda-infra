@@ -275,10 +275,10 @@ ASSET_RE = re.compile(
     r"\.(js|css|mjs|png|jpe?g|webp|svg|gif|ico|woff2?|ttf|otf|map|mp4|avif)$"
     r"|/_next/static/", re.I)
 ATTACK_RE = re.compile(                      # 机密探测路径（历史扫库字典高频项）
-    r"\.env(\.|$)|/\.aws/|wp-(config|content|login)|application\.(properties|yml)(\.|$)"
+    r"\.env(\.|$)|/\.aws/|wp-(config|content|login|includes)|application\.(properties|yml)(\.|$)"
     r"|composer/installed|/\.git(/|$)|\.svn/|id_rsa|/\.ssh/|\.sql(\.|$)|\.bak(\.|$)"
     r"|debug\.log(\.|$)|phpmyadmin|web\.config|\.htaccess|\.htpasswd|\.DS_Store"
-    r"|actuator(/|$)|\.aspx?(\.|$)|\.jsp(\.|$)|/etc/passwd|\.\./", re.I)
+    r"|xmlrpc\.php|wlwmanifest|actuator(/|$)|\.aspx?(\.|$)|\.jsp(\.|$)|/etc/passwd|\.\./", re.I)
 BROWSER_SIGNAL_RE = re.compile(              # 真 PWA 浏览器生命周期端点（爬虫不拉）
     r"/sw\.js$|/manifest\.webmanifest$|/manifest\.json$|/offline\.html?$"
     r"|/_next/static/|/__next\.|/geo\.json$", re.I)

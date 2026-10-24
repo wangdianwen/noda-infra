@@ -347,6 +347,21 @@ def test_flood32_attack_priority_over_browser_shape(ip_ban):
     assert ttl == 30 * 24 * 3600 and reason.startswith("attack-urls")
 
 
+def test_attack_re_wp_probe_paths(ip_ban):
+    """2026-10-24 判例：WP 扫描器 20 发 wlwmanifest/xmlrpc/wp-includes 探测
+    全 404 溜走（旧规则只认 wp-config/content/login）→ 三类路径必须命中"""
+    assert ip_ban.ATTACK_RE.search("/wp-includes/wlwmanifest.xml")
+    assert ip_ban.ATTACK_RE.search("//blog/wp-includes/wlwmanifest.xml")
+    assert ip_ban.ATTACK_RE.search("//xmlrpc.php?rsd")
+    assert ip_ban.ATTACK_RE.search("/wp-includes/js/jquery/jquery.js")
+    # 老模式不回归
+    assert ip_ban.ATTACK_RE.search("/wp-login.php")
+    assert ip_ban.ATTACK_RE.search("/wp-config.php.bak")
+    # 正常业务路径不误伤
+    assert not ip_ban.ATTACK_RE.search("/auckland/places/hidden-gems")
+    assert not ip_ban.ATTACK_RE.search("/zh/item/4396be16-f8db")
+
+
 def test_flood32_browser_exempt_unchanged(ip_ban):
     """signals≥3+零 bot-UA → exempt 不变（WARP 事件教训；超浏览器档阈值也豁免）"""
     assert ip_ban.decide_flood32(90, 0, 3, 0, 0, NOW, 216) is None
