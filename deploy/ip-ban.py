@@ -16,8 +16,10 @@ ip-ban.py — 通用 IP 段黑名单（自动发现 spam 网段 → CF WAF 封�
   * 明显 bot UA：HeadlessChrome / python-requests / curl / wget / Go-http-client …
   * 伪造老浏览器：Chrome 主版本 < 100（2026 年不存在的人类用户）
 - /24 行为指纹（6 小时滚动窗口，低慢速爬取在 5 分钟窗内攒不够阈值）：
-  请求 ≥40 且不同 IP ≥3 且（静态资源占比 ≤5% 或 bot-UA 占比 ≥50% 或去重路径 ≥15）
-  → 真人浏览器必然带资源请求、单 IP 真人过不了「3 个不同 IP」门槛
+  请求 ≥40 且不同 IP ≥3 且（静态资源占比 ≤5% 或 bot-UA 占比 ≥50%）且去重路径 ≥15
+  → 真人浏览器必然带资源请求；paths 为必要条件不单独触发（2026-10-25 复盘修正：
+  纯 paths 触发曾把高资源多路径的 Google Mediapartners 段与日本家宽共享出口
+  一并误封）、单 IP 真人过不了「3 个不同 IP」门槛
 - 单 IP 洪水（#37 2026-10-24 分档）：5 分钟窗内按档位阈值 → 封 /32（外科
   手术式）——严档 60（夹 bot-UA 或 6h 内有攻击 URL 命中）、浏览器档 300
   （零 bot-UA 且零攻击命中）；真人浏览器爆发豁免——窗口内零 bot-UA 且命中
@@ -90,8 +92,9 @@ _next 静态资源，零攻击路径）：
   键=v4 /32、v6 /64（家宽 v6 后缀逐日轮换）
 - 判定 decide_persistent：14 天窗口 ≥4 个不同到访日 + 累计 ≥8 请求 + 全程零
   浏览器生命周期信号 + 零 304（signals/n304 任一非零即真人铁证放行=原则②）
-- 命中 → 独立 CF 规则 persistent-visitor-challenge（managed_challenge，真人一键
-  可过）+ cf.client.bot/站主双豁免兜底；名单空自动 disable=原则③ 收口
+- 命中 → 并入 dc 规则（OR 子句，managed_challenge 真人一键可过）+ cf.client.bot/
+  站主双豁免兜底；名单空=子句不存在。**不建独立规则**：Free 版自定义规则上限
+  5 条（2026-10-25 实测 "6 out of 5"），名单空自动 disable=原则③ 收口
 """
 
 import ipaddress
@@ -136,6 +139,9 @@ PERSIST_WINDOW = 14 * 86400          # 滚动窗口 14 天
 PERSIST_MIN_DAYS = 4                 # 窗口内不同到访日下限
 PERSIST_MIN_REQS = 8                 # 累计请求下限（排除每天一发的良性拨测）
 MAX_PERSIST_TRACK = 3000             # 档案容量（按 last 裁最旧）
+MAX_PERSIST_LIST = 80                # 名单上限：与 dc 规则共用表达式，须留余量
+                                    # （CF 单规则表达式 4095 字符；Free 版自定义
+                                    #  规则上限 5 条，2026-10-25 实测 "6 out of 5"）
 # UA 自报家门豁免（大小写都写死：CF contains 不保证大小写不敏感）。"bot"/"Crawler"
 # 系覆盖 GPTBot/OAI-SearchBot/ClaudeBot/PerplexityBot/Amazonbot/Applebot/CCBot；
 # 三个 "-User" 是各引擎的「用户发起实时抓取」变体——GEO 引用漏斗本体，UA 里没有
@@ -528,20 +534,29 @@ def apply_blacklist(rules, bans):
     return rules
 
 
-def build_dc_expression(allowed=None):
+def build_dc_expression(allowed=None, persist_cidrs=None):
     """机房 ASN 常驻封禁规则表达式（纯函数，单测直接打）。
 
     例外集（防误伤四层）随表达式烘死：cf.client.bot（CF 验证爬虫主闸，Google/Bing
     稳保）+ UA 自报家门（与 classify 的 SELFID_MARKERS 同一教义：守规矩才敢自报
     家门——Amazonbot 实测 14h 34 req 全 AWS 段、ChatGPT-User 是 GEO 引用漏斗，
     AI 爬虫不在 cf.client.bot 名单里，必须 UA 豁免）+ 66.249.64.0/19 兜底 +
-    站主 IP + ALLOW_CIDRS。"""
+    站主 IP + ALLOW_CIDRS。
+
+    persist_cidrs 非空时 OR 进坚持不懈来访者挑战子句（同一 managed_challenge，
+    语义不变）：Free 版自定义规则上限 5 条，无第 6 条配额（2026-10-25 实测
+    "6 out of 5"），两名单必须共用本规则；子句独立带 cf.client.bot + 站主豁免。"""
     cidrs = ["66.249.64.0/19"] + sorted(OWNER_IPS) \
         + [str(n) for n in (allowed if allowed is not None else allow_nets())]
     ua = " or ".join('http.user_agent contains "%s"' % u for u in DC_UA_EXEMPTS)
-    return ("(ip.src.asnum in {%s}) and not cf.client.bot and not (%s) "
-            "and not ip.src in {%s}"
-            % (" ".join(str(a) for a in DATACENTER_ASNS), ua, " ".join(cidrs)))
+    dc = ("(ip.src.asnum in {%s}) and not cf.client.bot and not (%s) "
+          "and not ip.src in {%s}"
+          % (" ".join(str(a) for a in DATACENTER_ASNS), ua, " ".join(cidrs)))
+    if not persist_cidrs:
+        return dc
+    owners = " ".join(sorted(OWNER_IPS))
+    return ("(%s) or (ip.src in {%s} and not cf.client.bot "
+            "and not ip.src in {%s})" % (dc, " ".join(persist_cidrs), owners))
 
 
 def apply_dc_rule(rules, expr):
@@ -588,47 +603,17 @@ def decide_persistent(days, reqs, signals, n304):
             and signals == 0 and n304 == 0)
 
 
-def build_persist_expression(cidrs):
-    """坚持不懈挑战规则表达式；空名单返回 ""（规则转 disabled）。
-    cf.client.bot + 站主 IP 双豁免兜底（入档集本就不含官方爬虫/白名单）。"""
-    if not cidrs:
-        return ""
-    owners = " ".join(sorted(OWNER_IPS))
-    return ("(ip.src in {%s}) and not cf.client.bot and not ip.src in {%s}"
-            % (" ".join(cidrs), owners))
+def decide_enum24(hits, ips, assets, botua, paths):
+    """/24 行为指纹判定（纯函数，单测直接打）。
 
-
-def apply_persist_rule(rules, expr):
-    """在规则列表中原位维护坚持不懈挑战规则，返回 (同一列表, 是否有变化)。
-    名单空 → 规则存在则 disable（对象保留 Dashboard 可见），不存在则不动。"""
-    rule = next((r for r in rules
-                 if str(r.get("description", "")).startswith(PERSIST_MARKER)
-                 or r.get("ref") == PERSIST_MARKER), None)
-    n = expr.count("/")                      # ip.src in {...} 里的 CIDR 数
-    if not expr:
-        if rule and rule.get("enabled", True):
-            rule["enabled"] = False
-            log("persist-rule: disabled (empty list)")
-            return rules, True
-        return rules, False
-    if (rule and rule.get("expression") == expr
-            and rule.get("action") == PERSIST_ACTION
-            and rule.get("enabled", True)):
-        return rules, False
-    created = rule is None
-    desc = "%s auto (%d IPs; managed by ip-ban.py)" % (PERSIST_MARKER, n)
-    if rule:
-        rule["expression"] = expr
-        rule["action"] = PERSIST_ACTION
-        rule["description"] = desc
-        rule["enabled"] = True
-    else:
-        rules.append({"action": PERSIST_ACTION, "action_parameters": {},
-                      "expression": expr, "description": desc,
-                      "enabled": True, "ref": PERSIST_MARKER})
-    log("persist-rule: %s (%d IPs, %s)" % ("created" if created else "updated",
-                                           n, PERSIST_ACTION))
-    return rules, True
+    枚举/爬取形状 =（低静态资源占比 或 bot-UA 过半）且 路径多样性达标。
+    paths 只作必要条件、不单独触发：真人共享出口 /24（3+ 用户、高资源、
+    多路径）不误封——209.85.238.0/24（assets 76%/paths 35）与 2026-10-21
+    日本家宽误封同通道，2026-10-25 复盘把原 OR 改 AND。"""
+    return (hits >= BAN24_MIN_REQ and ips >= BAN24_MIN_IPS
+            and (assets / hits <= BAN24_MAX_ASSET_RATIO
+                 or botua / hits >= 0.5)
+            and len(paths) >= BAN24_MIN_PATHS)
 
 
 def client_ip_from_xff(raw):
@@ -739,8 +724,9 @@ def classify(ip, ua, allowed=None):
     if is_crawler_ip(ip):
         return "skip"                        # 官方爬虫段 IP 优先，不看 UA
     u = ua.lower()
-    if "googlebot" in u:
-        return "bot"                         # 假 Googlebot（真段已在上面 skip）
+    if "googlebot" in u or "bingbot" in u:
+        return "bot"          # 假 Googlebot/Bingbot（真段已在上面 skip）——
+                              # bingbot 不加会被 SELFID "bot" 误放行为 skip
     if any(m in u for m in SELFID_MARKERS):
         return "skip"                                             # 自报家门的爬虫，欢迎
     if not ua.strip() or any(m in u for m in OBVIOUS_BOT_UA):
@@ -946,13 +932,10 @@ def main():
         botua = sum(e[2] for e in evs)
         paths = {e[4] for e in evs}
         attack = sum(1 for e in evs if ATTACK_RE.search(e[4]))
-        if (assets / hits <= BAN24_MAX_ASSET_RATIO or botua / hits >= 0.5
-                or len(paths) >= BAN24_MIN_PATHS):
+        if decide_enum24(hits, len(ips), assets, botua, paths):
             escalated = attack >= ATTACK_MIN
-            proposals[p24] = (
-                ("24h-enum" if len(paths) >= BAN24_MIN_PATHS
-                 else "headless/rotation") + ("+attack" if escalated else ""),
-                ATTACK_TTL if escalated else BAN_TTL)
+            proposals[p24] = ("24h-enum" + ("+attack" if escalated else ""),
+                              ATTACK_TTL if escalated else BAN_TTL)
             log("candidate %s: hits=%d ips=%d assets=%.0f%% botua=%.0f%% "
                 "paths=%d attack=%d"
                 % (p24, hits, len(ips), 100.0 * assets / hits,
@@ -1009,6 +992,12 @@ def main():
         if k not in bans and decide_persistent(
             len([d for d in p["days"] if int(d) >= min_day]),
             p["reqs"], p["signals"], p["n304"]))
+    if len(persist_hits) > MAX_PERSIST_LIST:
+        keep = set(sorted(persist_hits,
+                          key=lambda k: persist[k]["last"])[-MAX_PERSIST_LIST:])
+        log("persist: 名单 %d 超 %d 上限（表达式尺寸保护），按最后到访裁最旧"
+            % (len(persist_hits), MAX_PERSIST_LIST))
+        persist_hits = [k for k in persist_hits if k in keep]
     persist_listed = state.get("persist_listed") or []
     new_persist = [k for k in persist_hits if k not in persist_listed]
     for k in new_persist:
@@ -1045,7 +1034,7 @@ def main():
     # ---- 同步 CF 规则（多 zone：黑名单 + 机房 ASN 常驻规则同步到 ZONES 全部站点）----
     # 每轮都 GET 对账：除封禁变化外，还要校验 dc 常驻规则未被 Dashboard 手改漂移。
     unsynced = sorted(set(state.get("unsynced") or []))
-    dc_expr = build_dc_expression(allowed)
+    dc_expr = build_dc_expression(allowed, persist_cidrs=persist_hits)
     try:
         cf = load_cf_token()
         ids = {}
@@ -1061,7 +1050,6 @@ def main():
         need_put = bool(new_bans or unbanned or unsynced
                         or new_persist
                         or [k for k in persist_listed if k not in persist_hits])
-        persist_expr = build_persist_expression(persist_hits)
         for zname in ZONES:
             zid = ids.get(zname)
             if not zid:
@@ -1070,8 +1058,7 @@ def main():
             try:
                 rules = apply_blacklist(get_rules(cf, zid), bans)
                 rules, dc_changed = apply_dc_rule(rules, dc_expr)
-                rules, pc_changed = apply_persist_rule(rules, persist_expr)
-                if need_put or dc_changed or pc_changed:
+                if need_put or dc_changed:
                     put_rules(cf, zid, rules)
                     if dc_changed and not DRY_RUN and not need_put:
                         tg("ip-ban: 机房 ASN 常驻规则已启用——%d 个云/hosting ASN 走 %s，"

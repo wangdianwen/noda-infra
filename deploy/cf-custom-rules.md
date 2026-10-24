@@ -13,19 +13,17 @@
 |---|---|---|---|
 | 1 | admin non-NZ managed challenge | managed_challenge | 手工（后台入口仅 NZ 访问） |
 | 2 | block empty/fake/script user agent | block | 手工（本次加严，见下） |
-| 3 | cn-traffic-managed-challenge | managed_challenge | 手工 |
+| 3 | cn-traffic-managed-challenge（cf.client.bot 豁免，10-25 补） | managed_challenge | 手工 |
 | 4 | ip-range-blacklist auto (N active) | block | ip-ban.py 自动 |
-| 5 | datacenter-asn-block auto (N ASNs) | managed_challenge | ip-ban.py 自动 |
-| 6* | persistent-visitor-challenge auto | managed_challenge | ip-ban.py 自动（**名单非空才创建**，空=不存在） |
+| 5 | datacenter-asn-block auto (N ASNs；名单非空时 OR 进坚持不懈挑战子句) | managed_challenge | ip-ban.py 自动 |
 
 ### shuotong.wang（3 条）
 
 | # | 描述 | action | 维护方 |
 |---|---|---|---|
 | 1 | ip-range-blacklist auto | block | ip-ban.py 自动 |
-| 2 | datacenter-asn-block auto | managed_challenge | ip-ban.py 自动 |
+| 2 | datacenter-asn-block auto（名单非空时含坚持不懈子句） | managed_challenge | ip-ban.py 自动 |
 | 3 | block empty/fake/script user agent（ref=ua-block） | block | 手工（10-24 从 noda 同步） |
-| 4* | persistent-visitor-challenge auto | managed_challenge | ip-ban.py 自动（名单非空才创建） |
 
 ## UA 规则（block empty/fake/script user agent）
 
@@ -67,6 +65,30 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
 ```
 
 ## 变更记录
+### 2026-10-25 晚（全量规则 review 轮，review 至无新问题）
+逐条复审两 zone 全部表达式 + 黑名单 30 段理由 + ip-ban.py 各判定闸，修复 5 处：
+1. **persist 名单并入 dc 规则**（严重）：Free 版自定义规则上限 5 条，实测第 6 条
+   PUT 报 50001 "exceeded the maximum number of rules: 6 out of 5"——独立
+   persistent-visitor-challenge 规则建不出来，首名单出现时将永远同步失败。
+   现 OR 进 dc 规则表达式（同 managed_challenge 语义），MAX_PERSIST_LIST=80
+   保护单规则 4095 字符表达式上限。
+2. **/24 枚举闸 OR→AND**（误封通道）：原 `低资源 OR botua≥50% OR paths≥15`
+   允许纯 paths 单独触发——Google Mediapartners 段（assets 76%/paths 35）与
+   2026-10-21 日本家宽共享出口正是此通道误封。改 `(低资源 OR botua) AND paths≥15`
+   纯函数 decide_enum24 + 6 测试。存量 205.169.39.0/24 复核=Palo Alto Networks
+   扫描段（hosting）保留；47.79.13.0/24=Alibaba SG 保留。
+3. **CN 规则补 cf.client.bot 豁免**：原 `ip.geoip.country eq "CN"` 裸表达式会
+   挑战 Baiduspider 等 CF 验证爬虫（违反原则①）。现 `(CN) and not cf.client.bot`。
+   Sogou/Bytespider 等无验证标记 CN 爬虫仍按 CN 政策挑战（Bytespider 处置仍留用户裁定）。
+4. **UA 规则空 UA 条款补豁免**（两 zone）：原首条款 `(ua eq "")` 无条件 block，
+   不吃站主 IP 与 cf.client.bot 豁免。现 `((ua eq "") and not cf.client.bot
+   and ip.src ne 47.72.103.104) or …`。
+5. **假 bingbot 归类修正**：classify 只点名假 googlebot，bingbot 伪装 UA 会经
+   SELFID "bot" 字样溜成 skip（不计入速率统计）。现 googlebot/bingbot 伪装均归 bot。
+黑名单 30 段逐段复核：22 攻击路径 + 6 洪水 + 2 enum + 1 手动 wp-probe，全部有实据。
+无 RSS feed（/feed 等全 404）→ RSS 阅读器 UA 无误封面。admin.noda.co.nz DNS 在位。
+第二遍全文复审未再发现新问题，review 收敛。
+
 ### 2026-10-25（下午：坚持不懈来访者挑战网，用户三原则）
 用户定三原则：①不误封 SEO/GEO/守规矩爬虫 ②不误封正常用户 ③机器访问/机房攻击/
 天天坚持来的访客皆可疑。新增 ip-ban.py 第 6 条自动规则 **persistent-visitor-challenge**：

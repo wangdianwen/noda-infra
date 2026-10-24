@@ -237,30 +237,62 @@ def test_persist_key_v6_uses_64(ip_ban):
     assert ip_ban.persist_key("203.0.113.9") == "203.0.113.9/32"
 
 
-def test_build_persist_expression(ip_ban):
-    e = ip_ban.build_persist_expression(["203.0.113.9/32", "198.51.100.7/32"])
-    assert e.startswith("(ip.src in {203.0.113.9/32 198.51.100.7/32})")
-    assert "not cf.client.bot" in e and "47.72.103.104" in e
-    assert ip_ban.build_persist_expression([]) == ""
+def test_build_persist_expression_merged_into_dc(ip_ban):
+    """Free 版自定义规则上限 5 条（实测 "6 out of 5"）→ 挑战名单并入 dc 规则"""
+    e = ip_ban.build_dc_expression([], persist_cidrs=["203.0.113.9/32",
+                                                      "2407:7000:b051:ed00::/64"])
+    assert ") or (ip.src in {203.0.113.9/32" in e
+    assert "2407:7000:b051:ed00::/64} and not cf.client.bot" in e
+    # 子句独立豁免：cf.client.bot + 站主
+    tail = e.split(") or (ip.src in")[1]
+    assert "not cf.client.bot" in tail and "47.72.103.104" in tail
+    # 名单空 → 与老表达式完全一致
+    assert ip_ban.build_dc_expression([], persist_cidrs=None) \
+        == ip_ban.build_dc_expression([], persist_cidrs=[])
 
 
-def test_apply_persist_rule_create_update_disable(ip_ban, capsys):
+def test_apply_dc_rule_carries_persist_clause(ip_ban):
     rules = []
-    expr1 = ip_ban.build_persist_expression(["203.0.113.9/32"])
-    rules, ch = ip_ban.apply_persist_rule(rules, expr1)
-    assert ch and rules[0]["ref"] == ip_ban.PERSIST_MARKER
-    assert rules[0]["action"] == "managed_challenge" and rules[0]["enabled"]
-    assert "1 IPs" in rules[0]["description"]
-    rules, ch = ip_ban.apply_persist_rule(rules, expr1)      # 幂等
+    expr = ip_ban.build_dc_expression([], persist_cidrs=["203.0.113.9/32"])
+    rules, ch = ip_ban.apply_dc_rule(rules, expr)
+    assert ch and rules[0]["action"] == "managed_challenge"
+    rules, ch = ip_ban.apply_dc_rule(rules, expr)            # 幂等
     assert ch is False
-    expr2 = ip_ban.build_persist_expression(
-        ["203.0.113.9/32", "198.51.100.7/32"])
-    rules, ch = ip_ban.apply_persist_rule(rules, expr2)      # 更新
-    assert ch and "2 IPs" in rules[0]["description"]
-    rules, ch = ip_ban.apply_persist_rule(rules, "")         # 名单空 → disable
-    assert ch and rules[0]["enabled"] is False
-    rules, ch = ip_ban.apply_persist_rule(rules, "")         # 再空 → 不动
-    assert ch is False
+    expr2 = ip_ban.build_dc_expression([])                    # 名单清空 → 更新
+    rules, ch = ip_ban.apply_dc_rule(rules, expr2)
+    assert ch and "or (ip.src in" not in rules[0]["expression"]
+
+
+# ---- /24 枚举闸 OR→AND 修正（2026-10-25 复盘）----
+
+def test_enum24_google_case_not_banned(ip_ban):
+    """Mediapartners 判例复盘：高资源(76%)+多路径 → 不再封"""
+    assert ip_ban.decide_enum24(42, 6, 32, 0, {"p%d" % i for i in range(35)}) is False
+
+
+def test_enum24_real_user_shared_exit_not_banned(ip_ban):
+    """日本家宽判例复盘：真人共享出口（高资源、多路径、botua 0）→ 不封"""
+    assert ip_ban.decide_enum24(60, 5, 45, 0, {"p%d" % i for i in range(25)}) is False
+
+
+def test_enum24_pure_page_crawler_banned(ip_ban):
+    assert ip_ban.decide_enum24(42, 3, 1, 0, {"p%d" % i for i in range(35)}) is True
+
+
+def test_enum24_script_ua_enumerator_banned(ip_ban):
+    assert ip_ban.decide_enum24(40, 3, 4, 20, {"p%d" % i for i in range(15)}) is True
+
+
+def test_enum24_low_paths_or_low_hits_or_few_ips_not_banned(ip_ban):
+    assert ip_ban.decide_enum24(40, 3, 1, 0, {"p%d" % i for i in range(10)}) is False
+    assert ip_ban.decide_enum24(30, 3, 1, 0, {"p%d" % i for i in range(30)}) is False
+    assert ip_ban.decide_enum24(40, 2, 1, 0, {"p%d" % i for i in range(30)}) is False
+
+
+def test_bingbot_spoof_outside_ranges_is_bot(ip_ban):
+    """假 bingbot（IP 不在 bing 段）必须归 bot 计数，不得借 SELFID "bot" 溜成 skip"""
+    assert ip_ban.classify("1.2.3.4",
+                           "Mozilla/5.0 (compatible; bingbot/2.0)") == "bot"
 
 
 # ---- ③ 多级 XFF：取 CF 追加的最后一跳，非法跳过不崩溃 ----
