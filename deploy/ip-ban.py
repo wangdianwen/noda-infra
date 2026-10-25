@@ -225,6 +225,10 @@ ABUSE_ASNS = (
     60781,          # LeaseWeb 全球主 ASN（10-24/25 段立案扩容候选，7203 同公司）
     51167,          # Contabo（10-24/25 段立案扩容候选：预算 VPS 重灾区）
     199524,         # GCore（10-24/25 段立案扩容候选：CDN/边缘代理）
+    19148,          # 152.163.152.0/22（10-26 08:37 NZ 实证 152.163.154.167 Mac Chrome/125
+                    #  headless 2 分钟 46 请求完整渲染 /zh/item/{uuid}：_next chunks×30+/
+                    #  geo.json/POST graphql——与 7203（152.163.156.0/22）判例同指纹，
+                    #  邻段姐妹 ASN 一起封，noda-infra#3 终验 live 抓获）
 )
 # 大云 ASN：保留 UA 自报家门豁免——GEO/SEO 爬虫实证全在此（GPTBot/ChatGPT-User/
 # OAI-SearchBot 全 Azure、Amazonbot/PerplexityBot 全 AWS、AhrefsBot 主力 OVH、
