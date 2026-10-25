@@ -60,7 +60,7 @@ cp config/environments/.env.example config/environments/.env
 | 服务 | 镜像/版本 | 端口 | 说明 |
 |------|-----------|------|------|
 | PostgreSQL | `postgres:17.9` | 5432（内部） | 数据库，数据持久化在 `postgres_data` 卷 |
-| noda-api-prod | `noda-api:<commit-sha>` | 3001/3007/3010/3011 | Go API 多模块（class/liuyao/email/admin + auth/comment API），内置 crawl 调度 cron |
+| noda-api-prod | `noda-api:<commit-sha>` | 3001/3004/3011/3012/3014 | Go API 多模块（admin/auth/comment + noda-api:3014 数据接口；3001 仅 /api/health 供 healthcheck） |
 | noda-static-prod | `noda-static:<commit-sha>` | 80/81/443 | nginx 边缘路由（反代 Go API + 从 SeaweedFS 桶伺服各产品静态站，网络别名 noda-infra-nginx） |
 | SeaweedFS | r4s 数据盘 | 8333（内部） | 对象存储，桶 `noda-static`（prod）/ `noda-static-stg`（本机 preprod），匿名只读 |
 | noda-ops | 自构建 | - | 运维工具集（PostgreSQL 备份 + Doppler 密钥备份 + Cloudflare Tunnel） |
@@ -71,14 +71,13 @@ cp config/environments/.env.example config/environments/.env
 
 ```
 浏览器 → Cloudflare CDN → Cloudflare Tunnel (noda-ops 容器) → noda-static-prod (nginx 边缘)
-  class.noda.co.nz/api/*   → noda-api-prod:3001            (Go API)
-  class.noda.co.nz/*       → SeaweedFS 桶 sites/class/     (静态壳 + app-shell 兜底)
-  liuyao.noda.co.nz/api/*  → noda-api-prod:3007
-  liuyao.noda.co.nz/*      → SeaweedFS 桶 sites/liuyao/
-  noda.co.nz               → SeaweedFS 桶 sites/www/
+  noda.co.nz（apex）       → SeaweedFS 桶 sites/nearby/    (静态站；/api/nearby|user/* → noda-api-prod:3014)
+  www.noda.co.nz           → 301 → noda.co.nz
   admin.noda.co.nz         → SeaweedFS 桶 sites/admin/ + noda-api-prod:3011
   auth.noda.co.nz          → SeaweedFS 桶 sites/auth/      (Go authapi 承接 API)
   comments.noda.co.nz      → SeaweedFS 桶 sites/comment/   (Go commentapi 承接 API)
+  shuotong.wang            → SeaweedFS 桶 sites/shuotong/
+  class/findclass          → 410（2026-10-25 下线，#46）
 ```
 
 ## 目录结构
@@ -135,7 +134,7 @@ Jenkins 运行在本机 `http://localhost:8080`，仅两个手动触发的 Pipel
 
 | Job | Jenkinsfile | 职责 | 参数 |
 |-----|-------------|------|------|
-| **noda-apps** | `jenkins/Jenkinsfile.apps` | 产品应用发布 | `PRODUCT` 必选单产品（class/www/admin/liuyao/nearby/auth/comment）；`LAYER` = all（一起）/ api（后端）/ static（前端）；`DEPLOY_MODE` = normal（preprod 验证 + 人工批准）/ fast（hotfix 直发） |
+| **noda-apps** | `jenkins/Jenkinsfile.apps` | 产品应用发布 | `PRODUCT` 必选单产品（www/admin/nearby/auth/comment；nearby=apex 主站）；`LAYER` = all（一起）/ api（后端）/ static（前端）；`DEPLOY_MODE` = normal（preprod 验证 + 人工批准）/ fast（hotfix 直发） |
 | **noda-infra** | `jenkins/Jenkinsfile.infra` | 公共基础设施镜像发布 | `SERVICE` 必选其一：nginx（构建反代镜像并重建容器）/ seaweedfs / noda-ops / postgres（备份 + 人工确认） |
 
 - 前端静态站发布 = 构建 `out/` 后 `mc mirror` 入 SeaweedFS 桶 `sites/<product>/`（prod + stg 双桶同步收敛）。

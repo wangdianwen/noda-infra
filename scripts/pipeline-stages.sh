@@ -390,9 +390,9 @@ NEXT_PUBLIC_AUTH_BYPASS=false
 --build-arg
 NEXT_PUBLIC_AUTH_KEYCLOAK_CLIENT_ID=noda-auth
 --build-arg
-NEXT_PUBLIC_ALLOWED_ORIGINS=https://class.noda.co.nz,https://noda.co.nz
+NEXT_PUBLIC_ALLOWED_ORIGINS=https://noda.co.nz,https://auth.noda.co.nz
 --build-arg
-NEXT_PUBLIC_SITE_URL=https://class.noda.co.nz
+NEXT_PUBLIC_SITE_URL=https://noda.co.nz
 --build-arg
 NEXT_PUBLIC_REMARK_URL=https://comments.noda.co.nz
 --build-arg
@@ -615,7 +615,6 @@ pipeline_post_publish_cleanup()
 _node_pkg_for_product()
 {
     case "$1" in
-        class)   echo "@noda-apps/web" ;;
         www)     echo "@noda-apps/www" ;;
         admin)   echo "@noda-apps/admin" ;;
         nearby)  echo "@noda-apps/nearby-web" ;;
@@ -641,9 +640,8 @@ pipeline_test()
     case "${LAYER_FILTER:-all}" in
         static|web) ;;
         *)
-        local modules="api common common/crawler common/jobs nearby/api class/api admin/api auth/api comment/api"
+        local modules="api common common/crawler common/jobs nearby/api admin/api auth/api comment/api"
         case "${PRODUCT_FILTER:-all}" in
-            class)            modules="class/api common" ;;
             nearby)           modules="nearby/api common" ;;
             admin)            modules="admin/api common" ;;
             auth)             modules="auth/api common" ;;
@@ -720,7 +718,7 @@ pipeline_lint_go()
         -e GOFLAGS=-buildvcs=false \
         "$img" \
         run ./api/... ./common/... ./common/crawler/... ./common/jobs/... \
-            ./auth/api/... ./class/api/... ./comment/api/... \
+            ./auth/api/... ./comment/api/... \
             ./nearby/api/... ./admin/api/... ./bff/... \
         || return 1
     log_info "Go 守卫测试（api/smoke：W-01/W-02/W-04，宿主 go）"
@@ -1449,7 +1447,7 @@ pipeline_purge_cdn()
 # 环境变量（由 Jenkins withCredentials 注入，同 pipeline_purge_cdn）：
 #   CF_API_TOKEN - Cloudflare API Token
 #   CF_ZONE_ID   - Cloudflare Zone ID
-# 参数: $1 = 产品名（class/www/admin/nearby/auth/comment）
+# 参数: $1 = 产品名（www/admin/nearby/auth/comment）
 # 返回: 0=成功或跳过（永远不阻止部署，per D-09/D-11，语义同 pipeline_purge_cdn）
 pipeline_purge_cdn_urls()
 {
@@ -1458,13 +1456,6 @@ pipeline_purge_cdn_urls()
 
     # 入口 URL 表（与 _static_product_config 的产品维度对齐；注释一行说明选型理由）
     case "$product" in
-        class)
-            # en/zh/zh-TW 三个语言壳入口（out/en|zh|zh-TW.html）+ api 健康端点（verify 探针）
-            urls="https://class.noda.co.nz/en
-https://class.noda.co.nz/zh
-https://class.noda.co.nz/zh-TW
-https://class.noda.co.nz/api/health"
-            ;;
         www)
             # 规范域首页 + zh/zh-TW 目录壳（www 301 → noda.co.nz，与 verify 一样只探规范域；
             # 2026-10-11 尾斜杠一致性（9a805b6 F5/F7）后 canonical=无斜杠，/zh/ 会 301）

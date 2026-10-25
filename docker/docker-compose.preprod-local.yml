@@ -60,7 +60,7 @@ services:
       AUTH_BYPASS: "false"
       # 会话 cookie 名（Go API 校验 cookie 用；preprod 独立名避免污染 prod 会话）
       NEXT_PUBLIC_SESSION_COOKIE_NAME: "noda_session_preprod"
-      NEXT_PUBLIC_ALLOWED_ORIGINS: "https://class-preprod.noda.co.nz,https://auth-preprod.noda.co.nz,https://www-preprod.noda.co.nz,https://admin-preprod.noda.co.nz,https://comments-preprod.noda.co.nz"
+      NEXT_PUBLIC_ALLOWED_ORIGINS: "https://auth-preprod.noda.co.nz,https://www-preprod.noda.co.nz,https://admin-preprod.noda.co.nz,https://comments-preprod.noda.co.nz"
       TOKEN_SECRET: "${TOKEN_SECRET:-}"
       EMAIL_SERVICE_API_KEY: "${EMAIL_SERVICE_API_KEY:-}"
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
@@ -94,7 +94,7 @@ services:
       GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID:-}"
       GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET:-}"
       AUTH_STATE_SECRET: "${AUTH_STATE_SECRET:-}"
-      ALLOWED_ORIGINS: "https://class-preprod.noda.co.nz,https://auth-preprod.noda.co.nz,https://www-preprod.noda.co.nz,https://admin-preprod.noda.co.nz,https://comments-preprod.noda.co.nz"
+      ALLOWED_ORIGINS: "https://auth-preprod.noda.co.nz,https://www-preprod.noda.co.nz,https://admin-preprod.noda.co.nz,https://comments-preprod.noda.co.nz"
       ADMIN_ALLOWED_EMAILS: "wangdw2012@gmail.com,dryrun-admin@noda.test"
       COMMENT_SERVICE_KEY: "${COMMENT_SERVICE_KEY:-}"
       REMARK_WORDS_BAN_LIST: "赌博,代开发票,casino-spam"
@@ -105,8 +105,6 @@ services:
       S3_BUCKET: "noda-static"
       # nearby 条目页 head 注入拉壳的桶（stg 桶与 S3_BUCKET 的 prod 名不同,须显式）
       NEARBY_STATIC_BUCKET: "noda-static-stg"
-      # class 课程/分类深链页 head 注入拉壳的桶（同上）
-      CLASS_STATIC_BUCKET: "noda-static-stg"
       # 站点绝对地址（Go 侧 sitemap/深链注入运行时读取；缺省回退 prod 域名，
       # preprod 须显式指向 -preprod 域，否则 preprod sitemap/注入输出 prod URL）
       NEXT_PUBLIC_SITE_URL: "https://class-preprod.noda.co.nz"

@@ -64,7 +64,7 @@ DASH_URL = "https://admin.noda.co.nz/security/"
 # 后台 host 前缀：被挑战/封禁=正确行为，不计误封（robots.txt 全站 Disallow 在位）
 NON_CONTENT_PREFIX = ("admin.", "auth.", "comments.", "api.", "health.",
                       "localhost.", "www-preprod.", "admin-preprod.",
-                      "class-preprod.", "auth-preprod.")
+                      "auth-preprod.")
 CONTENT_SUFFIX = ("noda.co.nz", "shuotong.wang")
 WATCH_ACTIONS = ("block", "managed_challenge", "challenge", "js_challenge")
 

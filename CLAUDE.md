@@ -8,21 +8,24 @@ Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL
 
 ```
 浏览器 → Cloudflare CDN → Cloudflare Tunnel (noda-ops 容器) → noda-static-prod (nginx) → Docker 内部服务
-  *.noda.co.nz/*        → noda-static-prod → SeaweedFS 桶 noda-static（sites/<product>/ 静态站）
-  class.noda.co.nz/api/* → noda-static-prod → noda-api-prod:3001      (Go API)
-  snagme.noda.co.nz/api/*→ noda-static-prod → noda-api-prod:3015      (Go snagmeapi + /api/snagme/img 图片代理)
+  noda.co.nz（apex 主站）→ noda-static-prod → SeaweedFS 桶 sites/nearby/（静态站）
+                            /api/nearby|user/* → noda-api-prod:3014  (Go noda-api 数据接口)
+  www.noda.co.nz        → 301 → noda.co.nz
   auth.noda.co.nz       → noda-static-prod → noda-api-prod:3004      (Go authapi)
   admin.noda.co.nz/api/* → noda-static-prod → noda-api-prod:3011     (Go adminapi)
-  noda.co.nz            → noda-static-prod → SeaweedFS 桶（www 静态）
+  comments.noda.co.nz   → noda-static-prod → noda-api-prod:3012      (Go commentapi)
+  shuotong.wang         → noda-static-prod → SeaweedFS 桶 sites/shuotong/
+  class/findclass.noda.co.nz → 410（2026-10-25 整站下线，noda-apps #46；DNS 切除排其阶段 F）
+  nearby.noda.co.nz     → 301 → noda.co.nz（权重迁移桥，冻结至 ≥2026-11-30）
   cron 状态             → noda-jobs-prod:3016（唯一 scheduler；admin cronjobs 页经 adminapi cron-pull 直连）
 ```
 
 | 服务 | 端口 | 备注 |
 |------|------|------|
 | PostgreSQL | 5432 | 数据持久化在 `noda-infra_postgres_data` 卷 |
-| noda-api-prod | 3001/3004/3007/3010/3011/3012/3014/3015 | Go API 八 listener（gin；3015 = snagmeapi） |
-| noda-jobs-prod | 3016 | Go 调度守护进程（noda-api 同镜像换 entrypoint）：全部产品 cron（爬虫/lifecycle/nearby/snagme-tick）；:3016 只读状态 + 手动触发 |
-| noda-static-prod | 80/81/443 | nginx 边缘路由，七站点静态由 SeaweedFS 桶伺服（网络别名 noda-infra-nginx） |
+| noda-api-prod | 3001/3004/3011/3012/3014 | Go API 多 listener（gin；3001 仅 /api/health 供 compose healthcheck；3014 = noda-api 数据接口） |
+| noda-jobs-prod | 3016 | Go 调度守护进程（noda-api 同镜像换 entrypoint）：全部产品 cron（crawl-* 供给线/lifecycle/富化/运营）；:3016 只读状态 + 手动触发 |
+| noda-static-prod | 80/81/443 | nginx 边缘路由，静态站由 SeaweedFS 桶伺服（网络别名 noda-infra-nginx） |
 | seaweedfs | 8333/9333 | S3 对象存储：桶 `noda-static`（静态站/头像/爬虫图片） |
 | noda-ops | 8080 (healthcheck) | 备份 cron（DB/B2/Doppler/filesystem）+ Cloudflare Tunnel |
 

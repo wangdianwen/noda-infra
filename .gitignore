@@ -47,3 +47,4 @@ config/nginx/liuyao-local.conf
 # SeaweedFS S3 凭据（pipeline 从 Doppler 渲染，不入库）
 config/seaweedfs/s3.json
 .worktrees/
+__pycache__/
