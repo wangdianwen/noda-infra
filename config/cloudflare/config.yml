@@ -1,4 +1,5 @@
 # Cloudflare Tunnel 配置 - Noda 生产环境
+# （线上为 TUNNEL_TOKEN 托管；class/findclass 路由+DNS 已于 2026-10-26 控制台删除，noda-apps #46 阶段 F）
 # Tunnel ID: 9cab5df3-a546-48fb-9dc5-eacb48c56ff8
 
 tunnel: 9cab5df3-a546-48fb-9dc5-eacb48c56ff8
@@ -22,9 +23,6 @@ ingress:
     service: http://noda-nginx:81
   # 健康检查端点
   - hostname: health.noda.co.nz
-    service: http://noda-nginx:81
-  # Class 应用
-  - hostname: class.noda.co.nz
     service: http://noda-nginx:81
   # Admin Dashboard（内网访问）
   - hostname: admin.noda.co.nz
