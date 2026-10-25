@@ -3775,7 +3775,7 @@ EOF
     local gq_host="https://${product}.noda.co.nz/graphql"
     case "$product" in
         admin)  gq_query='{ me { id } }' ;;
-        www)    gq_query='{ nearbyFeed(city: "auckland", types: [place], limit: 1) { items { id } } }'; gq_host="https://noda.co.nz/graphql" ;;
+        www)    gq_query='{ nearbyFeed(city: "auckland", types: ["place"], limit: 1) { items { id } } }'; gq_host="https://noda.co.nz/graphql" ;;
         auth)   gq_query='{ me { id } }' ;;
     esac
     if [ -n "$gq_query" ]; then
