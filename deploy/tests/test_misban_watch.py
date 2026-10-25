@@ -227,7 +227,7 @@ def test_watch_actions_cover_challenges(mw):
 
 
 def test_events_query_has_needed_fields(mw):
-    for f in ("clientIP", "clientRequestUserAgent", "clientRequestHTTPHost",
+    for f in ("clientIP", "userAgent", "clientRequestHTTPHost",
               "clientRequestPath", "action", "source", "datetime"):
         assert f in mw.EVENTS_QUERY
     assert str(mw.EVENT_PAGE_LIMIT) in mw.EVENTS_QUERY

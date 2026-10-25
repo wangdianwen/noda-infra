@@ -66,6 +66,19 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
 ```
 
 ## 变更记录
+### 2026-10-25 二（D1 事件流点亮：token 配置 + GraphQL UA 字段判例）
+CF_REPORT_API_TOKEN 已配置（token 名 `cf-report-misban-watch`，Zone.Zone Read +
+Zone.Analytics Read，All zones，永不过期，r4s /etc/noda/ip-ban.env）。首次真跑暴露
+两个判例：
+- **firewallEventsAdaptive 的 UA 字段名 = `userAgent`**——`clientRequestUserAgent`
+  不存在（那是 httpRequestsAdaptiveGroups 的命名）；Free 版内省被封，且 schema
+  校验**一次只报一个 unknown field**，逐字段试出来。D1 当时是无 token 盲写，首跑
+  才暴露。
+- token 首版从面板截图人工转抄错字符 → API 9109 Invalid access token；**Roll**
+  功能重发密钥（权限保留）+ 从页面 DOM 直提不再转抄。secrets 永不经截图/人手转写。
+24h 回看验证：两 zone 事件正常入库（block/managed_challenge/link_maze），官方爬虫
+段命中 = 0，与 D2 心跳结论互证（bing 无误封）。
+
 ### 2026-10-25（misban-watch 首报即误报：容器重建截断，已修复）
 bing 心跳告警「源站 48 小时未见官方段请求」查实为**误报**：当日 13:30 class-410
 部署重建 noda-static-prod，access.log→/dev/stdout 随容器归零，13:40 轮的 48h 扫描窗
@@ -85,10 +98,9 @@ ip-ban 速率窗）都要有「覆盖时长」意识；这类哨兵的告警文�
   alias ops-logs 卷 `security-report/`，misban-watch cron */10 每轮回写 page.html+
   report.json；保护层=CF admin non-NZ challenge + robots.txt 全站 Disallow；
   无应用鉴权，数据敏感度=防御姿态摘要，v2 可迁 BFF Keycloak 后面）。
-- **D1 事件流检测**（token 到位即启用）：`firewallEventsAdaptive` 双 zone 增量
-  （CF_BAN_API_TOKEN/CF_API_TOKEN 均无 zone.analytics.read，实测；需新建
-  `CF_REPORT_API_TOKEN`：My Profile→API Tokens→Create——权限 Zone/Zone/Read +
-  Zone/Analytics/Read，Zone Resources Include All zones，加进 `/etc/noda/ip-ban.env`）
+- **D1 事件流检测**（2026-10-25 已启用：`CF_REPORT_API_TOKEN` 在 r4s
+  /etc/noda/ip-ban.env，Zone.Zone Read + Zone.Analytics Read，All zones）：
+  `firewallEventsAdaptive` 双 zone 增量
   → 官方爬虫段 IP（与 ip-ban 白名单同源）被封/被挑战 = 实锤误封，TG 即时告警，
   同事件去重。admin./auth./comments./api./health. 后台 host 被挑战不计（robots
   Disallow 全站，守规矩爬虫本就不该来）。

@@ -73,7 +73,7 @@ EVENTS_QUERY = """query($z: String!, $since: Time!) {
     firewallEventsAdaptive(limit: %d, orderBy: [datetime_DESC],
       filter: {datetime_geq: $since}) {
       action source datetime clientIP clientCountryName
-      clientRequestHTTPHost clientRequestPath clientRequestUserAgent
+      clientRequestHTTPHost clientRequestPath userAgent
     } } } }""" % EVENT_PAGE_LIMIT
 
 
@@ -341,12 +341,16 @@ def main():
         elif k in state.get("alerted", []):        # 恢复自动解除
             state["alerted"].remove(k)
             if eff:
-                tg(ipb, "%s 心跳恢复（最后到访 %s，静默 %.1fh<%dh）——解除误封怀疑"
-                   % (fam, time.strftime("%F %T", time.localtime(eff)),
-                      quiet_h, th))
+                text = ("%s 心跳恢复（最后到访 %s，静默 %.1fh<%dh）——解除误封怀疑"
+                        % (fam, time.strftime("%F %T", time.localtime(eff)),
+                           quiet_h, th))
             else:
-                tg(ipb, "%s 心跳解除：窗口内零到访但静默 %.1fh 未超阈值 %dh"
-                   "（日志覆盖不足防误报）——解除误封怀疑" % (fam, quiet_h, th))
+                text = ("%s 心跳解除：窗口内零到访但静默 %.1fh 未超阈值 %dh"
+                        "（日志覆盖不足防误报）——解除误封怀疑" % (fam, quiet_h, th))
+            tg(ipb, text)
+            with open(ALERTS_JSONL, "a") as f:     # 解除也落账，报表列表自带闭环
+                f.write(json.dumps({"t": now, "key": k, "msg": text,
+                                    "resolved": True}, ensure_ascii=False) + "\n")
 
     state["last_run"] = now
     if len(state.get("alerted", [])) > MAX_DEDUP:
@@ -409,7 +413,7 @@ def collect_events(ipb, cf_token, since, now, state, alerts):
                     "source": ev.get("source"), "ts": ev.get("datetime"),
                     "ip": ip, "country": ev.get("clientCountryName"),
                     "host": host, "path": (ev.get("clientRequestPath") or "")[:120],
-                    "ua": (ev.get("clientRequestUserAgent") or "")[:120],
+                    "ua": (ev.get("userAgent") or "")[:120],
                     "_official_ip": official}
             cls, misban = classify_event(item, ipb)
             item.pop("_official_ip", None)
