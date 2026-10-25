@@ -770,6 +770,78 @@ server {
         error_page 403 404 =200 /$nearby_loc/item/app-shell.html;
     }
 
+    # ── URL 架构 v2 模式路由面（issue#31 层D，与 prod default.conf apex 块
+    # 同构镜像，2026-10-26 preprod 代理面补齐 = noda-infra#4）：nginx 只做
+    # 「模式路由」→ nearbyapi（preprod-noda-api:3014），所有业务 301 目标由
+    # Go 查库/查静态数据生成（单跳）；列表/聚合页维持桶静态（末段 id12 约束）。
+    # 正则与常量注释见 prod 块（八城 + national 兜底；places 线分类白名单
+    # 6 slug 含 playground；对账守卫 scripts/check-nginx-urltree.py）──
+
+    # A1 城市树详情（末段 slug-id12 或纯 id12；可选分类组挂 places 段后）
+    location ~ "^/(?:en/|zh/|zh-TW/)?(?:auckland|wellington|christchurch|hamilton|rotorua|tauranga|queenstown|dunedin|national)/(?:places(?:/(?:attractions|markets|camping|hidden-gems|national-parks|playground))?|events|news|deals)/(?:[a-z0-9-]*-[0-9a-f]{12}|[0-9a-f]{12})$" {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # A2-① 旧目录详情 /{loc}/(attractions|market|camping)/{slug} → Go 301
+    location ~ ^/(?:en/|zh/|zh-TW/)?(?:attractions|market|camping)/[^/]+$ {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # A2-② event/place 全族（含裸 /event、/event/{sub}/{when}、/place/{sub}）
+    location ~ ^/(?:en/|zh/|zh-TW/)?(?:event|place)(?:/|$) {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # A2-②b 场景页×5（weekend/kids/free/outdoors/settle）+岛页
+    # attractions/market → Go 301（scenarioRedirects/islandRedirects 单一真源）
+    location ~ ^/(?:en/|zh/|zh-TW/)?(?:weekend|kids|free|outdoors|settle|attractions|market)$ {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # A2-③ news/deals 带子段（无参列表页仍走桶）
+    location ~ ^/(?:en/|zh/|zh-TW/)?(?:news|deals)/[^/]+$ {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # A2-④ 旧城市类型页 /{city}/(event|place) → Go 301（news/deals 新列表
+    # 同 URL 由桶承接，不路由——同 prod「已知交互」）
+    location ~ ^/(?:en/|zh/|zh-TW/)?(?:auckland|wellington|christchurch|hamilton|rotorua|tauranga|queenstown|dunedin)/(?:event|place)$ {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # A2-⑤ 旧城市分类页 /{city}/{category25}（geo.go 四组 25 slug 全集）
+    location ~ ^/(?:en/|zh/|zh-TW/)?(?:auckland|wellington|christchurch|hamilton|rotorua|tauranga|queenstown|dunedin)/(?:family|market|music|sports|culture|food|free|playground|art|viewpoint|beach|garden|venues|recreation|policy|livelihood|transport|education|community|leisure|grocery|homeware|electronics|fuel|other)$ {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # 静态站入口：locale 协商（as-needed 同 liuyao）
     location / {
         set $loc $nearby_locale;
