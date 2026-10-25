@@ -111,23 +111,61 @@ def test_human_ua_block_is_info_not_misban(mw, ipb):
     assert mw.classify_event(ev, ipb) == ("human", False)
 
 
-# ---- decide_canary ----
+# ---- decide_canary / canary_quiet_hours ----
 
 def test_canary_google_silence_threshold(mw):
-    now = 1_800_000_000
-    assert mw.decide_canary("google", now - 35 * 3600, now) is False
-    assert mw.decide_canary("google", now - 37 * 3600, now) is True
-    assert mw.decide_canary("google", None, now) is True
+    assert mw.decide_canary("google", 35.0) is False
+    assert mw.decide_canary("google", 37.0) is True
 
 
 def test_canary_bing_slower_threshold(mw):
-    now = 1_800_000_000
-    assert mw.decide_canary("bing", now - 60 * 3600, now) is False
-    assert mw.decide_canary("bing", now - 73 * 3600, now) is True
+    assert mw.decide_canary("bing", 60.0) is False
+    assert mw.decide_canary("bing", 73.0) is True
 
 
 def test_canary_other_family_never(mw):
-    assert mw.decide_canary("other", None, 1_800_000_000) is False
+    assert mw.decide_canary("other", 9999.0) is False
+
+
+def test_scan_window_covers_bing_threshold(mw):
+    # 零到访态的静默封顶=扫描窗；窗 < 阈值则 bing 永远够不到判定线（2026-10-25 判例）
+    assert mw.PAGE_FETCH_WINDOW >= mw.BING_SILENCE_H
+
+
+def test_quiet_zero_crawler_full_window_both_alert(mw):
+    # 日志覆盖满窗 + 窗口内零到访：google(36h)/bing(72h) 均超阈值 → 都告警
+    now = 1_800_000_000
+    earliest = now - mw.PAGE_FETCH_WINDOW * 3600 + 60
+    q, eff = mw.canary_quiet_hours(None, None, earliest, now)
+    assert eff is None
+    assert q > mw.GOOGLE_SILENCE_H
+    assert mw.decide_canary("google", q) is True
+    assert mw.decide_canary("bing", q) is True
+
+
+def test_quiet_truncated_logs_caps_silence(mw):
+    # 容器刚重建（日志只覆盖 10 分钟）：静默按覆盖时长封顶，不得虚报满窗
+    now = 1_800_000_000
+    earliest = now - 600
+    q, eff = mw.canary_quiet_hours(None, None, earliest, now)
+    assert eff is None and q * 3600 <= 600.001
+    assert mw.decide_canary("google", q) is False
+    assert mw.decide_canary("bing", q) is False
+
+
+def test_quiet_high_water_survives_truncation(mw):
+    # 重建前的最后到访留在高水位：静默跨截断持续累计，bing 超 72h 照样告警
+    now = 1_800_000_000
+    hw = now - 80 * 3600
+    q, eff = mw.canary_quiet_hours(None, hw, now - 600, now)
+    assert eff == hw and q > mw.BING_SILENCE_H
+    assert mw.decide_canary("bing", q) is True
+
+
+def test_quiet_scan_and_hw_take_max(mw):
+    now = 1_800_000_000
+    q, eff = mw.canary_quiet_hours(now - 2 * 3600, now - 5 * 3600, None, now)
+    assert eff == now - 2 * 3600 and 1.9 < q < 2.1
 
 
 # ---- alert 去重与落盘 ----
@@ -161,7 +199,10 @@ def test_build_report_shape(mw, ipb):
              "verify": {"v1": {"left": 3}}, "history": {"h": 1}, "tracks": {"a": []}}
     bans = {"1.2.3.4/32": {"until": now + 86400, "banned_at": now - 3600,
                            "reason": "test", "ttl": 86400}}
-    canary = {"google": now - 3600, "bing": None}
+    canary = {"google": {"scan_last": now - 3600, "high_water": now - 3600,
+                         "quiet_h": 1.0, "status": "ok"},
+              "bing": {"scan_last": None, "high_water": now - 80 * 3600,
+                       "quiet_h": 80.0, "status": "SILENT"}}
     digest = {"available": True, "window_hours": 0.2,
               "counts": {"fake": 2, "human": 1}, "by_source": {"custom_rules": 3},
               "recent": [], "misban_total": 0}
@@ -171,6 +212,9 @@ def test_build_report_shape(mw, ipb):
     assert r["bans"][0]["ttl_days"] == 1
     assert r["canary"]["google"]["status"] == "ok"
     assert r["canary"]["bing"]["status"] == "SILENT"
+    assert r["canary"]["bing"]["threshold_h"] == mw.BING_SILENCE_H
+    assert r["canary"]["bing"]["high_water"] is not None
+    assert r["canary"]["bing"]["hours_quiet"] == 80.0
     assert r["persist_listed"] == ["203.0.113.0/32"]
     assert r["events"]["counts"]["fake"] == 2
     assert r["blacklist"] == "1/%d" % ipb.MAX_ENTRIES

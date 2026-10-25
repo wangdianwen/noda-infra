@@ -15,6 +15,10 @@ misban-watch.py — 误封哨兵 + admin 安全报表（2026-10-26 用户需求�
   爬虫 IP 定期打源站；源站日志里 Googlebot 连续 GOOGLE_SILENCE_H 小时无踪 = 疑似
   边缘误封（含 GSC 之外的静默 403），TG 即报；恢复自动解除。反向价值：心跳在 =
   「Google 能进」的持续证明。
+  2026-10-25 判例：部署重建容器会截断 docker logs（access.log→stdout，随容器归零），
+  48h 扫描窗瞬间只剩几分钟数据，「窗口内零到访」被误报成「48 小时未见」——修复
+  三件套：① None 态静默按「日志实际覆盖时长」封顶；② canary_last 高水位入
+  watch-state（跨容器重建存活）；③ 扫描窗 80h ≥ bing 阈值 72h，零到访态够得到判定线。
 
 报表：ops-logs/security-report/{report.json, page.html, alerts.jsonl}
   ops-logs 卷已挂 noda-static-prod:/var/log/rl429 → nginx admin server 块
@@ -50,7 +54,9 @@ WINDOW_DEFAULT = 600          # 首跑/状态缺失回看 10 分钟
 CRON_STEP = 600
 GOOGLE_SILENCE_H = 36         # Googlebot 源站心跳静默阈值（正常数小时一访）
 BING_SILENCE_H = 72           # bing 抓取节奏慢，阈值放宽
-PAGE_FETCH_WINDOW = 48        # 心跳扫描窗口（小时）
+PAGE_FETCH_WINDOW = 80        # 心跳扫描窗口（小时）——必须 ≥ BING_SILENCE_H，
+                              # 否则「窗口内零到访」态永远够不到 bing 判定线
+HW_MAX_AGE = 14 * 86400       # 心跳高水位保留期（超期视为失忆，重新观测）
 EVENT_PAGE_LIMIT = 50         # GraphQL 单页事件数（稳妥）
 EVENT_MAX = 1000              # 单轮回看事件上限（防首次回灌刷屏；截断记进报表）
 DASH_URL = "https://admin.noda.co.nz/security/"
@@ -153,53 +159,26 @@ def fetch_events(cf_token, zone_id, since_iso):
     return out
 
 
-def origin_crawler_scan(ipb, since_epoch):
-    """D2 源站心跳：扫 nginx 日志统计官方爬虫段 IP 的最后到访（按 google/bing/
-    other 三族）。返回 {family: last_epoch}"""
-    try:
-        out = subprocess.run(
-            ["docker", "logs", "--since", str(since_epoch), ipb.NGINX_CONTAINER],
-            capture_output=True, text=True, timeout=300)
-    except Exception as e:
-        log("origin scan failed: %s" % e)
-        return {}
-    last = {}
-    for line in (out.stdout + out.stderr).splitlines():
-        m = ipb.LINE_RE.match(line)
-        if not m:
-            continue
-        ip = ipb.client_ip_from_xff(m.group(6))
-        if not ip or not ipb.is_crawler_ip(ip):
-            continue
-        if ip in ipb._crawler_ip_cache:
-            pass
-        fam = "bing" if ipb.in_nets(ip, ipb.BING_NETS) else (
-            "google" if (ipb.in_nets(ip, ipb.GOOGLE_NETS)
-                         or ipb.in_nets(ip, ipb.EXTRA_CRAWLER_NETS)) else "other")
-        last[fam] = max(last.get(fam, 0), since_epoch)  # 占位，行级时间戳下换
-    return last
-
-
 def origin_crawler_scan_ts(ipb, since_epoch):
-    """同上但取行级时间戳（nginx 日志 [dd/Mon/YYYY:HH:MM:SS +HHMM]），更准"""
+    """D2 源站心跳扫描：扫 nginx 日志统计官方爬虫段 IP 的最后到访（google/bing
+    分族，行级时间戳），同时记录本轮解析到的最早日志行时刻——容器重建截断日志时
+    用它识别「真实观测窗」。返回 (last_by_fam, earliest_epoch|None)"""
     try:
         out = subprocess.run(
             ["docker", "logs", "--since", str(since_epoch), ipb.NGINX_CONTAINER],
             capture_output=True, text=True, timeout=300)
     except Exception as e:
         log("origin scan failed: %s" % e)
-        return {}
+        return {}, None
     import re as _re
     TS = _re.compile(r"\[(\d{2})/(\w{3})/(\d{4}):(\d{2}):(\d{2}):(\d{2}) ([+-]\d{4})\]")
     MON = {m: i for i, m in enumerate(
         "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(), 1)}
     last = {}
+    earliest = None
     for line in (out.stdout + out.stderr).splitlines():
         m = ipb.LINE_RE.match(line)
         if not m:
-            continue
-        ip = ipb.client_ip_from_xff(m.group(6))
-        if not ip or not ipb.is_crawler_ip(ip):
             continue
         ts = TS.search(line)
         if ts:
@@ -208,37 +187,61 @@ def origin_crawler_scan_ts(ipb, since_epoch):
             import calendar as _cal
             epoch = _cal.timegm((int(y), MON[mon], int(d), int(hh), int(mm),
                                  int(ss), 0, 0, 0)) - off
+            earliest = epoch if earliest is None else min(earliest, epoch)
         else:
             epoch = since_epoch
+        ip = ipb.client_ip_from_xff(m.group(6))
+        if not ip or not ipb.is_crawler_ip(ip):
+            continue
         fam = "bing" if ipb.in_nets(ip, ipb.BING_NETS) else (
             "google" if (ipb.in_nets(ip, ipb.GOOGLE_NETS)
                          or ipb.in_nets(ip, ipb.EXTRA_CRAWLER_NETS)) else "other")
         last[fam] = max(last.get(fam, 0), epoch)
-    return last
+    return last, earliest
 
 
-def decide_canary(fam, last_seen, now):
-    """D2 判定（纯函数）：last_seen 缺失（窗口内零到访）或静默超阈值 → True。
-    bing 节奏慢阈值放宽；google 是 SEO 主命脉用严阈值。"""
+def threshold_of(fam):
     if fam == "google":
-        th = GOOGLE_SILENCE_H * 3600
-    elif fam == "bing":
-        th = BING_SILENCE_H * 3600
-    else:
-        return False
-    return last_seen is None or (now - last_seen) > th
+        return GOOGLE_SILENCE_H
+    if fam == "bing":
+        return BING_SILENCE_H
+    return None
+
+
+def canary_quiet_hours(scan_last, hw_last, earliest_line, now):
+    """心跳真实静默时长（小时）→ (quiet_h, 有效最后到访或 None)。
+    有效到访取「本轮扫描 ↔ 高水位」较大者（高水位跨容器重建存活）；两者皆无
+    （窗口内零到访）时静默按「日志实际覆盖时长」封顶，不再把截断后的短观测窗
+    夸大成满窗（2026-10-25 判例：10 分钟观测被误报成 48 小时未见）。"""
+    seen = [x for x in (scan_last, hw_last) if x]
+    if seen:
+        eff = max(seen)
+        return (now - eff) / 3600.0, eff
+    win_start = now - PAGE_FETCH_WINDOW * 3600
+    cover_from = max(win_start, earliest_line or win_start)
+    return (now - cover_from) / 3600.0, None
+
+
+def decide_canary(fam, quiet_h):
+    """D2 判定（纯函数）：真实静默超阈值 → True。bing 节奏慢阈值放宽；
+    google 是 SEO 主命脉用严阈值。"""
+    th = threshold_of(fam)
+    return th is not None and quiet_h > th
 
 
 def build_report(now, state, bans, ipb, canary, events_digest):
     iso = lambda t: time.strftime("%F %T", time.localtime(t)) if t else None
     canary_out = {}
-    for fam, th in (("google", GOOGLE_SILENCE_H), ("bing", BING_SILENCE_H)):
-        ls = canary.get(fam)
-        silent = decide_canary(fam, ls, now)
+    for fam in ("google", "bing"):
+        d = canary.get(fam) or {}
         canary_out[fam] = {
-            "last_seen": iso(ls), "last_seen_epoch": ls,
-            "hours_quiet": round((now - ls) / 3600, 1) if ls else None,
-            "threshold_h": th, "status": "SILENT" if silent else "ok"}
+            "last_seen": iso(d.get("scan_last")),
+            "last_seen_epoch": d.get("scan_last"),
+            "high_water": iso(d.get("high_water")),
+            "high_water_epoch": d.get("high_water"),
+            "hours_quiet": d.get("quiet_h"),
+            "threshold_h": threshold_of(fam),
+            "status": d.get("status")}
     return {
         "generated_at": iso(now), "generated_epoch": now, "tz": "NZ",
         "events": events_digest,
@@ -311,20 +314,39 @@ def main():
         events_digest["note"] = "CF_REPORT_API_TOKEN 未配置"
 
     # ---- D2 源站心跳 ----
-    canary = origin_crawler_scan_ts(ipb, now - PAGE_FETCH_WINDOW * 3600)
+    scan_last, earliest_line = origin_crawler_scan_ts(
+        ipb, now - PAGE_FETCH_WINDOW * 3600)
+    hw = state.setdefault("canary_last", {})
     for fam in ("google", "bing"):
-        ls = canary.get(fam)
-        if decide_canary(fam, ls, now):
-            h = round((now - ls) / 3600, 1) if ls else PAGE_FETCH_WINDOW
-            alert(ipb, state, "canary:%s" % fam,
-                  "%s 心跳消失：源站 %s 小时未见官方段请求，疑似边缘误封，"
-                  "查 CF Security Events %s" % (fam, h, DASH_URL), alerts)
-        else:
-            k = "canary:%s" % fam
-            if k in state.get("alerted", []):      # 恢复自动解除
-                state["alerted"].remove(k)
-                tg(ipb, "%s 心跳恢复（最后到访 %s）——解除误封怀疑"
-                   % (fam, time.strftime("%F %T", time.localtime(ls))))
+        if scan_last.get(fam):
+            hw[fam] = max(hw.get(fam, 0), scan_last[fam])
+    for fam in [f for f, t in hw.items() if now - t > HW_MAX_AGE]:
+        hw.pop(fam)
+    canary = {}
+    for fam in ("google", "bing"):
+        quiet_h, eff = canary_quiet_hours(
+            scan_last.get(fam), hw.get(fam), earliest_line, now)
+        th = threshold_of(fam)
+        silent = decide_canary(fam, quiet_h)
+        canary[fam] = {"scan_last": scan_last.get(fam),
+                       "high_water": hw.get(fam),
+                       "quiet_h": round(quiet_h, 1),
+                       "status": "SILENT" if silent else "ok"}
+        k = "canary:%s" % fam
+        if silent:
+            alert(ipb, state, k,
+                  "%s 心跳消失：源站 %.1f 小时未见官方段请求（阈值 %dh），"
+                  "疑似边缘误封，查 CF Security Events %s"
+                  % (fam, quiet_h, th, DASH_URL), alerts)
+        elif k in state.get("alerted", []):        # 恢复自动解除
+            state["alerted"].remove(k)
+            if eff:
+                tg(ipb, "%s 心跳恢复（最后到访 %s，静默 %.1fh<%dh）——解除误封怀疑"
+                   % (fam, time.strftime("%F %T", time.localtime(eff)),
+                      quiet_h, th))
+            else:
+                tg(ipb, "%s 心跳解除：窗口内零到访但静默 %.1fh 未超阈值 %dh"
+                   "（日志覆盖不足防误报）——解除误封怀疑" % (fam, quiet_h, th))
 
     state["last_run"] = now
     if len(state.get("alerted", [])) > MAX_DEDUP:

@@ -66,6 +66,19 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
 ```
 
 ## 变更记录
+### 2026-10-25（misban-watch 首报即误报：容器重建截断，已修复）
+bing 心跳告警「源站 48 小时未见官方段请求」查实为**误报**：当日 13:30 class-410
+部署重建 noda-static-prod，access.log→/dev/stdout 随容器归零，13:40 轮的 48h 扫描窗
+实际只剩 10 分钟数据，`last_seen is None` 分支绕过 bing 72h 阈值直接告警
+（消息里的「48 小时」是窗口常量，不是观测值；bing 真实静默 ≤48h，封禁表 7 条全是
+攻击封禁、UA 规则豁免 bingbot、google 心跳正常，无任何误封证据）。
+修复三件套（misban-watch.py，单测 21 个全绿）：
+① `canary_quiet_hours`——None 态静默按「日志实际覆盖时长」封顶，短观测窗不再虚报；
+② `canary_last` 高水位入 watch-state——容器重建不丢最后到访，跨截断持续累计静默；
+③ 扫描窗 48h→80h（≥ bing 阈值，零到访态也能够到 72h 判定线）。
+**判例：部署重建容器 = docker logs 归零**。凡基于 docker logs 的观测（misban 心跳、
+ip-ban 速率窗）都要有「覆盖时长」意识；这类哨兵的告警文案必须带真实观测时长+阈值。
+
 ### 2026-10-26（misban-watch 误封哨兵 + admin 安全报表上线）
 用户需求：报表上 admin 随时看 + 主动消息 + 误封自动发现（「不要等 Google 发邮件」）。
 - **报表**：已内嵌 admin 应用 UI（noda-apps admin/web `/security` 页，direct-fetch 同源 JSON）；数据端点=nginx admin 块 `/security-report/` 静态 location（**前缀不可用 /security——会遮蔽应用路由，2026-10-26 判例**），
