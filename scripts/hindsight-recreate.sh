@@ -11,6 +11,10 @@
 #   hindsight-recreate.sh rebuild  # 删旧容器并按固化定义重建（卷保留）
 #
 # 服务地址 http://localhost:8888（API/MCP），UI http://localhost:9999。
+#
+# --shm-size 2g（2026-10-25）：PG 并行查询的动态共享内存段放在 /dev/shm，
+# Docker 默认仅 64M；实测 533MB 段扩容失败报 DiskFullError「No space left
+# on device」，表象是"磁盘满"但所有真实盘均有大量余量。
 set -euo pipefail
 
 IMAGE="ghcr.io/vectorize-io/hindsight:latest"
@@ -41,6 +45,7 @@ docker rm -f "$NAME" 2>/dev/null || true
 # 卷不删——记忆全在里面；确要清空：docker volume rm hindsight-data（不可逆）
 docker run -d --name "$NAME" \
   --restart unless-stopped \
+  --shm-size 2g \
   -p 8888:8888 -p 9999:9999 \
   -v "$VOLUME":/home/hindsight/.pg0 \
   -e HINDSIGHT_API_LLM_PROVIDER=zai \

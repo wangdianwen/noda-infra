@@ -21,6 +21,7 @@ docker inspect hindsight --format '{{range .Config.Env}}{{println .}}{{end}}' 2>
 [ -s "$ENV_FILE" ] || { echo "$ENV_FILE 为空：请先手工填 HINDSIGHT_API_LLM_PROVIDER/API_KEY/MODEL 等"; exit 1; }
 
 docker run -d --name hindsight --restart unless-stopped \
+  --shm-size 2g \
   -p 8888:8888 -p 9999:9999 \
   -v hindsight-data:/home/hindsight/.pg0 \
   --env-file "$ENV_FILE" \
