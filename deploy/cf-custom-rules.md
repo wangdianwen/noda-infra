@@ -241,6 +241,27 @@ AWS）；②12h 普查滥用 ASN 零欢迎爬虫零真人；③7 天动作日志
 Events 滥用 ASN 的 block 事件 UA 列。残余不可关死：搬大云+伪造 bot UA+低速率=与真 SEO
 爬虫不可区分。73 测试绿，API 读回双 zone 两分支生效（滥用分支零 UA 豁免验证过）。
 
+### 2026-10-26（dc 名单 17+13：GA「美国 Direct」溯源定案 + 小运营商全禁用户令）
+- 溯源链：GA 当日 6 用户 = 4 US Direct（headless 全 JS 层）+ HK/UK organic（真人，
+  源站 PWA 三件套坐实）。按「JS 资产>0 + HTML 1-2 页 + 无外链 referer」从源站日志
+  筛 12 候选 → Team Cymru BGP 定 ASN。GA 4×3=12 事件与 4 IP 各 1 页完美对账。
+- **判例：whois OrgName 不可信（陈旧注册数据）**——195.40.x 注册名 Code200 实为
+  FDCservers 宣告、189.104.x netname "US_TX_internet" 实为 M247（LT 注册 RO 宣告）、
+  152.163.x 误标 RIPE 实为 LeaseWeb-SFO；定 ASN 一律 Cymru BGP。
+- 用户令（10-26）：小运营商完全不允许（ABUSE=block 无 UA 豁免）；大云有 bot 的可进
+  （CLOUD=block+UA 自报家门豁免）——与 10-25 拆分同构，落实为名单扩容。
+- 新入 ABUSE 11 家（当日实证 8 + 立案候选 3）：M247 9009 / Latitude.sh 262287 /
+  Ace 11798 / HostRoyale 203020 / Host Universal 136557 / FDCservers 30058 /
+  LeaseWeb 7203+60781 / Contabo 51167 / GCore 199524 / CDN77 二号牌 60068。
+- 不动：Charter 11426（家宽，206.232.103.197 出口老 Edge iPhone 存真人可能）、
+  Starlink 14593、Dimension Data 20011、Lumen 骨干 3561、Google 15169。
+- 模式判例：家族按「不在册托管商」轮换租出口（Bucklog 10-24 → M247/Latitude/Ace
+  10-26），名单扩张只是抬对方换租成本；主力防线=PWA 三件套判据/速率闸/persist 档案。
+- GA 新口径：用户数=headless+真人混合体（对方一直 headless 执行 JS），真人下限=
+  源站 PWA 三件套会话数（当日≈10）；「GA 某天无某国」无信号价值。
+- 部署：双 zone 读回 dc 规则 30 ASNs block、新 11 家命中 11/11、unsynced 空、
+  表达式 850 字符；94 测试绿（17+13 分区锁 + 11 家回归锁）。
+
 ## 核验命令（r4s 上跑）
 ```bash
 python3 - <<'PYEOF'

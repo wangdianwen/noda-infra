@@ -201,6 +201,30 @@ ABUSE_ASNS = (
     62874,          # Web2Objects 代理出口（10-24/25 实证：Mac-UA 深链爬虫 176.20.202.169）
     211590,         # Bucklog SARL（10-24 实证：800x600 家族出口 185.177.72.69 洪水
                     #  161req/300s strict 档；hosting 商，同 212238/46635/62874 判例）
+    60068,          # Datacamp/CDN77 二号 ASN（212238 同一公司双牌；10-26 实证
+                    #  152.233.12.x 入站；判例：主牌入列后家族换姐妹 ASN，一起封）
+    # ---- 2026-10-26 批（GA「美国 Direct 用户」溯源定案，用户裁定：小运营商全禁）----
+    #  当日 GA 6 用户里 4 个 US Direct 全为 headless 会话；按「JS 资产>0+HTML 1-2 页
+    #  +无外链 referer」筛 12 候选 → Team Cymru BGP 定 ASN（whois OrgName 全是陈旧
+    #  注册数据，BGP 实际宣告才作准）。11 ASN 全部为托管/代理出口，官方爬虫 0 落点。
+    9009,           # M247 Europe（全球最大 VPN/代理出口商；10-26 实证 189.104.18.171
+                    #  Chrome/125 Mac headless 走 /zh/item/{uuid} 301 入站。whois
+                    #  netname "US_TX_internet" 系误导——BGP=LT 注册 RO 宣告）
+    262287,         # Latitude.sh 裸金属云市场（10-26 实证 104.252.109.130 EdgiOS/120
+                    #  headless 主页进入；与 Charter 出口同指纹=同工具双出口）
+    11798,          # Ace Data Centers（10-26 实证 31.76.162.235 Chrome/125 Linux
+                    #  headless 从 /zh-TW/item/{uuid} 301 入站）
+    203020,         # HostRoyale Technologies（10-26 实证 103.194.112.x 三出口：
+                    #  sw.js+manifest+offline 全拉的全 JS 层，google.co.nz referer）
+    136557,         # Host Universal Pty AU（10-26 实证 103.75.11.70 Linux Chrome/156
+                    #  headless 单页 6 资产）
+    30058,          # FDCservers（10-26 实证 195.40.x 三出口 Chrome/125 Mac headless
+                    #  直入 zh 活动详情页；whois 旧注册名 Code200 已易主，BGP=FDC）
+    7203,           # LeaseWeb USA-SFO（10-26 实证 152.163.156.134 Chrome/125 Mac
+                    #  headless——whois 误标 RIPE NL；LeaseWeb 主 ASN=60781 同批）
+    60781,          # LeaseWeb 全球主 ASN（10-24/25 段立案扩容候选，7203 同公司）
+    51167,          # Contabo（10-24/25 段立案扩容候选：预算 VPS 重灾区）
+    199524,         # GCore（10-24/25 段立案扩容候选：CDN/边缘代理）
 )
 # 大云 ASN：保留 UA 自报家门豁免——GEO/SEO 爬虫实证全在此（GPTBot/ChatGPT-User/
 # OAI-SearchBot 全 Azure、Amazonbot/PerplexityBot 全 AWS、AhrefsBot 主力 OVH、
