@@ -3775,7 +3775,9 @@ EOF
     local gq_host="https://${product}.noda.co.nz/graphql"
     case "$product" in
         admin)  gq_query='{ me { id } }' ;;
-        www)    gq_query='{ nearbyFeed(city: "auckland", types: ["place"], limit: 1) { items { id } } }'; gq_host="https://noda.co.nz/graphql" ;;
+        www)    gq_query='{ nearbyFeed(limit: 1) { items { id } } }'; gq_host="https://noda.co.nz/graphql" ;;
+        # 2026-10-26：featuredCourses 随 class 下线删除后改 nearbyFeed 最简形态
+        # （零内嵌引号，维持旧 -d 拼装；limit 必填性实测无需 city/types）
         auth)   gq_query='{ me { id } }' ;;
     esac
     if [ -n "$gq_query" ]; then
@@ -3783,9 +3785,11 @@ EOF
         local gq_body
         gq_body=$(mktemp /tmp/noda-gq-verify.XXXXXX)
         for i in $(seq 1 "$retries"); do
+            local gq_payload
+            gq_payload=$(jq -cn --arg q "$gq_query" '{query: $q}')
             gq_code=$(curl -sk -o "$gq_body" -w '%{http_code}' --connect-timeout 5 --max-time 10 \
                 -H 'content-type: application/json' \
-                -d "{\"query\":\"$gq_query\"}" \
+                -d "$gq_payload" \
                 "$gq_host" 2>/dev/null || echo "000")
             # 2026-10-03 升级：HTTP 200 且响应体无 errors 才算过——
             # 2026-10-02 snagme G8 事故实证 (nil,nil) 形故障会 200+errors，
