@@ -173,6 +173,11 @@ pipeline {
                                 source scripts/lib/log.sh
                                 source scripts/pipeline-stages.sh
                                 export SSH_KEY_FILE
+                                # nginx URL 树跨仓对账守卫（noda-infra#4）：本仓 default.conf/
+                                # liuyao 模板的城市组与分类组 vs 刚检出的 noda-apps 真源
+                                # （geo JSON + urltree.go placeCategoryWhitelist）——
+                                # 漂移即红禁止发版（playground 794 条 404 事故防复发）
+                                NODA_APPS_DIR="$WORKSPACE/noda-apps" python3 scripts/check-nginx-urltree.py
                                 APPS_SHA=$(git -C noda-apps rev-parse --short HEAD)
                                 pipeline_build_nginx_image "$WORKSPACE/noda-apps" "$APPS_SHA"
                             '''
