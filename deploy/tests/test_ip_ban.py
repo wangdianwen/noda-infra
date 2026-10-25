@@ -643,13 +643,13 @@ def test_dc_expression_exempts_selfid_ai_crawlers(ip_ban):
 
 
 def test_abuse_and_cloud_asns_partition(ip_ban):
-    """17+13 拆分恰好覆盖原 19 个+10-26 扩容 11 个,无交集无遗漏(拆分日回归锁)"""
-    assert len(ip_ban.ABUSE_ASNS) == 17 and len(ip_ban.CLOUD_ASNS) == 13
+    """18+13 拆分覆盖原 19 个+10-26 扩容 11 个+10-26 终验补录 19148,无交集无遗漏"""
+    assert len(ip_ban.ABUSE_ASNS) == 18 and len(ip_ban.CLOUD_ASNS) == 13
     assert set(ip_ban.ABUSE_ASNS) & set(ip_ban.CLOUD_ASNS) == set()
     assert set(ip_ban.DATACENTER_ASNS) == set(ip_ban.ABUSE_ASNS) | set(ip_ban.CLOUD_ASNS)
     # 10-26 批回归锁:GA 溯源定案的 11 家不得缺失,大云 13 家不得误挪
     for a in (60068, 9009, 262287, 11798, 203020, 136557, 30058, 7203,
-              60781, 51167, 199524):
+              60781, 51167, 199524, 19148):
         assert a in ip_ban.ABUSE_ASNS
     for a in (16509, 14618, 396982, 8075, 24940):
         assert a in ip_ban.CLOUD_ASNS
