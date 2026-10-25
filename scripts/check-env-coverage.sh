@@ -28,7 +28,7 @@ fi
 CODE_KEYS=$(grep -rhoE \
     '(os\.Getenv|[^.[:alnum:]]getenv|envBase)\("[A-Z][A-Z0-9_]+"' \
     --include='*.go' --exclude='*_test.go' \
-    "$NODA_APPS"/api "$NODA_APPS"/admin "$NODA_APPS"/auth "$NODA_APPS"/class \
+    "$NODA_APPS"/api "$NODA_APPS"/admin "$NODA_APPS"/auth \
     "$NODA_APPS"/comment "$NODA_APPS"/common \
     "$NODA_APPS"/nearby 2>/dev/null \
     | grep -oE '"[A-Z][A-Z0-9_]+"' | tr -d '"' | sort -u)

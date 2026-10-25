@@ -44,7 +44,7 @@ services:
       DIRECT_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@noda-infra-postgres-prod:5432/noda_prod
       # Go API 会话/CORS（与退役 frontend 容器同名变量，各容器独立注入）
       NEXT_PUBLIC_SESSION_COOKIE_NAME: noda_session
-      NEXT_PUBLIC_ALLOWED_ORIGINS: https://class.noda.co.nz,https://auth.noda.co.nz,https://www.noda.co.nz,https://admin.noda.co.nz,https://comments.noda.co.nz
+      NEXT_PUBLIC_ALLOWED_ORIGINS: https://auth.noda.co.nz,https://www.noda.co.nz,https://admin.noda.co.nz,https://comments.noda.co.nz
       # Keycloak 内网端点（token introspection / admin）；noda-infra-nginx 别名由 static 容器承载
       KEYCLOAK_INTERNAL_URL: http://noda-infra-nginx
       # LLM（Anthropic 兼容网关）
@@ -72,7 +72,7 @@ services:
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       AUTH_STATE_SECRET: ${AUTH_STATE_SECRET:-}
-      ALLOWED_ORIGINS: https://noda.co.nz,https://class.noda.co.nz,https://auth.noda.co.nz,https://www.noda.co.nz,https://admin.noda.co.nz,https://comments.noda.co.nz
+      ALLOWED_ORIGINS: https://noda.co.nz,https://auth.noda.co.nz,https://www.noda.co.nz,https://admin.noda.co.nz,https://comments.noda.co.nz
       ADMIN_ALLOWED_EMAILS: wangdw2012@gmail.com
       COMMENT_SERVICE_KEY: ${COMMENT_SERVICE_KEY:-}
       # 头像桶（authapi avatar 写 SeaweedFS；blobstore 同款变量名）
