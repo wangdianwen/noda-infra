@@ -2402,8 +2402,11 @@ pipeline_build_static_artifacts()
     # 不入清单=不上传：文件仅服务鼠标悬停预取，缺失只降级为硬导航预取失败回退，
     # 站内点击仍经页面 .txt 软导航（2026-10-08 拍板剔除）。旧对象由清单 diff 的
     # deleted 列表随下次 stg 发布清出；蓝绿路径新前缀天然无此文件。
+    # 2026-10-27 部分放行（#76）：__next._tree.txt 是客户端软导航的路由树 payload，
+    # 缺失时 en 页每页 console RSC fetch Error + 导航降级（#70 走查实锤）——只放行
+    # _tree.txt，其余悬停 payload 维持剔除口径不变。
     (cd "$web_dir/out" && find . -type f ! -name '.noda-manifest' ! -name '.noda-artifact-hash' \
-        ! -name '__next.*' \
+        ! \( -name '__next.*' ! -name '__next._tree.txt' \) \
         -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) \
         > "$web_dir/out/.noda-manifest"
     b_tree=$(shasum -a 256 < "$web_dir/out/.noda-manifest" | awk '{print $1}')
