@@ -219,6 +219,39 @@ cleanup_node_modules()
 }
 
 # -------------------------------------------
+# 构建产物清理（2026-10-27）
+# -------------------------------------------
+# 参数:
+#   $1: workspace 路径（为空则跳过）
+# 返回：无（删除 $workspace/noda-apps 内 out/.next/.turbo/.swc/dist 及 playwright 残留）
+# 背景：4 槽位 workspace 轮换但构建产物从不清理，各产品的静态导出与编译
+# 缓存逐班累积（dev 实测 nearby 单产品即 out 2.0G + .next 1.7G），两天即可
+# 堆满 ~56G（4×14G）撑爆 Mac 数据盘。与 SKIP_NODE_MODULES_CLEANUP=1
+# （node_modules 常驻换安装速度，2026-10-01 决策）正交：本函数只删构建期
+# 可再生产物，不动 node_modules 与源码；产物在 post 阶段前已上传桶/镜像。
+cleanup_build_outputs()
+{
+    local workspace="$1"
+
+    if [ -z "$workspace" ]; then
+        return 0
+    fi
+
+    local apps_dir="$workspace/noda-apps"
+    if [ ! -d "$apps_dir" ]; then
+        log_info "无 noda-apps 检出，跳过构建产物清理"
+        return 0
+    fi
+
+    local before after
+    before=$(du -sh "$apps_dir" 2>/dev/null | awk '{print $1}')
+    find "$apps_dir" -type d \( -name out -o -name .next -o -name .turbo -o -name .swc -o -name dist \) -prune -exec rm -rf {} + 2>/dev/null || true
+    find "$apps_dir" -type d \( -name test-results -o -name playwright-report \) -prune -exec rm -rf {} + 2>/dev/null || true
+    after=$(du -sh "$apps_dir" 2>/dev/null | awk '{print $1}')
+    log_success "构建产物清理完成 (${before:-?} → ${after:-?})"
+}
+
+# -------------------------------------------
 # Jenkins 临时文件清理 (FILE-02)
 # -------------------------------------------
 # 参数:
@@ -313,6 +346,7 @@ disk_snapshot()
 #   SKIP_VOLUME_CLEANUP          - 跳过卷清理
 #   SKIP_NODE_MODULES_CLEANUP    - 跳过 node_modules 清理
 #   SKIP_TEMP_FILES_CLEANUP      - 跳过临时文件清理
+#   SKIP_BUILD_OUTPUTS_CLEANUP   - 跳过构建产物清理（out/.next/.turbo/.swc/dist）
 cleanup_after_deploy()
 {
     local workspace="${1:-$WORKSPACE}"
@@ -345,6 +379,10 @@ cleanup_after_deploy()
 
     if [[ -z "${SKIP_TEMP_FILES_CLEANUP:-}" ]]; then
         cleanup_jenkins_temp_files "$workspace"
+    fi
+
+    if [[ -z "${SKIP_BUILD_OUTPUTS_CLEANUP:-}" ]]; then
+        cleanup_build_outputs "$workspace"
     fi
 
     # 磁盘快照不可跳过
