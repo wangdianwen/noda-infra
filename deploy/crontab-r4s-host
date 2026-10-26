@@ -120,3 +120,11 @@
 0 21 * * * docker exec immich_redis redis-cli eval "for i,q in ipairs({\"thumbnailGeneration\",\"videoConversion\",\"smartSearch\",\"faceDetection\",\"duplicateDetection\"}) do redis.call(\"HDEL\", \"immich_bull:\"..q..\":meta\", \"paused\") while redis.call(\"LLEN\", \"immich_bull:\"..q..\":paused\") > 0 do redis.call(\"LMOVE\", \"immich_bull:\"..q..\":paused\", \"immich_bull:\"..q..\":wait\", \"LEFT\", \"RIGHT\") end end" 0
 20 5 * * * sh /mnt/mmc1-4/System/Scripts/b2-quota-tg-guard.sh && /mnt/mmc1-4/System/Scripts/hb ok r4s:b2-quota-tg-guard '20 5 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:b2-quota-tg-guard '20 5 * * *'
 # （已移除 2026-10-21）pd-watchdog 一次性看护：脚本已自删、行残留每天 144 次静默失败
+
+# ===== 容器镜像版本巡检（每周日 06:30；2026-10-27 emSign 证书事件新增）=====
+#       pull 对比 RepoDigests 报告可更新容器（默认只报告不动容器，白名单机制见
+#       脚本头）+ cloudflared 运行版本 vs GitHub latest 专项（noda-ops 容器内
+#       二进制的版本新鲜度此前无任何机制跟踪）。脚本
+#       /mnt/mmc1-4/System/Scripts/container-update-check.sh
+#       （存档 deploy/container-update-check.sh，Mac mini 周日 06:00 同款跑 mac 角色）
+30 6 * * 0 /mnt/mmc1-4/System/Scripts/container-update-check.sh >> /var/log/noda-container-update.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:container-update-check '30 6 * * 0' || /mnt/mmc1-4/System/Scripts/hb fail r4s:container-update-check '30 6 * * 0'
