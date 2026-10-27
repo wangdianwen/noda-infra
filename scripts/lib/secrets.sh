@@ -11,6 +11,30 @@ set -euo pipefail
 # ============================================
 
 # ============================================
+# 函数: _export_env_lines（内部）
+# ============================================
+# stdin 逐行读 KEY=VAL 并 export，替代 eval 展开 Doppler env 文件。
+# 2026-10-27 判例（infra#72/apps#1071 双红根因）：值内字面 $（如 Viator
+# 密码 "...$Kx7"）在 set -u 下被 eval 当变量名展开 → "Kx7: unbound
+# variable" 毒死所有构建。本函数不经 shell 二次展开，值原样入 env。
+# 口径：空行/# 注释行跳过；无 = 的行跳过（防御 doppler 输出漂移）；
+# 容忍 Doppler env 格式的成对双引号包裹（只剥首尾各一层）。
+_export_env_lines() {
+    local _line _key _val
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        case "$_line" in
+            ''|\#*) continue ;;
+            *=*) ;;
+            *) continue ;;
+        esac
+        _key=${_line%%=*}
+        _val=${_line#*=}
+        case "$_val" in '"'*'"') _val=${_val#\"}; _val=${_val%\"} ;; esac
+        export "${_key}=${_val}"
+    done
+}
+
+# ============================================
 # 函数: load_secrets
 # ============================================
 # Doppler-only 密钥加载：
@@ -80,9 +104,7 @@ load_secrets()
     fi
     if [ -n "$_cache" ] && [ -s "$_cache" ] && grep -qm1 '=' "$_cache" 2>/dev/null; then
         _secrets=$(cat "$_cache")
-        set -a
-        eval "$_secrets"
-        set +a
+        _export_env_lines <<< "$_secrets"
         _NODA_SECRETS_LOADED="$_config"
         export _NODA_SECRETS_LOADED
         $_restore_trace
@@ -103,9 +125,11 @@ load_secrets()
         find -H "${TMPDIR:-/tmp}" -maxdepth 1 -name 'noda-secrets-*.env' -mmin +60 -delete 2>/dev/null || true
     fi
 
-    set -a
-    eval "$_secrets"
-    set +a
+    # 2026-10-27 判例（infra#72/apps#1071 双红根因）：eval 展开 Doppler env 文件时，
+    # 值内字面 $（如 AFFILIATE_VIATOR_ACCOUNT_PASSWORD="...$Kx7"）在 set -u 下被当
+    # 变量名展开 → "Kx7: unbound variable" 毒死所有构建。改 _export_env_lines
+    # 逐行 KEY=VAL 解析（见函数头注释），不经 shell 二次展开。
+    _export_env_lines <<< "$_secrets"
     _NODA_SECRETS_LOADED="$_config"
     export _NODA_SECRETS_LOADED
 
