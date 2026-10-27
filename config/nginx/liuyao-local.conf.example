@@ -786,6 +786,16 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # A1b playground 无城市段详情 → Go（issue #91，同 prod default.conf A1b：
+    # 桶 404 不落 Go NoRoute 白名单制判例，只代理 playground 不抢桶静态分类页）
+    location ~ "^/(?:en/|zh/|zh-TW/)?places/playground/(?:[a-z0-9-]*-[0-9a-f]{12}|[0-9a-f]{12})$" {
+        proxy_pass http://preprod-noda-api:3014;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # A2-① 旧目录详情 /{loc}/(attractions|market|camping)/{slug} → Go 301
     location ~ ^/(?:en/|zh/|zh-TW/)?(?:attractions|market|camping)/[^/]+$ {
         proxy_pass http://preprod-noda-api:3014;
