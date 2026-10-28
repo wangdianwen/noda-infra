@@ -247,7 +247,11 @@ services:
           # 1418s vs 270s 的 4-6 倍波动主因之一（另一因=swap 债满载）。在线 docker
           # update --memory 2g 已生效（零停机），此处落盘。清 swap 债 + 跨层发版
           # 互斥后按实测回调）
-          memory: 2G
+          # 2.5G（2026-10-29：nearby 站点含图资产涨到 33GB/336k 对象，蓝绿 fs.mv
+          # 整前缀搬迁时 filer 元数据尖峰 anon-rss 2.06G 撞 2G 上限 → memcg OOM
+          # 重启（Jenkins #1102 Deploy Prod 段失败、同窗 CDN 短暂 502）。在线
+          # docker update --memory 2560m 零停机生效，此处落盘）
+          memory: 2.5G
       # 防 swap 债务（2026-10-04 33s GET 根因之一：149MB 热内存压 swapfile，
       # 与数据同盘 sda2，风暴期换页 pgmajfault 9.1 万）。cgroup v2 无 swappiness
       # 旋钮，且本机 docker 不支持 swap limit（memswap_limit 会被引擎整行丢弃）——
