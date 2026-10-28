@@ -50,7 +50,8 @@ TD = "TWO-DEGREES-AS-AP - Two Degrees Networks Ltd, NZ"
 def mk(**kw):
     """空会话模板（字段与 ip-audit.aggregate.blank 一致）"""
     s = {"reqs": 0, "heads": 0, "posts": 0, "js_assets": 0, "images": 0,
-         "graphql": 0, "rsc": 0, "pwa": 0, "probe404": 0, "uas": [], "refs": [],
+         "graphql": 0, "rsc": 0, "pwa": 0, "probe404": 0, "ok200": 0,
+         "blocked": 0, "uas": [], "refs": [],
          "paths": [], "entry": None, "first": T0, "last": T0}
     s.update(kw)
     return s
@@ -152,6 +153,64 @@ def test_tiers_ban():
     assert ia.classify_session(
         "169.48.104.70", s, 36351, "SOFTLAYER - IBM Cloud, US", ipb, C)[:2] == (
         "ban", "fake-browser-probe-dc")
+    # ③ 前置：同款会话若已被限速全拦（429 占多数、零成功取页）→ blocked 静默，
+    #    不再进 100% 线（2026-10-29 用户口径：没拉到页面就不发 TG）
+    s2 = mk(uas=[FF41], reqs=13, js_assets=0, probe404=0, blocked=13)
+    assert ia.classify_session(
+        "169.48.104.71", s2, 36351, "SOFTLAYER - IBM Cloud, US", ipb, C)[:2] == (
+        "blocked", "rule-blocked")
+
+
+def test_rule_blocked_silent():
+    """2026-10-29 用户口径：被本方防线全拦（0 成功取页 + 多数 429/403/444）
+    → blocked：不动手、不进疑似、不发 TG；拦截交给限速/botblock/origin-gate。"""
+    # 拟真停更浏览器轰 graphql 全 429（机房段）→ 不再 auto-ban+TG
+    s = mk(uas=[CHROME_125], reqs=60, graphql=60, blocked=60)
+    assert ia.classify_session(
+        "3.2.3.7", s, 14618, AWS, ipb, C)[:2] == ("blocked", "rule-blocked")
+    # curl 脚本客户端全 429 → 同样静默
+    s2 = mk(uas=["curl/8.1.2"], reqs=30, graphql=30, blocked=30)
+    assert ia.classify_session(
+        "3.2.3.8", s2, 14618, AWS, ipb, C)[0] == "blocked"
+    # botblock 403（自报蜘蛛撞墙）→ 静默
+    s3 = mk(uas=["Sogou web spider/4.0"], reqs=20, blocked=20)
+    assert ia.classify_session(
+        "3.2.3.9", s3, 14618, AWS, ipb, C)[0] == "blocked"
+    # 404 探测不算拦截态：假浏览器探测线不受影响（10-28 SoftLayer 判例仍 100% 封）
+    s4 = mk(uas=[FF41], reqs=13, js_assets=0, probe404=12)
+    assert ia.classify_session(
+        "169.48.104.72", s4, 36351, "SOFTLAYER - IBM Cloud, US", ipb, C)[:2] == (
+        "ban", "fake-browser-probe-dc")
+
+
+def test_rule_blocked_needs_zero_success_and_majority():
+    # 拿到过一次 2xx（拉到了页面）→ 不静默，照常走疑似线（RCN 10-28 判例形状）
+    s = mk(uas=[CHROME_125], reqs=65, heads=3, graphql=3, rsc=7, js_assets=49,
+           ok200=5, blocked=60, first=T0, last=T0 + 60)
+    v, rule, _ = ia.classify_session("9.142.174.8", s, 6079, RCN, ipb, C)
+    assert (v, rule) == ("suspect", "reality-mismatch")
+    # 被拦是少数（多数是 404 探测）→ 不静默，仍进 100% 线
+    s2 = mk(uas=[FF41], reqs=13, js_assets=0, probe404=12, blocked=1)
+    assert ia.classify_session(
+        "169.48.104.73", s2, 36351, "SOFTLAYER - IBM Cloud, US", ipb, C)[0] == "ban"
+
+
+def test_aggregate_counts_ok_and_blocked():
+    lines = "\n".join([
+        '172.18.0.7 - - [28/Oct/2026:02:47:30 +0000] "POST /graphql HTTP/1.1" '
+        '429 0 "-" "curl/8.1.2" "9.142.174.9"',
+        '172.18.0.7 - - [28/Oct/2026:02:47:31 +0000] "GET /zh/page HTTP/1.1" '
+        '200 512 "-" "curl/8.1.2" "9.142.174.9"',
+        '172.18.0.7 - - [28/Oct/2026:02:47:32 +0000] "GET /zh HTTP/1.1" '
+        '403 0 "-" "Sogou web spider" "9.142.174.10"',
+        '172.18.0.7 - - [28/Oct/2026:02:47:33 +0000] "GET /missing HTTP/1.1" '
+        '404 0 "-" "Sogou web spider" "9.142.174.10"',
+    ])
+    sess = ia.aggregate(ia.parse_lines(ipb, lines))
+    a = sess["9.142.174.9"]
+    assert a["ok200"] == 1 and a["blocked"] == 1
+    b = sess["9.142.174.10"]
+    assert b["ok200"] == 0 and b["blocked"] == 1 and b["probe404"] == 1
 
 
 def test_tiers_welcome():

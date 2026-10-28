@@ -20,6 +20,10 @@ ip-audit.py — 源站日志判据式 bot 判定器（2026-10-28 用户需求：
   s2 一次性校验队 = 单页≤3req 零 JS 机房段，同 ASN 同形状 ≥3 IP——Baxet 10-28 判例
   s3 自报 bot 但不在欢迎名单（10-28 KeenableBot/Reflectionbot 判例）
   s4 重爬虫 = ≥100req 且 JS 资产占比<10% 且零 graphql/PWA
+- 全拦静默（2026-10-29 用户口径：机器人没拉到页面就别发 TG）：会话 0 次成功
+  取页（无 2xx/3xx）且多数响应是本方拦截态（nginx 限速 429 / botblock 403 /
+  origin-gate 444）→ 判 blocked，不动手、不进疑似、不发通知——拦它的防线继续
+  拦；404/410 是应用真实应答（探测证据），不算拦截态。
 
 机制：独立 CF 自定义规则（ref=ip-audit-tempban）只装本脚本临时 IP，GET→原位改
 自己那条→PUT 整表，不碰 ip-ban.py 的 ASN/黑名单规则；7 天到期自动解封（空则
@@ -161,6 +165,7 @@ def aggregate(events):
     def blank():
         return {"reqs": 0, "heads": 0, "posts": 0, "js_assets": 0, "images": 0,
                 "graphql": 0, "rsc": 0, "pwa": 0, "probe404": 0,
+                "ok200": 0, "blocked": 0,
                 "uas": [], "refs": [], "paths": [], "entry": None,
                 "first": None, "last": None}
 
@@ -176,6 +181,10 @@ def aggregate(events):
             s["last"] = epoch if s["last"] is None else max(s["last"], epoch)
         if status in ("404", "410"):
             s["probe404"] += 1
+        if status[:1] in ("2", "3"):        # 拿到过内容（页面/跳转）＝成功取页
+            s["ok200"] += 1
+        if status in BLOCK_STATUS:          # 被本方防线拦下（没拿到东西）
+            s["blocked"] += 1
         if path == "/graphql":
             s["graphql"] += 1
         elif "__next" in path:
@@ -294,9 +303,13 @@ def burst(s):
             and s["reqs"] >= BURST_REQS and s["last"] - s["first"] <= BURST_SECS)
 
 
+# 本方拦截态：botblock 403（自报蜘蛛）/ nginx limit_req 429 / origin-gate 444
+BLOCK_STATUS = ("403", "429", "444")
+
+
 def classify_session(ip, s, asn, asn_name, ipb, ctx):
     """单会话判定 → (verdict, rule, evidence)。
-    verdict: welcome / human / ban / suspect / noise。
+    verdict: welcome / human / ban / suspect / noise / blocked。
     ctx: {"queue_keys": {短链: {ip,...}}}（主循环已并入 state 并含历史窗）。"""
     u = ua_lower(s)
 
@@ -310,6 +323,15 @@ def classify_session(ip, s, asn, asn_name, ipb, ctx):
         return "welcome", "official-net", "官方爬虫段 IP"
     if is_welcome_ua(s):
         return "welcome", "selfid-welcome", "点名欢迎 UA"
+
+    # ---- 全拦静默（2026-10-29 用户口径：机器人没拉到页面就别发 TG）----
+    # 0 次成功取页（无 2xx/3xx）且多数响应是本方拦截态（429 限速/403
+    # botblock/444 origin-gate）→ 判 blocked：不动手、不进疑似、不发通知，
+    # 拦它的防线继续拦。404/410 是应用真实应答（探测证据），不算拦截态。
+    if s["ok200"] == 0 and s["blocked"] * 2 >= s["reqs"]:
+        return "blocked", "rule-blocked", ev(
+            "全拦 %d/%d" % (s["blocked"], s["reqs"]),
+            "UA=%s" % (s["uas"][0][:70] if s["uas"] else "(空)"))
 
     evidence = ev("UA=%s" % (s["uas"][0][:70] if s["uas"] else "(空)"),
                   "%dreq%s" % (s["reqs"],
@@ -603,7 +625,8 @@ def cmd_run(dry):
         log("unbanned %s" % ip)
 
     # ---- 逐会话判定 ----
-    counts = {"welcome": 0, "human": 0, "ban": 0, "suspect": 0, "noise": 0}
+    counts = {"welcome": 0, "human": 0, "ban": 0, "suspect": 0, "noise": 0,
+              "blocked": 0}
     new_bans = {}          # ip -> (rule, evidence)
     new_suspects = []      # (sid, ip, rule, evidence)
     for ip, s in sess.items():
@@ -668,13 +691,14 @@ def cmd_run(dry):
     nz_day = time.strftime("%F", time.gmtime(now + 13 * 3600))
     if state["counters"].get("day") and state["counters"]["day"] != nz_day:
         c = state["counters"]
-        notify("📊 %s 简报: 真人%d 欢迎爬虫%d 疑似%d(新%d) 自动封%d 解封%d 样本IP%d"
+        notify("📊 %s 简报: 真人%d 欢迎爬虫%d 疑似%d(新%d) 拦截%d 自动封%d 解封%d 样本IP%d"
             % (c["day"], c["human"], c["welcome"], c["suspect"],
-               c.get("suspect_new", 0), c["ban"], c["unban"], c["ips"]))
+               c.get("suspect_new", 0), c.get("blocked", 0),
+               c["ban"], c["unban"], c["ips"]))
         state["counters"] = {}
     c = state["counters"]
     c["day"] = nz_day
-    for k in ("human", "welcome", "suspect", "noise"):
+    for k in ("human", "welcome", "suspect", "noise", "blocked"):
         c[k] = c.get(k, 0) + counts[k]
     c["ban"] = c.get("ban", 0) + len(new_bans)
     c["unban"] = c.get("unban", 0) + len(unbanned)
