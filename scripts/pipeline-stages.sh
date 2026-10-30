@@ -2872,6 +2872,12 @@ EOF
 # remote 配置全部走 env（RCLONE_CONFIG_*），无落盘配置文件——mc 的
 # ~/.mc/config.json 曾是并发构建互踩点。--max-duration 内建墙钟看门狗
 # （替代 mc_t：中继半死不再拖到 Jenkins 全局超时）。RC_MAX_DURATION 秒。
+# 默认并发 8→16（noda-apps #103 第 7 条，2026-10-30）：蓝绿首轮全量 sync 走本
+# 默认值，nearby 109k 对象实测 8 流≈128 obj/s（~62ms/对象 RTT 主导）占 #1119
+# 全程 42%。内存纪律推演（同文件 _static_manifest_sync 处 34MB/并发流实测）：
+# 16 流峰值≈基础 650MB+544MB≈1.2G=cgroup 2.5G 限额的 48%，zram swap 上线后
+# 线上余量更宽；24 流是清单差量路径既有值、32 流历史上限（1.76G=88% 已否决）。
+# 差量路径自带的 RC_TRANSFERS=24 覆盖不受影响。
 # 用法: _rc <endpoint> <ak> <sk> <rclone 子命令...>
 _rc()
 {
@@ -2881,8 +2887,8 @@ _rc()
     RCLONE_CONFIG_SW_ENDPOINT="$endpoint" \
     RCLONE_CONFIG_SW_ACCESS_KEY_ID="$ak" \
     RCLONE_CONFIG_SW_SECRET_ACCESS_KEY="$sk" \
-    RCLONE_TRANSFERS="${RC_TRANSFERS:-8}" \
-    RCLONE_CHECKERS="${RC_CHECKERS:-16}" \
+    RCLONE_TRANSFERS="${RC_TRANSFERS:-16}" \
+    RCLONE_CHECKERS="${RC_CHECKERS:-32}" \
         rclone --max-duration "${RC_MAX_DURATION:-2700}s" "$@"
 }
 
