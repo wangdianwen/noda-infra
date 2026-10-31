@@ -778,7 +778,7 @@ server {
     # 6 slug 含 playground；对账守卫 scripts/check-nginx-urltree.py）──
 
     # A1 城市树详情（末段 slug-id12 或纯 id12；可选分类组挂 places 段后）
-    location ~ "^/(?:en/|zh/|zh-TW/)?(?:auckland|wellington|christchurch|hamilton|rotorua|tauranga|queenstown|dunedin|national)/(?:places(?:/(?:attractions|camping|routes|national-parks|playground|tracks))?|events|news|deals|hidden-gems)/(?:[a-z0-9-]*-[0-9a-f]{12}|[0-9a-f]{12})$" {
+    location ~ "^/(?:en/|zh/|zh-TW/)?(?:auckland|wellington|christchurch|hamilton|rotorua|tauranga|queenstown|dunedin|national)/(?:places(?:/(?:attractions|camping|markets|routes|national-parks|playground|tracks))?|events|news|deals|hidden-gems)/(?:[a-z0-9-]*-[0-9a-f]{12}|[0-9a-f]{12})$" {
         proxy_pass http://preprod-noda-api:3014;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
