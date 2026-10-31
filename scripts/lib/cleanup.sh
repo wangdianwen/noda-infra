@@ -599,10 +599,40 @@ cleanup_periodic_maintenance()
 
     cleanup_npm_cache
 
+    # 主机杂项缓存（2026-11-01 磁盘治理新增：这些项 10-25/10-27/11-01 三次
+    # 人工清理中反复重生，纳入周维护兜底）
+    cleanup_host_misc
+
     # 磁盘快照不可跳过
     disk_snapshot "定期清理后"
 
     log_success "=== 定期维护清理完成 ==="
+}
+
+# -------------------------------------------
+# cleanup_host_misc - 主机杂项缓存清理（周维护 + disk-guard 之外的最后兜底）
+# -------------------------------------------
+# 只清可再生缓存类；红线同 scripts/maintenance/disk-guard.sh 头注
+# （gocache/gomodcache 卷、ms-playwright、huggingface、Chrome/微信缓存等勿动）。
+cleanup_host_misc()
+{
+    log_info "--- 主机杂项缓存清理 ---"
+
+    # Docker Desktop 更新残留（每次升级重生 ~2.1G，2026-10-27/11-01 两次清过）
+    rm -rf "$HOME/Library/Application Support/com.docker.install/in_progress" 2>/dev/null || true
+
+    # 桌面端更新器 / pip / node-gyp 缓存
+    rm -rf "$HOME/Library/Caches/@zcodedesktop-updater" 2>/dev/null || true
+    rm -rf "$HOME/Library/Caches/pip" 2>/dev/null || true
+    rm -rf "$HOME/Library/Caches/node-gyp" 2>/dev/null || true
+
+    # noda 构建上下文缓存（再生项，多次清理实践）
+    rm -rf "$HOME/.cache/noda-buildcache" 2>/dev/null || true
+
+    # zcode 旧日志（>2 天）与旧会话 artifacts（>7 天）
+    find "$HOME/.zcode/cli/log" -type f -name '*.jsonl' -mtime +2 -delete 2>/dev/null || true
+    find "$HOME/.zcode/cli/artifacts" -maxdepth 1 -type d -mtime +7 \
+        -not -path "$HOME/.zcode/cli/artifacts" -exec rm -rf {} + 2>/dev/null || true
 }
 
 # 别名函数（向后兼容）

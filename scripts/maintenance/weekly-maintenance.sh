@@ -108,15 +108,14 @@ main()
     elapsed=$(( $(date +%s) - start_epoch ))
     log_success "本次维护完成，耗时 ${elapsed} 秒"
     echo "== noda 每周维护结束: $(date '+%Y-%m-%d %H:%M:%S') =="
+
+    # 心跳上报（2026-11-01 修复：原心跳块位于 exit 之后是死代码，从未上报过；
+    # 尽力而为——上报失败不算维护失败）
+    ssh -o ConnectTimeout=15 -o BatchMode=yes r4s \
+        'docker exec -u nodaops noda-ops /app/backup/hb.sh ok mac:weekly-maintenance "Sun 03:30"' \
+        || log_warn "心跳上报失败（不影响维护结果）"
     return 0
 }
 
 main "$@"
 exit $?
-
-# -------------------------------------------
-# 心跳上报（2026-10-21 cron 全量盘点接入）：尽力而为——上报失败不算维护失败
-# -------------------------------------------
-ssh -o ConnectTimeout=15 -o BatchMode=yes r4s \
-    'docker exec noda-ops /app/backup/hb.sh ok mac:weekly-maintenance "Sun 03:30"' \
-    || log_warn "心跳上报失败（不影响维护结果）"

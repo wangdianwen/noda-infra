@@ -486,6 +486,17 @@ pipeline {
                             # 至少清理悬空镜像
                             cleanup_dangling || true
                         }
+
+                        # === 3. 回收静态构建产物 out/（磁盘守卫，2026-11-01）===
+                        # out/ 8-15G/构建是 mini 磁盘约 5 天灌满的主导项：Build 产出一次、
+                        # stg/prod 两桶 mirror 完成后本地副本即无用（发布差量对账以桶侧
+                        # 快照为基准，下次构建全量重建 out/ + 清单，指纹随之再生）。
+                        # 放在 post always 兜底：失败 / stg-only / 审批超时的运行也回收。
+                        # .next 不在此处（构建前 pipeline 已整删换确定性全量，见 #356）。
+                        echo "🧹 回收静态产物 out/ ..."
+                        for d in class/web www/web admin/web nearby/web comment auth; do
+                            rm -rf "$WORKSPACE/noda-apps/$d/out"
+                        done
                     '''
                 }
             }
