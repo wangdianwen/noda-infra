@@ -128,5 +128,5 @@
 #       /mnt/mmc1-4/System/Scripts/container-update-check.sh
 #       （存档 deploy/container-update-check.sh，Mac mini 周日 06:00 同款跑 mac 角色）
 30 6 * * 0 /mnt/mmc1-4/System/Scripts/container-update-check.sh >> /var/log/noda-container-update.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:container-update-check '30 6 * * 0' || /mnt/mmc1-4/System/Scripts/hb fail r4s:container-update-check '30 6 * * 0'
-# ===== ip-audit 判据式 bot 判定（2026-10-28：100%线自动封7天+TG，疑似线TG待裁决）=====
-17 * * * * python3 /mnt/mmc1-4/System/Scripts/ip-audit.py >> /var/log/noda-ip-audit.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:ip-audit '17 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:ip-audit '17 * * * *'
+# ===== ip-audit 判据式 bot 判定（2026-10-31 分级自动处置，shadow 期（切实时去掉 IP_AUDIT_SHADOW=1））=====
+17 * * * * IP_AUDIT_SHADOW=1 python3 /mnt/mmc1-4/System/Scripts/ip-audit.py >> /var/log/noda-ip-audit.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:ip-audit '17 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:ip-audit '17 * * * *'
