@@ -18,7 +18,13 @@ set -euo pipefail
 # 密码 "...$Kx7"）在 set -u 下被 eval 当变量名展开 → "Kx7: unbound
 # variable" 毒死所有构建。本函数不经 shell 二次展开，值原样入 env。
 # 口径：空行/# 注释行跳过；无 = 的行跳过（防御 doppler 输出漂移）；
-# 容忍 Doppler env 格式的成对双引号包裹（只剥首尾各一层）。
+# 容忍 Doppler env 格式的成对双引号包裹（剥首尾各一层）。
+# 2026-11-01 判例（#107 验收发现）：dotenv 规范对引号包裹值内的字面引号
+# 转义为 \" ——只剥外层引号会把 GSC_SA_KEY_JSON 这类 JSON secret 以
+# {\"type\":…} 形态送进容器（noda-ops-metrics 10-28 起 SA JSON 解析失败
+# 全败；旧 eval 路径靠 shell 二次展开顺带还原了转义，改为逐行解析后缺了
+# 这一步）。剥引号后同步还原 \"→" 与 \\→\（单趟序与 dotenv 转义序一致，
+# 非引号包裹值不做替换，避免误伤业务字面反斜杠）。
 _export_env_lines() {
     local _line _key _val
     while IFS= read -r _line || [ -n "$_line" ]; do
@@ -29,7 +35,10 @@ _export_env_lines() {
         esac
         _key=${_line%%=*}
         _val=${_line#*=}
-        case "$_val" in '"'*'"') _val=${_val#\"}; _val=${_val%\"} ;; esac
+        case "$_val" in '"'*'"')
+            _val=${_val#\"}; _val=${_val%\"}
+            _val=${_val//\\\"/\"}; _val=${_val//\\\\/\\}
+            ;; esac
         export "${_key}=${_val}"
     done
 }
