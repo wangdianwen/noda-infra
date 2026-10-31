@@ -144,6 +144,11 @@ NEARBY_MARKET_ENRICH_LIMIT
 NEARBY_ATTRACTION_MANIFEST_URL
 NEARBY_MARKET_MANIFEST_URL
 NEARBY_ENRICH_PARALLEL
+# ── 2026-10-31 issue#107 特惠描述增厚相位可选旋钮 ──
+#   NEARBY_DEAL_ENRICH_LIMIT（特惠薄文案 LLM 改写日额，默认 30 条/日；
+#   dealenrich.go DealEnrichLimitFromEnv。同型「代码带默认值」可选调参，
+#   未配置 = 默认值，生产行为正确）。
+NEARBY_DEAL_ENRICH_LIMIT
 # RL429_DIR：adminapi 反爬限流观测的 429 JSON 日志目录（bot-hardening 2026-10-17）。
 # 代码默认 /ops-logs（pipeline-stages.sh _start_prod_* 恒挂载该 RO 卷），模板不配、
 # 代码默认值兜底；preprod/本地未挂卷 → source=disabled 优雅空态（ratelimit.go）。
