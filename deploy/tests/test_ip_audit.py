@@ -331,3 +331,124 @@ def test_load_save_state_roundtrip(tmp_path, monkeypatch):
     st["checkpoint"] = 123
     ia.save_state(st)
     assert ia.load_state()["checkpoint"] == 123
+
+
+# ---------------------------------------------------------------- 新线分级处置
+# 2026-10-31 用户底线：正常爬虫（自报身份）和真人（消费/模糊 ISP）永不自动封。
+# 自动封 = 机房段 ASN + 非自报 + 冒充浏览器/无爬虫礼仪，三重前提缺一不可。
+
+GCP_ASN = 14618
+GCP_NAME = "GOOGLE-CLOUD-PLATFORM - Google LLC, US"
+CU_ASN = 4837
+CU_NAME = "CHINA169-Backbone - CHINA UNICOM China169 Backbone, CN"
+
+
+def test_auto_ban_dc_reality_mismatch():
+    """机房段拟真自动化 → 自动封（真人不会从机房冒充老浏览器爆发）"""
+    assert ia.auto_ban_rule("reality-mismatch", 1, GCP_ASN, GCP_NAME,
+                            False, CHROME_125.lower(), ipb) \
+        == "auto:reality-mismatch-dc"
+
+
+def test_auto_ban_never_selfid():
+    """自报身份爬虫永不自动封——哪怕机房段+重爬+惯犯（可能是正常新爬虫）"""
+    for tier in ("reality-mismatch", "mass-scraper", "odd-client-dc",
+                 "unknown-bot", "one-shot-fleet"):
+        assert ia.auto_ban_rule(tier, 99, GCP_ASN, GCP_NAME,
+                                True, "reflect crawler", ipb) is None
+
+
+def test_auto_ban_never_consumer_or_ambiguous_isp():
+    """联通骨干（模糊 ISP）一票否决——10-18 WARP 误封真人判例形态在此"""
+    assert ia.auto_ban_rule("reality-mismatch", 50, CU_ASN, CU_NAME,
+                            False, CHROME_125.lower(), ipb) is None
+    # unknown ASN（名称无机房关键词）同样不封
+    assert ia.auto_ban_rule("mass-scraper", 50, None, "unknown", False,
+                            CHROME_125.lower(), ipb) is None
+
+
+def test_auto_ban_mass_scraper_dc():
+    """机房段无礼仪重爬（非自报）→ 自动封；同样形态落消费 ISP → TG 裁决"""
+    assert ia.auto_ban_rule("mass-scraper", 1, GCP_ASN, GCP_NAME,
+                            False, CHROME_125.lower(), ipb) \
+        == "auto:mass-scraper-dc"
+    assert ia.auto_ban_rule("mass-scraper", 1, CU_ASN, CU_NAME,
+                            False, CHROME_125.lower(), ipb) is None
+
+
+def test_auto_ban_odd_client_dc_monitor_exempt():
+    """机房段匿名非浏览器客户端 → 封；探活/拨测 UA（可能是站主配的监控）→ TG"""
+    assert ia.auto_ban_rule("odd-client-dc", 1, GCP_ASN, GCP_NAME,
+                            False, "myclient/1.0", ipb) == "auto:odd-client-dc"
+    assert ia.auto_ban_rule("odd-client-dc", 1, GCP_ASN, GCP_NAME,
+                            False, "uptimerobot/2.0", ipb) is None
+    assert ia.auto_ban_rule("odd-client-dc", 1, GCP_ASN, GCP_NAME,
+                            False, "pingdom.com_bot_version_1.1", ipb) is None
+
+
+def test_auto_ban_repeat_offender_threshold():
+    """惯犯线 seen≥20 且机房段且非自报 → 封；19 次及以下不封"""
+    for tier in ("stale-browser", "one-shot-fleet", "unknown-x"):
+        assert ia.auto_ban_rule(tier, REPEAT := 20, GCP_ASN, GCP_NAME,
+                                False, CHROME_125.lower(), ipb) \
+            == "auto:repeat-offender-dc"
+        assert ia.auto_ban_rule(tier, 19, GCP_ASN, GCP_NAME,
+                                False, CHROME_125.lower(), ipb) is None
+
+
+def test_suspect_notify_mode():
+    """自报爬虫：一次性静默、舰队（≥3 新 IP）发一条；其余 tier 即时报"""
+    assert ia.suspect_notify_mode("unknown-bot", 1) == "silent"
+    assert ia.suspect_notify_mode("unknown-bot", 2) == "silent"
+    assert ia.suspect_notify_mode("unknown-bot", 3) == "fleet"
+    assert ia.suspect_notify_mode("unknown-bot", 10) == "fleet"
+    assert ia.suspect_notify_mode("reality-mismatch", 1) == "tg"
+    assert ia.suspect_notify_mode("mass-scraper", 1) == "tg"
+
+
+def test_promote_shadow_vetoes_and_promotes(tmp_path, monkeypatch):
+    """影子转正：普通 IP 进 banned，owner/官方段最终否决（双保险）"""
+    owner_ip = next(iter(ipb.OWNER_IPS))
+    official_ip = str(next(iter(ipb.GOOGLE_NETS[0].hosts())))
+    monkeypatch.setattr(ipb, "_crawler_ip_cache", {})
+    state = {"banned": {},
+             "shadow_banned": {"8.8.8.8": {"until": 999, "rule": "auto:x",
+                                           "since": 1, "evidence": "e"},
+                               owner_ip: {"until": 999, "rule": "auto:x",
+                                          "since": 1, "evidence": "e"},
+                               official_ip: {"until": 999, "rule": "auto:x",
+                                             "since": 1, "evidence": "e"}}}
+    promoted, vetoed = ia.promote_shadow(state, ipb, T0)
+    assert "8.8.8.8" in promoted and "8.8.8.8" in state["banned"]
+    assert owner_ip in vetoed and owner_ip not in state["banned"]
+    assert official_ip in vetoed and official_ip not in state["banned"]
+    assert state["shadow_banned"] == {}
+
+
+def test_selfid_extra_bare_google_ua():
+    """10-31 判例：裸 UA=Google（74.125.210.x）无 bot 字样但是 Google 自家
+    fetcher——必须判自报，否则会被 odd-client-dc 新线误封大厂 IP"""
+    assert ia.is_selfid_ua({"uas": ["Google"]}, ipb) is True
+    assert ia.is_selfid_ua({"uas": ["GoogleHC/1.0"]}, ipb) is True
+    # Chrome 真浏览器 UA 不含 google 字样，不受影响
+    assert ia.is_selfid_ua({"uas": [CHROME_NEW]}, ipb) is False
+    # 自报兜底联动：UA=Google + 机房段 + odd-client 形态 → 不自动封
+    assert ia.auto_ban_rule("odd-client-dc", 1, GCP_ASN, GCP_NAME,
+                            True, "google", ipb) is None
+
+
+def test_auto_ban_hosting_strict_no_name_heuristic():
+    """10-31 预演判例：名称启发式子串陷阱（Colombia→colo、AFRIHOST→host、
+    Airtel Networks→networks）把消费 ISP 误判机房——自动封线只认 ASN 真值"""
+    assert ia.is_hosting_strict(55836, "Airtel Networks Limited - Airtel Networks Limited, IN", ipb) is False
+    assert ia.is_hosting_strict(10620, "AS10620 - Telmex Colombia S.A., CO", ipb) is False
+    assert ia.is_hosting_strict(36943, "AFRIHOST SP (PTY) LTD - AFRIHOST SP (PTY) LTD, ZA", ipb) is False
+    assert ia.is_hosting_strict(3816, "AS3816 - COLOMBIA TELECOMUNICACIONES S.A. E.S.P, CO", ipb) is False
+    # 同样形态落真机房（GCP 14618 在 DATACENTER_ASNS）→ 封不变
+    assert ia.is_hosting_strict(GCP_ASN, GCP_NAME, ipb) is True
+    # 消费 ISP 上的拟真嫌疑哪怕惯犯也永不自动封
+    assert ia.auto_ban_rule("reality-mismatch", 50, 55836,
+                            "Airtel Networks Limited - Airtel Networks Limited, IN",
+                            False, CHROME_125.lower(), ipb) is None
+    # 名称启发式仍可用于 classify/TG 线（is_hosting 行为不变）
+    assert ia.is_hosting(55836, "Airtel Networks Limited - Airtel Networks Limited, IN", ipb) is True

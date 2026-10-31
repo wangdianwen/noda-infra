@@ -14,7 +14,18 @@ ip-audit.py — 源站日志判据式 bot 判定器（2026-10-28 用户需求：
     机房段（10-28 SoftLayer Firefox/41 判例）
   ④ 蜜罐命中（HONEY_PATHS 预留，部署后自动生效）
   粒度只封单 IP（不做 /24 扩大）；命中站主 IP / 官方段的提案自动否决。
-- 疑似线只发 TG 不动手，等用户回话裁决（ip-audit.py ban <sid> / dismiss <sid>）：
+- 疑似线分级处置（2026-10-31 用户底线：正常爬虫和真人永不自动封）：
+  ① 新线自动封 7 天 = 机房段 ASN + 非自报身份 + 冒充浏览器/无爬虫礼仪：
+     reality-mismatch（停更+行为硬信号）∧机房、mass-scraper∧机房∧非自报、
+     odd-client-dc（monitor 类 UA 除外→TG）、任意 tier 惯犯 seen≥20∧机房∧非自报。
+     联通/VNPT 等消费与模糊 ISP 一票否决（10-18 WARP 误封判例形态在此）；
+     自报身份爬虫永不自动封（可能是正常新爬虫）。
+  ② 静默归档 = 一次性自报小爬虫 unknown-bot（seen≤2 不封不发，留档供舰队判定）；
+     自报爬虫舰队（同族新 IP≥3）只发一条 TG，状态仍静默。
+  ③ TG 待裁决 = 消费/模糊 ISP 疑似、stale-browser 弱信号（VN/RO 家宽老电脑判例）、
+     自报的重爬虫——ip-audit.py ban <sid> / dismiss <sid> 不变。
+  影子期：IP_AUDIT_SHADOW=1 时新线决策只记 state.shadow_banned+TG（🧪）不动 CF；
+  切实后首个非影子 run 自动转正（转正前重过 owner/官方段否决）。
   s1 拟真自动化 = UA 停更(主版本落后≥12) 且 (HEAD≥3 / 单页爆发≥40req≤120s /
      短链队列复用) 占一——RCN 10-28 判例（Chrome/125+HEAD 突发+65req/60s）
   s2 一次性校验队 = 单页≤3req 零 JS 机房段，同 ASN 同形状 ≥3 IP——Baxet 10-28 判例
@@ -55,6 +66,17 @@ BAN_TTL = 7 * 86400                    # 用户定：黑名单 7 天
 TEMP_BAN_MAX = 40                      # CF in-set 容量上限（40×~40B 远小于表达式限）
 FIRST_RUN_WINDOW = 3600                # 首跑/状态缺失回看 1 小时
 CRON_MIN = 17
+SILENT_MAX_SEEN = 2                    # 静默线：unknown-bot seen≤2 不封不发
+REPEAT_BAN_SEEN = 20                   # 惯犯线：机房段+非自报 seen≥20 自动封
+# 探活/拨测服务 UA（可能是站主自己配的监控，不自动封，进 TG 裁决/欢迎名单）
+MONITOR_UA = ("uptimerobot", "pingdom", "statuscake", "betteruptime",
+              "healthcheck", "cron-job", "site24x7", "freshping", "uptime")
+# 自报判定补充（10-31 判例 74.125.210.x UA=Google 无 bot 字样）：裸大厂
+# fetcher 也算自报——自报爬虫永不自动封，只进静默/裁决线
+SELFID_EXTRA = ("google",)
+
+# 影子期开关（crontab 设 IP_AUDIT_SHADOW=1）：新线自动封只记决策不动 CF
+SHADOW = os.environ.get("IP_AUDIT_SHADOW") == "1"
 
 ASSET_EXT = (".js", ".css", ".woff2", ".woff", ".png", ".jpg", ".jpeg",
              ".svg", ".webp", ".ico", ".map", ".avif")
@@ -264,6 +286,17 @@ def is_hosting(asn, name, ipb):
     return any(h in n for h in HOSTING_NAME_HINTS)
 
 
+def is_hosting_strict(asn, name, ipb):
+    """自动封专用严格版：只认 ASN 真值集合，不用名称启发式。
+    10-31 预演判例：HOSTING_NAME_HINTS 子串匹配把消费 ISP 误判成机房——
+    Colombia 含 colo、AFRIHOST 含 host、Airtel Networks 含 networks——这些
+    网段上的拟真嫌疑一旦进自动封就是误封真人。启发式仍可用于 classify/TG
+    线（人工复核，错了无害），不可用于动手线。"""
+    if is_consumer(asn, name):
+        return False
+    return asn in ipb.DATACENTER_ASNS
+
+
 def stale_version(ua):
     """浏览器主版本停更判定 → (bool, 说明)。UA 可伪造，单独永不封——只作
     s1 拟真自动化的一个信号。"""
@@ -290,7 +323,8 @@ def is_welcome_ua(s):
 
 
 def is_selfid_ua(s, ipb):
-    return any(m in ua_lower(s) for m in ipb.SELFID_MARKERS)
+    return (any(m in ua_lower(s) for m in ipb.SELFID_MARKERS)
+            or any(m in ua_lower(s) for m in SELFID_EXTRA))
 
 
 def is_scanner_client(s, ipb):
@@ -398,6 +432,52 @@ def classify_session(ip, s, asn, asn_name, ipb, ctx):
     return "noise", "-", "-"
 
 
+def auto_ban_rule(tier, seen, asn, asn_name, selfid, ua_str, ipb):
+    """疑似→自动封裁定 → rule | None（2026-10-31 用户底线：正常爬虫和真人
+    永不自动封）。三重前提缺一不可：非自报身份（自报可能是正常新爬虫，只 TG）
+    + 机房段 ASN 严格真值（is_hosting_strict——名称启发式会把 Colombia/
+    Airtel 等消费 ISP 误判机房，只许用于 TG 线）+ 冒充浏览器或无爬虫礼仪。"""
+    if selfid:
+        return None
+    if not is_hosting_strict(asn, asn_name, ipb):
+        return None
+    if tier == "odd-client-dc":
+        if any(m in ua_str for m in MONITOR_UA):
+            return None                       # 探活/拨测服务 → TG 裁决
+        return "auto:odd-client-dc"
+    if tier == "reality-mismatch":            # 冒充浏览器（停更+行为硬信号）
+        return "auto:reality-mismatch-dc"
+    if tier == "mass-scraper":                # 无礼仪重爬（自报早被排除）
+        return "auto:mass-scraper-dc"
+    if seen >= REPEAT_BAN_SEEN:               # 惯犯（机房段+非自报才到这）
+        return "auto:repeat-offender-dc"
+    return None
+
+
+def suspect_notify_mode(rule, new_count):
+    """疑似 TG 模式：unknown-bot（自报爬虫）一次性静默，舰队（≥FLEET_MIN_IPS
+    个新 IP）发一条；其余 tier 维持即时报（防刷屏聚合照旧）。"""
+    if rule != "unknown-bot":
+        return "tg"
+    return "fleet" if new_count >= FLEET_MIN_IPS else "silent"
+
+
+def promote_shadow(state, ipb, now):
+    """影子名单转正 → (promoted, vetoed)。owner/官方段最终否决（双保险：
+    影子判定时已否决过一次，转正再验一次）。"""
+    sb = state.get("shadow_banned") or {}
+    promoted, vetoed = [], []
+    for ip, b in list(sb.items()):
+        if ip in ipb.OWNER_IPS or ipb.is_crawler_ip(ip):
+            vetoed.append(ip)
+        else:
+            state["banned"][ip] = {"until": now + BAN_TTL, "rule": b["rule"],
+                                   "since": now, "evidence": b["evidence"]}
+            promoted.append(ip)
+    state["shadow_banned"] = {}
+    return promoted, vetoed
+
+
 def fleet_check(s, asn, asn_name, ipb, ip, state, now):
     """s2 一次性校验队：同 ASN 同形状 ≥FLEET_MIN_IPS 个 IP → 全员疑似。
     形状 = 单页 ≤3req 零 JS 机房段；pattern 取路径前 3 段。
@@ -497,12 +577,13 @@ def load_state():
             s.setdefault("fleet", {})
             s.setdefault("queue", {})
             s.setdefault("counters", {})
+            s.setdefault("shadow_banned", {})
             return s
     except Exception:
         pass
     return {"checkpoint": None, "asn_cache": {}, "banned": {}, "suspects": {},
             "fleet": {}, "queue": {}, "counters": {}, "unsynced": False,
-            "daily_sent": None}
+            "daily_sent": None, "shadow_banned": {}}
 
 
 def save_state(state):
@@ -546,7 +627,8 @@ def prune(state, now):
             del state["fleet"][key]
     for sid in list(state["suspects"]):
         rec = state["suspects"][sid]
-        if rec.get("status") in ("banned", "dismissed") and now - rec.get("last", 0) > 30 * 86400:
+        if (rec.get("status") in ("banned", "dismissed", "silent")
+                and now - rec.get("last", 0) > 30 * 86400):
             del state["suspects"][sid]
     if len(state["asn_cache"]) > 20000:
         for k in list(state["asn_cache"])[:len(state["asn_cache"]) - 20000]:
@@ -569,6 +651,8 @@ def cmd_run(dry):
             tg(ipb, msg)
     if os.path.exists(STATE_FILE) is False and dry is False:
         log("first run: state created")
+    if SHADOW:
+        log("SHADOW mode: 新线自动封只记决策不动 CF（IP_AUDIT_SHADOW=1）")
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
 
     ipb.load_crawler_ranges()
@@ -624,10 +708,32 @@ def cmd_run(dry):
         notify("🔓 解封 %s（7 天期满）" % ip)
         log("unbanned %s" % ip)
 
+    # ---- 影子名单转正（切实后首个非影子 run）----
+    if (state.get("shadow_banned") or {}) and not SHADOW:
+        promoted, vetoed = promote_shadow(state, ipb, now)
+        if promoted:
+            notify("🧪→🔒 shadow 名单转正 %dIP 7天: %s"
+                   % (len(promoted), ",".join(promoted[:10])))
+        if vetoed:
+            log("SAFETY: shadow promote vetoed: %s" % vetoed)
+
+    # ---- 一次性迁移：存量一次性自报小爬虫转静默（新口径 2026-10-31）----
+    if not state.get("migrated_lanes"):
+        n = 0
+        for rec in state["suspects"].values():
+            if (rec.get("status") == "open" and rec.get("tier") == "unknown-bot"
+                    and rec.get("seen", 1) <= SILENT_MAX_SEEN):
+                rec["status"] = "silent"
+                n += 1
+        state["migrated_lanes"] = True
+        if n:
+            log("migration: %d one-off unknown-bot -> silent" % n)
+
     # ---- 逐会话判定 ----
     counts = {"welcome": 0, "human": 0, "ban": 0, "suspect": 0, "noise": 0,
               "blocked": 0}
-    new_bans = {}          # ip -> (rule, evidence)
+    new_bans = {}          # ip -> (rule, evidence)（100% 线）
+    auto_bans = {}         # ip -> (rule, evidence)（新线，受 SHADOW 支配）
     new_suspects = []      # (sid, ip, rule, evidence)
     for ip, s in sess.items():
         asn, asn_name = state["asn_cache"].get(ip, [None, "unknown"])
@@ -641,30 +747,60 @@ def cmd_run(dry):
         elif verdict == "suspect":
             if fleet_check(s, asn, asn_name, ipb, ip, state, now):
                 rule = "one-shot-fleet"
+            selfid = is_selfid_ua(s, ipb)
             sid = sid_of(rule, ip)
+            is_new = sid not in state["suspects"]
             rec = state["suspects"].get(sid)
             if rec:
                 rec["last"] = now
                 rec["seen"] = rec.get("seen", 1) + 1
             else:
-                state["suspects"][sid] = {
+                rec = state["suspects"][sid] = {
                     "ip": ip, "asn": asn, "asn_name": asn_name, "tier": rule,
                     "evidence": evidence, "first": now, "last": now,
-                    "seen": 1, "status": "open", "notified": False}
+                    "seen": 1, "status": "open", "notified": False,
+                    "selfid": selfid}
+            rec["selfid"] = selfid          # 老档案回填（缺失时按当次会话真值）
+            # ---- 新线自动封（底线：自报爬虫/消费模糊 ISP 永不自动封）----
+            if (ip not in state["banned"]
+                    and ip not in (state.get("shadow_banned") or {})
+                    and rec.get("status") not in ("banned", "dismissed")):
+                ab = auto_ban_rule(rule, rec["seen"], asn, asn_name, selfid,
+                                   ua_lower(s), ipb)
+                if ab:
+                    auto_bans[ip] = (ab, evidence)
+                    rec["status"] = "banned"
+                    rec["ban_rule"] = ab
+                    continue
+            if is_new:
                 new_suspects.append((sid, ip, rule, evidence))
 
-    # ---- 新疑似 → TG 按 campaign 聚合（同一 bot 家族一条消息，防刷屏）----
+    # ---- 新疑似 → 分级 TG（自报爬虫静默/舰队一条；其余 campaign 聚合防刷屏）----
     groups = {}
     for sid, ip, rule, evidence in new_suspects:
         asn, asn_name = state["asn_cache"].get(ip, ["?", "?"])
         fam = bot_family(sess[ip])
         groups.setdefault((rule, asn, fam), []).append((sid, ip, evidence))
-    for (rule, asn, fam), items in list(groups.items())[:6]:
+    silent_count = 0
+    tg_groups = []
+    for (rule, asn, fam), items in groups.items():
+        mode = suspect_notify_mode(rule, len(items))
+        if rule == "unknown-bot":
+            for sid, _, _ in items:
+                state["suspects"][sid]["status"] = "silent"
+            silent_count += len(items)
+            if mode == "fleet":
+                sample = "; ".join("%s %s" % (ip, ev[:70]) for _, ip, ev in items[:2])
+                notify("🤖 自报爬虫 %s ×%dIP AS%s | %s | 封: ip-audit.py ban %s"
+                       % (fam, len(items), asn, sample[:240], items[0][0]))
+        else:
+            tg_groups.append(((rule, asn, fam), items))
+    for (rule, asn, fam), items in tg_groups[:6]:
         sample = "; ".join("%s %s" % (ip, ev[:70]) for _, ip, ev in items[:2])
         notify("🤔 疑似机器人 %s ×%dIP AS%s | %s | 封: ip-audit.py ban %s"
             % (fam, len(items), asn, sample[:240], items[0][0]))
-    if len(groups) > 6:
-        notify("…另有 %d 组新疑似未推送（见 ip-audit.py status）" % (len(groups) - 6))
+    if len(tg_groups) > 6:
+        notify("…另有 %d 组新疑似未推送（见 ip-audit.py status）" % (len(tg_groups) - 6))
     for sid, ip, rule, evidence in new_suspects:
         state["suspects"][sid]["notified"] = True
 
@@ -680,6 +816,31 @@ def cmd_run(dry):
         keep = sorted(state["banned"].items(), key=lambda kv: kv[1]["until"])[:TEMP_BAN_MAX]
         state["banned"] = dict(keep)
 
+    # ---- 新线自动封 → shadow 记账或实封（2026-10-31 底线版）----
+    if auto_bans:
+        by_rule = {}
+        for ip, (rule, evidence) in auto_bans.items():
+            by_rule.setdefault(rule, []).append(ip)
+        detail = "; ".join("%s: %s" % (r, ",".join(ips[:6]))
+                           for r, ips in sorted(by_rule.items())[:5])
+        if SHADOW:
+            sb = state.setdefault("shadow_banned", {})
+            for ip, (rule, evidence) in auto_bans.items():
+                sb[ip] = {"until": now + BAN_TTL, "rule": rule, "since": now,
+                          "evidence": evidence}
+            if len(sb) > TEMP_BAN_MAX:
+                keep = sorted(sb.items(), key=lambda kv: kv[1]["until"])[:TEMP_BAN_MAX]
+                state["shadow_banned"] = dict(keep)
+            notify("🧪 shadow 将自动封 %dIP（未动手）: %s" % (len(auto_bans), detail))
+            log("shadow auto-bans: %s"
+                % {ip: r for ip, (r, _) in auto_bans.items()})
+        else:
+            for ip, (rule, evidence) in auto_bans.items():
+                state["banned"][ip] = {"until": now + BAN_TTL, "rule": rule,
+                                       "since": now, "evidence": evidence}
+                log("auto-banned %s (%s)" % (ip, rule))
+            notify("🔒 新线自动封 %dIP 7天: %s" % (len(auto_bans), detail))
+
     # ---- CF 同步（变更或上轮失败都重推）----
     sync_ok = True
     if new_bans or unbanned_changed or state.get("unsynced"):
@@ -691,16 +852,21 @@ def cmd_run(dry):
     nz_day = time.strftime("%F", time.gmtime(now + 13 * 3600))
     if state["counters"].get("day") and state["counters"]["day"] != nz_day:
         c = state["counters"]
-        notify("📊 %s 简报: 真人%d 欢迎爬虫%d 疑似%d(新%d) 拦截%d 自动封%d 解封%d 样本IP%d"
+        notify("📊 %s 简报: 真人%d 欢迎爬虫%d 疑似%d(新%d 静默%d) 拦截%d "
+               "自动封%d(百%%线%d 新线%d shadow%d) 解封%d 样本IP%d"
             % (c["day"], c["human"], c["welcome"], c["suspect"],
-               c.get("suspect_new", 0), c.get("blocked", 0),
-               c["ban"], c["unban"], c["ips"]))
+               c.get("suspect_new", 0), c.get("silent", 0), c.get("blocked", 0),
+               c["ban"] + c.get("ban_auto", 0), c["ban"], c.get("ban_auto", 0),
+               c.get("shadow", 0), c["unban"], c["ips"]))
         state["counters"] = {}
     c = state["counters"]
     c["day"] = nz_day
     for k in ("human", "welcome", "suspect", "noise", "blocked"):
         c[k] = c.get(k, 0) + counts[k]
     c["ban"] = c.get("ban", 0) + len(new_bans)
+    c["ban_auto"] = c.get("ban_auto", 0) + (0 if SHADOW else len(auto_bans))
+    c["shadow"] = c.get("shadow", 0) + (len(auto_bans) if SHADOW else 0)
+    c["silent"] = c.get("silent", 0) + silent_count
     c["unban"] = c.get("unban", 0) + len(unbanned)
     c["suspect_new"] = c.get("suspect_new", 0) + len(new_suspects)
     c["ips"] = c.get("ips", 0) + len(sess)
@@ -708,8 +874,8 @@ def cmd_run(dry):
     state["checkpoint"] = now
     prune(state, now)
     save_state(state)
-    log("done: %s bans=%d suspects_open=%d%s"
-        % (counts, len(state["banned"]),
+    log("done: %s bans=%d shadow_bans=%d suspects_open=%d%s"
+        % (counts, len(state["banned"]), len(state.get("shadow_banned") or {}),
            sum(1 for x in state["suspects"].values() if x["status"] == "open"),
            " (dry)" if dry else ""))
 
@@ -765,6 +931,16 @@ def cmd_status():
     for ip, b in sorted(state["banned"].items(), key=lambda kv: kv[1]["until"]):
         print("  %s until %s rule=%s" % (ip, time.strftime(
             "%F %T", time.gmtime(b["until"])), b["rule"]))
+    sb = state.get("shadow_banned") or {}
+    if sb:
+        print("== shadow_banned (%d) 待转正 ==" % len(sb))
+        for ip, b in sorted(sb.items(), key=lambda kv: kv[1]["until"]):
+            print("  %s rule=%s since %s" % (ip, b["rule"], time.strftime(
+                "%F %T", time.gmtime(b.get("since", 0)))))
+    st = {}
+    for r in state["suspects"].values():
+        st[r.get("status", "?")] = st.get(r.get("status", "?"), 0) + 1
+    print("== suspects by status: %s ==" % st)
     open_s = [(sid, r) for sid, r in state["suspects"].items()
               if r["status"] == "open"]
     print("== suspects open (%d) ==" % len(open_s))
