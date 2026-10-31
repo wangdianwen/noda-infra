@@ -396,16 +396,6 @@ def test_auto_ban_repeat_offender_threshold():
                                 False, CHROME_125.lower(), ipb) is None
 
 
-def test_suspect_notify_mode():
-    """自报爬虫：一次性静默、舰队（≥3 新 IP）发一条；其余 tier 即时报"""
-    assert ia.suspect_notify_mode("unknown-bot", 1) == "silent"
-    assert ia.suspect_notify_mode("unknown-bot", 2) == "silent"
-    assert ia.suspect_notify_mode("unknown-bot", 3) == "fleet"
-    assert ia.suspect_notify_mode("unknown-bot", 10) == "fleet"
-    assert ia.suspect_notify_mode("reality-mismatch", 1) == "tg"
-    assert ia.suspect_notify_mode("mass-scraper", 1) == "tg"
-
-
 def test_promote_shadow_vetoes_and_promotes(tmp_path, monkeypatch):
     """影子转正：普通 IP 进 banned，owner/官方段最终否决（双保险）"""
     owner_ip = next(iter(ipb.OWNER_IPS))

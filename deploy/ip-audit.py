@@ -14,23 +14,23 @@ ip-audit.py — 源站日志判据式 bot 判定器（2026-10-28 用户需求：
     机房段（10-28 SoftLayer Firefox/41 判例）
   ④ 蜜罐命中（HONEY_PATHS 预留，部署后自动生效）
   粒度只封单 IP（不做 /24 扩大）；命中站主 IP / 官方段的提案自动否决。
-- 疑似线分级处置（2026-10-31 用户底线：正常爬虫和真人永不自动封）：
-  ① 新线自动封 7 天 = 机房段 ASN + 非自报身份 + 冒充浏览器/无爬虫礼仪：
+- 疑似线分级处置（2026-11-01 口径：疑似裁决也静默，TG 只留动手事件与日简报；
+  底线不变：正常爬虫和真人永不自动封）：
+  ① 新线自动封 7 天 = 机房段 ASN 严格真值 + 非自报身份 + 冒充浏览器/无爬虫礼仪：
      reality-mismatch（停更+行为硬信号）∧机房、mass-scraper∧机房∧非自报、
-     odd-client-dc（monitor 类 UA 除外→TG）、任意 tier 惯犯 seen≥20∧机房∧非自报。
+     odd-client-dc（monitor 类 UA 除外）、任意 tier 惯犯 seen≥20∧机房∧非自报。
      联通/VNPT 等消费与模糊 ISP 一票否决（10-18 WARP 误封判例形态在此）；
      自报身份爬虫永不自动封（可能是正常新爬虫）。
-  ② 静默归档 = 一次性自报小爬虫 unknown-bot（seen≤2 不封不发，留档供舰队判定）；
-     自报爬虫舰队（同族新 IP≥3）只发一条 TG，状态仍静默。
-  ③ TG 待裁决 = 消费/模糊 ISP 疑似、stale-browser 弱信号（VN/RO 家宽老电脑判例）、
-     自报的重爬虫——ip-audit.py ban <sid> / dismiss <sid> 不变。
+  ② 静默归档 = 全部疑似（含消费 ISP 拟真舰队 11-01 判例：Chrome/119+HEAD×3+
+     短链复用跨 200+ 住民 IP，不可自动封只能归档）；30 天不活跃即清档。
+  ③ TG = 仅 🔒 自动封 / 🧪 shadow 决策 + 日简报一行（含新疑似 top 家族）；
+     ban <sid> / dismiss <sid> 手动通路保留。
   影子期：IP_AUDIT_SHADOW=1 时新线决策只记 state.shadow_banned+TG（🧪）不动 CF；
   切实后首个非影子 run 自动转正（转正前重过 owner/官方段否决）。
-  s1 拟真自动化 = UA 停更(主版本落后≥12) 且 (HEAD≥3 / 单页爆发≥40req≤120s /
-     短链队列复用) 占一——RCN 10-28 判例（Chrome/125+HEAD 突发+65req/60s）
-  s2 一次性校验队 = 单页≤3req 零 JS 机房段，同 ASN 同形状 ≥3 IP——Baxet 10-28 判例
-  s3 自报 bot 但不在欢迎名单（10-28 KeenableBot/Reflectionbot 判例）
-  s4 重爬虫 = ≥100req 且 JS 资产占比<10% 且零 graphql/PWA
+  判定信号（classifier 不变）：s1 拟真 = UA 停更(主版本落后≥12) 且 (HEAD≥3 /
+     单页爆发≥40req≤120s / 短链队列复用) 占一；s2 校验队 = 单页≤3req 零 JS
+     机房段同 ASN 同形状 ≥3 IP；s3 自报不在欢迎名单；s4 重爬 = ≥100req 且
+     JS<10% 且零 graphql/PWA。
 - 全拦静默（2026-10-29 用户口径：机器人没拉到页面就别发 TG）：会话 0 次成功
   取页（无 2xx/3xx）且多数响应是本方拦截态（nginx 限速 429 / botblock 403 /
   origin-gate 444）→ 判 blocked，不动手、不进疑似、不发通知——拦它的防线继续
@@ -454,14 +454,6 @@ def auto_ban_rule(tier, seen, asn, asn_name, selfid, ua_str, ipb):
     return None
 
 
-def suspect_notify_mode(rule, new_count):
-    """疑似 TG 模式：unknown-bot（自报爬虫）一次性静默，舰队（≥FLEET_MIN_IPS
-    个新 IP）发一条；其余 tier 维持即时报（防刷屏聚合照旧）。"""
-    if rule != "unknown-bot":
-        return "tg"
-    return "fleet" if new_count >= FLEET_MIN_IPS else "silent"
-
-
 def promote_shadow(state, ipb, now):
     """影子名单转正 → (promoted, vetoed)。owner/官方段最终否决（双保险：
     影子判定时已否决过一次，转正再验一次）。"""
@@ -578,12 +570,13 @@ def load_state():
             s.setdefault("queue", {})
             s.setdefault("counters", {})
             s.setdefault("shadow_banned", {})
+            s.setdefault("digest_fams", {})
             return s
     except Exception:
         pass
     return {"checkpoint": None, "asn_cache": {}, "banned": {}, "suspects": {},
             "fleet": {}, "queue": {}, "counters": {}, "unsynced": False,
-            "daily_sent": None, "shadow_banned": {}}
+            "daily_sent": None, "shadow_banned": {}, "digest_fams": {}}
 
 
 def save_state(state):
@@ -627,8 +620,7 @@ def prune(state, now):
             del state["fleet"][key]
     for sid in list(state["suspects"]):
         rec = state["suspects"][sid]
-        if (rec.get("status") in ("banned", "dismissed", "silent")
-                and now - rec.get("last", 0) > 30 * 86400):
+        if now - rec.get("last", 0) > 30 * 86400:   # 任何 status：30 天不活跃即清档
             del state["suspects"][sid]
     if len(state["asn_cache"]) > 20000:
         for k in list(state["asn_cache"])[:len(state["asn_cache"]) - 20000]:
@@ -728,6 +720,16 @@ def cmd_run(dry):
         state["migrated_lanes"] = True
         if n:
             log("migration: %d one-off unknown-bot -> silent" % n)
+    # ---- 一次性迁移 v2：全静默口径下存量 open 全转 silent（2026-11-01）----
+    if not state.get("migrated_all_silent"):
+        n = 0
+        for rec in state["suspects"].values():
+            if rec.get("status") == "open":
+                rec["status"] = "silent"
+                n += 1
+        state["migrated_all_silent"] = True
+        if n:
+            log("migration v2: %d open -> silent (11-01 全静默口径)" % n)
 
     # ---- 逐会话判定 ----
     counts = {"welcome": 0, "human": 0, "ban": 0, "suspect": 0, "noise": 0,
@@ -775,34 +777,25 @@ def cmd_run(dry):
             if is_new:
                 new_suspects.append((sid, ip, rule, evidence))
 
-    # ---- 新疑似 → 分级 TG（自报爬虫静默/舰队一条；其余 campaign 聚合防刷屏）----
+    # ---- 新疑似 → 全静默归档（2026-11-01 口径），家族汇总进日简报 ----
     groups = {}
     for sid, ip, rule, evidence in new_suspects:
         asn, asn_name = state["asn_cache"].get(ip, ["?", "?"])
         fam = bot_family(sess[ip])
         groups.setdefault((rule, asn, fam), []).append((sid, ip, evidence))
     silent_count = 0
-    tg_groups = []
+    fam_counts = {}
     for (rule, asn, fam), items in groups.items():
-        mode = suspect_notify_mode(rule, len(items))
-        if rule == "unknown-bot":
-            for sid, _, _ in items:
-                state["suspects"][sid]["status"] = "silent"
-            silent_count += len(items)
-            if mode == "fleet":
-                sample = "; ".join("%s %s" % (ip, ev[:70]) for _, ip, ev in items[:2])
-                notify("🤖 自报爬虫 %s ×%dIP AS%s | %s | 封: ip-audit.py ban %s"
-                       % (fam, len(items), asn, sample[:240], items[0][0]))
-        else:
-            tg_groups.append(((rule, asn, fam), items))
-    for (rule, asn, fam), items in tg_groups[:6]:
-        sample = "; ".join("%s %s" % (ip, ev[:70]) for _, ip, ev in items[:2])
-        notify("🤔 疑似机器人 %s ×%dIP AS%s | %s | 封: ip-audit.py ban %s"
-            % (fam, len(items), asn, sample[:240], items[0][0]))
-    if len(tg_groups) > 6:
-        notify("…另有 %d 组新疑似未推送（见 ip-audit.py status）" % (len(tg_groups) - 6))
+        for sid, _, _ in items:
+            state["suspects"][sid]["status"] = "silent"
+        silent_count += len(items)
+        key = "%s/%s" % (fam, rule)
+        fam_counts[key] = fam_counts.get(key, 0) + len(items)
+    df = state.setdefault("digest_fams", {})     # 当日累计，日简报随 counters 清零
+    for k, v in fam_counts.items():
+        df[k] = df.get(k, 0) + v
     for sid, ip, rule, evidence in new_suspects:
-        state["suspects"][sid]["notified"] = True
+        state["suspects"][sid]["notified"] = False
 
     # ---- 100% 线 → 封 7 天 ----
     for ip, (rule, evidence) in new_bans.items():
@@ -852,13 +845,19 @@ def cmd_run(dry):
     nz_day = time.strftime("%F", time.gmtime(now + 13 * 3600))
     if state["counters"].get("day") and state["counters"]["day"] != nz_day:
         c = state["counters"]
-        notify("📊 %s 简报: 真人%d 欢迎爬虫%d 疑似%d(新%d 静默%d) 拦截%d "
-               "自动封%d(百%%线%d 新线%d shadow%d) 解封%d 样本IP%d"
+        df = state.get("digest_fams") or {}
+        tops = ", ".join("%s×%d" % (k.split("/")[0], v)
+                         for k, v in sorted(df.items(),
+                                            key=lambda kv: -kv[1])[:3])
+        notify("📊 %s 简报: 真人%d 欢迎%d 疑似%d(新%d) 拦截%d "
+               "自动封%d(百%%线%d 新线%d shadow%d) 解封%d 样本IP%d%s"
             % (c["day"], c["human"], c["welcome"], c["suspect"],
-               c.get("suspect_new", 0), c.get("silent", 0), c.get("blocked", 0),
+               c.get("suspect_new", 0), c.get("blocked", 0),
                c["ban"] + c.get("ban_auto", 0), c["ban"], c.get("ban_auto", 0),
-               c.get("shadow", 0), c["unban"], c["ips"]))
+               c.get("shadow", 0), c["unban"], c["ips"],
+               (" | top: " + tops) if tops else ""))
         state["counters"] = {}
+        state["digest_fams"] = {}
     c = state["counters"]
     c["day"] = nz_day
     for k in ("human", "welcome", "suspect", "noise", "blocked"):
