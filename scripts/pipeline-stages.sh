@@ -3237,7 +3237,9 @@ _fs_rollback_mirror_stg()
         log_warn "stg 无同层快照（$STG_STATIC_ROOT/sites/${snap_dir:--}），跳过 stg 镜像回滚（不影响 prod）"
         return 0
     fi
-    if rsync -a --delete "$STG_STATIC_ROOT/sites/$snap_dir/" "$STG_STATIC_ROOT/sites/$product/"; then
+    # --checksum：回滚是正确性优先操作——quick-check(size+mtime) 会跳过「同尺寸
+    # 同秒 mtime 但内容不同」的文件（2026-11-02 #8 回滚演练实证），必须内容比对
+    if rsync -a --delete --checksum "$STG_STATIC_ROOT/sites/$snap_dir/" "$STG_STATIC_ROOT/sites/$product/"; then
         log_info "stg 静态根已同步回滚（fs）：sites/$snap_dir/ → sites/$product/"
     else
         log_warn "stg 静态根回滚失败（不影响 prod）"
@@ -3270,7 +3272,7 @@ _pipeline_rollback_static_site_fs()
     fi
     if [ "${prev_objs:-0}" -gt 0 ]; then
         log_info "回滚（fs）: $root/$snap_dir/（$prev_objs 文件）→ $root/$product/ ...（r4s 本机 rsync --delete）"
-        if ! remote_exec "rsync -a --delete $root/$snap_dir/ $root/$product/"; then
+        if ! remote_exec "rsync -a --delete --checksum $root/$snap_dir/ $root/$product/"; then
             log_error "prod fs 回滚失败（$snap_dir → $product）"
             return 1
         fi
