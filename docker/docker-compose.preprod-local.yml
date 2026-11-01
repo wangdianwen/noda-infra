@@ -141,6 +141,10 @@ services:
       - /Users/dianwenwang/Project/noda-infra/config/nginx/liuyao-local.conf:/etc/nginx/conf.d/default.conf:ro
       - /Users/dianwenwang/Project/noda-infra/config/nginx/snippets:/etc/nginx/snippets:ro
       - /Users/dianwenwang/Project/noda-infra/config/nginx/ssl:/etc/nginx/ssl:ro
+      # 本地静态根（noda-infra#8 P3，2026-11-02）：preprod 挂 static-stg（顶层
+      # sites/<产品>/ 与 cdn/…，同 prod 布局；发布流水线写入此目录），原 SeaweedFS
+      # stg 桶代理（seaweedfs-*-stg snippet 与 cdn-preprod 块）切本地只读直读
+      - ../docker/volumes/static-stg:/var/noda-static:ro
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:80/health || exit 1"]
       interval: 30s
