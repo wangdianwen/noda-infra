@@ -54,7 +54,10 @@ account = $b2_account_id
 key = $b2_application_key
 EOF
 
-    # SeaweedFS S3 remote（文件系统备份用；未配置时不写入，FS 备份自会显式报错）
+    # SeaweedFS S3 remote（FS 备份 s3weed: 前缀源用；2026-11-02 #8 SeaweedFS 退役起为
+    # 过渡期兼容保留——本地路径源（/backup-sources/<name>）不经此 remote，纯本地源部署
+    # 可不配置 SEAWEED_S3_*；未配置时不写入本节，backup-filesystem.sh 仅在存在
+    # s3weed: 源且凭据缺失时显式报错）
     if [[ -n "${SEAWEED_S3_ACCESS_KEY:-}" && -n "${SEAWEED_S3_SECRET_KEY:-}" ]]; then
         cat >>"$rclone_config" <<EOF
 

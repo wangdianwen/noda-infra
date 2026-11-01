@@ -109,6 +109,14 @@ services:
       # preprod 须显式指向 -preprod 域，否则 preprod sitemap/注入输出 prod URL）
       NEXT_PUBLIC_SITE_URL: "https://class-preprod.noda.co.nz"
       NEXT_PUBLIC_NEARBY_SITE_URL: "https://nearby-preprod.noda.co.nz"
+      # blobstore fs 模式（#123/#8 SeaweedFS 退役）：preprod 直接 fs——stg 无
+      # 30 天保留约束，直写本地静态根 cdn/ 子树（与 pipeline fs 后端同根：
+      # STG_STATIC_ROOT=docker/volumes/static-stg）
+      BLOBSTORE_MODE: "fs"
+      BLOBSTORE_FS_DIR: "/data/blobstore"
+    volumes:
+      # 静态 fs 后端根（#8）：blobstore 可写直挂 cdn/ 子树
+      - ../docker/volumes/static-stg/cdn:/data/blobstore
     tmpfs:
       - /tmp
       - /app/crawl-output:uid=1001,gid=1001,mode=0755
@@ -141,6 +149,10 @@ services:
       - /Users/dianwenwang/Project/noda-infra/config/nginx/liuyao-local.conf:/etc/nginx/conf.d/default.conf:ro
       - /Users/dianwenwang/Project/noda-infra/config/nginx/snippets:/etc/nginx/snippets:ro
       - /Users/dianwenwang/Project/noda-infra/config/nginx/ssl:/etc/nginx/ssl:ro
+      # 本地静态根（noda-infra#8 P3，2026-11-02）：preprod 挂 static-stg（顶层
+      # sites/<产品>/ 与 cdn/…，同 prod 布局；发布流水线写入此目录），原 SeaweedFS
+      # stg 桶代理（seaweedfs-*-stg snippet 与 cdn-preprod 块）切本地只读直读
+      - ../docker/volumes/static-stg:/var/noda-static:ro
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:80/health || exit 1"]
       interval: 30s

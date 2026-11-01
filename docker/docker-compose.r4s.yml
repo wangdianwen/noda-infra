@@ -72,6 +72,11 @@ services:
       - "8080:80"
       - "8081:81"
       - "8443:443"
+    volumes:
+      # 本地静态根（noda-infra#8 P3，2026-11-02）：sites/<产品>/ 九站 + cdn/{nearby,avatars}，
+      # 原 SeaweedFS S3 代理（cdn.conf 与 seaweedfs-* snippet）切本地文件系统只读直读；
+      # 与 base nginx 服务的 config 卷按 target 合并追加
+      - /mnt/mmc1-4/Noda/Static:/var/noda-static:ro
     # !override 长格式网络配置：补齐新旧两个 DNS 别名（容器改名后旧名靠 alias 保活）
     networks: !override
       noda-network:
