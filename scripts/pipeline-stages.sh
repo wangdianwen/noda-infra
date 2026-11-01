@@ -1654,7 +1654,7 @@ EOF
                             --connect-timeout 10 \
                             --max-time 30 2>/dev/null)" || true
                         if [ "$http_code" = "200" ]; then
-                            log_info "  资产批次清缓存 OK（累计 $i）"
+                            log_info "  资产批次清缓存 OK（累计 ${i}）"
                         else
                             log_error "  资产批次清缓存失败 (HTTP ${http_code:-timeout})，不影响部署"
                         fi
@@ -1673,7 +1673,7 @@ EOF
                         --connect-timeout 10 \
                         --max-time 30 2>/dev/null)" || true
                     if [ "$http_code" = "200" ]; then
-                        log_info "  资产尾批清缓存 OK（共 $i）"
+                        log_info "  资产尾批清缓存 OK（共 ${i}）"
                     else
                         log_error "  资产尾批清缓存失败 (HTTP ${http_code:-timeout})，不影响部署"
                     fi
@@ -3101,7 +3101,7 @@ _publish_static_to_prod_fs()
     log_info "prod 静态后端=fs（.backend-fs 标记）：rsync 蓝绿发布 → $root/$product/"
     # 目标根幂等兜底（M1 建根；不动 .backend-fs 标记）
     if ! remote_exec "mkdir -p $root"; then
-        log_error "无法创建 $root（r4s）"
+        log_error "无法创建 ${root}（r4s）"
         return 1
     fi
 
@@ -3175,7 +3175,7 @@ _publish_static_to_stg_fs()
     local root="$STG_STATIC_ROOT/sites"
 
     log_info "stg 静态后端=fs（.backend-fs 标记）：本地 rsync 蓝绿发布 → $root/$product/"
-    mkdir -p "$root" || { log_error "无法创建 $root（fs stg）"; return 1; }
+    mkdir -p "$root" || { log_error "无法创建 ${root}（fs stg）"; return 1; }
 
     local remote_fp=""
     if [ -f "$root/$product/.noda-artifact-hash" ]; then
@@ -3273,7 +3273,7 @@ _pipeline_rollback_static_site_fs()
     if [ "${prev_objs:-0}" -gt 0 ]; then
         log_info "回滚（fs）: $root/$snap_dir/（$prev_objs 文件）→ $root/$product/ ...（r4s 本机 rsync --delete）"
         if ! remote_exec "rsync -a --delete --checksum $root/$snap_dir/ $root/$product/"; then
-            log_error "prod fs 回滚失败（$snap_dir → $product）"
+            log_error "prod fs 回滚失败（$snap_dir → ${product}）"
             return 1
         fi
         now_objs=$(remote_exec "find $root/$product -type f 2>/dev/null | wc -l" 120 2>/dev/null | tr -d '[:space:]') || now_objs=0
@@ -3288,7 +3288,7 @@ _pipeline_rollback_static_site_fs()
             return 1
         fi
         _fs_rollback_mirror_stg "$product" "$snap_dir"
-        log_success "$product 静态站已回滚到快照层 $snap_dir（fs，$now_objs 文件）；下次发布会重新快照"
+        log_success "$product 静态站已回滚到快照层 ${snap_dir}（fs，$now_objs 文件）；下次发布会重新快照"
         return 0
     fi
 
@@ -3300,11 +3300,11 @@ _pipeline_rollback_static_site_fs()
             return 1
         fi
         if [ -n "$sentinel" ] && ! remote_exec "test -f $root/$product/$sentinel"; then
-            log_error "回滚后哨兵缺失（fs）：$root/$product/$sentinel（$product-old 内容异常）"
+            log_error "回滚后哨兵缺失（fs）：$root/$product/${sentinel}（$product-old 内容异常）"
             return 1
         fi
         _fs_rollback_mirror_stg "$product" ""
-        log_success "$product 静态站已回滚（fs，反向 mv $product-old → $product）；下次发布会重新快照"
+        log_success "$product 静态站已回滚（fs，反向 mv $product-old → ${product}）；下次发布会重新快照"
         return 0
     fi
 
@@ -4809,8 +4809,8 @@ pipeline_release_build_lock()
 # 背景：stg 发布经 pipeline_publish_static_site 取 static-publish，post always 才
 # 释放——静态班的整个 Human Approval 窗口（最长 6h）都占着全局静态锁，其他产品
 # 静态发布全被堵（batch #9 实证挂起子班占锁 30min 过期）；更糟的是同产品 api 班
-# （fast 持 build-$product）等 static-publish、本班审批后 Deploy Prod 重取
-# build-$product，构成 ABBA 死锁（#751/#752 实证：互等 900s 超时连杀两班）。
+# （fast 持 build-${product}）等 static-publish、本班审批后 Deploy Prod 重取
+# build-${product}，构成 ABBA 死锁（#751/#752 实证：互等 900s 超时连杀两班）。
 # 审批前释放 + Deploy 前经包装层重取后，static 与 api 两流取锁顺序恢复全局一致
 # （build-$product → static-publish），死锁环不复存在。
 pipeline_release_static_publish_lock()
