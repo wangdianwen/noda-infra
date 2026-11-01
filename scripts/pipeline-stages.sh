@@ -774,6 +774,7 @@ _start_prod_api()
             --tmpfs /app/crawl-output:uid=1001,gid=1001,mode=0755 \
             --tmpfs /app/crawler-logs:uid=1001,gid=1001,mode=0755 \
             -v /opt/noda/noda-infra/docker/volumes/ops-logs:/ops-logs:ro \
+            -v $PROD_STATIC_ROOT/cdn:/data/blobstore \
             --memory 256m \
             --memory-reservation 64m \
             --cpus 0.5 \
@@ -857,6 +858,7 @@ _start_prod_jobs()
             --read-only \
             --tmpfs /tmp \
             --tmpfs /app/crawl-output:uid=1001,gid=1001,mode=0755 \
+            -v $PROD_STATIC_ROOT/cdn:/data/blobstore \
             --memory 256m \
             --memory-reservation 64m \
             --cpus 0.5 \
@@ -955,6 +957,7 @@ _start_prod_static()
             -v $config_dir/ssl:/etc/nginx/ssl:ro \
             -v $config_dir/errors:/etc/nginx/errors:ro \
             -v /opt/noda/noda-infra/docker/volumes/ops-logs:/var/log/rl429:rw \
+            -v $PROD_STATIC_ROOT:/var/noda-static:ro \
             --memory 128m \
             --memory-reservation 32m \
             --cpus 0.25 \
@@ -2463,6 +2466,14 @@ pipeline_publish_static_site()
 _publish_static_to_prod()
 {
     local product="$1"
+    # #8 双后端：目标机 .backend-fs 标记存在 → fs 路径（rsync+mv+cp -al）；
+    # 缺失/探测失败 → 下方既有 s3 路径（回退锚，一字不动）
+    local backend
+    backend=$(prod_static_backend)
+    if [ "$backend" = "fs" ]; then
+        _publish_static_to_prod_fs "$product" || return 1
+        return 0
+    fi
     local min_objs="$STATIC_MIN_OBJS"
     local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
     local web_dir="$apps_dir/$STATIC_WEB_DIR"
@@ -2688,6 +2699,12 @@ _publish_static_to_prod()
 _publish_static_to_stg()
 {
     local product="$1"
+    # #8 双后端：本机 .backend-fs 标记存在 → fs 路径（本地 rsync+mv+cp -al）；
+    # 缺失 → 下方既有 s3 路径（回退锚，一字不动）
+    if [ "$(stg_static_backend)" = "fs" ]; then
+        _publish_static_to_stg_fs "$product" || return 1
+        return 0
+    fi
     local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
     local web_dir="$apps_dir/$STATIC_WEB_DIR"
     local endpoint="http://127.0.0.1:8333"
@@ -2890,6 +2907,407 @@ _rc()
     RCLONE_TRANSFERS="${RC_TRANSFERS:-16}" \
     RCLONE_CHECKERS="${RC_CHECKERS:-32}" \
         rclone --max-duration "${RC_MAX_DURATION:-2700}s" "$@"
+}
+
+# ============================================
+# 静态存储双后端原语（#8 SeaweedFS 退役，2026-11；fs 与 s3 并存期）
+# ============================================
+# 后端由目标机标记文件探测（.backend-fs 存在=fs，缺失=s3）——切换/回退只落/删
+# 一个标记文件，Jenkins 配置零改动。fs 后端 = rsync 推送 + mv 原子蓝绿切换 +
+# cp -al 硬链接快照；s3 后端 = 既有 seaweedfs 路径原样保留（回退锚，一字不动）。
+# 探测失败（ssh 不通/根目录未建）一律回落 s3——行为与退役前完全一致。
+STG_STATIC_ROOT="${STG_STATIC_ROOT:-$PROJECT_ROOT/docker/volumes/static-stg}"
+PROD_STATIC_ROOT="/mnt/mmc1-4/Noda/Static"
+
+# prod_static_backend - 探测 r4s 生产静态后端（echo fs 或 s3；失败回落 s3）
+prod_static_backend()
+{
+    [ "$(remote_exec "test -f $PROD_STATIC_ROOT/.backend-fs && echo fs || echo s3" 30 2>/dev/null)" = "fs" ] && echo fs || echo s3
+}
+
+# stg_static_backend - 探测本机 preprod 静态后端（echo fs 或 s3）
+stg_static_backend()
+{
+    [ -f "$STG_STATIC_ROOT/.backend-fs" ] && echo fs || echo s3
+}
+
+# _fs_static_content_unchanged - fs 后端「未变更跳过」判定
+# 双条件口径同 _static_content_unchanged（内容树哈希+对象数；指纹文件随 rsync
+# 整目录推送，无需 s3 路径的手动 copyto 上送）。STATIC_PUBLISH_FORCE=1 强制完整
+# 发布——仅 fs 路径生效（s3 路径的 FORCE_STATIC_PUBLISH 不受影响）。
+# 参数: $1=目标机指纹首行（可空） $2=out 目录
+_fs_static_content_unchanged()
+{
+    if [ "${STATIC_PUBLISH_FORCE:-0}" = "1" ]; then
+        log_info "STATIC_PUBLISH_FORCE=1，跳过未变更判定，走完整发布（fs）"
+        return 1
+    fi
+    local fp="$2/.noda-artifact-hash"
+    [ -f "$fp" ] || return 1
+    [ -n "$1" ] || return 1
+    local r_sha r_tree r_cnt l_sha l_tree l_cnt
+    read -r r_sha r_tree r_cnt <<EOF
+$1
+EOF
+    read -r l_sha l_tree l_cnt < "$fp"
+    case "$r_sha" in
+        *[!0-9a-f]*|'') return 1 ;;
+    esac
+    if [ "$r_tree" = "$l_tree" ] && [ "$r_cnt" = "$l_cnt" ]; then
+        log_info "内容树一致（fs）：tree=${l_tree:0:12}… objects=${l_cnt}（git ${l_sha:0:12}…→${r_sha:0:12}…）→ 判定内容未变更"
+        return 0
+    fi
+    return 1
+}
+
+# _fs_snapshot_prod - prod fs 发布前快照轮转（cp -al 硬链接，元数据级近零成本）
+# 链命名 0 起：<p>-prev0（最新）… <p>-prev<N>（最旧）；MAX_STATIC_SNAPSHOTS 控层数
+# （默认 1，与 s3 口径同值）。轮转 = 删最旧溢出层（prev<MAX-1>，满链时被挤出）→
+# 深到浅 rename 外移（rename 同设备零拷贝）→ cp -al 当前主目录 → prev0——prev0
+# 即「上一版」回滚锚（对齐 s3 发布前轮转语义：快照先于切换落盘）。
+# 超过 MAX 的历史残留层（调小配置遗留）不轮转不清理——同 s3 -prev2 残留判例。
+# cp -al 失败（跨设备/FS 不支持硬链）降级 cp -a 全量拷贝；快照失败仅告警绝不
+# 阻塞发布（主目录未动，$p-old 切换锚仍在）。参数: $1=product
+_fs_snapshot_prod()
+{
+    local product="$1"
+    local root="$PROD_STATIC_ROOT/sites"
+    local max_snap="${MAX_STATIC_SNAPSHOTS:-1}"
+    if ! remote_exec "test -d $root/$product"; then
+        log_info "首次发布（$product 主目录不存在），跳过快照（fs）"
+        return 0
+    fi
+    local i
+    remote_exec "rm -rf $root/$product-prev$((max_snap - 1))" || true
+    i=$((max_snap - 1))
+    while [ "$i" -ge 1 ]; do
+        remote_exec "mv $root/$product-prev$((i - 1)) $root/$product-prev$i 2>/dev/null" || true
+        i=$((i - 1))
+    done
+    # prev0 残留保险清除（防 cp 落进已存在目录变嵌套拷贝）后硬链快照
+    if remote_exec "rm -rf $root/$product-prev0; cp -al $root/$product $root/$product-prev0 2>/dev/null"; then
+        log_info "快照轮转完成（fs）：$product → $product-prev0（cp -al 硬链接）"
+    else
+        remote_exec "rm -rf $root/$product-prev0 2>/dev/null" || true
+        if remote_exec "cp -a $root/$product $root/$product-prev0"; then
+            log_warn "cp -al 不可用（跨设备/FS 限制），已降级 cp -a 全量快照（fs，$product-prev0）"
+        else
+            log_warn "快照失败（fs，$product-prev0）——回滚锚点未更新，不影响本次发布"
+        fi
+    fi
+    return 0
+}
+
+# _fs_snapshot_stg - stg fs 发布前快照轮转（本机，同 _fs_snapshot_prod 逻辑）
+_fs_snapshot_stg()
+{
+    local product="$1"
+    local root="$STG_STATIC_ROOT/sites"
+    local max_snap="${MAX_STATIC_SNAPSHOTS:-1}"
+    if [ ! -d "$root/$product" ]; then
+        log_info "首次发布（$product 主目录不存在），跳过快照（fs stg）"
+        return 0
+    fi
+    local i
+    rm -rf "$root/$product-prev$((max_snap - 1))" 2>/dev/null || true
+    i=$((max_snap - 1))
+    while [ "$i" -ge 1 ]; do
+        mv "$root/$product-prev$((i - 1))" "$root/$product-prev$i" 2>/dev/null || true
+        i=$((i - 1))
+    done
+    rm -rf "$root/$product-prev0" 2>/dev/null || true
+    if cp -al "$root/$product" "$root/$product-prev0" 2>/dev/null; then
+        log_info "快照轮转完成（fs stg）：$product → $product-prev0（cp -al 硬链接）"
+    elif cp -a "$root/$product" "$root/$product-prev0" 2>/dev/null; then
+        log_warn "cp -al 不可用（本机 FS 限制），已降级 cp -a 全量快照（fs stg，$product-prev0）"
+    else
+        log_warn "快照失败（fs stg，$product-prev0）——回滚锚点未更新，不影响本次发布"
+    fi
+    return 0
+}
+
+# _fs_switch_prod - prod fs 原子蓝绿切换（mv 双跳，语义对齐 s3 蓝绿切换）：
+# mv1 失败=主目录未动；mv2 失败=自动反向 mv 回滚。残留 $p-old 先清——mv 落在
+# 已存在目录会嵌套进目标而非报错，不清会静默损坏目录树（与 weed fs.mv 的
+# 覆盖语义不同，这是 POSIX mv 的坑）。参数: $1=product；返回 0=切换成功
+_fs_switch_prod()
+{
+    local product="$1"
+    local root="$PROD_STATIC_ROOT/sites"
+    if remote_exec "test -d $root/$product"; then
+        log_info "蓝绿切换 [1/2]（fs）：主目录 → $product-old（回滚锚点）..."
+        if ! remote_exec "cd $root && rm -rf $product-old && mv $product $product-old"; then
+            log_error "mv 主目录→old 失败（fs）——绿目录保留（下次 rsync 增量复用），主目录未动"
+            return 1
+        fi
+    else
+        log_info "首次发布（$product 主目录不存在），跳过 mv1（fs）"
+    fi
+    if ! remote_exec "cd $root && mv $product-green $product"; then
+        if remote_exec "test -d $root/$product-old"; then
+            if remote_exec "cd $root && mv $product-old $product"; then
+                log_warn "mv green→主目录失败，已回滚（主目录=旧版，fs）"
+            else
+                log_error "mv green→主目录失败且回滚失败——主目录缺失！立即人工：ssh $R4S_HOST mv $root/$product-old $root/$product"
+            fi
+        fi
+        return 1
+    fi
+    log_success "蓝绿切换完成（fs，mv 原子换名，旧版保留于 $product-old）"
+    return 0
+}
+
+# _fs_switch_stg - stg fs 原子蓝绿切换（本机，同 _fs_switch_prod 逻辑）
+_fs_switch_stg()
+{
+    local product="$1"
+    local root="$STG_STATIC_ROOT/sites"
+    if [ -d "$root/$product" ]; then
+        log_info "蓝绿切换 [1/2]（fs stg）：主目录 → $product-old（回滚锚点）..."
+        if ! (cd "$root" && rm -rf "$product-old" && mv "$product" "$product-old"); then
+            log_error "mv 主目录→old 失败（fs stg）——绿目录保留，主目录未动"
+            return 1
+        fi
+    else
+        log_info "首次发布（$product 主目录不存在），跳过 mv1（fs stg）"
+    fi
+    if ! (cd "$root" && mv "$product-green" "$product"); then
+        if [ -d "$root/$product-old" ]; then
+            if (cd "$root" && mv "$product-old" "$product"); then
+                log_warn "mv green→主目录失败，已回滚（主目录=旧版，fs stg）"
+            else
+                log_error "mv green→主目录失败且回滚失败——主目录缺失！立即人工：mv $root/$product-old $root/$product"
+            fi
+        fi
+        return 1
+    fi
+    log_success "蓝绿切换完成（fs stg，mv 原子换名，旧版保留于 $product-old）"
+    return 0
+}
+
+# _publish_static_to_prod_fs - prod fs 后端发布（#8：rsync 推送 + mv 蓝绿切换 +
+# cp -al 快照）。无中继/无 S3 凭据/无 mc 对账/无 vacuum 交互。绿目录全量 rsync
+# （--delete 收敛上次残留）→ 文件数对账（3 次收敛重试，不平绝不切换，对齐 s3
+# 蓝绿口径）→ 快照轮转 → mv 双跳切换 → 哨兵。参数: $1=product
+_publish_static_to_prod_fs()
+{
+    local product="$1"
+    local min_objs="$STATIC_MIN_OBJS"
+    local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
+    local web_dir="$apps_dir/$STATIC_WEB_DIR"
+    local out_dir="$web_dir/out"
+    local root="$PROD_STATIC_ROOT/sites"
+
+    log_info "prod 静态后端=fs（.backend-fs 标记）：rsync 蓝绿发布 → $root/$product/"
+    # 目标根幂等兜底（M1 建根；不动 .backend-fs 标记）
+    if ! remote_exec "mkdir -p $root"; then
+        log_error "无法创建 $root（r4s）"
+        return 1
+    fi
+
+    # 内容未变更判定（同 s3 路径语义：指纹一致整段跳过）
+    local remote_fp
+    remote_fp=$(remote_exec "cat $root/$product/.noda-artifact-hash 2>/dev/null | head -1" 30 2>/dev/null | head -1 || true)
+    if _fs_static_content_unchanged "$remote_fp" "$out_dir"; then
+        log_success "$product 内容未变更，跳过镜像与快照（fs）：$root/$product/"
+        return 0
+    fi
+
+    # 绿目录全量推送（SSH 参数对齐 remote_exec；指纹/清单随目录整体到达）
+    local rsync_ssh="ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=10 -o ServerAliveCountMax=6"
+    if [ -n "${SSH_KEY_FILE:-}" ]; then
+        rsync_ssh="ssh -i $SSH_KEY_FILE -o StrictHostKeyChecking=no -o ServerAliveInterval=10 -o ServerAliveCountMax=6"
+    fi
+    if ! rsync -az --delete -e "$rsync_ssh" "$out_dir/" "$R4S_HOST:$root/$product-green/"; then
+        log_error "绿目录 rsync 失败（fs）——主目录未动"
+        return 1
+    fi
+
+    # 文件数对账：本地 find 计数 vs 目标 find 计数（本地 FS 强一致，重试纯兜底；
+    # 不平重推幂等收敛，3 次后仍不平绝不切换）
+    local src_objs objs attempt
+    src_objs=$(find "$out_dir" -type f 2>/dev/null | wc -l | tr -d ' ')
+    objs=0
+    for attempt in 1 2 3; do
+        objs=$(remote_exec "find $root/$product-green -type f 2>/dev/null | wc -l" 120 2>/dev/null | tr -d '[:space:]') || objs=0
+        [ -z "$objs" ] && objs=0
+        if [ "$objs" -eq "$src_objs" ]; then
+            break
+        fi
+        log_warn "绿目录列举 ${objs} ≠ 源 ${src_objs}——全量 rsync 收敛（第 ${attempt} 次，fs）..."
+        rsync -az --delete -e "$rsync_ssh" "$out_dir/" "$R4S_HOST:$root/$product-green/" >/dev/null 2>&1 || true
+    done
+    if [ "$objs" -ne "$src_objs" ] || [ "$objs" -lt "$min_objs" ]; then
+        log_error "绿目录对账失败（源 $src_objs ≠ 目标 ${objs}）——不切换，主目录保持旧版（fs）"
+        return 1
+    fi
+
+    # 发布前快照轮转（prev0=切换前版本）
+    _fs_snapshot_prod "$product"
+
+    # 原子 mv 双跳切换（mv2 失败自动反向回滚）
+    if ! _fs_switch_prod "$product"; then
+        return 1
+    fi
+
+    # 切换后哨兵确认（对账已在绿目录做过，这里只做单点兜底）
+    local sentinel="${STATIC_SENTINEL#out/}"
+    if [ -f "$out_dir/$sentinel" ]; then
+        if ! remote_exec "test -f $root/$product/$sentinel"; then
+            log_error "切换后哨兵缺失（fs）：$root/$product/$sentinel"
+            return 1
+        fi
+    fi
+
+    log_success "$product 静态站 fs 发布完成：$root/$product/（$objs 个文件，与源一致）"
+    return 0
+}
+
+# _publish_static_to_stg_fs - stg fs 后端发布（本机 rsync，同 prod fs 结构；
+# Jenkins 与 stg 静态根同机，无 ssh）。参数: $1=product
+_publish_static_to_stg_fs()
+{
+    local product="$1"
+    local min_objs="$STATIC_MIN_OBJS"
+    local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
+    local web_dir="$apps_dir/$STATIC_WEB_DIR"
+    local out_dir="$web_dir/out"
+    local root="$STG_STATIC_ROOT/sites"
+
+    log_info "stg 静态后端=fs（.backend-fs 标记）：本地 rsync 蓝绿发布 → $root/$product/"
+    mkdir -p "$root" || { log_error "无法创建 $root（fs stg）"; return 1; }
+
+    local remote_fp=""
+    if [ -f "$root/$product/.noda-artifact-hash" ]; then
+        remote_fp=$(head -1 "$root/$product/.noda-artifact-hash" 2>/dev/null || true)
+    fi
+    if _fs_static_content_unchanged "$remote_fp" "$out_dir"; then
+        log_success "$product 内容未变更，跳过镜像与快照（fs stg）：$root/$product/"
+        return 0
+    fi
+
+    if ! rsync -az --delete "$out_dir/" "$root/$product-green/"; then
+        log_error "绿目录 rsync 失败（fs stg）——主目录未动"
+        return 1
+    fi
+
+    local src_objs objs attempt
+    src_objs=$(find "$out_dir" -type f 2>/dev/null | wc -l | tr -d ' ')
+    objs=0
+    for attempt in 1 2 3; do
+        objs=$(find "$root/$product-green" -type f 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$objs" -eq "$src_objs" ]; then
+            break
+        fi
+        log_warn "stg 绿目录列举 ${objs} ≠ 源 ${src_objs}——全量 rsync 收敛（第 ${attempt} 次，fs）..."
+        rsync -az --delete "$out_dir/" "$root/$product-green/" >/dev/null 2>&1 || true
+    done
+    if [ "$objs" -ne "$src_objs" ] || [ "$objs" -lt "$min_objs" ]; then
+        log_error "stg 绿目录对账失败（源 $src_objs ≠ 目标 ${objs}，fs）——不切换，主目录保持旧版"
+        return 1
+    fi
+
+    _fs_snapshot_stg "$product"
+    if ! _fs_switch_stg "$product"; then
+        return 1
+    fi
+
+    local sentinel="${STATIC_SENTINEL#out/}"
+    if [ -f "$out_dir/$sentinel" ] && [ ! -f "$root/$product/$sentinel" ]; then
+        log_error "切换后哨兵缺失（fs stg）：$root/$product/$sentinel"
+        return 1
+    fi
+
+    log_success "$product preprod fs 发布完成：$root/$product/（$objs 个文件，与源一致）"
+    return 0
+}
+
+# _fs_rollback_mirror_stg - 回滚的 stg 侧镜像（fs 模式）：按 stg 后端探测，
+# fs → 本地 rsync 同步 stg 自身的同层快照；s3 → 跳过（stg s3 桶由 s3 发布
+# 路径自管，下次 stg 发布自然对齐）。失败仅告警（preprod 非关键路径，同 s3 判例）。
+# 参数: $1=product $2=stg 侧快照目录名（空=无对应源，跳过）
+_fs_rollback_mirror_stg()
+{
+    local product="$1" snap_dir="$2"
+    if [ "$(stg_static_backend)" != "fs" ]; then
+        log_info "stg 仍为 s3 后端，跳过 fs 回滚的 stg 镜像（下次 stg 发布自然对齐）"
+        return 0
+    fi
+    if [ -z "$snap_dir" ] || [ ! -d "$STG_STATIC_ROOT/sites/$snap_dir" ]; then
+        log_warn "stg 无同层快照（$STG_STATIC_ROOT/sites/${snap_dir:--}），跳过 stg 镜像回滚（不影响 prod）"
+        return 0
+    fi
+    if rsync -a --delete "$STG_STATIC_ROOT/sites/$snap_dir/" "$STG_STATIC_ROOT/sites/$product/"; then
+        log_info "stg 静态根已同步回滚（fs）：sites/$snap_dir/ → sites/$product/"
+    else
+        log_warn "stg 静态根回滚失败（不影响 prod）"
+    fi
+    return 0
+}
+
+# _pipeline_rollback_static_site_fs - fs 后端回滚（#8）
+# 优先快照层（fs 链 0 起命名：depth d → <p>-prev$((d-1))——与 s3 链 prev/prev2
+# 命名不同，勿混用 _static_snapshot_dir），rsync --delete 恢复 + 对账 + 哨兵；
+# 无快照层 → 反向 mv（$p ↔ $p-old，坏版暂存 green 槽待下次发布覆盖）。
+# 参数: $1=product $2=depth（1=上一版，默认；上限 MAX_STATIC_SNAPSHOTS）
+_pipeline_rollback_static_site_fs()
+{
+    local product="$1"
+    local depth="${2:-1}"
+    _static_product_config "$product" || return 1
+    local max_snap="${MAX_STATIC_SNAPSHOTS:-1}"
+    case "$depth" in ''|*[!0-9]*) depth=1 ;; esac
+    [ "$depth" -lt 1 ] && depth=1
+    [ "$depth" -gt "$max_snap" ] && depth=$max_snap
+    local root="$PROD_STATIC_ROOT/sites"
+    local snap_dir="$product-prev$((depth - 1))"
+    local sentinel="${STATIC_SENTINEL#out/}"
+    local prev_objs now_objs
+
+    if remote_exec "test -d $root/$snap_dir"; then
+        prev_objs=$(remote_exec "find $root/$snap_dir -type f 2>/dev/null | wc -l" 120 2>/dev/null | tr -d '[:space:]') || prev_objs=0
+        [ -z "$prev_objs" ] && prev_objs=0
+    fi
+    if [ "${prev_objs:-0}" -gt 0 ]; then
+        log_info "回滚（fs）: $root/$snap_dir/（$prev_objs 文件）→ $root/$product/ ...（r4s 本机 rsync --delete）"
+        if ! remote_exec "rsync -a --delete $root/$snap_dir/ $root/$product/"; then
+            log_error "prod fs 回滚失败（$snap_dir → $product）"
+            return 1
+        fi
+        now_objs=$(remote_exec "find $root/$product -type f 2>/dev/null | wc -l" 120 2>/dev/null | tr -d '[:space:]') || now_objs=0
+        [ -z "$now_objs" ] && now_objs=0
+        log_info "回滚后主目录文件数: ${now_objs}（快照 ${prev_objs}）"
+        if [ "$now_objs" != "$prev_objs" ]; then
+            log_warn "回滚后文件数与快照不一致（${now_objs} vs ${prev_objs}）——请人工核对"
+        fi
+        # 哨兵单点校验（快照层自身有哨兵才要求主目录有——快照为部分残缺时不误杀忠实恢复）
+        if [ -n "$sentinel" ] && remote_exec "test -f $root/$snap_dir/$sentinel" 2>/dev/null && ! remote_exec "test -f $root/$product/$sentinel"; then
+            log_error "回滚后哨兵缺失（fs）：$root/$product/$sentinel"
+            return 1
+        fi
+        _fs_rollback_mirror_stg "$product" "$snap_dir"
+        log_success "$product 静态站已回滚到快照层 $snap_dir（fs，$now_objs 文件）；下次发布会重新快照"
+        return 0
+    fi
+
+    # 无可用快照层 → 反向 mv（$p ↔ $p-old）
+    if remote_exec "test -d $root/$product-old"; then
+        log_info "回滚（fs）：无快照层，反向 mv $product ↔ $product-old ..."
+        if ! remote_exec "cd $root && rm -rf $product-green && mv $product $product-green && mv $product-old $product"; then
+            log_error "反向 mv 回滚失败（fs）——立即人工检查 $root"
+            return 1
+        fi
+        if [ -n "$sentinel" ] && ! remote_exec "test -f $root/$product/$sentinel"; then
+            log_error "回滚后哨兵缺失（fs）：$root/$product/$sentinel（$product-old 内容异常）"
+            return 1
+        fi
+        _fs_rollback_mirror_stg "$product" ""
+        log_success "$product 静态站已回滚（fs，反向 mv $product-old → $product）；下次发布会重新快照"
+        return 0
+    fi
+
+    log_error "无回滚锚点（fs）：$root/$snap_dir 与 $root/$product-old 均不存在或为空"
+    return 1
 }
 
 # ============================================
@@ -3225,6 +3643,15 @@ _pipeline_rollback_static_site_impl()
     if [ -z "$product" ]; then
         log_error "用法: pipeline_rollback_static_site <product> [depth=1..${MAX_STATIC_SNAPSHOTS:-2}]"
         return 1
+    fi
+
+    # #8 双后端：prod .backend-fs 标记存在 → fs 回滚路径（prev 链/反向 mv）；
+    # 缺失/探测失败 → 下方既有 s3 路径（回退锚，一字不动）
+    local backend
+    backend=$(prod_static_backend)
+    if [ "$backend" = "fs" ]; then
+        _pipeline_rollback_static_site_fs "$product" "$depth" || return 1
+        return 0
     fi
 
     local relay_name="tmp-s3-relay-${product}"
