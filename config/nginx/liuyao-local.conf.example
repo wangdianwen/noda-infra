@@ -9,6 +9,9 @@
 # S3 preprod 同步（2026-09-12）：class/liuyao/nearby/admin/www 五站页面路由切换为
 #   SeaweedFS stg 桶（noda-static-stg/sites/<product>/）伺服——与 prod 完全同构；
 #   静态产物 = 同一份 output:'export' out/（mc mirror 到 stg 桶）。
+#   本地文件系统迁移（2026-11-02 noda-infra#8 P3）：stg 桶代理全部退役，改
+#   root /var/noda-static 直读——compose 挂 docker/volumes/static-stg 到
+#   /var/noda-static（目录顶层 sites/<product>/… 与 cdn/…，同 prod 布局）。
 #   本容器需挂载 config/nginx/snippets（seaweedfs-* snippet + security-headers +
 #   upstream-seaweedfs 均为共享文件）。三个 map 文件（class/liuyao/nearby.map.conf）
 #   内联于下方 http 上下文（本文件即 conf.d/default.conf，http 级合法）。
@@ -388,17 +391,13 @@ server {
         include /etc/nginx/snippets/seaweedfs-auth-static-stg.conf;
     }
 
-    # 头像（Go authapi 写桶 avatars/ 前缀，nginx 直读）
+    # 头像（Go authapi 写 avatars/ 前缀；2026-11-02 #8 本地根直读——
+    # /avatars/x → /var/noda-static/cdn/avatars/x 自然映射，原桶代理退役）
     location /avatars/ {
         add_header Cache-Control $auth_cache_control always;
         include /etc/nginx/snippets/security-headers.conf;
-        rewrite ^/avatars/(.*)$ /noda-static/avatars/$1 break;
-        proxy_pass http://$seaweedfs_upstream;
-        proxy_http_version 1.1;
-        proxy_set_header Host "seaweedfs:8333";
-        proxy_set_header Connection "";
-        proxy_connect_timeout 5s;
-        proxy_read_timeout 30s;
+        root /var/noda-static/cdn;
+        try_files $uri =404;
     }
 
     # 其余全部（带前缀页面、/404.html、/zh/* 302 规整、RSC .txt）
@@ -920,7 +919,8 @@ server {
     }
 }
 
-# ── HTTPS: CDN（stg 桶图片，不变）──
+# ── HTTPS: CDN（本地静态根直读，2026-11-02 #8；原 stg 桶代理退役——
+#    /<key> → /var/noda-static/cdn/<key>，Mac compose 挂 static-stg）──
 server {
     listen 443 ssl;
     server_name cdn-preprod.noda.co.nz;
@@ -929,8 +929,8 @@ server {
     ssl_certificate_key /etc/nginx/ssl/noda.dev.key;
 
     location / {
-        proxy_pass http://seaweedfs:8333;
-        proxy_set_header Host seaweedfs:8333;
+        root /var/noda-static/cdn;
+        try_files $uri =404;
     }
 }
 # ── HTTPS: snagme（2026-09-14 产品站化；S3 stg 桶版，与 prod snagme 块同构）──
