@@ -114,6 +114,9 @@ services:
       # STG_STATIC_ROOT=docker/volumes/static-stg）
       BLOBSTORE_MODE: "fs"
       BLOBSTORE_FS_DIR: "/data/blobstore"
+      # nearby 壳页基址（#123 fs 模式）：preprod-noda-static 专用 8181 监听
+      # （liuyao-local.conf 尾部 server 块），替代原 S3 path-style 桶基址
+      STATIC_SHELL_BASE_URL: "http://preprod-noda-static:8181"
     volumes:
       # 静态 fs 后端根（#8）：blobstore 可写直挂 cdn/ 子树
       - ../docker/volumes/static-stg/cdn:/data/blobstore
