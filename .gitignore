@@ -48,3 +48,4 @@ config/nginx/liuyao-local.conf
 config/seaweedfs/s3.json
 .worktrees/
 __pycache__/
+docker/volumes/static-stg/
