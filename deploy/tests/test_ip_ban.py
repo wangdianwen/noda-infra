@@ -65,6 +65,22 @@ def test_bing_ip_without_bot_ua_skips(ip_ban):
     assert ip_ban.classify("40.77.167.99", "Mozilla/5.0 Chrome/153.0") == "skip"
 
 
+def test_chrome_private_prefetch_proxy_v6_skips(ip_ban):
+    """2001:4860:7::/48（Chrome 私密预取代理/SERP 预取出口，ARIN 2001:4800::/23
+    Google LLC）不在 googlebot.json——2026-11-01 判例：persist 惯犯网把
+    2001:4860:7:40b::/64 列入挑战名单（源站 14 req 全 referer google.com、
+    真实内容页、零攻击信号），同族 :50b/:80b 在档案 3/4 天排队。预取代理
+    天生零 PWA 信号+零 304+多日重复，persist 三铁证恰是它的正常形状。"""
+    ua = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36")
+    assert ip_ban.classify("2001:4860:7:40b::ff", ua) == "skip"
+    assert ip_ban.classify("2001:4860:7:50b::ff", ua) == "skip"
+    assert ip_ban.classify("2001:4860:7:80b::1", ua) == "skip"
+    # SAFETY 闸镜像：同段提案必须被拒，防止任何通道再封进 Google 预取段
+    assert "2001:4860:7:40b::/64" not in ip_ban.apply_safety(
+        {"2001:4860:7:40b::/64": ("x", 60)})
+
+
 def test_prefetch_proxy_ip_outside_json_skips_via_legacy_19(ip_ban):
     """googlebot.json 只发布 crawl IP 的 /27 明细，不含 66.249.84.x（Chrome
     Prefetch Proxy 出口，2026-10 真实日志多级 XFF 出现过）——靠保留的
