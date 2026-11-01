@@ -3171,16 +3171,18 @@ _static_snapshot_rotate()
         if [ -n "$(_rc "$endpoint" "$ak" "$sk" lsf -R --files-only "SW:$bucket_root/sites/$src/" 2>/dev/null | head -1)" ]; then
             log_info "快照轮转 $src → $dst ..."
             # 子 shell 包 env：VAR=x 对【函数】调用持久留存（POSIX），防污染后续 _rc
-            # 传输 64：Mac 本机 stg weed transfers=32 实测 ~245 obj/s（#660 snagme
-            # 50k 对象 204s），留一倍余量给更大站点；stg 直连无中继，开销低
-            ( RC_TRANSFERS=64 RC_CHECKERS=128 _rc "$endpoint" "$ak" "$sk" sync \
+            # 并发用 _rc 默认 16/32（2026-11-01 #1159 判例：64/128 的依据是 stg
+            # Mac 本机直连实测，prod 经中继打 4GB ARM weed 会触发 memcg 直回收
+            # 冻结；且 10-30 内存纪律推演 32 流=限额 88% 已否决，64=176% 更不可）
+            ( _rc "$endpoint" "$ak" "$sk" sync \
                 "SW:$bucket_root/sites/$src/" "SW:$bucket_root/sites/$dst/" >/dev/null 2>&1 ) || \
                 log_warn "快照轮转 $src → $dst 失败（该层快照可能过期）"
         fi
         i=$((i - 1))
     done
     log_info "快照当前发布 → $bucket_root/sites/$(_static_snapshot_dir "$product" 1)/ ..."
-    ( RC_TRANSFERS=64 RC_CHECKERS=128 _rc "$endpoint" "$ak" "$sk" sync \
+    # 同上：16/32 默认并发（64/128 于 2026-11-01 撤销，判例见 _static_snapshot_rotate）
+    ( _rc "$endpoint" "$ak" "$sk" sync \
         "SW:$bucket_root/sites/$product/" "SW:$bucket_root/sites/$(_static_snapshot_dir "$product" 1)/" >/dev/null 2>&1 ) || \
         log_warn "快照失败（不影响本次发布，仅失去回滚锚点）"
 }
