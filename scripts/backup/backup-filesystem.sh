@@ -7,15 +7,18 @@ set -euo pipefail
 # 备份方式：rclone copy 直连 SeaweedFS S3 API → B2（对象级逻辑备份，流经内存
 #           不落本地盘）。原 tar 整卷方式废弃：活动写入下 tar 有一致性风险，
 #           且无法剔除可重建数据（sites/ 前端编译产物）。
-# 备份对象：BACKUP_FS_SOURCES（逗号分隔的 rclone 源路径，默认
-#           s3weed:noda-static/avatars:s3weed:noda-static/nearby，即头像 +
-#           nearby 爬取图片素材；sites/ 可经 Jenkins infra-deploy 重建不备份）
+# 备份对象：BACKUP_FS_SOURCES（逗号分隔的备份源，默认 s3weed:noda-static/avatars，即头像；
+#           2026-11-02 noda-infra#8 SeaweedFS 退役起支持绝对本地路径（容器内路径，如
+#           /backup-sources/avatars，配合 compose 只读挂载 /mnt/mmc1-4/Noda/Static/cdn/<name>），
+#           本地路径源直读挂载目录流经内存上 B2，无需 SEAWEED_S3_*；sites/ 可经 Jenkins
+#           infra-deploy 重建不备份）
 # 目标：b2remote:<bucket>/<FS_B2_PATH><src_name>/<YYYY/MM/DD>/（对象树原样镜像，
-#           恢复 = rclone copy 反向拷回 s3weed:noda-static/<src_name>/）
+#           恢复 = rclone copy 反向拷回源——本地路径源拷回挂载目录 / s3weed 源拷回
+#           s3weed:noda-static/<src_name>/）
 # 保留：FS_RETENTION_DAYS（默认 3 天）——每次备份后按日期目录整体清理
 #           <FS_B2_PATH><src_name>/ 下早于保留期的 YYYY/MM/DD 目录控制 B2 用量
 # 依赖：SEAWEED_S3_ENDPOINT / SEAWEED_S3_ACCESS_KEY / SEAWEED_S3_SECRET_KEY
-#           （rclone s3weed remote，见 lib/cloud.sh setup_rclone_config）
+#           （仅 s3weed: 源需要；rclone s3weed remote，见 lib/cloud.sh setup_rclone_config）
 # 运行位置：noda-ops 容器内 crond（deploy/crontab；容器与 seaweedfs 同在
 #           noda-network，无需挂载数据卷）
 # 用法：backup-filesystem.sh [--dry-run]
@@ -50,11 +53,12 @@ show_help()
   --help       显示帮助信息
 
 环境变量:
-  BACKUP_FS_SOURCES     逗号分隔的 rclone 备份源
-                        （默认 s3weed:noda-static/avatars:s3weed:noda-static/nearby）
+  BACKUP_FS_SOURCES     逗号分隔的备份源（s3weed: 前缀 rclone 路径，或容器内绝对
+                        本地路径如 /backup-sources/avatars；默认 s3weed:noda-static/avatars，
+                        noda-infra#8 迁移后推荐 /backup-sources/avatars）
   FS_B2_PATH            B2 目标前缀（默认 backups/filesystem/）
   FS_RETENTION_DAYS     B2 端保留天数（默认 3）
-  SEAWEED_S3_*          SeaweedFS S3 连接配置（endpoint/access key/secret key）
+  SEAWEED_S3_*          SeaweedFS S3 连接配置（仅 s3weed: 源需要）
 
 示例:
   $(basename "$0")              # 备份全部源并上传 B2 + 清理超期历史
@@ -117,13 +121,11 @@ parse_arguments()
 # ============================================
 # 函数：validate_fs_config
 # ============================================
-# FS 备份专属校验：S3 连接与源路径格式（load_config/validate_config 已跑通用项）
+# FS 备份专属校验：保留天数等通用项（load_config/validate_config 已跑通用项）。
+# SEAWEED_S3_* 校验移至 main 的源解析处——2026-11-02 #8 起本地路径源无需 S3 凭据，
+# 仅当存在 s3weed: 前缀源时才要求（SeaweedFS 退役后纯本地源不应被 S3 凭据卡死）
 validate_fs_config()
 {
-    if [[ -z "$SEAWEED_S3_ACCESS_KEY" || -z "$SEAWEED_S3_SECRET_KEY" ]]; then
-        log_error "SEAWEED_S3_ACCESS_KEY / SEAWEED_S3_SECRET_KEY 未设置（SeaweedFS S3 连接必需）"
-        return 1
-    fi
     if ! [[ "$FS_RETENTION_DAYS" =~ ^[0-9]+$ ]] || [[ "$FS_RETENTION_DAYS" -lt 1 ]]; then
         log_error "FS_RETENTION_DAYS 必须是正整数，当前值: $FS_RETENTION_DAYS"
         return 1
@@ -134,7 +136,8 @@ validate_fs_config()
 # ============================================
 # 函数：fs_source_name
 # ============================================
-# rclone 源路径 → 目标目录名（s3weed:noda-static/nearby → nearby）
+# 源路径 → 目标目录名（s3weed:noda-static/nearby → nearby；
+# /backup-sources/avatars → avatars——两种源形态同名即同镜像树，无缝切换）
 fs_source_name()
 {
     local src=$1
@@ -157,13 +160,25 @@ main()
     log_info "Noda 文件系统备份系统（S3 逻辑备份）"
     log_info "=========================================="
 
-    # 解析备份源（rclone 路径列表；逗号分隔——路径自带 s3weed: 冒号，不能用冒号）
+    # 解析备份源（逗号分隔——s3weed: 路径自带冒号，不能用冒号；#8 起支持容器内
+    # 绝对本地路径，配合 compose 只读挂载 /backup-sources/<name>）
     local sources=()
     IFS=',' read -ra source_list <<<"$(get_fs_sources)"
     for src in "${source_list[@]}"; do
         [ -z "$src" ] && continue
-        if [[ "$src" != s3weed:* ]]; then
-            log_error "备份源必须是 s3weed: 前缀的 rclone 路径，当前: $src"
+        if [[ "$src" == s3weed:* ]]; then
+            if [[ -z "$SEAWEED_S3_ACCESS_KEY" || -z "$SEAWEED_S3_SECRET_KEY" ]]; then
+                log_error "s3weed: 源需要 SEAWEED_S3_ACCESS_KEY / SEAWEED_S3_SECRET_KEY（未设置）: $src"
+                exit $EXIT_INVALID_ARGS
+            fi
+        elif [[ "$src" == /* ]]; then
+            # 本地路径源（容器内路径，经 compose 只读挂载；rclone copy 直读上 B2）
+            if [ ! -d "$src" ]; then
+                log_error "本地备份源目录不存在（检查 compose /backup-sources 挂载）: $src"
+                exit $EXIT_INVALID_ARGS
+            fi
+        else
+            log_error "备份源必须是 s3weed: 前缀的 rclone 路径或绝对本地路径，当前: $src"
             exit $EXIT_INVALID_ARGS
         fi
         sources+=("$src")

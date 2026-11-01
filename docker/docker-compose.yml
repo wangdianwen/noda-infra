@@ -103,6 +103,9 @@ services:
       # 文件系统备份（2026-09-13 S3 逻辑备份：SeaweedFS S3 API → B2，只备 avatars；
       # nearby 爬取素材 2026-10-18 挪百度云（r4s nearby-baidu-backup.sh → /noda备份/nearby），
       # B2 免费额度 10GB 装不下 nearby 源 ×4 滚动窗（10-18 实证触 75%）；sites/ 前端编译产物经 Jenkins 可重建不备份）
+      # 2026-11-02 noda-infra#8 SeaweedFS 退役：源迁 r4s 本地目录，BACKUP_FS_SOURCES 切
+      # /backup-sources/avatars（见下方 volumes 只读挂载）；s3weed: 前缀过渡期仍支持（回退），
+      # 纯本地源无需 SEAWEED_S3_*（默认值保留旧 S3 路径，切换只改 r4s .env，不动镜像默认）
       BACKUP_FS_SOURCES: ${BACKUP_FS_SOURCES:-s3weed:noda-static/avatars}
       FS_B2_PATH: ${FS_B2_PATH:-backups/filesystem/}
       FS_RETENTION_DAYS: ${FS_RETENTION_DAYS:-3}
@@ -131,6 +134,9 @@ services:
       - ./volumes/backup:/tmp/postgres_backups
       - ./volumes/history:/app/history
       - ./volumes/logs:/var/log/noda-backup
+      # 头像本地备份源（noda-infra#8 SeaweedFS 退役）：BACKUP_FS_SOURCES 切
+      # /backup-sources/avatars 后经此只读挂载直读（backup-filesystem.sh rclone copy 本地→B2）
+      - /mnt/mmc1-4/Noda/Static/cdn/avatars:/backup-sources/avatars:ro
     networks:
       - noda-network
     depends_on:
