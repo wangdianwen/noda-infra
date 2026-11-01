@@ -109,6 +109,14 @@ services:
       # preprod 须显式指向 -preprod 域，否则 preprod sitemap/注入输出 prod URL）
       NEXT_PUBLIC_SITE_URL: "https://class-preprod.noda.co.nz"
       NEXT_PUBLIC_NEARBY_SITE_URL: "https://nearby-preprod.noda.co.nz"
+      # blobstore fs 模式（#123/#8 SeaweedFS 退役）：preprod 直接 fs——stg 无
+      # 30 天保留约束，直写本地静态根 cdn/ 子树（与 pipeline fs 后端同根：
+      # STG_STATIC_ROOT=docker/volumes/static-stg）
+      BLOBSTORE_MODE: "fs"
+      BLOBSTORE_FS_DIR: "/data/blobstore"
+    volumes:
+      # 静态 fs 后端根（#8）：blobstore 可写直挂 cdn/ 子树
+      - ../docker/volumes/static-stg/cdn:/data/blobstore
     tmpfs:
       - /tmp
       - /app/crawl-output:uid=1001,gid=1001,mode=0755
