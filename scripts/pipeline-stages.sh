@@ -746,6 +746,10 @@ _start_prod_api()
     local mode="$1" image="$2" env_file="$3"
     log_info "启动容器: $PROD_API_CONTAINER ($image)"
     if [ "$mode" = "remote" ]; then
+        # blobstore fs 根属主保障（#8/#123，2026-11-02 镜像失败 5/5 实证）：容器以
+        # app(1001) 运行，cdn 根若由 root 建立（P0 拷贝/新根）则 1001 不可写——
+        # 幂等 chown，仅 cdn 子树（sites 由 pipeline root 写、nginx 只读，不动）
+        remote_exec "mkdir -p $PROD_STATIC_ROOT/cdn/nearby/crawled $PROD_STATIC_ROOT/cdn/nearby/pool $PROD_STATIC_ROOT/cdn/avatars && chown -R 1001:1001 $PROD_STATIC_ROOT/cdn" >/dev/null 2>&1 || true
         # 蓝绿切换（B4 2026-10-03）：不再先 rm 旧容器——那一步就是 /graphql
         # 停机窗的根源（rm → 新容器起 listener 之间 DNS 无可解析目标）。改为：
         #   ① 新容器以 $PROD_API_CONTAINER-next 名称启动，临时加网络别名
@@ -846,6 +850,8 @@ _start_prod_jobs()
     local mode="$1" image="$2" env_file="$3"
     log_info "启动容器: $PROD_JOBS_CONTAINER ($image)"
     if [ "$mode" = "remote" ]; then
+        # 同 _start_prod_api：cdn 根属主保障（app(1001) 可写）
+        remote_exec "mkdir -p $PROD_STATIC_ROOT/cdn/nearby/crawled $PROD_STATIC_ROOT/cdn/nearby/pool $PROD_STATIC_ROOT/cdn/avatars && chown -R 1001:1001 $PROD_STATIC_ROOT/cdn" >/dev/null 2>&1 || true
         remote_exec "docker rm -f $PROD_JOBS_CONTAINER >/dev/null 2>&1 || true"
         remote_exec "docker run -d \
             --name $PROD_JOBS_CONTAINER \
