@@ -4844,7 +4844,8 @@ pipeline_release_static_publish_lock()
 # 本门禁解决「机器本身枯竭时照跑」。检查 r4s 单机瓶颈五项：weed 健康、weed 内存
 # <85%（GC 贴线抖动判据，180e84e 实测 93.8% 时 5 倍劣化）、MemAvailable ≥
 # RESOURCE_GATE_MIN_FREE_MB（默认 500MB）、1min 负载 <8（6 核机轮转+上传峰值 7.8）、
-# 无残留 tmp-s3-relay 中继（上一班发布未清场）。swap 仅告警不阻断（慢性债由
+# 无残留 tmp-s3-relay 中继（上一班发布未清场）。weed 两条仅在 s3 后端生效
+# （#8 退役：fs 后端时 weed 已停机，健康/内存不再构成阻断）。swap 仅告警不阻断（慢性债由
 # swap-debt-guard 周清，阻断会让守卫窗口期所有发版失效）。探针为 r4s 宿主机脚本
 # pipeline-resource-probe.sh（存档 deploy/），fail-open：探针缺失/不可达仅告警
 # 放行（对齐 pipeline_check_freshness 的 ls-remote fail-open 语义）——门禁阻断
@@ -4862,7 +4863,7 @@ pipeline_resource_gate()
             if [ "$elapsed" -gt 0 ]; then
                 log_success "资源门禁通过（等待 ${elapsed}s 后资源自愈）"
             else
-                log_success "资源门禁通过（r4s：可用内存/ weed 内存与健康/负载/中继清理 全部就绪）"
+                log_success "资源门禁通过（r4s：可用内存/weed（s3 后端时）/负载/中继清理 全部就绪）"
             fi
             return 0
         fi
@@ -4894,6 +4895,15 @@ _resource_gate_check()
     relays=$(echo "$out" | sed -n 's/^relays=//p')
     load1=$(echo "$out" | sed -n 's/^load1=//p')
     swapfree_pct=$(echo "$out" | sed -n 's/^swapfree_pct=//p')
+    # #8 退役（2026-11-02）：prod 静态后端=fs 时 weed 不在发布链上（已停机），
+    # 其健康/内存条件跳过——stop 后 unhealthy 不再构成阻断；s3 回退
+    # （删除 .backend-fs 标记）时恢复原判定。每轮复查多一次 ssh 探测，可忽略。
+    local skip_weed="false"
+    [ "$(prod_static_backend)" = "fs" ] && skip_weed="true"
+    if [ "$skip_weed" = "true" ]; then
+        weed_health="healthy"   # fs 模式：置位绕过下方两条 weed 判定
+        weed_memperc=""
+    fi
     if [ "${weed_health:-unknown}" != "healthy" ]; then
         reason="seaweedfs 健康状态=${weed_health:-unknown}（非 healthy，发布必失败/极慢）"
     elif echo "$weed_memperc" | grep -q '^[0-9.]*$' && awk -v v="$weed_memperc" 'BEGIN{exit !(v>=85)}'; then
