@@ -236,7 +236,7 @@ docker_image_retention()
     fi
     [ -n "${imgs}" ] || return 0
     # CreatedAt（ISO 序=字典序）在前整行逆序去重 → 同 ID 多 tag 折叠为 1 版
-    ids=$(printf '%s\n' "${imgs}" | sort -ur | awk '{print ${NF}}')
+    ids=$(printf '%s\n' "${imgs}" | sort -ur | awk '{print $NF}')
     total=$(printf '%s\n' "${ids}" | grep -c . || true)
     [ "${total}" -gt "${keep}" ] || return 0
     stale=$(printf '%s\n' "${ids}" | tail -n +$((keep + 1)))
