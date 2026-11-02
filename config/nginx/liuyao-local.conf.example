@@ -703,6 +703,12 @@ server {
     resolver 127.0.0.11 valid=10s ipv6=off;
     include /etc/nginx/snippets/upstream-graphql.conf;
 
+    # zh-TW 长尾详情全退 301（#124）：postbuild 停烘 zh-TW places 详情
+    # （canonical→/zh），此处兜底 301，行为与 prod noda.co.nz 块对齐
+    if ($noda_zhtw_longtail_redirect) {
+        return 301 $noda_zhtw_longtail_redirect$is_args$args;
+    }
+
     # GraphQL BFF（同源反代，与 class-preprod 块同构）
     location = /graphql {
         client_max_body_size 1m;
