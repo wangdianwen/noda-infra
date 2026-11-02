@@ -709,6 +709,13 @@ server {
         return 301 $noda_zhtw_longtail_redirect$is_args$args;
     }
 
+    # zh 长尾详情全退 301（#126 P2，GA4 门控达标）：同 prod noda.co.nz 块
+    # （注释与 map 全文见 default.conf 同名段）；协商环防线 bypass map 在
+    # 下方 location / 内消费
+    if ($noda_zh_longtail_redirect) {
+        return 301 $noda_zh_longtail_redirect$is_args$args;
+    }
+
     # GraphQL BFF（同源反代，与 class-preprod 块同构）
     location = /graphql {
         client_max_body_size 1m;
@@ -755,8 +762,20 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # root 树自持实体（#126 P0 root↔en 去重白名单，清单同步 noda-apps
+    # mirror-en-root.mjs——注释与清单全文见 default.conf noda.co.nz 块同名
+    # location，测试域行为与 prod 对齐）
+    location ~ ^/(?:404\.html|_not-found\.html|_not-found\.txt|offline\.html|robots\.txt|ads\.txt|llms\.txt|en\.html|en\.txt|zh\.html|zh\.txt|zh-TW\.html|zh-TW\.txt)$ {
+        include /etc/nginx/snippets/seaweedfs-nearby-static-stg.conf;
+    }
+
     # RSC 载荷 .txt 净 404（先于 item 深链壳，regex 顺序敏感）
+    # #126 P0：无前缀 .txt 内部改写 /en 伺服（同 prod default.conf noda.co.nz
+    # 块；rewrite last 重入带前缀不再命中——无循环）
     location ~ \.txt$ {
+        if ($uri !~ "^/(?:en|zh|zh-TW)/") {
+            rewrite ^(.*)$ /en$1 last;
+        }
         include /etc/nginx/snippets/seaweedfs-nearby-static-stg.conf;
     }
 
@@ -865,12 +884,21 @@ server {
     # 静态站入口：locale 协商（as-needed 同 liuyao）
     location / {
         set $loc $nearby_locale;
+        # zh 长尾退场协商豁免（#126 P2，同 prod 块：设 en 走改写防环防直查
+        # 已停烘 root 树，注释全文见 default.conf）
+        if ($noda_zh_longtail_bypass) { set $loc "en"; }
         if ($uri ~ "^/(en|zh|zh-TW)(/|$)") { set $loc ""; }
         if ($uri ~ "^/(_next|api|images|fonts)(/|$)") { set $loc ""; }
         if ($uri ~ "\.[A-Za-z0-9]+(/|$)") { set $loc ""; }
         if ($loc = zh-TW) { return 302 /zh-TW$request_uri; }
         if ($loc = zh) { return 302 /zh$request_uri; }
         if ($loc = en) { rewrite ^(.*)$ /en$1 last; }
+        # #126 P0：无前缀 .html 直链 → /en（同 prod 块；白名单元数据/locale
+        # 首页已被上方 exact regex location 兜住）
+        set $root_en_html "";
+        if ($uri !~ "^/(?:en|zh|zh-TW)(?:/|$)") { set $root_en_html "1"; }
+        if ($uri !~ "\.html$") { set $root_en_html ""; }
+        if ($root_en_html = "1") { rewrite ^(.*)$ /en$1 last; }
         include /etc/nginx/snippets/seaweedfs-nearby-static-stg.conf;
         error_page 403 404 /404.html;
     }
