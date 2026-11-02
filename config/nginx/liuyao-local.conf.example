@@ -755,8 +755,20 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # root 树自持实体（#126 P0 root↔en 去重白名单，清单同步 noda-apps
+    # mirror-en-root.mjs——注释与清单全文见 default.conf noda.co.nz 块同名
+    # location，测试域行为与 prod 对齐）
+    location ~ ^/(?:404\.html|_not-found\.html|_not-found\.txt|offline\.html|robots\.txt|ads\.txt|llms\.txt|en\.html|en\.txt|zh\.html|zh\.txt|zh-TW\.html|zh-TW\.txt)$ {
+        include /etc/nginx/snippets/seaweedfs-nearby-static-stg.conf;
+    }
+
     # RSC 载荷 .txt 净 404（先于 item 深链壳，regex 顺序敏感）
+    # #126 P0：无前缀 .txt 内部改写 /en 伺服（同 prod default.conf noda.co.nz
+    # 块；rewrite last 重入带前缀不再命中——无循环）
     location ~ \.txt$ {
+        if ($uri !~ "^/(?:en|zh|zh-TW)/") {
+            rewrite ^(.*)$ /en$1 last;
+        }
         include /etc/nginx/snippets/seaweedfs-nearby-static-stg.conf;
     }
 
@@ -871,6 +883,12 @@ server {
         if ($loc = zh-TW) { return 302 /zh-TW$request_uri; }
         if ($loc = zh) { return 302 /zh$request_uri; }
         if ($loc = en) { rewrite ^(.*)$ /en$1 last; }
+        # #126 P0：无前缀 .html 直链 → /en（同 prod 块；白名单元数据/locale
+        # 首页已被上方 exact regex location 兜住）
+        set $root_en_html "";
+        if ($uri !~ "^/(?:en|zh|zh-TW)(?:/|$)") { set $root_en_html "1"; }
+        if ($uri !~ "\.html$") { set $root_en_html ""; }
+        if ($root_en_html = "1") { rewrite ^(.*)$ /en$1 last; }
         include /etc/nginx/snippets/seaweedfs-nearby-static-stg.conf;
         error_page 403 404 /404.html;
     }
