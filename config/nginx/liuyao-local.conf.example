@@ -27,6 +27,11 @@
 # ────────────────────────────────────────────
 
 # class：localePrefix:'always'（无前缀一律 302 到带前缀等价路径）
+# map_hash_bucket_size 必须先于首个 map 声明（map 模块怪癖，#124 实证）
+# ——zhtw-longtail-301 map 长 slug key 超 64B 默认桶；prod 挂仓内 nginx.conf
+# 已有此声明，本文件（=preprod conf.d/default.conf）用镜像 nginx.conf 故补
+map_hash_bucket_size 128;
+
 map $cookie_noda_locale $class_cookie_locale {
     ~*^zh-TW$   zh-TW;
     ~*^zh$      zh;
