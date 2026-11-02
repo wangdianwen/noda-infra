@@ -70,8 +70,13 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ANTHROPIC_AUTH_TOKEN: "${ANTHROPIC_AUTH_TOKEN:-}"
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
+      # 备 provider（2026-11-02 failover）：主（z.ai）失败自动切备（DeepSeek）
+      ANTHROPIC_FALLBACK_API_KEY: "${ANTHROPIC_FALLBACK_API_KEY:-}"
+      ANTHROPIC_FALLBACK_AUTH_TOKEN: "${ANTHROPIC_FALLBACK_AUTH_TOKEN:-}"
+      ANTHROPIC_FALLBACK_BASE_URL: "${ANTHROPIC_FALLBACK_BASE_URL:-}"
       # 注意：ANTHROPIC_MODEL 不在此透传——宿主 shell 可能残留旧值（如 sonnet），
       # 留缺走 Go 端代码默认（glm-5.3-flash），与 ZAI 网关匹配
+      # ANTHROPIC_FALLBACK_MODEL 同理不透传，留缺走 Go 端默认（deepseek-flash）
       ANTHROPIC_MAX_TOKENS: "24000"
       CRAWL_POST_LIMIT: "10"
       # Stripe test key 源头隔离：preprod 部署脚本从 Doppler config=prd_pre 导出
