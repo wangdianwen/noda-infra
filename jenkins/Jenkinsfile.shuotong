@@ -52,6 +52,11 @@ pipeline {
             choices: ['normal', 'fast'],
             description: 'normal: 产物发布到 stg 桶（preprod 验证环境）后人工批准再发 prod 桶；fast: 紧急直发 prod 桶，跳过 stg 与人工批准（仅限确认无风险的变更）'
         )
+        booleanParam(
+            name: 'STATIC_PUBLISH_FORCE',
+            defaultValue: false,
+            description: '跳过「产物未变更」判定走完整发布（fs 路径 STATIC_PUBLISH_FORCE；同内容重推/割接后首证发布用）'
+        )
     }
 
     stages {
@@ -216,6 +221,11 @@ pipeline {
         stage('Deploy Prod') {
             when {
                 expression { params.DEPLOY_MODE == 'fast' || env.DEPLOY_ACTION == 'deploy_prod' }
+            }
+            // STATIC_PUBLISH_FORCE（#8 M5 割接首证加）：boolean → pipeline_publish_product
+            // 认的 '1'/'0'（fs 路径跳过未变更判定，走完整 rsync 推送+切换+快照）
+            environment {
+                STATIC_PUBLISH_FORCE = "${params.STATIC_PUBLISH_FORCE ? '1' : '0'}"
             }
             options {
                 // 门禁重取双 gate 最坏合计 30m（队列 900s + 资源 900s）+ prod 桶发布
