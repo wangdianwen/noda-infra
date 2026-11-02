@@ -610,6 +610,39 @@ cleanup_periodic_maintenance()
 }
 
 # -------------------------------------------
+# testpg-fixture 残留容器清理 (DOCK-05, 2026-11-02)
+# -------------------------------------------
+# noda-apps Go 测试的一次性 postgres 夹具容器（testpg-fixture-*，各带匿名数据
+# 卷 ~60-90MB）。正常路径已由 testpg 包引用计数在测试结束即删（rm -f -v 连带
+# 卷）；这里兜底回收进程被硬杀（kill -9 / go test 超时 panic）的残留。
+# 年龄线 30 分钟（TESTPG_STALE_SECS 可覆盖）与包内 reclaimStaleFixtures 对齐：
+# 防止误杀并行包测试进程正在用的活容器（2026-10-06 实证同跑一绿一红随机翻转）。
+cleanup_testpg_fixtures()
+{
+    command -v docker >/dev/null 2>&1 || return 0
+    docker info >/dev/null 2>&1 || return 0
+
+    local cutoff=$(( $(date +%s) - ${TESTPG_STALE_SECS:-1800} ))
+    local removed=0 cid started epoch
+    for cid in $(docker ps -aq --filter "name=testpg-fixture" 2>/dev/null); do
+        started=$(docker inspect -f '{{.State.StartedAt}}' "$cid" 2>/dev/null) || continue
+        # StartedAt 形如 2026-11-02T09:35:08.123456789Z（UTC）；BSD/GNU date 双兼容
+        epoch=$(date -j -u -f '%Y-%m-%dT%H:%M:%S' "${started%%.*}" '+%s' 2>/dev/null) \
+            || epoch=$(date -u -d "${started%%.*}" '+%s' 2>/dev/null) \
+            || continue
+        if [ "$epoch" -lt "$cutoff" ]; then
+            # -v 连带匿名数据卷，否则卷永久 dangling（真实泄漏源）
+            docker rm -f -v "$cid" >/dev/null 2>&1 && removed=$((removed + 1))
+        fi
+    done
+    if [ "$removed" -gt 0 ]; then
+        log_success "testpg 残留夹具容器清理: ${removed} 个"
+    else
+        log_info "无 testpg 残留夹具容器"
+    fi
+}
+
+# -------------------------------------------
 # cleanup_host_misc - 主机杂项缓存清理（周维护 + disk-guard 之外的最后兜底）
 # -------------------------------------------
 # 只清可再生缓存类；红线同 scripts/maintenance/disk-guard.sh 头注
@@ -617,6 +650,10 @@ cleanup_periodic_maintenance()
 cleanup_host_misc()
 {
     log_info "--- 主机杂项缓存清理 ---"
+
+    # testpg 夹具容器残留（2026-11-02：正常路径由 testpg 包引用计数即删，
+    # 这里只兜底硬杀残留；30 分钟线防误杀并行活容器）
+    cleanup_testpg_fixtures
 
     # Docker Desktop 更新残留（每次升级重生 ~2.1G，2026-10-27/11-01 两次清过）
     rm -rf "$HOME/Library/Application Support/com.docker.install/in_progress" 2>/dev/null || true
