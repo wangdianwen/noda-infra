@@ -709,6 +709,13 @@ server {
         return 301 $noda_zhtw_longtail_redirect$is_args$args;
     }
 
+    # zh 长尾详情全退 301（#126 P2，GA4 门控达标）：同 prod noda.co.nz 块
+    # （注释与 map 全文见 default.conf 同名段）；协商环防线 bypass map 在
+    # 下方 location / 内消费
+    if ($noda_zh_longtail_redirect) {
+        return 301 $noda_zh_longtail_redirect$is_args$args;
+    }
+
     # GraphQL BFF（同源反代，与 class-preprod 块同构）
     location = /graphql {
         client_max_body_size 1m;
@@ -877,6 +884,9 @@ server {
     # 静态站入口：locale 协商（as-needed 同 liuyao）
     location / {
         set $loc $nearby_locale;
+        # zh 长尾退场协商豁免（#126 P2，同 prod 块：设 en 走改写防环防直查
+        # 已停烘 root 树，注释全文见 default.conf）
+        if ($noda_zh_longtail_bypass) { set $loc "en"; }
         if ($uri ~ "^/(en|zh|zh-TW)(/|$)") { set $loc ""; }
         if ($uri ~ "^/(_next|api|images|fonts)(/|$)") { set $loc ""; }
         if ($uri ~ "\.[A-Za-z0-9]+(/|$)") { set $loc ""; }
