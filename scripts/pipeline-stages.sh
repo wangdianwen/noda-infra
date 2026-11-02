@@ -2922,7 +2922,12 @@ _rc()
 # 一个标记文件，Jenkins 配置零改动。fs 后端 = rsync 推送 + mv 原子蓝绿切换 +
 # cp -al 硬链接快照；s3 后端 = 既有 seaweedfs 路径原样保留（回退锚，一字不动）。
 # 探测失败（ssh 不通/根目录未建）一律回落 s3——行为与退役前完全一致。
-STG_STATIC_ROOT="${STG_STATIC_ROOT:-$PROJECT_ROOT/docker/volumes/static-stg}"
+# stg 静态根必须是 Jenkins 槽位无关的共享绝对路径（build 1165 实证）：各 job
+# 按 BUILD_NUMBER%4 轮换 workspace，工作区级 static-stg 会被 checkout 清空
+# （sites 丢失 + .backend-fs 标记消失 → 后端误判 s3 → 内容发进桶、容器却 bind
+# 空工作区目录 → preprod 探活 404）。共享根一次播种（clonefile 种子），apps/
+# shuotong/rollback 所有 job 与 compose 卷插值（经 export 透传）同根。
+export STG_STATIC_ROOT="${STG_STATIC_ROOT:-$HOME/.jenkins/noda-apps/shared/static-stg}"
 PROD_STATIC_ROOT="/mnt/mmc1-4/Noda/Static"
 
 # prod_static_backend - 探测 r4s 生产静态后端（echo fs 或 s3；失败回落 s3）
@@ -4353,11 +4358,15 @@ PREPROD_CONTAINER="preprod-noda-apps"  # legacy 单容器（清理用）
 _preprod_infra_running()
 {
     local cname
-    # 2026-09-26（#282 实证）：只检真基础设施（postgres / seaweedfs-stg）。
-    # preprod-noda-static 是应用层容器——它缺失（如被误清）时应走快路径 +
-    # static 兜底恢复，而非误判"基础设施缺失"触发整栈重建（该路径先 rm
-    # postgres、down --remove-orphans 清场，若 up 失败即全栈蒸发）。
-    for cname in preprod-postgres seaweedfs-stg; do
+    # 2026-09-26（#282 实证）：只检真基础设施。preprod-noda-static 是应用层
+    # 容器——它缺失（如被误清）时应走快路径 + static 兜底恢复，而非误判
+    # "基础设施缺失"触发整栈重建（该路径先 rm postgres、down --remove-orphans
+    # 清场，若 up 失败即全栈蒸发）。
+    # 2026-11-02（#8 退役收口）：seaweedfs-stg 退出基础设施集——stg 静态已
+    # fs-only，它停在位不再触发整栈拉起（否则每次部署都会把已退役的 weed
+    # 重新拉起）。s3 回退时 git revert 本函数恢复原判定。
+    # shellcheck disable=SC2043  # 单元素集合系退役收敛所致，保留循环形态
+    for cname in preprod-postgres; do
         if [ "$(docker inspect -f '{{.State.Running}}' "$cname" 2>/dev/null)" != "true" ]; then
             return 1
         fi
@@ -4400,7 +4409,11 @@ _preprod_cleanup_legacy()
 {
     local mode="$1"
     local cname
-    local rm_list="$PREPROD_CONTAINER preprod-nginx $PREPROD_FRONTEND_CONTAINER"
+    # seaweedfs-stg（#8 退役，2026-11-02）：stg 发布已 fs-only，每次部署顺手
+    # 回收残留 weed 容器（手动复活/回退锚遗留）；seaweedfs-data 数据卷不受
+    # docker rm 影响（保留至 2026-12-02 删除窗口）。r4s 侧无同名容器（prod
+    # 实例名为 seaweedfs），remote 模式为无害空操作。
+    local rm_list="$PREPROD_CONTAINER preprod-nginx $PREPROD_FRONTEND_CONTAINER seaweedfs-stg"
     if _layer_want_api; then
         rm_list="$rm_list $PREPROD_API_CONTAINER"
     fi

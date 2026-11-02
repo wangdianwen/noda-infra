@@ -115,16 +115,19 @@ services:
       NEXT_PUBLIC_SITE_URL: "https://class-preprod.noda.co.nz"
       NEXT_PUBLIC_NEARBY_SITE_URL: "https://nearby-preprod.noda.co.nz"
       # blobstore fs 模式（#123/#8 SeaweedFS 退役）：preprod 直接 fs——stg 无
-      # 30 天保留约束，直写本地静态根 cdn/ 子树（与 pipeline fs 后端同根：
-      # STG_STATIC_ROOT=docker/volumes/static-stg）
+      # 30 天保留约束，直写本地静态根 cdn/ 子树（与 pipeline fs 后端同根，
+      # STG_STATIC_ROOT Jenkins 共享根，见 volumes 注释）
       BLOBSTORE_MODE: "fs"
       BLOBSTORE_FS_DIR: "/data/blobstore"
       # nearby 壳页基址（#123 fs 模式）：preprod-noda-static 专用 8181 监听
       # （liuyao-local.conf 尾部 server 块），替代原 S3 path-style 桶基址
       STATIC_SHELL_BASE_URL: "http://preprod-noda-static:8181"
     volumes:
-      # 静态 fs 后端根（#8）：blobstore 可写直挂 cdn/ 子树
-      - ../docker/volumes/static-stg/cdn:/data/blobstore
+      # 静态 fs 后端根（#8）：blobstore 可写直挂 cdn/ 子树。
+      # STG_STATIC_ROOT 由 pipeline-stages.sh export（Jenkins 共享绝对根，
+      # 槽位无关——build 1165 实证工作区级根会被 checkout 清空致探活 404）；
+      # 手动 compose 不带 env 时回落仓库内 ./volumes/static-stg（自包含开发模式）
+      - ${STG_STATIC_ROOT:-./volumes/static-stg}/cdn:/data/blobstore
     tmpfs:
       - /tmp
       - /app/crawl-output:uid=1001,gid=1001,mode=0755
@@ -159,8 +162,10 @@ services:
       - /Users/dianwenwang/Project/noda-infra/config/nginx/ssl:/etc/nginx/ssl:ro
       # 本地静态根（noda-infra#8 P3，2026-11-02）：preprod 挂 static-stg（顶层
       # sites/<产品>/ 与 cdn/…，同 prod 布局；发布流水线写入此目录），原 SeaweedFS
-      # stg 桶代理（seaweedfs-*-stg snippet 与 cdn-preprod 块）切本地只读直读
-      - ../docker/volumes/static-stg:/var/noda-static:ro
+      # stg 桶代理（seaweedfs-*-stg snippet 与 cdn-preprod 块）切本地只读直读。
+      # STG_STATIC_ROOT：Jenkins 共享绝对根（同 api blobstore 注释），手动
+      # compose 缺省回落仓库内 ./volumes/static-stg
+      - ${STG_STATIC_ROOT:-./volumes/static-stg}:/var/noda-static:ro
     healthcheck:
       test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:80/health || exit 1"]
       interval: 30s
@@ -169,53 +174,13 @@ services:
       start_period: 10s
 
   # ----------------------------------------
-  # SeaweedFS（stg 实例，Phase 1, 2026-09-12）
-  # 与 prod（R4S 实例）完全隔离：不同机器、不同数据卷、不同密钥、不同桶
-  # （noda-static-stg）。服务名同为 seaweedfs——S3_ENDPOINT 在各自网络内同名可达。
-  # s3.json 由 pipeline/脚本从 Doppler stg 渲染（gitignored）。
+  # SeaweedFS（stg 实例，Phase 1, 2026-09-12）——已退役（noda-infra#8，2026-11-02）
+  # stg 静态发布 fs-only（共享根 rsync 蓝绿），blobstore BLOBSTORE_MODE=fs；
+  # 上方 S3_ENDPOINT / S3_BUCKET 等 env 键仅作 s3 回退模式的惰性默认保留。
+  # 回退锚：git revert 本文件与 pipeline-stages.sh 的退役提交 →
+  # docker compose up -d seaweedfs（seaweedfs-data 数据卷保留至 2026-12-02
+  # 删除窗口；.backend-fs 标记删除后发布链回落 s3 桶路径）。
   # ----------------------------------------
-  seaweedfs:
-    image: chrislusf/seaweedfs:3.80
-    container_name: seaweedfs-stg
-    # hostname 必须与 -ip=seaweedfs 一致：master/volume/s3 组件间用该名字自连
-    # （container_name=seaweedfs-stg 时 /etc/hosts 无 seaweedfs → 自连 refused 崩溃循环）
-    hostname: seaweedfs
-    restart: unless-stopped
-    # ⚠️ command 折叠块内不可写 # 注释（会被并进命令吞掉后续参数——实测 -s3 整段丢失）
-    # S3 preprod 同步（2026-09-12）：每 bucket = 独立 collection 需独立 writable
-    # volume，原 -volume.max=12 被图片桶耗尽后新桶写入全失败（No writable volumes）；
-    # 磁盘 /data 223G 富余，上限放宽到 96
-    command: >-
-      server -dir=/data -ip=seaweedfs
-      -master.volumeSizeLimitMB=1024
-      -master.volumePreallocate=false
-      -volume.max=96
-      -s3 -s3.port=8333
-      -s3.config=/etc/seaweedfs/s3.json
-    volumes:
-      - seaweedfs-data:/data
-      - ../config/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
-    ports:
-      # S3 仅按需暴露：STG_S3_BIND=本机局域网 IP 时供 R4S nginx 公网 cdn-preprod 代理；
-      # 缺省只绑本机回环（本地 mc/调试用），不对局域网暴露
-      - "${STG_S3_BIND:-127.0.0.1}:8333:8333"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:9333/cluster/status || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          # 1536M（2026-10-07 三度放宽）：snagme 50,780 对象 + 轮转/差量同步 64
-          # 并发下 weed 实测涨到 720MiB/768MiB（93.8%），Go GC 贴线抖动致 stg
-          # 发布 5 倍劣化（#664 stg 轮转+上传 20.5min vs #660 同量级 12min；
-          # 64 并发 sync 内存=空闲值 2.2 倍的规律与 r4s 实测一致）。Docker VM
-          # 7.75G 水位充裕。沿革：256M（mirror 写入风暴 #54/#60/#62）→ 384M
-          # （OOM 137 重启 87 次）→ 768M（#559-#561 超时）→ 1536M（#664 GC 抖动）
-          memory: 1536M
 
 volumes:
   preprod-pgdata:
-  seaweedfs-data:
