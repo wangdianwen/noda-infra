@@ -153,3 +153,9 @@ NEARBY_DEAL_ENRICH_LIMIT
 # 代码默认 /ops-logs（pipeline-stages.sh _start_prod_* 恒挂载该 RO 卷），模板不配、
 # 代码默认值兜底；preprod/本地未挂卷 → source=disabled 优雅空态（ratelimit.go）。
 RL429_DIR
+# NEARBY_PUSH_VAPID_PUBLIC_KEY / NEARBY_PUSH_VAPID_PRIVATE_KEY（issue #147
+# Web Push）：VAPID 应用服务器密钥对——公钥 /api/nearby/push/vapid-key 下发，
+# 私钥 noda-jobs push-weekly 发送端签名。值在 Doppler noda（prd+prd_pre）；
+# 未配置 = 前端订阅块静默不渲染 + cron 安全跳过（代码侧兜底，非部署必需）。
+NEARBY_PUSH_VAPID_PUBLIC_KEY
+NEARBY_PUSH_VAPID_PRIVATE_KEY
