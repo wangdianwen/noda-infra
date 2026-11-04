@@ -49,3 +49,9 @@ config/seaweedfs/s3.json
 .worktrees/
 __pycache__/
 docker/volumes/static-stg/
+
+# 运行时挂载卷数据（docker compose 把宿主路径挂进容器；2026-11-05 收尾批次
+# 处置 r4s checkout 三处 untracked——数据不删，仅忽略）
+docker/volumes/crawler-logs/
+docker/volumes/ops-logs/
+docker/volumes/history/alert_history.json
