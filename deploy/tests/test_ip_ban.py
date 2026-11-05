@@ -739,3 +739,43 @@ def test_get_rules_tolerates_missing_entrypoint(ip_ban, monkeypatch):
         raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
     monkeypatch.setattr(ip_ban, "http_json", fake_http_json)
     assert ip_ban.get_rules("tok", "zoneid") == []
+
+
+# ---- ⑨ tripwire：800x600 指纹自报端点（2026-11-06）----
+# GA4 判例 2026-10-24：800x600 headless 族（美/英 direct 深链 sitemap 事件页、
+# 单页零互动、城市 not set）真实受众分辨率零撞车；nearby 内联 JS 对该分辨率
+# sendBeacon('/__trip') 自报，源站见路径即封出口。出口逐会话轮换，同 IP 凑不
+# 出第二次命中 → 单发即封；/24 会殃及机房无辜邻居，不用（v4 /32、v6 /64）。
+
+def test_trip_single_hit_bans_exit_ip(ip_ban):
+    """单次 /__trip 命中即 /32 提案 30 天——低慢速族速率闸永远够不上，指纹网补位"""
+    events = [("203.0.113.7", "/__trip", "Mozilla/5.0 Chrome/156.0", "403"),
+              ("203.0.113.7", "/zh/queenstown", "Mozilla/5.0 Chrome/156.0", "200")]
+    assert ip_ban.trip_bans(events) == {
+        "203.0.113.7/32": ("fingerprint-tripwire", ip_ban.TRIP_TTL)}
+
+
+def test_trip_v6_bans_slash64(ip_ban):
+    """v6 出口按 /64 封（家宽/机房 /64 即订户级，不殃及邻居前缀）"""
+    bans = ip_ban.trip_bans([("2001:db8:1::ff", "/__trip", "UA", "403")])
+    assert "2001:db8:1::/64" in bans
+
+
+def test_trip_path_must_be_exact(ip_ban):
+    """只有 exact /__trip 是 tripwire JS 发的；子路径/无端点路径不提案（防伪造路径构陷误封）"""
+    assert ip_ban.trip_bans([("203.0.113.8", "/__trip/x", "UA", "403")]) == {}
+    assert ip_ban.trip_bans([("203.0.113.9", "/zh/queenstown", "UA", "200")]) == {}
+    assert ip_ban.trip_bans([("203.0.113.9", "/trip", "UA", "200")]) == {}
+
+
+def test_trip_dedupes_same_ip(ip_ban):
+    """同 IP 一窗多次 beacon 只出一案（封禁提案按 cidr 去重）"""
+    events = [("203.0.113.7", "/__trip", "UA", "403")] * 3
+    assert list(ip_ban.trip_bans(events)) == ["203.0.113.7/32"]
+
+
+def test_trip_google_range_rejected_by_safety(ip_ban):
+    """trip 误命中官方爬虫段（理论不可能——爬虫视口非 800x600）时 SAFETY 闸兜底拒绝"""
+    proposals = ip_ban.trip_bans([("66.249.73.10", "/__trip", "UA", "403")])
+    assert proposals                                        # 提案生成
+    assert "66.249.73.10/32" not in ip_ban.apply_safety(proposals)  # SAFETY 拒绝

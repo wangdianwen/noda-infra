@@ -440,6 +440,9 @@ BROWSER_SIGNAL_RE = re.compile(              # 真 PWA 浏览器生命周期端�
     r"/sw\.js$|/manifest\.webmanifest$|/manifest\.json$|/offline\.html?$"
     r"|/_next/static/|/__next\.|/geo\.json$", re.I)
 CHROME_VER_RE = re.compile(r"chrome/(\d+)\.", re.I)
+TRIP_PATH = "/__trip"                # 800x600 指纹 tripwire 自报端点（nearby 内联 JS sendBeacon）
+TRIP_TTL = ATTACK_TTL                # 单发即封 30 天：出口逐会话轮换，同 IP 凑不出复犯
+TRIP_REASON = "fingerprint-tripwire" # 800x600 headless 族（GA4 判例 2026-10-24 真实受众零撞车）
 LINE_RE = re.compile(
     r'^\S+ \S+ \S+ \[[^\]]+\] "(\S+) ([^"]*) HTTP/[^"]*" (\d{3}) \d+ '
     r'"([^"]*)" "([^"]*)" "([^"]+)"')
@@ -801,6 +804,24 @@ def step_verification(verify, events, new_bans, log):
     return verify, alerts
 
 
+def trip_bans(events):
+    """tripwire 命中 → 封禁提案（纯函数，单测直接打）。
+
+    800x600 headless 族（GA4 判例 2026-10-24：direct 深链 sitemap 事件页、
+    单页零互动、城市 not set）真实受众分辨率零撞车——nearby 页面内联 JS 对该
+    分辨率 sendBeacon('/__trip') 自报，源站日志见 exact /__trip 即封出口
+    （v4 /32、v6 /64 复用 persist_key：机房 /24 有无辜邻居，/64 即订户级）。
+    族出口逐会话轮换，同 IP 凑不出第二次命中 → 单发即封 30 天；速率闸
+    （60/5min）与 persist 网（14 天 4 到访日）都够不上的低慢速模式由此补位，
+    且出口无关（不依赖 ABUSE_ASNS 名单）。分辨率清单漂移由 GA4 哨兵人工判读
+    后与读数层 BOT_RESOLUTIONS 同步扩表，不自动扩。"""
+    out = {}
+    for ip, path, _ua, _status in events:
+        if path == TRIP_PATH:
+            out[persist_key(ip)] = (TRIP_REASON, TRIP_TTL)
+    return out
+
+
 _crawler_ip_cache = {}
 
 
@@ -1078,6 +1099,13 @@ def main():
             proposals[cidr] = ("attack-urls %d hits/%dh" % (ah, ROLL_HOURS),
                                ATTACK_TTL)
             log("candidate %s: attack-url hits=%d" % (cidr, ah))
+
+    # ---- 爬虫指纹 tripwire（800x600 headless 族，出口无关，单发即封）----
+    # 站主/官方爬虫段兜底交给 apply_safety（提案含站主 IP 或撞白名单段即拒）。
+    for cidr, (reason, ttl) in trip_bans(events).items():
+        if cidr not in proposals and cidr not in bans:
+            proposals[cidr] = (reason, ttl)
+            log("candidate %s: %s（tripwire 自报，SAFETY 复核后生效）" % (cidr, reason))
 
     # ---- 坚持不懈来访者（原则 3 收口网）：档案裁剪 + 评估 ----
     persist_cut = now - PERSIST_WINDOW
