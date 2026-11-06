@@ -182,5 +182,33 @@ services:
   # 删除窗口；.backend-fs 标记删除后发布链回落 s3 桶路径）。
   # ----------------------------------------
 
+  # ----------------------------------------
+  # OurAuckland CDP sidecar（issue #182 浏览器会话通道）
+  # 有头 chromium（Xvfb）+ CDP 9222：preprod-noda-api 的 ourauckland adapter
+  # 403→CDP fallback（NEARBY_CDP_URL=http://ourauckland-cdp:9222，env 模板已配）。
+  # 与 prod 版（docker-compose.r4s.yml）同镜像/入口，Mac 上 512m 档即可。
+  # 仅 preprod 默认网络内可达，无宿主端口发布。
+  # ----------------------------------------
+  ourauckland-cdp:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.ourauckland-cdp
+    image: ourauckland-cdp:latest
+    container_name: preprod-ourauckland-cdp
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9222/json/version || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
 volumes:
   preprod-pgdata:
