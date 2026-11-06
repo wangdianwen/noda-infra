@@ -267,6 +267,52 @@ services:
           cpus: '0.1'
           memory: 64M
 
+  # ----------------------------------------
+  # OurAuckland CDP sidecar（issue #182 浏览器会话通道）— 1G / 0.5cpu
+  # 有头 chromium（Xvfb :99）+ CDP 9222：noda-jobs-prod 的 ourauckland adapter
+  # 403→CDP fallback 通道（源站 Cloudflare 按无头引擎指纹拦 403，有头零 stealth
+  # 直通，spike 2026-11-07 实证）。每轮仅 2 页 ×2 通道请求，负载轻（常驻
+  # about:blank），1G 上限覆盖有头 chromium 常驻 RSS（spike 实测 ~512m 档）。
+  # 仅 noda-network 内可达：无宿主端口发布（9222 不出容器网络；chromium
+  # DNS-rebinding Host 校验由客户端侧 Host: localhost 覆写处理，见
+  # noda-apps nearby/api/nearbydata/cdpclient.go）。构建先例 = noda-ops
+  #（compose build 模式；Mac 构建后 transfer_image 或 r4s 本地 build 均可，
+  # 纯 apt 层无编译）。环境依赖：NEARBY_CDP_URL=http://ourauckland-cdp:9222
+  #（env-noda-api.env / env-noda-api-preprod.env 同步注入 noda-jobs-prod）。
+  # ----------------------------------------
+  ourauckland-cdp:
+    <<: *r4s-logging
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.ourauckland-cdp
+    image: ourauckland-cdp:latest
+    container_name: ourauckland-cdp
+    labels:
+      - "noda.service-group=infra"
+      - "noda.environment=prod"
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 128m
+    networks:
+      noda-network:
+        aliases:
+          - ourauckland-cdp
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9222/json/version || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+
   # Apps Pre-prod — 512M (D-06)
   # Pre-prod 使用 docker run 启动，不通过 compose 管理
   # 内存限制在 docker run --memory 中指定

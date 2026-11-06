@@ -1,0 +1,35 @@
+# ============================================
+# OurAuckland CDP sidecar（issue #182 浏览器会话通道）
+# ============================================
+# 有头 chromium + Xvfb + CDP 9222：给 noda-jobs 的 ourauckland adapter 做
+# 403→CDP fallback（源站 Cloudflare 按无头引擎指纹拦 403，有头零 stealth 直通，
+# spike 2026-11-07 实证，issue #182 评论 6693616737）。
+# 基底 debian:bookworm-slim + apt chromium（r4s arm64 包已验证）；不采
+# playwright sidecar（musllinux/arm64 差、1.5GB+、实测连 stealth 都不需要）。
+# 仅 noda-network 内可达（无对外端口发布）；CDP Host 头校验由客户端侧
+# Host: localhost 覆写处理（noda-apps cdpclient.go）。
+# 构建/部署先例 = noda-ops（compose build 模式；r4s 线 Mac 构建后 transfer_image
+# 或 r4s 本地 compose build 均可——纯 apt 层，无编译）。
+FROM debian:bookworm-slim
+
+# chromium：浏览器本体；xvfb：有头渲染所需虚拟显示；fonts-liberation：拉丁
+# 字形（无字体时 CF 指纹面异常）；curl：healthcheck 探活 /json/version；
+# socat：CDP 端口外发转发——chromium ≥13x 起 --remote-debugging-address 被
+# 忽略、DevTools 只绑 127.0.0.1（2026-11-07 bookworm chromium 156 本地构建
+# 实证），0.0.0.0:9222 → 127.0.0.1:9223 由 socat 承载。
+# --no-install-recommends 收体积（chromium 全家桶已 ~500MB）
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        chromium xvfb fonts-liberation curl ca-certificates socat && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY deploy/entrypoint-ourauckland-cdp.sh /usr/local/bin/entrypoint-ourauckland-cdp.sh
+RUN chmod +x /usr/local/bin/entrypoint-ourauckland-cdp.sh
+
+EXPOSE 9222
+
+# 容器级探活：CDP HTTP 端点 200（Host=127.0.0.1 过 chromium DNS-rebinding 校验）
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -sf http://127.0.0.1:9222/json/version || exit 1
+
+ENTRYPOINT ["/usr/local/bin/entrypoint-ourauckland-cdp.sh"]
