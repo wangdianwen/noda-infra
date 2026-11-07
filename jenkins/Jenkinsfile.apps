@@ -81,6 +81,21 @@ pipeline {
                 timeout(time: 20, unit: 'MINUTES')
             }
             steps {
+                // ⓪ Workspace 卫生（2026-11-08）：4 槽位轮换 + node_modules 常驻设计下，
+                //    构建产物会在槽位里跨班累积（实测 4 槽堆到 98G：各产品 .next/out、
+                //    e2e 报告、ws 内 docker/volumes/static-stg 桶镜像）。此步只删可
+                //    再生产物，保留 node_modules 常驻槽位优化（SKIP_NODE_MODULES_CLEANUP）；
+                //    shared/ 是现役 preprod 静态挂载点，绝不触碰。
+                sh '''
+                    # 先移除可能残留的 noda-apps 符号链接，防止下方清理穿透链接
+                    # 误删本地工作区文件（与后文 CI 防线同一语义，此处必须先行）
+                    if [ -L noda-apps ]; then rm -f noda-apps; fi
+                    rm -rf noda-apps/*/web/.next noda-apps/*/web/out \
+                           noda-apps/e2e/playwright-report noda-apps/e2e/test-results \
+                           noda-apps/e2e/coverage docker/volumes/static-stg/sites/* \
+                           2>/dev/null || true
+                    echo "workspace 卫生清理完成：$(du -sh . | cut -f1)"
+                '''
                 // ① 队列门禁：同产品后触发构建在此等待（不开始实际构建），
                 //    先到者完成后自动接棒；normal 模式审批前会主动释放
                 //    （原独立 Queue Gate / Build Info / Pre-flight stage 收敛至此）
