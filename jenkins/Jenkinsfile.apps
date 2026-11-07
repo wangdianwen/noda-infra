@@ -75,8 +75,10 @@ pipeline {
         stage('Build') {
             options {
                 // 队列门禁等待 + checkout + preflight + docker build（Mac）+
-                // 静态产物构建，常规 ~20m，45m 封顶
-                timeout(time: 45, unit: 'MINUTES')
+                // 静态产物构建。近 9 班实测 9.5~12.4m，20m 封顶留 ~8m 余量；
+                // 2026-11-07 由 45m 收紧——#1264 网络挂死 38min 实证需更早止损
+                // （外层 curl 已另加 max-time 300 根修，超时层是最后防线）
+                timeout(time: 20, unit: 'MINUTES')
             }
             steps {
                 // ① 队列门禁：同产品后触发构建在此等待（不开始实际构建），
