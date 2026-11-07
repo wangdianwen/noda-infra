@@ -1,0 +1,29 @@
+# headroom-proxy 本地构建镜像（2026-11-08 建，随 PyPI 上游版本升级）
+#
+# 背景：ghcr.io/chopratejas/headroom 的 Docker 镜像停在 0.27.0（2026-06-22 构建，
+#   0.6.7/sha-* 等 tag 更旧），但上游 pip 包持续发版——v0.43.1（2026-11-05）含多个
+#   proxy 层修复（模型键 tokenizer/beacon 缓存加上界、ChatGPT 流式改 HTTP/1.1 客户端等）。
+#   因此改为本地按 PyPI wheel 构建；若 ghcr 恢复发版可随时切回镜像引用。
+#
+# 重建容器命令见 scripts/headroom-recreate.sh（env 与 ghcr 版容器逐项一致）。
+FROM python:3.13-slim
+
+# healthcheck 用 curl（python:slim 不自带）
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# 版本显式钉住，升级改这一行后 docker build
+# ⚠ 0.4x 起 proxy 依赖拆进 [proxy] extra，裸装会报 "Proxy dependencies not installed"
+RUN pip install --no-cache-dir "headroom-ai[proxy]==0.43.1"
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# 与 ghcr 0.27.0 版容器 Entrypoint/Cmd 完全一致
+ENTRYPOINT ["headroom", "proxy"]
+CMD ["--host", "0.0.0.0", "--port", "8787"]
+
+# 与 ghcr 0.27.0 版容器 Healthcheck 一致
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl --fail --silent http://127.0.0.1:8787/readyz
