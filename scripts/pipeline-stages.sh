@@ -372,6 +372,34 @@ _layer_want_api()    { [ "$LAYER_FILTER" = "all" ] || [ "$LAYER_FILTER" = "api" 
 _layer_want_web()    { [ "$LAYER_FILTER" = "all" ] || [ "$LAYER_FILTER" = "web" ]; }
 _layer_want_static() { [ "$LAYER_FILTER" = "all" ] || [ "$LAYER_FILTER" = "static" ]; }
 
+# buildx_load_verified - buildx --load 后验证 tag 真落到 daemon（#1265 判例）：
+# 全 CACHED 构建时 naming done 但 tag 偶发未落（daemon 无此 tag → 部署段 compose
+# pull access denied → api 容器缺失、static nginx upstream 悬空 crash loop）。
+# 用法：buildx_load_verified <tag> <buildx 原参数...>——首跑后 inspect 验证，
+# 缺失重试一次（解包记录已就位，重试 load 可落），再失败 fail-fast（宁可红
+# 不带病进部署段）。
+buildx_load_verified() {
+    local tag="$1"; shift
+    if ! docker buildx build --load "$@"; then
+        log_error "buildx 构建失败: ${tag}"
+        return 1
+    fi
+    if docker image inspect "$tag" >/dev/null 2>&1; then
+        return 0
+    fi
+    log_info "⚠️  buildx load 后 tag 未落 daemon（全 CACHED 丢 tag 判例），重试一次..."
+    if ! docker buildx build --load "$@"; then
+        log_error "buildx 重试构建失败: ${tag}"
+        return 1
+    fi
+    if docker image inspect "$tag" >/dev/null 2>&1; then
+        log_success "重试 load 后 tag 已落: ${tag}"
+        return 0
+    fi
+    log_error "load 重试后 tag 仍未落 daemon: ${tag}（fail-fast，不进部署段）"
+    return 1
+}
+
 # _next_public_build_args - NEXT_PUBLIC_* build-args（逐行输出；noda-static 镜像构建共用）
 # 照抄旧单容器清单；static 仅 www 消费其中 GA4_WWW_ID/Keycloak 等，多余变量无副作用
 _next_public_build_args()
@@ -474,7 +502,10 @@ pipeline_build()
     # 只打 commit tag 不打 latest（2026-09-13）：latest 与 commit tag 指向同一镜像，
     # 纯视觉重复且会掩盖「latest 到底是哪版」的疑问；部署/回滚统一走 commit tag
     if _layer_want_api; then
-    docker buildx build --load \
+    # buildx 全 CACHED 时 --load 偶发丢 tag（#1265 实证：naming done 但 daemon 无
+    # tag → compose pull denied → preprod api 容器缺失、static nginx 上游悬空）。
+    # load 后立即验证，缺失重试一次（重试时解包记录已在，tag 可落），再失败 fail-fast。
+    buildx_load_verified "noda-api:${git_sha}" \
         --cache-from type=local,src="$cache_dir" \
         --cache-to type=local,dest="$cache_dir",mode=max \
         -t "noda-api:${git_sha}" \
@@ -489,7 +520,7 @@ pipeline_build()
 
     # 3/3 Static（nginx + www 静态导出；LAYER=api 时跳过）
     if _layer_want_web; then
-    docker buildx build --load \
+    buildx_load_verified "noda-static:${git_sha}" \
         --cache-from type=local,src="$cache_dir" \
         --cache-to type=local,dest="$cache_dir",mode=max \
         -t "noda-static:${git_sha}" \
