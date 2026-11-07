@@ -16,7 +16,7 @@ RUN apk add --no-cache wget gnupg
 # 2026-10-27 emSign 证书事件教训：latest 抓取的版本=构建时点的运气，安全版本
 # 必须显式声明。bump 由 deploy/container-update-check.sh 每周对比 GitHub
 # latest release 告警驱动，改本 ARG 后走 noda-infra 管线 SERVICE=noda-ops 发布。
-ARG CLOUDFLARED_VERSION=2026.10.4
+ARG CLOUDFLARED_VERSION=2026.10.7
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then CLOUDFLARED_ARCH="amd64"; \
     elif [ "$ARCH" = "aarch64" ]; then CLOUDFLARED_ARCH="arm64"; \
