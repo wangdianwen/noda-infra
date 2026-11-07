@@ -1005,7 +1005,7 @@ _start_prod_static()
             --label com.docker.compose.service=nginx \
             --label noda.service-group=apps \
             --label noda.environment=prod \
-            --health-cmd \"wget --quiet --tries=1 --spider http://127.0.0.1:81/health || exit 1\" \
+            --health-cmd \"wget --quiet --tries=1 --spider --header='Host: auth.noda.co.nz' http://127.0.0.1:81/health || exit 1\" \
             --health-interval 5s \
             --health-timeout 5s \
             --health-retries 3 \
@@ -1048,7 +1048,7 @@ _start_prod_static()
             --label "com.docker.compose.service=nginx" \
             --label "noda.service-group=apps" \
             --label noda.environment=prod \
-            --health-cmd "wget --quiet --tries=1 --spider http://127.0.0.1:81/health || exit 1" \
+            --health-cmd "wget --quiet --tries=1 --spider --header='Host: auth.noda.co.nz' http://127.0.0.1:81/health || exit 1" \
             --health-interval 5s \
             --health-timeout 5s \
             --health-retries 3 \
