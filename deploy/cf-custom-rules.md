@@ -5,17 +5,17 @@
 > 手工改规则走 API 或面板均可，改完无需动 ip-ban.py。
 > 核验命令：见文末。
 
-## 规则清单（2026-10-25 快照）
+## 规则清单（2026-11-07 快照）
 
-### noda.co.nz（5 条自定义 + 1 条限速，按求值顺序）
+### noda.co.nz（4 条自定义 + 1 条限速，按求值顺序）
 
 | # | 描述 | action | 维护方 |
 |---|---|---|---|
-| 1 | admin non-NZ managed challenge | managed_challenge | 手工（后台入口仅 NZ 访问） |
+| 1 | geo-challenge merged（admin non-NZ + web non-NZ/AU 两分支；官方 Google 段豁免 11-07 补，见当日判例） | managed_challenge | 手工（11-07 由 admin 规则+CN 规则合并而成） |
 | 2 | block empty/fake/script user agent | block | 手工（本次加严，见下） |
-| 3 | cn-traffic-managed-challenge（cf.client.bot 豁免，10-25 补） | managed_challenge | 手工 |
-| 4 | ip-range-blacklist auto（10-25 精简至 7 段） | block | ip-ban.py 自动 |
-| 5 | datacenter-asn-block auto（19 ASN 两分支：滥用 6 个无 UA 豁免/大云 13 个保留；10-25 升 block+拆分） | block | ip-ban.py 自动 |
+| 3 | ip-range-blacklist auto（22 段） | block | ip-ban.py 自动 |
+| 4 | datacenter-asn-block auto（31 ASN 两分支：滥用 18 无 UA 豁免/大云 13 保留；10-26 扩容） | block | ip-ban.py 自动 |
+| 5 | cdn-hotlink-block（Referer 反盗链，ip-ban.py 维护） | block | ip-ban.py 自动 |
 | RL | content-nav-burst-guard：150 req/10s（http_ratelimit 阶段，HTML 路径） | block | 手工（#37 放宽） |
 
 ### shuotong.wang（3 条）
@@ -286,6 +286,36 @@ Events 滥用 ASN 的 block 事件 UA 列。残余不可关死：搬大云+伪�
   源站 PWA 三件套会话数（当日≈10）；「GA 某天无某国」无信号价值。
 - 部署：双 zone 读回 dc 规则 30 ASNs block、新 11 家命中 11/11、unsynced 空、
   表达式 850 字符；94 测试绿（17+13 分区锁 + 11 家回归锁）。
+
+### 2026-11-07（geo-challenge merged 上线 + 首例边缘误封：官方 Google 段豁免补齐）
+
+- **geo-challenge merged 上线（当日早）**：admin non-NZ 挑战 + web 非 NZ/AU 挑战
+  两分支合并为单规则 `b62507ea2ec243098ea2ce8eaac599e5`（managed_challenge，7 天
+  观察期），替换原 CN 单国规则；表达式
+  `(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ") or ((not cf.client.bot) and (http.host eq "noda.co.nz") and (not ip.geoip.country in {"NZ" "AU"}))`。
+- **首例边缘误封（misban-watch D1 当日即报，口号兑现）**：66.249.82.98
+  （66.249.64.0/19，PTR google-proxy-…google.com，UA=Chrome Privacy Preserving
+  Prefetch Proxy，抓 /.well-known/traffic-advice——该服务标准行为）与
+  2001:4860:7:510::fd（2001:4860:7::/48 Read Aloud 文档段，全引擎 Chrome/156 UA，
+  打 /zh-TW item 页）双双 geo=TW 被该规则 managed_challenge（无人值守服务解不了
+  挑战=403）。WHOIS 双双 GOOGLE LLC；firewallEventsAdaptive 定罪 ruleId=b62507ea
+  同秒双杀。
+  **根因**：边缘新规则只带 cf.client.bot 豁免——这两族官方流量 UA 无 bot 字样，
+  CF 不认 cf.client.bot；而源站 ip-ban.py 白名单早有 IP 真值豁免
+  （EXTRA_CRAWLER_RANGES）。边缘与源站豁免不对齐=上线缺口。
+  **修复**：web 分支插 `not ip.src in {66.249.64.0/19 209.85.128.0/17 2001:4860:7::/48}`
+  （三段=EXTRA_CRAWLER_RANGES 全量：prefetch/AdSense-Mediapartners/Read Aloud；
+  AS15169 本就不在 dc 名单，UA 规则对两类 UA 均不命中，读回 version 135）。
+  admin 分支不动（官方爬虫本不该来后台，挑战正确）。
+- **判例**：CF verified-bot 位（cf.client.bot）覆盖不了「官方段+无 bot UA」族
+  （Prefetch Proxy/Read Aloud/GoogleOther 类）——凡新上边缘拦截/挑战规则，豁免
+  条件必须从源站白名单整体移植（cf.client.bot **加** EXTRA_CRAWLER_RANGES IP 段），
+  不能只抄一半。
+- **顺手修**：r4s crontab misban-watch 条目 10-26 追加时失手插了两处（52 行残缺块
+  混进 hermes 看门狗注释中间 + 149 行完整块），同分钟双跑 dedup 竞态 → 每个 IP
+  告警发两遍；删残缺块，恢复单跑（misban 脚本行 2→1，hermes 行完好）。
+- 观察项：7 天观察期口径不变——geo 挑战量应逐日衰减；D1 对官方段零新命中即豁免
+  生效实证（Traffic-advice 会被周期性重抓，当晚即可见）。
 
 ## 核验命令（r4s 上跑）
 ```bash
