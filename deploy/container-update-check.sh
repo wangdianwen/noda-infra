@@ -60,6 +60,13 @@ if [ "$ROLE" != "r4s" ] && [ "$ROLE" != "mac" ]; then
     exit 1
 fi
 
+# ---------- 白名单配置（与头部注释契约对齐，2026-11-08 补 source——原版只读进程 env，配置文件从未生效） ----------
+case "$ROLE" in
+    r4s) ENV_FILE="/etc/noda/container-update.env" ;;
+    mac) ENV_FILE="$HOME/.container-update.env" ;;
+esac
+[ -f "$ENV_FILE" ] && . "$ENV_FILE"
+
 tg_notify()  # $1=消息文本（r4s 用 telegram-alert.sh；mac 用 website-gate 的 0600 tg.env）
 {
     if [ "$ROLE" = "r4s" ]; then
@@ -100,10 +107,15 @@ compose_labels()  # $1=容器名 → project|service|working_dir|config_files（
 
 # ---------- 1. 镜像巡检 ----------
 # here-doc 喂 while（非管道）：循环须在当前 shell 跑，findings 变量才能带出去
+# 2026-11-08 修复：镜像名取 docker inspect 的 Config.Image（创建时配置）而非
+# docker ps 的 .Image——:latest 漂浮 tag 被新 pull 转移后 .Image 显示镜像 ID
+# （如 50311d02b4d5），拿 ID 拼 :latest 去 pull 必失败，白名单也永不命中。
 WHITELIST="${CONTAINER_UPDATE_WHITELIST:-}"
 log "==== 容器镜像巡检开始（role=${ROLE}）===="
-while read -r name image; do
+while read -r name; do
     [ -n "$name" ] || continue
+    image=$(docker inspect --format '{{.Config.Image}}' "$name" 2>/dev/null) || continue
+    [ -n "$image" ] || continue
     case "$image" in
         noda-api:*|noda-static:*|noda-ops:*|localhost:5001/*)
             log "跳过本地构建镜像: $name ($image)"; continue ;;
@@ -139,7 +151,42 @@ while read -r name image; do
                     log "RECREATE_FAIL $name"
                 fi
             else
-                add_finding "可更新但无 compose 标签（裸 docker run）：${name}（${image}）— 需手动重建"
+                # 裸 docker run 容器的固化重建映射（2026-11-08 增强自动发布）：
+                # 命令必须幂等、无交互、参数与本机当前运行定义一致（回环绑定/新 key 语义）。
+                # 重建失败 = 旧容器已 rm + 新容器未起 → 必须 TG 求助，不能静默。
+                case "$name" in
+                    hindsight)
+                        # 固化脚本自带全部 run 参数与 LLM env 逻辑（env.zai 优先，
+                        # watchdog 降级位自愈兜底）
+                        if bash "$HOME/Project/noda-infra/scripts/hindsight-recreate.sh" rebuild >/dev/null 2>&1 \
+                           && docker inspect hindsight --format '{{.State.Status}}' 2>/dev/null | grep -q running; then
+                            log "RECREATED $name（固化脚本 hindsight-recreate.sh）"
+                            add_finding "已自动更新 recreate：${name}（${image}）"
+                        else
+                            add_finding "自动重建失败：hindsight — 跑 ~/Project/noda-infra/scripts/hindsight-recreate.sh rebuild 人工处理"
+                            log "RECREATE_FAIL $name"
+                        fi
+                        ;;
+                    headroom-proxy)
+                        # 固化参数 = 2026-11-08 实测定义（回环绑定；key 由客户端透传，不落容器）
+                        if docker rm -f headroom-proxy >/dev/null 2>&1 && docker run -d --name headroom-proxy \
+                            -p 127.0.0.1:8787:8787 \
+                            -e ANTHROPIC_TARGET_API_URL=https://api.z.ai/api/anthropic \
+                            -e OPENAI_TARGET_API_URL=https://api.z.ai/api/coding/paas/v4 \
+                            -e HEADROOM_TELEMETRY_ENABLED=true \
+                            --restart unless-stopped \
+                            ghcr.io/chopratejas/headroom:latest >/dev/null 2>&1; then
+                            log "RECREATED $name（固化 docker run 参数）"
+                            add_finding "已自动更新 recreate：${name}（${image}）"
+                        else
+                            add_finding "自动重建失败：headroom-proxy — 按固化 docker run 参数人工处理（ZCode provider 链路依赖 8787）"
+                            log "RECREATE_FAIL $name"
+                        fi
+                        ;;
+                    *)
+                        add_finding "可更新但无 compose 标签（裸 docker run）：${name}（${image}）— 需手动重建"
+                        ;;
+                esac
             fi
             ;;
         *)
@@ -147,7 +194,7 @@ while read -r name image; do
             ;;
     esac
 done <<EOF
-$(docker ps --format '{{.Names}}\t{{.Image}}')
+$(docker ps --format '{{.Names}}')
 EOF
 
 # ---------- 2. cloudflared 专项 ----------
