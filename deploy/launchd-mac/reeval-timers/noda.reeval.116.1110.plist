@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>noda.reeval.116.1110</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/dianwenwang/Project/noda-infra/scripts/jenkins/tg-notify.sh</string>
+    <string>📅 复评窗口到期：noda-apps#116 deals 按城扩源（7 天数据窗已满）。任务：SQL 对账过去 7 天三城各自每天 deal ≥1、奥克兰 ≥2/天；线上 /zh/{auckland,wellington,christchurch}/deals 抽查；数据评论挂 issue #116；不达标则诊断抓取源（Kiwi Property/Bookme/First Table/GrabOne）并修复后重开窗。</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer><key>Day</key><integer>10</integer><key>Month</key><integer>11</integer></dict>
+</dict>
+</plist>

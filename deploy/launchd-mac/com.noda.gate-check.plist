@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.noda.gate-check</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>-c</string>
+		<string>cd $HOME/project/website-gate &amp;&amp; set -a &amp;&amp; . $HOME/project/website-gate/credentials/tg.env &amp;&amp; set +a &amp;&amp; /opt/homebrew/bin/uv run gate check --tg &gt;&gt; logs/cron.log 2&gt;&amp;1 &amp;&amp; git pull --rebase -q &amp;&amp; git add data/ reports/ metrics.csv &amp;&amp; git commit -m "chore(data): weekly gate run $(/bin/date +%F)" &amp;&amp; git -c credential.helper='!/opt/homebrew/bin/gh auth git-credential' push -q &gt;&gt; logs/cron.log 2&gt;&amp;1</string>
+	</array>
+	<key>StandardErrorPath</key>
+	<string>/Users/dianwenwang/project/website-gate/logs/cron.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/dianwenwang/project/website-gate/logs/cron.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>8</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+		<key>Weekday</key>
+		<integer>0</integer>
+	</dict>
+</dict>
+</plist>

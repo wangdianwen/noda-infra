@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>Label</key>
+	<string>com.noda.container-update-check</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>-c</string>
+		<string>cd $HOME/project/noda-infra &amp;&amp; exec sh deploy/container-update-check.sh mac &gt;&gt; $HOME/Library/Logs/noda-container-update.log 2&gt;&amp;1 &amp;&amp; ssh -o BatchMode=yes r4s 'docker exec -u nodaops noda-ops /app/backup/hb.sh ok mac:container-update-check "Sun 04:00"' || ssh -o BatchMode=yes r4s 'docker exec -u nodaops noda-ops /app/backup/hb.sh fail mac:container-update-check "Sun 04:00"'</string>
+	</array>
+	<key>StandardErrorPath</key>
+	<string>/Users/dianwenwang/Library/Logs/noda-container-update.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/dianwenwang/Library/Logs/noda-container-update.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>4</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+		<key>Weekday</key>
+		<integer>0</integer>
+	</dict>
+</dict>
+</plist>

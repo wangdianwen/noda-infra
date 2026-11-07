@@ -1,0 +1,17 @@
+# website-gate cron（Mac mini，NZ 本地时间；2026-10-11 接线，2026-10-16 去 doppler 化）
+# 每天 05:30 探针（零凭据）；06:30 日报 --tg --llm；周日 08:00 全四门+TG+spec §6.4 提交纪律
+# 凭据一律走 credentials/ 下 0600 文件（tg.env / llm.env / gsc-sa.json），不依赖 doppler、keyring 与 GUI 会话
+30 5 * * * cd $HOME/project/website-gate && /opt/homebrew/bin/uv run gate probe >> logs/cron.log 2>&1
+30 6 * * * cd $HOME/project/website-gate && set -a && . $HOME/project/website-gate/credentials/tg.env && . $HOME/project/website-gate/credentials/llm.env && set +a && /opt/homebrew/bin/uv run gate digest --tg --llm >> logs/cron.log 2>&1
+0 8 * * 0 cd $HOME/project/website-gate && set -a && . $HOME/project/website-gate/credentials/tg.env && set +a && /opt/homebrew/bin/uv run gate check --tg >> logs/cron.log 2>&1 && git pull --rebase -q && git add data/ reports/ metrics.csv && git commit -m "chore(data): weekly gate run $(/bin/date +\%F)" && git -c credential.helper='!/opt/homebrew/bin/gh auth git-credential' push -q >> logs/cron.log 2>&1
+
+# container-update-check（Mac mini，2026-10-27 emSign cloudflared 事件新增）
+# 每周日 06:00：容器镜像 pull 对比 RepoDigests + cloudflared vs GitHub latest；
+# 有发现 TG 推送（zcodeforben bot，凭据 website-gate credentials/tg.env）；
+# 心跳走 r4s noda-ops hb。日志 ~/Library/Logs/noda-container-update.log
+0 6 * * 0 cd $HOME/project/noda-infra && sh deploy/container-update-check.sh mac >> $HOME/Library/Logs/noda-container-update.log 2>&1 && ssh -o BatchMode=yes r4s 'docker exec -u nodaops noda-ops /app/backup/hb.sh ok mac:container-update-check "Sun 06:00"' || ssh -o BatchMode=yes r4s 'docker exec -u nodaops noda-ops /app/backup/hb.sh fail mac:container-update-check "Sun 06:00"'
+
+# disk-guard（Mac mini，2026-11-01 磁盘 5 天灌满治理新增）
+# 每天 07:10 阈值守卫：free<60G 清安全缓存，<40G 加深度清单（空闲 ws+dev 产物），清理后<20G TG 告警
+# 红线豁免清单见 scripts/maintenance/disk-guard.sh 头注（gocache/gomodcache 卷、@tmp、ms-playwright、huggingface 等）
+10 7 * * * cd $HOME/project/noda-infra && sh scripts/maintenance/disk-guard.sh >> $HOME/Library/Logs/noda-disk-guard.log 2>&1 && ssh -o BatchMode=yes r4s 'docker exec -u nodaops noda-ops /app/backup/hb.sh ok mac:disk-guard "daily 07:10"' || ssh -o BatchMode=yes r4s 'docker exec -u nodaops noda-ops /app/backup/hb.sh fail mac:disk-guard "daily 07:10"'

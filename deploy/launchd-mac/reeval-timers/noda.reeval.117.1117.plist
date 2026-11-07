@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>noda.reeval.117.1117</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/dianwenwang/Project/noda-infra/scripts/jenkins/tg-notify.sh</string>
+    <string>📅 复评窗口到期：noda-apps#117 booking 卡按城织入（11-09 affiliate-weave cron 后 7 天数据窗已满）。任务：对账过去 7 天每城 booking 卡 ≥2、奥克兰 ≥4（GYG/Viator/Bookme 深链）；线上详情页 booking 卡抽查；数据评论挂 issue #117；不达标则诊断 affiliate-weave 产物并修复后重开窗。</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer><key>Day</key><integer>17</integer><key>Month</key><integer>11</integer></dict>
+</dict>
+</plist>
