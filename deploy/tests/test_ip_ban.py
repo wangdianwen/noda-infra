@@ -315,6 +315,80 @@ def test_apply_dc_rule_carries_persist_clause(ip_ban):
     assert ch and "or (ip.src in" not in rules[0]["expression"]
 
 
+# ---- CDN 图片防盗链子句（2026-11-07，并入 dc 规则）----
+
+def test_hotlink_clause_structure(ip_ban):
+    """host 定界 cdn.noda.co.nz + 三重豁免（空 Referer/cf.client.bot/白名单域）"""
+    e = ip_ban.HOTLINK_CLAUSE
+    assert 'http.host eq "cdn.noda.co.nz"' in e
+    assert "http.referer ne" in e                      # 空 Referer 放行
+    assert "not cf.client.bot" in e                    # 验证爬虫放行（原则①）
+    for allow in ip_ban.HOTLINK_REFERER_ALLOW:
+        assert 'lower(http.referer) contains "%s"' % allow in e, allow
+
+
+def test_hotlink_referer_allowlist_covers_own_and_search_domains(ip_ban):
+    """自家 apex+子域与主流搜索引擎转介域的 contains 锚都命中（模拟 Referer 值）"""
+    import re as _re
+    clause = ip_ban.HOTLINK_CLAUSE
+    markers = ip_ban.HOTLINK_REFERER_ALLOW
+    for ref in ("https://noda.co.nz/zh",
+                "https://www.noda.co.nz/",
+                "https://nearby.noda.co.nz/places/xyz",
+                "https://www.google.com/search?q=x",
+                "https://www.google.co.nz/imghp",
+                "https://www.bing.com/images",
+                "https://image.baidu.com/detail",
+                "https://pic.sogou.com/pics",
+                "https://duckduckgo.com/?q=x",
+                "https://nz.yahoo.com/"):
+        lo = ref.lower()
+        assert any(m in lo for m in markers), ref
+    # 结构自检：这些 referer 都会命中子句里的豁免 contains（防锚写错）
+    for m in markers:
+        assert m in clause
+
+
+def test_hotlink_clause_not_in_dc_expression(ip_ban):
+    """防盗链 2026-11-07 升格独立规则后，dc 表达式不得再携带（防止双份/占用配额）"""
+    assert "cdn.noda.co.nz" not in ip_ban.build_dc_expression([])
+    assert "http.referer" not in ip_ban.build_dc_expression(
+        [], persist_cidrs=["203.0.113.9/32"])
+
+
+def test_apply_hotlink_rule_creates_adopts_and_heals(ip_ban):
+    """创建/收养/自愈三形态：无规则→创建；CF 上已有同 ref 规则（API 预建）→
+    收养不重复；表达式被手改漂移→拉回"""
+    # 创建
+    rules, ch = ip_ban.apply_hotlink_rule([])
+    assert ch and len(rules) == 1 and rules[0]["ref"] == ip_ban.HOTLINK_MARKER
+    assert rules[0]["action"] == "block" and rules[0]["expression"] \
+        == ip_ban.HOTLINK_CLAUSE
+    # 幂等
+    rules, ch = ip_ban.apply_hotlink_rule(rules)
+    assert ch is False and len(rules) == 1
+    # 收养：CF 上预建的规则（ref 同 marker，description 同文）→ 不新建
+    adopted = [{"ref": ip_ban.HOTLINK_MARKER, "action": "block",
+                "expression": ip_ban.HOTLINK_CLAUSE, "enabled": True,
+                "description": "cdn-hotlink-block (Referer anti-hotlink; managed by ip-ban.py)"}]
+    rules, ch = ip_ban.apply_hotlink_rule(adopted)
+    assert ch is False and len(adopted) == 1
+    # 自愈：表达式被手改 → 拉回原表达式
+    drifted = [dict(adopted[0], expression='http.host eq "cdn.noda.co.nz"')]
+    rules, ch = ip_ban.apply_hotlink_rule(drifted)
+    assert ch and rules[0]["expression"] == ip_ban.HOTLINK_CLAUSE
+
+
+def test_hotlink_clause_matches_cf_deployed_rule(ip_ban):
+    """代码生成的表达式与 CF 线上 453cd99e 的 expression 逐字节一致（收养不漂移）。
+    线上快照 2026-11-07 上线时固化；若本测试失败=有人改了豁免名单，需同步重发 CF。"""
+    deployed = ('(http.host eq "cdn.noda.co.nz" and http.referer ne "" '
+                "and not cf.client.bot and not ("
+                + " or ".join('lower(http.referer) contains "%s"' % s
+                              for s in ip_ban.HOTLINK_REFERER_ALLOW) + "))")
+    assert ip_ban.HOTLINK_CLAUSE == deployed
+
+
 # ---- /24 枚举闸 OR→AND 修正（2026-10-25 复盘）----
 
 def test_enum24_google_case_not_banned(ip_ban):

@@ -631,6 +631,43 @@ def apply_blacklist(rules, bans):
     return rules
 
 
+# ---- CDN 图片防盗链（2026-11-07 用户拍板落地）----
+# cdn.noda.co.nz 此前三层（CF 边缘/nginx/应用）零防盗措施：伪造外站 Referer 实测
+# 返回完整图片（200 + Access-Control-Allow-Origin *）。防盗链是独立语义（只允许
+# 自家页面引用），与地理挑战/UA/黑名单/机房 ASN 均不同族。
+# 规则形态演变：落地时 Free 版 5/5 满额，曾按 persist 先例并入 dc 规则；同日用户
+# 拍板把两条极少变的 challenge 规则（admin 非 NZ + geo 非 NZ/AU，同 action）合并
+# 腾出 1 个空位 → 防盗链升格为独立规则（ref=cdn-hotlink-block，仅 noda zone——
+# cdn host 不存在于 shuotong zone，不占其配额）。apply_hotlink_rule 每轮对账：
+# 被手改漂移则拉回、被删则重建（自愈，同 dc 规则）。
+# 语义（三重豁免，原则①②不误封）：
+#   - 空 Referer 放行：og:image 预览（Meta/Telegram/微信卡片抓取）、邮件客户端、
+#     RSS、QR 扫码全走这条——带 Referer 的盗链才拦，不带的不拦（攻击者本来
+#     就能 referrerpolicy 去Referer 绕过，本规则定位是拦「懒盗链」省带宽）；
+#   - cf.client.bot 放行：CF 验证爬虫（Googlebot/Bingbot 抓图不误伤，原则①）；
+#   - Referer 含 noda.co.nz（apex+全部子域，contains 域锚）/主流搜索引擎图片
+#     转介放行：Google 图片点击转介 Referer=google.*，中文站另保 baidu/sogou。
+# 已知松弛（接受）：Referer 是客户端可任意伪造的字段，contains 匹配可被构造
+# Referer 绕过——与空 Referer 绕过同性质，不值得为此上签名 URL。
+HOTLINK_MARKER = "cdn-hotlink-block"
+HOTLINK_HOST = "cdn.noda.co.nz"
+HOTLINK_REFERER_ALLOW = (   # contains 子串（lower() 后匹配；域锚自带，宁松勿误拦）
+    "noda.co.nz",           # 自家 apex+子域（www/nearby/admin/…）
+    "google.",              # Google 图片/搜索转介（com/co.nz/…）
+    "bing.",
+    "baidu.",               # 中文用户主用
+    "sogou.",               # 搜狗（本机黑名单脚本的出身项目，中文用户仍用）
+    "duckduckgo.com",
+    "yahoo.",               # Yahoo Japan 图片重度用户也在内
+    "yandex.",
+)
+HOTLINK_CLAUSE = (
+    '(http.host eq "%s" and http.referer ne "" and not cf.client.bot and not (%s))'
+    % (HOTLINK_HOST, " or ".join(
+        'lower(http.referer) contains "%s"' % s for s in HOTLINK_REFERER_ALLOW)))
+HOTLINK_ZONES = ("noda.co.nz",)   # cdn host 只在 noda zone，shuotong 不建（不占配额）
+
+
 def build_dc_expression(allowed=None, persist_cidrs=None):
     """机房 ASN 常驻封禁规则表达式（纯函数，单测直接打）。2026-10-25 起两分支：
 
@@ -643,7 +680,9 @@ def build_dc_expression(allowed=None, persist_cidrs=None):
 
     persist_cidrs 非空时 OR 进坚持不懈来访者子句（继承 dc action=block）：
     Free 版自定义规则上限 5 条，无第 6 条配额（2026-10-25 实测
-    "6 out of 5"），两名单必须共用本规则；子句独立带 cf.client.bot + 站主豁免。"""
+    "6 out of 5"），两名单必须共用本规则；子句独立带 cf.client.bot + 站主豁免。
+    （CDN 防盗链 2026-11-07 曾因同配额压力并入本规则，同日 challenge 规则合并
+    腾位后升格独立规则 HOTLINK_MARKER，不再走这里。）"""
     ip_ex = "ip.src in {%s}" % " ".join(
         ["66.249.64.0/19"] + sorted(OWNER_IPS)
         + [str(n) for n in (allowed if allowed is not None else allow_nets())])
@@ -674,7 +713,8 @@ def apply_dc_rule(rules, expr):
             and rule.get("action") == DC_ACTION and rule.get("enabled", True)):
         return rules, False
     created = rule is None
-    desc = "%s auto (%d ASNs; managed by ip-ban.py)" % (DC_MARKER, len(DATACENTER_ASNS))
+    desc = "%s auto (%d ASNs + cdn hotlink; managed by ip-ban.py)" % (
+        DC_MARKER, len(DATACENTER_ASNS))
     if rule:
         rule["expression"] = expr
         rule["action"] = DC_ACTION
@@ -685,6 +725,35 @@ def apply_dc_rule(rules, expr):
                       "description": desc, "enabled": True, "ref": DC_MARKER})
     log("dc-rule: %s (%d ASNs, %s)" % ("created" if created else "updated",
                                        len(DATACENTER_ASNS), DC_ACTION))
+    return rules, True
+
+
+def apply_hotlink_rule(rules):
+    """CDN 图片防盗链独立规则（2026-11-07）原位维护，返回 (同一列表, 是否有变化)。
+
+    表达式恒定 HOTLINK_CLAUSE（纯静态，不随封禁名单变化）；每轮对账拉漂移/重建，
+    同 dc 规则的自愈语义。仅 HOTLINK_ZONES（noda.co.nz）调用——cdn host 不在
+    shuotong zone，不占其 Free 版规则配额。"""
+    rule = next((r for r in rules
+                 if str(r.get("description", "")).startswith(HOTLINK_MARKER)
+                 or r.get("ref") == HOTLINK_MARKER), None)
+    if (rule and rule.get("expression") == HOTLINK_CLAUSE
+            and rule.get("action") == "block" and rule.get("enabled", True)):
+        return rules, False
+    created = rule is None
+    desc = "%s (Referer anti-hotlink; managed by ip-ban.py)" % HOTLINK_MARKER
+    if rule:
+        rule["expression"] = HOTLINK_CLAUSE
+        rule["action"] = "block"
+        rule["description"] = desc
+        rule["enabled"] = True
+    else:
+        rules.append({"action": "block", "action_parameters": {},
+                      "expression": HOTLINK_CLAUSE, "description": desc,
+                      "enabled": True, "ref": HOTLINK_MARKER})
+    log("hotlink-rule: %s (host=%s, %d referer allows)"
+        % ("created" if created else "updated", HOTLINK_HOST,
+           len(HOTLINK_REFERER_ALLOW)))
     return rules, True
 
 
@@ -1188,7 +1257,10 @@ def main():
             try:
                 rules = apply_blacklist(get_rules(cf, zid), bans)
                 rules, dc_changed = apply_dc_rule(rules, dc_expr)
-                if need_put or dc_changed:
+                hl_changed = False
+                if zname in HOTLINK_ZONES:
+                    rules, hl_changed = apply_hotlink_rule(rules)
+                if need_put or dc_changed or hl_changed:
                     put_rules(cf, zid, rules)
                     if dc_changed and not DRY_RUN and not need_put:
                         tg("ip-ban: 机房 ASN 规则更新——%d 个 ASN 直接 %s"
