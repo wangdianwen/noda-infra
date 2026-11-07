@@ -50,7 +50,7 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
      点名 ChatGPT-User / Claude-User / Perplexity-User / MistralAI-User / cohere-ai
      （=GEO 引用漏斗，与 dc 规则 `DC_UA_EXEMPTS` 同口径；v1 只豁免 bot 类字样，
      Claude-User/Perplexity-User 的 Mozilla 型 UA 会被 v1 误拦，v2 修正）
-- 表达式（1911 字符，noda/shuotong 同文；ref：noda=原规则 id cde18ca8a97d46509ac50029365cb7ca，
+- 表达式（v3 现 2013 字符，noda/shuotong 同文；ref：noda=原规则 id cde18ca8a97d46509ac50029365cb7ca，
   shuotong=ua-block）：
 
 ```
@@ -62,10 +62,35 @@ Chrome//Safari//Gecko/AppleWebKit/Trident），站主 IP 豁免、UA 自带 bot/
   http.user_agent contains "ChatGPT-User" or http.user_agent contains "Claude-User" or
   http.user_agent contains "Perplexity-User" or http.user_agent contains "MistralAI-User" or
   http.user_agent contains "cohere-ai")
-  and ( ((AppleWebKit 无 Safari/) or (Mozilla/5.0 无任何引擎标记)) or (脚本UA名单 OR 链) ))
+  and ( ((AppleWebKit 无 Safari/ 且无 MicroMessenger/) or (Mozilla/5.0 无任何引擎标记)) or (脚本UA名单 OR 链) ))
 ```
 
+### v3（2026-11-04，iOS 微信 webview 误拦修复，两 zone 同步：noda v104 / shuotong v45）
+「AppleWebKit 无 Safari/」截断伪装条款自 v1（10-24）起把 **iOS 微信内置浏览器全部判成伪装浏览器
+block**——微信 iOS webview 的 UA 天生以 `Mobile/15E148 MicroMessenger/…` 结尾、不含 `Safari/`
+（Android 微信 UA 带 Chrome/+Safari/ 不受影响）。判例：2026-11-04 02:53Z 用户手机（One NZ 移动
+IPv6 2407:7000:b051:ed00::/64）在微信内打开 `/zh/recipes/…` 被 block；站主出口 IP 在豁免名单内，
+本机 curl 复测全部通过，误拦持续 11 天无人察觉。修复=该子句加
+`and not http.user_agent contains "MicroMessenger"`（微信全端 UA 均带此 token，豁免面最小）。
+伪造面评估：爬虫声明 MicroMessenger 可过 UA 条款，但 CN 来源仍被 cn-challenge 挑战、
+大云 ASN 分支仍 block（MicroMessenger 不在其 UA 豁免表）、滥用 ASN 无条件 block、
+ip-ban 行为闸照收——四层防线不减弱，符合 2026-10-25 三原则①「不误封正常用户」。
+
 ## 变更记录
+### 2026-11-04 三（iOS 微信 webview 全量误拦 11 天：UA 规则 v3 豁免修复）
+用户在微信内打开 noda.co.nz 见 CF「Sorry, you have been blocked」403 页报障。取证：r4s 用
+CF_REPORT_API_TOKEN 拉 firewallEventsAdaptive 48h，锁定 02:53:35Z One NZ 移动 IPv6
+（2407:7000:b051:ed00::/64）UA=iPhone MicroMessenger 在 /zh/recipes 被 firewallCustom block；
+对照全规则表达式，命中「AppleWebKit 无 Safari/」截断伪装条款——iOS 微信 webview UA 以
+`Mobile/15E148 MicroMessenger/…` 结尾天生无 `Safari/`，**v1 上线（10-24）起全部 iOS 微信访客
+持续被 block**；站主出口 IP（47.72.103.104）在豁免名单内，本机 curl 复测一直 200，故 11 天无人
+察觉。修复：该子句加 `and not http.user_agent contains "MicroMessenger"`，双 zone entrypoint
+整体 PUT（照 ip-ban.py 同款路由；单规则 PUT 端点对该 token 报 10405 Method not allowed），
+noda v103→v104 / shuotong v44→v45，读回验证通过、其余规则原样透传。爬虫面评估见 UA 规则 v3 节
+（四层防线不减弱）。教训：**改边缘拦截规则后必须用非豁免 IP 真机回归**（微信真机/移动网络），
+仅本机 curl 通过是豁免 IP 假象；「拦截类规则上线看事件流而不是只看拦截量」（440 blocks/48h 全是
+爬虫命中、假绿，缺真人误伤核对）。
+
 ### 2026-10-25 二（D1 事件流点亮：token 配置 + GraphQL UA 字段判例）
 CF_REPORT_API_TOKEN 已配置（token 名 `cf-report-misban-watch`，Zone.Zone Read +
 Zone.Analytics Read，All zones，永不过期，r4s /etc/noda/ip-ban.env）。首次真跑暴露
