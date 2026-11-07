@@ -149,7 +149,10 @@ services:
           # 合并原 noda-infra-nginx 反代角色（cloudflared / KEYCLOAK_INTERNAL_URL 引用）
           - noda-infra-nginx
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:81/health || exit 1"]
+      # 1ef8aaf 后 :81 default_server 对无业务 Host（127.0.0.1）444——探活需带
+      # 真实 Host 落进业务块（auth 块 location = /health 本地直答，origin-gate
+      # 放行 127.0.0.0/8）。修复 2026-11-08 build#1277 部署健康门全红事故。
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider --header='Host: auth.noda.co.nz' http://127.0.0.1:81/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
