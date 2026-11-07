@@ -80,7 +80,7 @@ docker rm -f "$NAME" 2>/dev/null || true
 docker run -d --name "$NAME" \
   --restart unless-stopped \
   --shm-size 2g \
-  -p 8888:8888 -p 9999:9999 \
+  -p 127.0.0.1:8888:8888 -p 127.0.0.1:9999:9999 \
   -v "$VOLUME":/home/hindsight/.pg0 \
   "${LLM_ARGS[@]}" \
   -e HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS=4000 \
