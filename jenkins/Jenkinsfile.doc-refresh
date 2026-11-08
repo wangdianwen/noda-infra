@@ -1,0 +1,107 @@
+// Jenkinsfile.doc-refresh — DOC 静态快照周度重抓 + 字段级 diff 报告（noda-apps #234）
+//
+// 职责（只读管线，不发布任何东西）：
+//   1. 本 job 的 pipeline SCM = noda-infra main（seed 17-pipeline-job-doc-refresh，
+//      lightweight=false → Jenkinsfile 运行前 noda-infra 已 checkout 在 workspace 根）
+//   2. checkout noda-apps（BRANCH 参数，默认 main）到子目录
+//   3. 裸 node 跑 scripts/nearby/doc-snapshot-refresh.mjs（零第三方依赖——
+//      不 pnpm install；工件只有报告 JSON + TG 摘要文本）
+//   4. 报告双通道：TG bot（tg-notify.sh，空 diff 也通知——证明对比已执行）
+//      + admin /cronjobs 心跳（ssh r4s hb → noda-ops-cron service，
+//      cronjob_executions 口径）；失败两通道都告警
+//   5. archiveArtifacts 留档完整报告（构建记录 = #234 验收口径的执行台账）
+//
+// 调度：每周一 05:35（宿主 Mac 本地时区 NZ；TimerTrigger spec）——避开
+// 工作日 06-08 NZ 抓取带与人工发版窗口；DOC ArcGIS 官方开放数据端点，
+// 单轮 ~7 请求、≥2s/host 限速（脚本内红线），礼貌预算内。
+//
+// 发现漂移后的 bundle 刷新是 PR 半自动（人工复核 diff 报告后按 noda-apps
+// scripts/README.md 的 doc-refresh runbook 重跑 ETL 链提 PR）——本 job 绝不
+// 改仓内 bundle。
+//
+// 部署后生效清单（noda-infra PR 合入 main 后）：
+//   1. Jenkins Script Console 执行 scripts/jenkins/init.groovy.d/17-pipeline-job-doc-refresh.groovy
+//      （或重启 Jenkins 由 init.groovy.d 自动 seed）；job 默认 disabled=true
+//   2. 确认 job 配置（Jenkinsfile 路径/触发器）→ Enable
+//   3. 下个周一 05:35 自动跑；急需时 Build Now 手动出 Jenkins 侧记录
+pipeline {
+    agent any
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 20, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+    }
+
+    parameters {
+        string(name: 'BRANCH', defaultValue: '*/main',
+               description: 'noda-apps 分支（默认 main；机制验证期可指向 feature 分支）')
+    }
+
+    triggers {
+        cron('35 5 * * 1')
+    }
+
+    environment {
+        // 与 Jenkinsfile.apps 同源：nvm node + homebrew
+        PATH = "${env.HOME}/.nvm/versions/node/v24.12.0/bin:/usr/local/bin:/opt/homebrew/bin:${env.PATH}"
+    }
+
+    stages {
+        stage('DOC 重抓 + diff') {
+            steps {
+                // CI 防线（Jenkinsfile.apps 同款）：子目录若是指向本地工作区的
+                // 符号链接必须摘除——必须用真实 checkout
+                sh 'if [ -L noda-apps ]; then rm -f noda-apps && echo "⚠️ 已移除 noda-apps 符号链接"; fi'
+                dir('noda-apps') {
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: params.BRANCH]],
+                        userRemoteConfigs: [[
+                            url: 'git@github.com:wangdianwen/noda-apps.git',
+                            credentialsId: 'noda-apps-git-credentials'
+                        ]]
+                    ])
+                    sh '''
+                        node scripts/nearby/doc-snapshot-refresh.mjs \
+                            --json-out ../doc-refresh-report.json \
+                            --tg-out ../doc-refresh-tg.txt
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            archiveArtifacts artifacts: 'doc-refresh-report.json,doc-refresh-tg.txt', allowEmptyArchive: false
+            // TG：空 diff 也通知（报告本体即「跑了对比」的证明）
+            sh '''#!/bin/bash
+                set -euo pipefail
+                MSG="📋 DOC 快照重抓 #${BUILD_NUMBER}（周任务）
+
+$(cat doc-refresh-tg.txt)"
+                scripts/jenkins/tg-notify.sh "$MSG"
+            '''
+            // admin /cronjobs 心跳（noda-ops-cron service；失败不阻塞主流程）
+            withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                sh '''#!/bin/bash
+                    ssh -i "$SSH_KEY_FILE" -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
+                        root@192.168.100.1 \
+                        "/mnt/mmc1-4/System/Scripts/hb ok jenkins:doc-refresh '35 5 * * 1'" || true
+                '''
+            }
+        }
+        failure {
+            sh 'scripts/jenkins/tg-notify.sh "🛑 DOC 快照重抓 job #${BUILD_NUMBER} 失败——抓取/解析异常，见 Jenkins 控制台"'
+            withCredentials([sshUserPrivateKey(credentialsId: 'r4s-ssh-key', keyFileVariable: 'SSH_KEY_FILE')]) {
+                sh '''#!/bin/bash
+                    ssh -i "$SSH_KEY_FILE" -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new \
+                        root@192.168.100.1 \
+                        "/mnt/mmc1-4/System/Scripts/hb fail jenkins:doc-refresh '35 5 * * 1' build-failed" || true
+                '''
+            }
+        }
+    }
+}
