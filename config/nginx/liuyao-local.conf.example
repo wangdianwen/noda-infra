@@ -486,7 +486,7 @@ server {
         include /etc/nginx/snippets/seaweedfs-admin-static-stg.conf;
     }
 
-    # regex 顺序敏感：.txt > snagme 详情深链 > 两级 cronjobs 深链 > 单级 cronjobs
+    # regex 顺序敏感：.txt > snagme 详情深链 > 两级 cronjobs 深链 > 单级 cronjobs > 两级 dashboard/cronjobs 深链 > 单级 dashboard/cronjobs
     location ~ ^/snagme/listing/[^/]+(/|$) {
         add_header Cache-Control "no-cache" always;
         include /etc/nginx/snippets/seaweedfs-admin-static-stg.conf;
@@ -500,7 +500,10 @@ server {
         include /etc/nginx/snippets/seaweedfs-admin-static-stg.conf;
         # 条件请求剥离见 snippets/strip-conditional-get.conf 头注（深链壳 304×error_page=200 → 空 200 白页）
         include /etc/nginx/snippets/strip-conditional-get.conf;
-        error_page 403 404 =200 /cronjobs/app-shell/app-shell.html;
+        # 2026-11-11 admin 合并改版（spec docs/superpowers/specs/2026-11-11-admin-consolidation-xhs-design.md）：
+        # [service]/[job] 动态子树迁 /dashboard/cronjobs/[service]/[job]，旧壳文件已不存在，
+        # error_page 改指新壳让旧 /cronjobs/... 深书签复活到新页面（不改会二次 404 循环）
+        error_page 403 404 =200 /dashboard/cronjobs/app-shell/app-shell.html;
     }
 
     location ~ ^/cronjobs/ {
@@ -508,7 +511,28 @@ server {
         include /etc/nginx/snippets/seaweedfs-admin-static-stg.conf;
         # 条件请求剥离见 snippets/strip-conditional-get.conf 头注（深链壳 304×error_page=200 → 空 200 白页）
         include /etc/nginx/snippets/strip-conditional-get.conf;
-        error_page 403 404 =200 /cronjobs/app-shell.html;
+        # 2026-11-11：同上，单级 /cronjobs/<service> 深书签回退到 /dashboard/cronjobs 单级壳
+        error_page 403 404 =200 /dashboard/cronjobs/app-shell.html;
+    }
+
+    # 2026-11-11 admin 合并改版（spec docs/superpowers/specs/2026-11-11-admin-consolidation-xhs-design.md）：
+    # [service]/[job] 动态子树从 /cronjobs/[service] 迁 /dashboard/cronjobs/[service]/[job]（Next 静态
+    # 导出 SSG 壳：out/dashboard/cronjobs/app-shell.html 与 out/dashboard/cronjobs/app-shell/app-shell.html，
+    # 2026-11-11 构建产物实测）。照旧规则形状新增两条新路径深链兜底，两级在前（regex 首个命中生效）
+    location ~ ^/dashboard/cronjobs/[^/]+/[^/]+(/|$) {
+        add_header Cache-Control "no-cache" always;
+        include /etc/nginx/snippets/seaweedfs-admin-static-stg.conf;
+        # 条件请求剥离见 snippets/strip-conditional-get.conf 头注（深链壳 304×error_page=200 → 空 200 白页）
+        include /etc/nginx/snippets/strip-conditional-get.conf;
+        error_page 403 404 =200 /dashboard/cronjobs/app-shell/app-shell.html;
+    }
+
+    location ~ ^/dashboard/cronjobs/ {
+        add_header Cache-Control "no-cache" always;
+        include /etc/nginx/snippets/seaweedfs-admin-static-stg.conf;
+        # 条件请求剥离见 snippets/strip-conditional-get.conf 头注（深链壳 304×error_page=200 → 空 200 白页）
+        include /etc/nginx/snippets/strip-conditional-get.conf;
+        error_page 403 404 =200 /dashboard/cronjobs/app-shell.html;
     }
 
     # 根页 302（原 SSR redirect('/dashboard') 由 nginx 承担）
