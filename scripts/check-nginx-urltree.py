@@ -13,6 +13,9 @@ nginx default.conf 城市正则/分类组落后 —— 794 条 playground 详情
     （生成 common/go/geo/districts_gen.go 的同一份 JSON）
   - 分类集: nearby/api/nearbyapi/urltree.go 的 placeCategoryWhitelist
     （places 线分类白名单，issue#31 规则 1）
+  - 城市线组: 同文件 proxyCityLines（issue #283 新增真源——A1 城市线
+    alternation；2026-11-10 #283 实证漏 markets 致 sitemap 在列市场页
+    三语 404，本组对账即防复发）
 
 被查面（本仓 config/nginx）：
   - conf.d/default.conf: 六处城市组（prod apex 块 A1/A2-④/A2-⑤ + noda.test
@@ -85,7 +88,22 @@ def load_truth_sets(apps_dir):
         print(f"无法在 {URLTREE_GO_RELPATH} 解析 placeCategoryWhitelist（定义漂移？）")
         sys.exit(1)
     cats = set(re.findall(r'"([^"]+)"', m.group(1)))
-    return cities, cats
+    # proxyCityLines 元素是 line* 常量标识符：先建 标识符→字面量 映射再解析
+    idents = dict(re.findall(r"^\s*(\w+)\s*=\s*\"([^\"]+)\"", src, re.M))
+    m = re.search(r"proxyCityLines\s*=\s*\[\]string\{([^}]*)\}", src)
+    if not m:
+        print(f"无法在 {URLTREE_GO_RELPATH} 解析 proxyCityLines（定义漂移？）")
+        sys.exit(1)
+    toks = [t.strip() for t in m.group(1).split(",") if t.strip()]
+    lines = set()
+    for t in toks:
+        lm = re.fullmatch(r'"([^"]+)"', t)
+        val = lm.group(1) if lm else idents.get(t)
+        if not val:
+            print(f"proxyCityLines 含未解析标识符 {t}（常量定义漂移？）")
+            sys.exit(1)
+        lines.add(val)
+    return cities, cats, lines
 
 
 def check_set(label, line_no, actual, expected):
@@ -107,10 +125,13 @@ def check_set(label, line_no, actual, expected):
 CITY_GROUP_RE = re.compile(r"\(\?:auckland((?:\|[a-z0-9-]+)+)\)")
 # A1 分类组形态：places(?:/(?:attractions|...))? —— 仅 A1 城市树详情线有
 A1_CATEGORY_RE = re.compile(r"places\(\?:/\(\?:([a-z0-9-]+(?:\|[a-z0-9-]+)*)\)\)\?")
+# A1 城市线组形态：)?|events|news|deals|hidden-gems|markets)/ —— 紧跟分类组
+# 之后的 alternation（#283 对账面：漏 markets = sitemap 在列市场页 404）
+A1_CITYLINE_RE = re.compile(r"\)\?\|([a-z][a-z-]*(?:\|[a-z][a-z-]*)*)\)/")
 
 
-def check_conf(path, label, cities, cats, min_city_hits):
-    """解析单个 conf 文件中的城市组与 A1 分类组并对账。"""
+def check_conf(path, label, cities, cats, city_lines, min_city_hits):
+    """解析单个 conf 文件中的城市组、A1 分类组与 A1 城市线组并对账。"""
     print(f"\n[{label}] {os.path.relpath(path, repo_root())}")
     if not os.path.isfile(path):
         fail(f"文件不存在: {path}")
@@ -118,8 +139,16 @@ def check_conf(path, label, cities, cats, min_city_hits):
     with open(path, encoding="utf-8") as f:
         lines = f.readlines()
 
-    city_hits = cat_hits = 0
+    city_hits = cat_hits = line_hits = 0
     for i, line in enumerate(lines, 1):
+        is_a1 = A1_CATEGORY_RE.search(line) is not None
+        if is_a1:
+            lm = A1_CITYLINE_RE.search(line)
+            if not lm:
+                fail(f"L{i} A1 行未解析出城市线组（形态漂移，守卫失明）")
+            else:
+                check_set(f"A1 城市线组", i, set(lm.group(1).split("|")), city_lines)
+                line_hits += 1
         for m in CITY_GROUP_RE.finditer(line):
             group = set(("auckland",) + tuple(m.group(1).lstrip("|").split("|")))
             # 含 national = A1 城市树详情线（+兜底城）；A2-④/⑤ 旧城市线不含
@@ -140,29 +169,38 @@ def check_conf(path, label, cities, cats, min_city_hits):
         fail("A1 分类组零命中（places(?:/(?:…))? 形态漂移，守卫失明）")
     else:
         ok(f"A1 分类组共 {cat_hits} 处全部核对")
+    if line_hits == 0:
+        fail("A1 城市线组零命中（)?|线段)/ 形态漂移，守卫失明）")
+    else:
+        ok(f"A1 城市线组共 {line_hits} 处全部核对")
 
 
 def main():
     apps_dir, how = resolve_apps_dir()
-    cities, cats = load_truth_sets(apps_dir)
+    cities, cats, city_lines = load_truth_sets(apps_dir)
     print("== nginx URL 树跨仓对账守卫 ==")
     print(f"noda-apps 检出({how}): {apps_dir}")
     print(f"真源城市集({len(cities)}): {','.join(sorted(cities))}")
     print(f"真源分类集({len(cats)}): {','.join(sorted(cats))}")
+    print(f"真源城市线组({len(city_lines)}): {','.join(sorted(city_lines))}")
 
     root = repo_root()
     # default.conf：六处城市组（A1×2 + A2-④×2 + A2-⑤×2）+ A1 分类组×2
     check_conf(os.path.join(root, "config/nginx/conf.d/default.conf"),
-               "prod 主面", cities, cats, min_city_hits=6)
+               "prod 主面", cities, cats, city_lines, min_city_hits=6)
     # liuyao 本机模板：nearby-prepred 镜像面（A1 + A2-④/⑤ = 3 处城市组 + 1 分类组）
     check_conf(os.path.join(root, "config/nginx/liuyao-local.conf.example"),
-               "prepred 模板", cities, cats, min_city_hits=3)
+               "prepred 模板", cities, cats, city_lines, min_city_hits=3)
+    # liuyao-local.conf 实文件（Mac preprod nginx 真跑面，2026-11-11 #283 排查发现
+    # 它落后 example 一整个 W1 同步——漏 hidden-gems/markets 双线，纳入对账防再漂）
+    check_conf(os.path.join(root, "config/nginx/liuyao-local.conf"),
+               "prepred 实面", cities, cats, city_lines, min_city_hits=3)
 
     print()
     if FAILURES:
         print(f"对账失败：{len(FAILURES)} 处不等/缺失（上方明细）。nginx 与 noda-apps 真源漂移，禁止发版。")
         sys.exit(1)
-    print("对账通过：nginx 城市组/分类组与 noda-apps 真源全等。")
+    print("对账通过：nginx 城市组/分类组/城市线组与 noda-apps 真源全等。")
     sys.exit(0)
 
 
