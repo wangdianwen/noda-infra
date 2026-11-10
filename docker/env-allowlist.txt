@@ -163,3 +163,10 @@ NEARBY_PUSH_VAPID_PRIVATE_KEY
 #    docker exec -e 覆盖，无需容器模板默认值。
 NEARBY_VENUE_GEOCODE_BACKFILL_LIMIT
 NEARBY_VENUE_GEOCODE_PLATFORM
+# XHS_DATA_DIR：adminapi 小红书预估 vs 实际聚合的 CSV 目录（2026-11-11 spec
+# docs/superpowers/specs/2026-11-11-admin-consolidation-xhs-design.md）。
+# noda-social admin-sync 把 predictions/views 两 CSV rsync 到 ops-logs/social 卷
+# （prod 已随 ops-logs 挂载只读可见）。未配置默认 /ops-logs/social；preprod/本地
+# 未挂卷时 /api/admin/xhs/predictions 返回 source=disabled 优雅空态（代码侧兜底，
+# 非部署必需）——与上方 RL429_DIR 同款可选旋钮。
+XHS_DATA_DIR
