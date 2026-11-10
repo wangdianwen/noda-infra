@@ -192,9 +192,13 @@ def main():
     check_conf(os.path.join(root, "config/nginx/liuyao-local.conf.example"),
                "prepred 模板", cities, cats, city_lines, min_city_hits=3)
     # liuyao-local.conf 实文件（Mac preprod nginx 真跑面，2026-11-11 #283 排查发现
-    # 它落后 example 一整个 W1 同步——漏 hidden-gems/markets 双线，纳入对账防再漂）
-    check_conf(os.path.join(root, "config/nginx/liuyao-local.conf"),
-               "prepred 实面", cities, cats, city_lines, min_city_hits=3)
+    # 它落后 example 一整个 W1 同步——漏 hidden-gems/markets 双线，纳入对账防再漂）。
+    # 该文件 gitignore、仅存在于实跑机本盘；CI workspace 无此文件属正常，跳过不算过（不算败）
+    live_conf = os.path.join(root, "config/nginx/liuyao-local.conf")
+    if os.path.exists(live_conf):
+        check_conf(live_conf, "prepred 实面", cities, cats, city_lines, min_city_hits=3)
+    else:
+        print("[skip] prepred 实面 config/nginx/liuyao-local.conf 本机不存在（gitignore 实跑文件，CI 跳过）")
 
     print()
     if FAILURES:
