@@ -1837,8 +1837,22 @@ pipeline_infra_preflight()
         if [ "$running" != "true" ]; then
             if [ "$service" = "nginx" ]; then
                 log_info "反代容器未运行，正在通过 docker compose 启动（r4s 远程）..."
+                # apps 流水线只发 commit tag（r4s 无 latest）——与 pipeline_deploy_nginx
+                # 同口径：取 r4s 最新本地 noda-static tag 经 env 传给 compose；
+                # 否则模板回退 noda-static:latest 必然 pull denied（93 号构建事故根因）
+                local _fb_static_tag
+                _fb_static_tag=$(remote_exec "docker images noda-static --format '{{.Tag}}' | grep -v '<none>' | head -1" 2>/dev/null | tr -d '\r')
+                local _fb_env_prefix=""
+                if [ -n "$_fb_static_tag" ]; then
+                    _fb_env_prefix="NODA_STATIC_IMAGE=noda-static:${_fb_static_tag}"
+                    log_info "反代兜底启动使用静态镜像: noda-static:${_fb_static_tag}"
+                else
+                    log_error "r4s 上无任何 noda-static 镜像——无法兜底启动反代容器（请先跑 noda-apps 流水线产出静态镜像）"
+                    return 1
+                fi
                 remote_compose "up -d --no-deps nginx" \
-                    "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml" || {
+                    "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml" \
+                    "$_fb_env_prefix" || {
                     log_error "docker compose 启动反代容器失败（r4s）"
                     return 1
                 }
