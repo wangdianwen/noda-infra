@@ -55,15 +55,18 @@ services:
   # Static（原 nginx 服务键）— 128M (D-03)
   # 三容器拆分：noda-static-prod 取代 noda-infra-nginx（nginx:1.25 反代容器），
   # 镜像内烘焙 www 静态站，卷挂载继续沿用 base/prod 的 config/nginx/* 与 errors
-  # 服务键保持 nginx：infra pipeline（up -d --no-deps nginx）无需改动即可管理本容器
+  # 服务键保持 nginx：infra pipeline SERVICE=nginx 班次已改走 _start_prod_static
+  # docker run（infra #10）；本服务段仅作配置参考/手动兜底，不再是部署路径
   # 端口映射到高端口（D-28: 避免与 iStoreOS 管理界面冲突）
   # 别名 noda-infra-nginx 必须保留：cloudflared 与 KEYCLOAK_INTERNAL_URL 引用该 DNS 名
   # ----------------------------------------
   nginx:
     <<: *r4s-logging
     # !override 替换 base 的官方镜像为静态站镜像
-    # apps 流水线只发 commit tag（不打 latest）——SERVICE=nginx 部署经 remote_compose
-    # env_prefix 传 NODA_STATIC_IMAGE=noda-static:<commit>；latest 仅手动兜底
+    # ⚠️ infra #10（2026-11-11）：SERVICE=nginx 班次已不再经 compose 部署——
+    # pipeline_deploy_nginx/preflight 兜底均改走 _start_prod_static docker run
+    # 块（与 prod 实态单源；latest fallback 在 registry 无此 tag 必 pull denied，
+    # #93 事故根因）。本段仅作配置参考/手动兜底，手动使用需自行 NODA_STATIC_IMAGE=
     image: ${NODA_STATIC_IMAGE:-noda-static:latest}
     # !override 容器名更替：noda-infra-nginx → noda-static-prod
     container_name: noda-static-prod
@@ -84,8 +87,9 @@ services:
           - noda-infra-nginx
           - noda-static-prod
     healthcheck:
-      # class 块 /health 由 nginx 静态返回（不依赖 upstream）
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:81/health || exit 1"]
+      # auth 块 /health 本地直答（不依赖 upstream）；Host 头必带——1ef8aaf 起 :81
+      # 未知 Host 落 catch-all 444 会误杀健康检查（633577a 同款加固）
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider --header='Host: auth.noda.co.nz' http://127.0.0.1:81/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
