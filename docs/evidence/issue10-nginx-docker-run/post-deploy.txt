@@ -1,0 +1,11 @@
+=== POST-DEPLOY functional check 2026-11-11T10:53:28Z (build#95, container noda-static:72be087c) ===
+https://noda.co.nz/                                200 0.162963s
+https://noda.co.nz/en.html                         200 0.150351s
+https://noda.co.nz/geo.json                        200 0.102992s
+https://www.noda.co.nz/                            301 0.098727s
+https://auth.noda.co.nz/zh/login.html              302 0.111722s
+https://admin.noda.co.nz/login.html                200 0.111286s
+https://comments.noda.co.nz/                       302 0.084680s
+https://nearby.noda.co.nz/                         301 0.057452s
+https://shuotong.wang/                             200 0.448960s
+https://cdn.noda.co.nz/nearby/manifest.json        404 0.104280s

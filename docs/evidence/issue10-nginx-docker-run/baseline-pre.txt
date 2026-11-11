@@ -1,0 +1,10 @@
+=== PRE-WINDOW baseline 2026-11-11T10:40:05Z ===
+https://noda.co.nz/                           200 1.231242s
+https://www.noda.co.nz/                       301 0.088524s
+https://auth.noda.co.nz/zh/login.html         302 0.084965s
+https://admin.noda.co.nz/login.html           200 0.094448s
+https://comments.noda.co.nz/                  302 0.089346s
+https://nearby.noda.co.nz/                    301 0.082631s
+https://shuotong.wang/                        200 0.973570s
+https://noda.co.nz/api/nearby/health          404 0.061414s
+https://noda.co.nz/geo.json                   200 0.044813s
