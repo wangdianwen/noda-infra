@@ -4118,7 +4118,10 @@ pipeline_infra_verify()
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         case "$service" in
             nginx)
-                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --spider http://127.0.0.1:81/cdn-health 2>/dev/null"
+                # Host 头必带：1ef8aaf 起 :81 default_server catch-all 444，
+                # 无 Host 探针直接被断连（infra #10 build#94 Verify 失败实证；
+                # 与 healthcheck 同款加固）
+                remote_docker_exec "$NGINX_CONTAINER" "wget --quiet --tries=1 --spider --header='Host: cdn.noda.co.nz' http://127.0.0.1:81/cdn-health 2>/dev/null"
                 # GeoIP 哨兵（2026-09-16）：nearby /geo.json 依赖镜像内置 geoip2
                 # 模块 + DBIP 数据 + conf 三件套，任一在发布中丢失该端点即 404——
                 # 上面的 spider 探的是 class 块测不出，此处强制校验（失败 = 本次发布失败）
@@ -4153,7 +4156,8 @@ pipeline_infra_verify()
     else
         case "$service" in
             nginx)
-                docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider http://127.0.0.1:81/cdn-health 2>/dev/null
+                # Host 头必带（同 r4s 分支：1ef8aaf :81 catch-all 444 会杀无 Host 探针）
+                docker exec "$NGINX_CONTAINER" wget --quiet --tries=1 --spider --header 'Host: cdn.noda.co.nz' http://127.0.0.1:81/cdn-health 2>/dev/null
                 # GeoIP 哨兵（同 r4s 分支）：/geo.json 三件套（模块/数据/conf）回归检查
                 docker exec "$NGINX_CONTAINER" wget -qO /dev/null --header 'Host: noda.co.nz' http://127.0.0.1:81/geo.json
                 log_success "Nginx E2E 验证通过（含 GeoIP /geo.json 哨兵）"
