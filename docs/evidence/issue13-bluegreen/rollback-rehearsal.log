@@ -1,0 +1,46 @@
+Warning: Permanently added '192.168.100.1' (ED25519) to the list of known hosts.
+== rehearsal start 2026-11-11 20:16:21UTC ==
+old container image: noda-static:72be087c
+WARNING: Your kernel does not support swap limit capabilities or the cgroup is not mounted. Memory limited without swap.
+-next started (broken health probe by design)
+== dual-container memory ==
+              total        used        free      shared  buff/cache   available
+Mem:        3955256     1809148      257032      279388     1889076     1800928
+noda-static-prod-next 15.75MiB / 128MiB
+noda-static-prod 35.37MiB / 128MiB
+== health gate: poll 30x4s=120s (expect FAIL) ==
+t=4s health=starting
+t=8s health=starting
+t=12s health=starting
+t=16s health=starting
+t=20s health=unhealthy
+t=24s health=unhealthy
+t=28s health=unhealthy
+t=32s health=unhealthy
+t=36s health=unhealthy
+t=40s health=unhealthy
+t=44s health=unhealthy
+t=48s health=unhealthy
+t=52s health=unhealthy
+t=56s health=unhealthy
+t=60s health=unhealthy
+t=64s health=unhealthy
+t=68s health=unhealthy
+t=72s health=unhealthy
+t=76s health=unhealthy
+t=80s health=unhealthy
+t=84s health=unhealthy
+t=88s health=unhealthy
+t=92s health=unhealthy
+t=96s health=unhealthy
+t=100s health=unhealthy
+t=104s health=unhealthy
+t=108s health=unhealthy
+t=112s health=unhealthy
+t=116s health=unhealthy
+t=120s health=unhealthy
+HEALTH-GATE-FAILED-AS-EXPECTED
+ROLLED-BACK: rm -next; old container untouched
+== final state ==
+noda-static-prod | Up 9 hours (healthy)
+== rehearsal end 2026-11-11 20:18:35UTC ==
