@@ -949,11 +949,17 @@ _start_prod_jobs()
 }
 
 # static：镜像内烘焙 www 静态站；反代配置由卷挂载覆盖
-# r4s 高端口 8080/8081/8443 与 compose 定义一致；别名 noda-infra-nginx 必须保留
-# （cloudflared 与 KEYCLOAK_INTERNAL_URL 引用）；compose 服务键为 nginx（infra 栈合并管理）
+# r4s 实态宿主高位端口 18080/18081/18443（loopback+LAN 绑定；compose r4s overlay
+# 里的 8080/8081/8443 已非实态——SERVICE=nginx 自 infra #10 起走本 docker run 块）；
+# 别名 noda-infra-nginx 必须保留（cloudflared 与 KEYCLOAK_INTERNAL_URL 引用）；
+# compose 服务键为 nginx（infra 栈合并管理）
+# 参数: $1 = mode(remote|local)  $2 = image
+#       $3 = bluegreen（可选，仅 remote：蓝绿变体——以 ${PROD_STATIC_CONTAINER}-next
+#            名启动、不带宿主端口、双别名与正式容器相同、不触碰旧容器；
+#            切换编排见 _deploy_prod_static_bluegreen）
 _start_prod_static()
 {
-    local mode="$1" image="$2"
+    local mode="$1" image="$2" variant="${3:-}"
     local config_dir="/opt/noda/noda-infra/config/nginx"
     # 过渡期宿主端口绑高位：旧 noda-infra-nginx 在退役前一直占用 8080/8081/8443，
     # 新 static 先行高位并存（流量经 docker DNS 别名 noda-infra-nginx 分流），
@@ -962,16 +968,25 @@ _start_prod_static()
     # 皆不可达），配合 r4s fw4 显式 DROP 规则 block-wan-docker-published-ports 兜底；
     # docker 此机为 userland-proxy 模式（无 DNAT），WAN 入站本就被 wan zone REJECT。
     local ports="-p 127.0.0.1:18080:80 -p 192.168.100.1:18080:80 -p 127.0.0.1:18081:81 -p 192.168.100.1:18081:81 -p 127.0.0.1:18443:443 -p 192.168.100.1:18443:443"
+    local run_name="$PROD_STATIC_CONTAINER"
     if [ "$mode" != "remote" ]; then
         config_dir="$PROJECT_ROOT/config/nginx"
         # 本地模式不占宿主端口（infra nginx 可能占用 80/81/443），仅容器网络内服务
         ports=""
     fi
-    log_info "启动容器: $PROD_STATIC_CONTAINER ($image)"
+    if [ "$mode" = "remote" ] && [ "$variant" = "bluegreen" ]; then
+        # issue #13 蓝绿变体：-next 名启动；宿主 1808x 仍被旧容器占用且零真实
+        # 消费方（cloudflared 走 docker DNS），不带 -p；双别名与正式容器一致
+        # （docker DNS 对两别名返回新旧双 IP，流量双活分流）
+        run_name="${PROD_STATIC_CONTAINER}-next"
+        ports=""
+    fi
+    log_info "启动容器: $run_name ($image)"
     if [ "$mode" = "remote" ]; then
-        remote_exec "docker rm -f $PROD_STATIC_CONTAINER >/dev/null 2>&1 || true"
+        # 普通模式清同名旧容器；蓝绿模式清 -next 残留（旧正式容器不动=回滚保障）
+        remote_exec "docker rm -f $run_name >/dev/null 2>&1 || true"
         remote_exec "docker run -d \
-            --name $PROD_STATIC_CONTAINER \
+            --name $run_name \
             --network $NETWORK_NAME \
             --network-alias $PROD_STATIC_CONTAINER \
             --network-alias noda-infra-nginx \
@@ -1055,6 +1070,42 @@ _start_prod_static()
             --health-start-period 10s \
             "$image"
     fi
+}
+
+# _deploy_prod_static_bluegreen - static 反代容器蓝绿切换（issue #13，2026-11-12）
+# SERVICE=nginx 班次 deploy 原为 rm→run recreate（实测 ~7s 502 窗口 ×2，#95 判例），
+# 本函数改为蓝绿（对齐 api B4 语义）：
+#   ② 清残留 ${PROD_STATIC_CONTAINER}-next（由 _start_prod_static bluegreen 变体执行）
+#   ③ 以 -next 名 docker run——run 参数与正式容器完全一致（同卷挂载/资源限制/
+#      health-cmd 含 Host/双别名 noda-static-prod + noda-infra-nginx），仅两处差异：
+#      名字带 -next、不带宿主端口（1808x 被旧容器占用且零真实消费方——cloudflared
+#      经 docker DNS 名 noda-infra-nginx:81 直连容器，host 端口无流量）
+#   ④ wait_container_healthy 健康门（120s；双别名期间 docker DNS 新旧双 IP 轮询，
+#      旧容器全程在线，切换窗口零停机）
+#   ⑤ 健康 → rm 旧正式容器 + rename -next 接管正式名；不健康 → rm -next 返回
+#      失败——旧容器全程未动 = 自动回滚（DNS 回落单 IP，无需调用方介入）
+# 参数: $1 = image
+# 返回: 0=切换完成；1=启动失败或健康门失败（旧容器仍在服务）
+_deploy_prod_static_bluegreen()
+{
+    local image="$1"
+    local next_container="${PROD_STATIC_CONTAINER}-next"
+    log_info "蓝绿：启动新 static 容器 $next_container ($image)"
+    if ! _start_prod_static remote "$image" bluegreen; then
+        log_error "蓝绿：新 static 容器（${next_container}）启动失败 — 移除新容器，旧容器继续服务"
+        remote_exec "docker rm -f $next_container >/dev/null 2>&1 || true"
+        return 1
+    fi
+    # 健康门（默认 30×4=120s，与 api 蓝绿同口径；静态站 health-start-period 10s，
+    # 正常 ~15s 内 healthy）
+    if ! wait_container_healthy "$next_container" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))" true true; then
+        log_error "蓝绿：新 static 容器（${next_container}）未通过健康门 — 移除新容器，旧容器继续服务（自动回滚）"
+        remote_exec "docker rm -f $next_container >/dev/null 2>&1 || true"
+        return 1
+    fi
+    remote_exec "docker rm -f $PROD_STATIC_CONTAINER >/dev/null 2>&1 || true"
+    remote_exec "docker rename $next_container $PROD_STATIC_CONTAINER"
+    log_success "蓝绿：static 切流完成（$next_container → ${PROD_STATIC_CONTAINER}，旧容器已退场）"
 }
 
 # _stop_new_prod_containers - 失败时清理本次触达的新容器（mode: remote|local）
@@ -2109,10 +2160,10 @@ pipeline_infra_deploy()
 # ============================================
 # 函数: pipeline_deploy_nginx
 # ============================================
-# Nginx docker run recreate（秒级中断，非零停机）
+# Nginx 蓝绿切换（issue #13，2026-11-12；此前为 docker run recreate 秒级中断）
 # noda-infra SERVICE=nginx：反代镜像（noda-static，源码在 noda-apps 仓）已由
-# pipeline_build_nginx_image 构建并传输到 r4s，此处取 r4s 最新 tag 重建容器
-# r4s 路径走 _start_prod_static docker run 块（infra #10，2026-11-11）：
+# pipeline_build_nginx_image 构建并传输到 r4s，此处取 r4s 最新 tag 蓝绿切容器
+# r4s 路径容器启动走 _start_prod_static docker run 块（infra #10，2026-11-11）：
 #   compose 路径两大缺陷——①镜像模板 fallback noda-static:latest 在 r4s/registry
 #   无此 tag 必 pull denied（#93 事故根因）；②compose r4s overlay 的 healthcheck
 #   不带 Host 头，:81 catch-all 444 会误杀健康检查（1ef8aaf/633577a 判例）。
@@ -2123,7 +2174,7 @@ pipeline_deploy_nginx()
 {
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         # r4s 远程部署模式
-        log_info "Nginx 重建部署（r4s 远程 docker run recreate）"
+        log_info "Nginx 蓝绿部署（r4s 远程 docker run 蓝绿切换）"
 
         # 从 Doppler 恢复 SSL 证书（确保 git reset --hard 后证书仍在）
         restore_ssl_certs || return 1
@@ -2138,7 +2189,7 @@ pipeline_deploy_nginx()
             log_error "r4s 上无任何 noda-static 镜像——无法重建反代容器（镜像由 Deploy 阶段 pipeline_build_nginx_image 传输，请查上一步日志）"
             return 1
         fi
-        log_info "nginx 重建使用静态镜像: noda-static:${static_tag}"
+        log_info "nginx 蓝绿切换使用静态镜像: noda-static:${static_tag}"
 
         # 部署前预检（2026-09-16 GeoIP2 引入双仓联动后的防呆）：镜像源码在
         # noda-apps 仓、nginx 配置在本仓——两仓发布节奏一旦 skew（conf 引用
@@ -2152,16 +2203,17 @@ pipeline_deploy_nginx()
         fi
         log_success "部署前预检通过"
 
-        # 旧容器由 _start_prod_static 自带 docker rm -f 原子替换（stop+rm 等价）；
+        # 旧容器由蓝绿函数健康门后 rm+rename 接管（切换期双活，旧容器不动）；
         # legacy 名兜底清理保留（三容器拆分前的旧 noda-infra-nginx 残留）
         log_info "清理 legacy 反代容器（r4s）..."
         remote_exec "docker stop $NGINX_CONTAINER_LEGACY 2>/dev/null || true"
         remote_exec "docker rm $NGINX_CONTAINER_LEGACY 2>/dev/null || true"
 
-        # 容器重建走 _start_prod_static docker run 块（与 prod 实态/noda-apps
-        # 班次单源对齐；compose 路径退役理由见函数头注释）
-        if ! _start_prod_static remote "noda-static:${static_tag}"; then
-            log_error "docker run 启动反代容器失败（r4s）"
+        # 蓝绿切换（issue #13）：docker run 参数经 _start_prod_static bluegreen
+        # 变体与正式容器单源对齐（compose 路径退役理由见函数头注释）；健康门
+        # 不过=新容器移除旧容器未动，自动回滚
+        if ! _deploy_prod_static_bluegreen "noda-static:${static_tag}"; then
+            log_error "蓝绿切换反代容器失败（r4s，旧容器仍在服务）"
             return 1
         fi
 
@@ -2185,7 +2237,7 @@ pipeline_deploy_nginx()
             return 1
         fi
 
-        log_success "Nginx 重建完成（r4s）"
+        log_success "Nginx 蓝绿切换完成（r4s）"
     else
         # 本地模式：保持现有逻辑
         log_info "Nginx 重建部署（docker compose recreate）"
