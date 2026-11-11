@@ -1082,10 +1082,14 @@ _start_prod_static()
 #      经 docker DNS 名 noda-infra-nginx:81 直连容器，host 端口无流量）
 #   ④ wait_container_healthy 健康门（120s；双别名期间 docker DNS 新旧双 IP 轮询，
 #      旧容器全程在线，切换窗口零停机）
-#   ⑤ 健康 → rm 旧正式容器 + rename -next 接管正式名；不健康 → rm -next 返回
-#      失败——旧容器全程未动 = 自动回滚（DNS 回落单 IP，无需调用方介入）
+#   ⑤ 健康 → rm 旧正式容器 + rename -next 接管正式名（两步各自校验退出码，
+#      任一失败返回 1——本函数经 if ! 调用 errexit 被抑制，不显式检查会打出
+#      假成功日志；残留 -next 态漏检的话，下一次部署的预清理会删掉唯一在服务
+#      的容器、静默退化为带停机 recreate。失败时 -next 挂双别名继续服务，人工
+#      rename 收尾）；不健康 → rm -next 返回失败——旧容器全程未动 = 自动回滚
+#      （DNS 回落单 IP，无需调用方介入）
 # 参数: $1 = image
-# 返回: 0=切换完成；1=启动失败或健康门失败（旧容器仍在服务）
+# 返回: 0=切换完成；1=启动失败或健康门失败或切流失败（旧容器/新容器仍在服务）
 _deploy_prod_static_bluegreen()
 {
     local image="$1"
@@ -1103,8 +1107,21 @@ _deploy_prod_static_bluegreen()
         remote_exec "docker rm -f $next_container >/dev/null 2>&1 || true"
         return 1
     fi
-    remote_exec "docker rm -f $PROD_STATIC_CONTAINER >/dev/null 2>&1 || true"
-    remote_exec "docker rename $next_container $PROD_STATIC_CONTAINER"
+    # 切流两步（⑤）：各自校验退出码。旧容器可能本就不存在（重跑 deploy 阶段
+    # 等场景）——先探存在再移除，「不存在」不算失败；真失败则新旧双容器均挂
+    # 双别名在服务，流量不中断，人工补救后可安全重试
+    log_info "蓝绿：移除旧容器 $PROD_STATIC_CONTAINER（$next_container 已挂双别名接管流量）..."
+    if remote_exec "docker inspect $PROD_STATIC_CONTAINER >/dev/null 2>&1"; then
+        if ! remote_exec "docker rm -f $PROD_STATIC_CONTAINER >/dev/null 2>&1"; then
+            log_error "蓝绿：移除旧容器 $PROD_STATIC_CONTAINER 失败 — 旧容器与 $next_container 均挂双别名在服务，流量不中断；人工补救：排查后 docker rm -f $PROD_STATIC_CONTAINER && docker rename $next_container $PROD_STATIC_CONTAINER"
+            return 1
+        fi
+    fi
+    log_info "蓝绿：重命名 $next_container → $PROD_STATIC_CONTAINER ..."
+    if ! remote_exec "docker rename $next_container $PROD_STATIC_CONTAINER"; then
+        log_error "蓝绿：rename $next_container → $PROD_STATIC_CONTAINER 失败 — $next_container 仍挂双别名在服务，流量不中断；人工补救：docker rename $next_container $PROD_STATIC_CONTAINER"
+        return 1
+    fi
     log_success "蓝绿：static 切流完成（$next_container → ${PROD_STATIC_CONTAINER}，旧容器已退场）"
 }
 

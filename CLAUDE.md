@@ -37,7 +37,7 @@ Noda 基础设施仓库，管理 Docker Compose 部署配置。包含 PostgreSQL
 不再有 recreate 停机窗**。回滚语义：新容器 unhealthy → rm -next 即回落旧容器
 （旧容器全程未动）。双活窗口约 30-90s，前提=迁移向后兼容（仓库迁移规范既有
 要求）；r4s 内存高压期（MemAvailable<300MB）双 api 并存 +190M，宜错峰发版。
-jobs/static 容器原为 recreate（非用户面/纯 nginx）；static 已随 issue #13 改蓝绿（见下节）。
+jobs 容器维持原 recreate（非用户面）；static 原为 recreate，已随 issue #13 改蓝绿（见下节）。
 
 **新鲜度门禁（2026-10-03）**：`pipeline_deploy_prod` 部署前 `pipeline_check_freshness`
 ls-remote 核对本班 GIT_SHA 与 origin/main——落后即拒绝（防并行发版的「后切一班
@@ -60,7 +60,9 @@ SERVICE=nginx 班次 deploy（`pipeline_deploy_nginx` r4s 路径 → `_deploy_pr
 
 **代价**：切换后正式容器无 host 调试端口（1808x 随旧容器消失）——宿主侧
 `curl 127.0.0.1:1808x` 不再可用；verify 探针走 docker exec（容器内 127.0.0.1:81）
-不受影响。
+不受影响。切流末步（rm 旧容器 + rename）各自校验退出码，失败返回 1 并在日志
+写明人工补救路径（`docker rename noda-static-prod-next noda-static-prod`）。
+jobs 容器维持原 recreate（非用户面）。
 
 ## 部署规则
 
