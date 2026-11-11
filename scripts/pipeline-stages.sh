@@ -1836,24 +1836,22 @@ pipeline_infra_preflight()
         running=$(remote_exec "docker inspect -f '{{.State.Running}}' $NGINX_CONTAINER 2>/dev/null || docker inspect -f '{{.State.Running}}' $NGINX_CONTAINER_LEGACY 2>/dev/null || echo false")
         if [ "$running" != "true" ]; then
             if [ "$service" = "nginx" ]; then
-                log_info "反代容器未运行，正在通过 docker compose 启动（r4s 远程）..."
+                log_info "反代容器未运行，正在通过 docker run 启动（r4s 远程）..."
                 # apps 流水线只发 commit tag（r4s 无 latest）——与 pipeline_deploy_nginx
-                # 同口径：取 r4s 最新本地 noda-static tag 经 env 传给 compose；
-                # 否则模板回退 noda-static:latest 必然 pull denied（93 号构建事故根因）
+                # 同口径：取 r4s 最新本地 noda-static tag；无镜像即响亮失败（93 号
+                # 构建事故根因 = compose 模板回退 noda-static:latest 必 pull denied）。
+                # 兜底启动同样走 _start_prod_static docker run 块（infra #10）：
+                # 与 prod 实态/noda-apps 班次单源对齐（health-cmd 含 Host 头，
+                # 不会被 :81 catch-all 444 误杀——1ef8aaf/633577a 判例）
                 local _fb_static_tag
                 _fb_static_tag=$(remote_exec "docker images noda-static --format '{{.Tag}}' | grep -v '<none>' | head -1" 2>/dev/null | tr -d '\r')
-                local _fb_env_prefix=""
-                if [ -n "$_fb_static_tag" ]; then
-                    _fb_env_prefix="NODA_STATIC_IMAGE=noda-static:${_fb_static_tag}"
-                    log_info "反代兜底启动使用静态镜像: noda-static:${_fb_static_tag}"
-                else
+                if [ -z "$_fb_static_tag" ]; then
                     log_error "r4s 上无任何 noda-static 镜像——无法兜底启动反代容器（请先跑 noda-apps 流水线产出静态镜像）"
                     return 1
                 fi
-                remote_compose "up -d --no-deps nginx" \
-                    "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml" \
-                    "$_fb_env_prefix" || {
-                    log_error "docker compose 启动反代容器失败（r4s）"
+                log_info "反代兜底启动使用静态镜像: noda-static:${_fb_static_tag}"
+                _start_prod_static remote "noda-static:${_fb_static_tag}" || {
+                    log_error "docker run 启动反代容器失败（r4s）"
                     return 1
                 }
                 # 等待反代容器就绪
@@ -2111,57 +2109,61 @@ pipeline_infra_deploy()
 # ============================================
 # 函数: pipeline_deploy_nginx
 # ============================================
-# Nginx docker compose recreate（秒级中断，非零停机）
+# Nginx docker run recreate（秒级中断，非零停机）
 # noda-infra SERVICE=nginx：反代镜像（noda-static，源码在 noda-apps 仓）已由
 # pipeline_build_nginx_image 构建并传输到 r4s，此处取 r4s 最新 tag 重建容器
+# r4s 路径走 _start_prod_static docker run 块（infra #10，2026-11-11）：
+#   compose 路径两大缺陷——①镜像模板 fallback noda-static:latest 在 r4s/registry
+#   无此 tag 必 pull denied（#93 事故根因）；②compose r4s overlay 的 healthcheck
+#   不带 Host 头，:81 catch-all 444 会误杀健康检查（1ef8aaf/633577a 判例）。
+#   docker run 块与 prod 实态（noda-apps 班次同款）单源对齐：卷挂载/health-cmd
+#   含 Host/资源限制/网络别名 noda-infra-nginx/loopback+LAN 高端口全套。
 # 返回: 0=成功，1=失败
 pipeline_deploy_nginx()
 {
     if [ "$DEPLOY_TARGET" = "r4s" ]; then
         # r4s 远程部署模式
-        log_info "Nginx 重建部署（r4s 远程 docker compose recreate）"
+        log_info "Nginx 重建部署（r4s 远程 docker run recreate）"
 
         # 从 Doppler 恢复 SSL 证书（确保 git reset --hard 后证书仍在）
         restore_ssl_certs || return 1
 
-        # compose 模板镜像引用已变量化（apps 只发 commit tag，r4s 无 latest）——
-        # 取 r4s 上最新 noda-static 的 tag 经 env 传给 compose；无静态镜像时回退
-        # 模板 latest fallback（报错信息里可见，比静默失败清晰）
+        # docker run 需要具体镜像 tag（apps 只发 commit tag，r4s 无 latest）——
+        # 取 r4s 上最新 noda-static 的 tag；无静态镜像即响亮失败，不再回退
+        # compose 模板 latest fallback（该回退在 registry 无 latest 必 pull
+        # denied，#93 事故根因）
         local static_tag
         static_tag=$(remote_exec "docker images noda-static --format '{{.Tag}}' | grep -v '<none>' | head -1" 2>/dev/null | tr -d '\r')
-        local env_prefix=""
-        if [ -n "$static_tag" ]; then
-            env_prefix="NODA_STATIC_IMAGE=noda-static:${static_tag}"
-            log_info "nginx 重建使用静态镜像: noda-static:${static_tag}"
-        else
-            log_warn "r4s 上无 noda-static 镜像，compose 回退 latest fallback"
+        if [ -z "$static_tag" ]; then
+            log_error "r4s 上无任何 noda-static 镜像——无法重建反代容器（镜像由 Deploy 阶段 pipeline_build_nginx_image 传输，请查上一步日志）"
+            return 1
         fi
+        log_info "nginx 重建使用静态镜像: noda-static:${static_tag}"
 
         # 部署前预检（2026-09-16 GeoIP2 引入双仓联动后的防呆）：镜像源码在
         # noda-apps 仓、nginx 配置在本仓——两仓发布节奏一旦 skew（conf 引用
         # 新指令而镜像没带模块，反之亦然），直接 recreate 会让 nginx 起不来。
         # 用「新镜像 × 新配置」先跑 nginx -t，失败即中止——此刻旧容器仍在跑，
         # 中止零影响（镜像/配置已就位，修复后重跑即可）
-        if [ -n "$static_tag" ]; then
-            log_info "部署前预检: noda-static:${static_tag} × 新配置 nginx -t ..."
-            if ! remote_exec "docker run --rm -v /opt/noda/noda-infra/config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro -v /opt/noda/noda-infra/config/nginx/conf.d:/etc/nginx/conf.d:ro -v /opt/noda/noda-infra/config/nginx/snippets:/etc/nginx/snippets:ro -v /opt/noda/noda-infra/config/nginx/ssl:/etc/nginx/ssl:ro -v /opt/noda/noda-infra/config/nginx/errors:/etc/nginx/errors:ro noda-static:${static_tag} nginx -t"; then
-                log_error "预检失败：新镜像与新配置组合 nginx -t 不通过——中止部署（旧容器未动，站点无影响）"
-                return 1
-            fi
-            log_success "部署前预检通过"
+        log_info "部署前预检: noda-static:${static_tag} × 新配置 nginx -t ..."
+        if ! remote_exec "docker run --rm -v /opt/noda/noda-infra/config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro -v /opt/noda/noda-infra/config/nginx/conf.d:/etc/nginx/conf.d:ro -v /opt/noda/noda-infra/config/nginx/snippets:/etc/nginx/snippets:ro -v /opt/noda/noda-infra/config/nginx/ssl:/etc/nginx/ssl:ro -v /opt/noda/noda-infra/config/nginx/errors:/etc/nginx/errors:ro noda-static:${static_tag} nginx -t"; then
+            log_error "预检失败：新镜像与新配置组合 nginx -t 不通过——中止部署（旧容器未动，站点无影响）"
+            return 1
         fi
+        log_success "部署前预检通过"
 
-        # 先停止并移除旧容器，再创建新容器
-        # 三容器拆分：容器名为 noda-static-prod（compose 服务键仍为 nginx）；legacy 名兜底清理
-        log_info "停止旧反代容器（r4s）..."
-        remote_exec "docker stop $NGINX_CONTAINER 2>/dev/null || true"
-        remote_exec "docker rm $NGINX_CONTAINER 2>/dev/null || true"
+        # 旧容器由 _start_prod_static 自带 docker rm -f 原子替换（stop+rm 等价）；
+        # legacy 名兜底清理保留（三容器拆分前的旧 noda-infra-nginx 残留）
+        log_info "清理 legacy 反代容器（r4s）..."
         remote_exec "docker stop $NGINX_CONTAINER_LEGACY 2>/dev/null || true"
         remote_exec "docker rm $NGINX_CONTAINER_LEGACY 2>/dev/null || true"
 
-        remote_compose "up -d --no-deps nginx" \
-            "-f docker/docker-compose.yml -f docker/docker-compose.prod.yml -f docker/docker-compose.r4s.yml" \
-            "$env_prefix"
+        # 容器重建走 _start_prod_static docker run 块（与 prod 实态/noda-apps
+        # 班次单源对齐；compose 路径退役理由见函数头注释）
+        if ! _start_prod_static remote "noda-static:${static_tag}"; then
+            log_error "docker run 启动反代容器失败（r4s）"
+            return 1
+        fi
 
         # 等待反代容器启动
         log_info "等待反代容器就绪（r4s）..."
