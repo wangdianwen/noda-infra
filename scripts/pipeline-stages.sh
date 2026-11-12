@@ -2212,9 +2212,12 @@ pipeline_deploy_nginx()
         # noda-apps 仓、nginx 配置在本仓——两仓发布节奏一旦 skew（conf 引用
         # 新指令而镜像没带模块，反之亦然），直接 recreate 会让 nginx 起不来。
         # 用「新镜像 × 新配置」先跑 nginx -t，失败即中止——此刻旧容器仍在跑，
-        # 中止零影响（镜像/配置已就位，修复后重跑即可）
+        # 中止零影响（镜像/配置已就位，修复后重跑即可）。
+        # Static 卷（:ro）必挂（#15 判例）：conf.d zh-longtail 薄壳 include
+        # /var/noda-static/nginx-conf/ 数据文件——预检容器缺该挂载时 -t 必炸
+        # 「No such file or directory」（2026-11-12 #97 构建实锤，防护正确拦下）
         log_info "部署前预检: noda-static:${static_tag} × 新配置 nginx -t ..."
-        if ! remote_exec "docker run --rm -v /opt/noda/noda-infra/config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro -v /opt/noda/noda-infra/config/nginx/conf.d:/etc/nginx/conf.d:ro -v /opt/noda/noda-infra/config/nginx/snippets:/etc/nginx/snippets:ro -v /opt/noda/noda-infra/config/nginx/ssl:/etc/nginx/ssl:ro -v /opt/noda/noda-infra/config/nginx/errors:/etc/nginx/errors:ro noda-static:${static_tag} nginx -t"; then
+        if ! remote_exec "docker run --rm -v /opt/noda/noda-infra/config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro -v /opt/noda/noda-infra/config/nginx/conf.d:/etc/nginx/conf.d:ro -v /opt/noda/noda-infra/config/nginx/snippets:/etc/nginx/snippets:ro -v /opt/noda/noda-infra/config/nginx/ssl:/etc/nginx/ssl:ro -v /opt/noda/noda-infra/config/nginx/errors:/etc/nginx/errors:ro -v /mnt/mmc1-4/Noda/Static:/var/noda-static:ro noda-static:${static_tag} nginx -t"; then
             log_error "预检失败：新镜像与新配置组合 nginx -t 不通过——中止部署（旧容器未动，站点无影响）"
             return 1
         fi
@@ -2262,7 +2265,11 @@ pipeline_deploy_nginx()
         # 从 Doppler 恢复 SSL 证书（确保 git reset --hard 后证书仍在）
         restore_ssl_certs || return 1
 
-        # 部署前预检（同 r4s 分支：防两仓 conf/镜像 skew 导致 recreate 后起不来）
+        # 部署前预检（同 r4s 分支：防两仓 conf/镜像 skew 导致 recreate 后起不来）。
+        # 本地分支挂数据目录（#15 判例）：conf.d 通配含 zh-longtail 薄壳（include
+        # /var/noda-static/nginx-conf/）——挂 shared/nginx-conf（与 static-stg
+        # 桶同级，mc mirror 碰不到；数据滞后于 prod 可容忍，preprod 演练域
+        # 实际走 snippets 全量拷贝不消费该文件，挂载只为 -t 可解析）
         local static_tag
         static_tag=$(docker images noda-static --format '{{.Tag}}' | grep -v '<none>' | head -1)
         if [ -n "$static_tag" ]; then
@@ -2273,6 +2280,7 @@ pipeline_deploy_nginx()
                 -v "$(pwd)/config/nginx/snippets:/etc/nginx/snippets:ro" \
                 -v "$(pwd)/config/nginx/ssl:/etc/nginx/ssl:ro" \
                 -v "$(pwd)/config/nginx/errors:/etc/nginx/errors:ro" \
+                -v "$HOME/.jenkins/noda-apps/shared/nginx-conf:/var/noda-static/nginx-conf:ro" \
                 "noda-static:${static_tag}" nginx -t; then
                 log_error "预检失败：新镜像与新配置组合 nginx -t 不通过——中止部署（旧容器未动）"
                 return 1
