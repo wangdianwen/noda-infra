@@ -101,6 +101,43 @@ remote_exec()
 }
 
 # ============================================
+# 函数: remote_put_file
+# ============================================
+# 传输单个文件到 r4s（scp，连接参数与 remote_exec 一致）。
+# 用于小体积配置数据文件（如 zh 长尾 301 map 数据），镜像/大文件仍走
+# transfer_image（registry 增量）。
+#
+# 参数:
+#   $1: local_path - 本地文件（须存在）
+#   $2: remote_path - r4s 目标绝对路径（父目录须已存在）
+# 返回: 0=成功，1=失败
+remote_put_file()
+{
+    local local_path="$1"
+    local remote_path="$2"
+
+    if [ -z "$R4S_HOST" ]; then
+        log_error "R4S_HOST 未初始化，请先调用 setup_remote"
+        return 1
+    fi
+    if [ -z "$SSH_KEY_FILE" ]; then
+        log_error "SSH_KEY_FILE 未初始化，请先调用 setup_remote"
+        return 1
+    fi
+    if [ ! -f "$local_path" ]; then
+        log_error "本地文件不存在: $local_path"
+        return 1
+    fi
+
+    scp -i "$SSH_KEY_FILE" \
+        -o ConnectTimeout=30 \
+        -o StrictHostKeyChecking=no \
+        -o ServerAliveInterval=10 \
+        -o ServerAliveCountMax=6 \
+        "$local_path" "$R4S_HOST:$remote_path"
+}
+
+# ============================================
 # 函数: transfer_image
 # ============================================
 # 通过 Docker Registry 增量传输镜像到 r4s

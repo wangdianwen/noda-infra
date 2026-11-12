@@ -2374,6 +2374,53 @@ _static_product_config()
     esac
 }
 
+# ============================================
+# 函数: pipeline_sync_zh_longtail_map
+# ============================================
+# zh 长尾 301 map 数据同步（GSC Not found 404 修复，2026-11-12）：
+# noda-apps 构建产物 nearby/web/scripts/generated/zh-longtail-301.conf
+# （prune-zh-longtail.mjs 每次构建全量重生成，exact-only 双 map）→ r4s
+# /mnt/mmc1-4/Noda/Static/nginx-conf/zh-longtail-301.map.conf（prod nginx
+# conf.d 薄壳 include 该路径，见 nearby-zh-longtail-301.map.conf 头注释）。
+# 原子替换（.new 落地 → .bak 备份 → mv）+ nginx -t 闸门（失败回滚 .bak，
+# reload 不发生、线上旧配置继续跑）+ reload。
+# 前置：setup_remote 已初始化（pipeline_publish_product 调用链内已保证——
+# 同链路的桶 mirror 走 r4s 中继）；调用方持 static-publish/publish-nearby 锁。
+pipeline_sync_zh_longtail_map()
+{
+    local apps_dir="${NODA_APPS_DIR:-$PROJECT_ROOT/noda-apps}"
+    local src="$apps_dir/nearby/web/scripts/generated/zh-longtail-301.conf"
+    local dst_dir="/mnt/mmc1-4/Noda/Static/nginx-conf"
+    local dst="$dst_dir/zh-longtail-301.map.conf"
+    local nginx_name
+
+    if [ ! -f "$src" ]; then
+        log_error "zh 长尾 map 数据源缺失: $src（noda-apps 构建产物未产出？）"
+        return 1
+    fi
+    # 条目数下限哨兵：生成物历来 ≥2,800 条（2026-11-03 首版 2,866）；意外
+    # 空表（如 prune 脚本误删光）落进 nginx 会让全部退场页 404，宁红勿发
+    local entries
+    entries=$(grep -c '^    /zh/places/' "$src" || true)
+    if [ "$entries" -lt 2000 ]; then
+        log_error "zh 长尾 map 数据源条目异常（${entries} 条 <2000 下限），疑似生成物损坏: $src"
+        return 1
+    fi
+
+    remote_exec "mkdir -p $dst_dir" || return 1
+    remote_put_file "$src" "$dst.new" || return 1
+    remote_exec "cp $dst $dst.bak 2>/dev/null || true; mv $dst.new $dst; wc -l < $dst" || return 1
+
+    nginx_name=$(_resolve_nginx_container_remote)
+    if ! remote_docker_exec "$nginx_name" "nginx -t"; then
+        log_error "nginx -t 失败——回滚数据文件 .bak（线上 reload 未发生）"
+        remote_exec "mv $dst.bak $dst 2>/dev/null || true" || true
+        return 1
+    fi
+    reload_nginx || return 1
+    log_success "zh 长尾 301 map 已同步并重载（${entries} 条 redirect 表条目）"
+}
+
 # pipeline_publish_product - 产品静态站发布入口（noda-apps 调用）
 # 参数: $1 = PRODUCT  $2 = TARGET（stg=preprod 桶 / prod=生产桶）
 # publish-<product> 锁互斥同产品发布；锁登记到 NODA_LOCK_REGISTRY，
@@ -2404,6 +2451,12 @@ pipeline_publish_product()
     fi
     local rc=0
     pipeline_publish_static_site "$product" "$target" || rc=1
+    # nearby prod 桶发布成功后同步 zh 长尾 301 map（GSC 404 修复闭环：
+    # exact 表与桶面同源同时；static-publish 锁内做，与桶 mirror 互斥）。
+    # 桶发布失败（rc=1）不同步——数据先于桶到位无意义且 -t 闸门可能拦。
+    if [ "$rc" -eq 0 ] && [ "$product" = "nearby" ] && [ "$target" = "prod" ]; then
+        pipeline_sync_zh_longtail_map || rc=1
+    fi
     release_deploy_lock "$NODA_LOCK_NAME"
     return $rc
 }
