@@ -163,6 +163,10 @@ NEARBY_PUSH_VAPID_PRIVATE_KEY
 #    docker exec -e 覆盖，无需容器模板默认值。
 NEARBY_VENUE_GEOCODE_BACKFILL_LIMIT
 NEARBY_VENUE_GEOCODE_PLATFORM
+# ── 2026-11-15 #374 有坐标无 district 确定性打区回填（fix/374-backfill-channels）：
+#    软旋钮（代码默认 LIMIT=1000，零网络零 LLM 纯本地重算）——回填批跑用
+#    docker exec -e 覆盖，无需容器模板默认值（同上 #225 两键判例）。
+NEARBY_DISTRICT_BACKFILL_LIMIT
 # XHS_DATA_DIR：adminapi 小红书预估 vs 实际聚合的 CSV 目录（2026-11-11 spec
 # docs/superpowers/specs/2026-11-11-admin-consolidation-xhs-design.md）。
 # noda-social admin-sync 把 predictions/views 两 CSV rsync 到 ops-logs/social 卷
