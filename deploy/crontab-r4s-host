@@ -41,7 +41,7 @@
 0 5 * * 0 /opt/noda/cleanup-docker-images.sh >> /var/log/noda-cleanup-docker.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:cleanup-docker-images '0 5 * * 0' || /mnt/mmc1-4/System/Scripts/hb fail r4s:cleanup-docker-images '0 5 * * 0'
 
 # ===== noda 日志收敛（每天 04:45；>5MB 截到 1MB，30 天前的删除）=====
-45 4 * * * find /var/log -name "noda-*.log" -size +5000k -exec truncate -s 1M {} \; 2>/dev/null; find /var/log -name "noda-*.log" -mtime +30 -delete 2>/dev/null && /mnt/mmc1-4/System/Scripts/hb ok r4s:log-trim '45 4 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:log-trim '45 4 * * *'
+45 4 * * * find /var/log -name "noda-*.log" -size +5000k -exec truncate -s 1M {} \; 2>/dev/null; find /var/log -name "noda-*.log" -mtime +30 -exec rm -f {} \; 2>/dev/null && /mnt/mmc1-4/System/Scripts/hb ok r4s:log-trim '45 4 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:log-trim '45 4 * * *'
 
 # ===== （已移除，2026-09-13 集中化）=====
 # snagme tick / nearby 五 job / skykiwi 四 job → noda-jobs 守护进程容器
@@ -94,8 +94,6 @@
 #       v1 只看完成数会把健康大文件传输误杀重启、进度清零死循环）。
 #       进度条(↑)由上传脚本改写到 /tmp/.baidu-progress 侧文件，主日志不再膨胀。=====
 */10 * * * * /mnt/mmc1-4/System/Scripts/baidu-upload-watchdog.sh && /mnt/mmc1-4/System/Scripts/hb ok r4s:baidu-upload-watchdog '*/10 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:baidu-upload-watchdog '*/10 * * * *'
-17 * * * * IP_AUDIT_SHADOW=1 python3 /mnt/mmc1-4/System/Scripts/ip-audit.py >> /var/log/noda-ip-audit.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:ip-audit '17 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:ip-audit '17 * * * *'
-50 4 * * * /mnt/mmc1-4/System/Scripts/log-trim.sh && /mnt/mmc1-4/System/Scripts/hb ok r4s:weed-log-trim '50 4 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:weed-log-trim '50 4 * * *'
 
 # ===== 反爬限流（429）风暴 TG 告警（每 10 分钟）：noda-static-prod 的 429 JSON
 #       access log（真实访客 IP）增量聚合，单 IP×面 ≥20 次/窗 TG 告警（按小时
@@ -107,6 +105,7 @@
 
 # ===== 日志瘦身（每日 04:50）：/var/log 是内存盘，noda 日志超 2MB 保留末尾 200KB，
 #       进度条侧文件超 1MB 清空（2026-10-07 进度条曾把单日志刷到 39MB 挤占 RAM）=====
+50 4 * * * /mnt/mmc1-4/System/Scripts/log-trim.sh && /mnt/mmc1-4/System/Scripts/hb ok r4s:weed-log-trim '50 4 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:weed-log-trim '50 4 * * *'
 
 # ===== weed swap 债守卫（每 10 分钟）：核对 seaweedfs cgroup memory.swap.max=0，
 #       漂移（recreate/带外启动）自动重设 + TG 告警。背景：2026-10-04 33s manifest
@@ -160,4 +159,3 @@
 30 6 * * 0 /mnt/mmc1-4/System/Scripts/container-update-check.sh >> /var/log/noda-container-update.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:container-update-check '30 6 * * 0' || /mnt/mmc1-4/System/Scripts/hb fail r4s:container-update-check '30 6 * * 0'
 # ===== ip-audit 判据式 bot 判定（2026-10-31 分级自动处置，shadow 期（切实时去掉 IP_AUDIT_SHADOW=1））=====
 17 * * * * IP_AUDIT_SHADOW=1 python3 /mnt/mmc1-4/System/Scripts/ip-audit.py >> /var/log/noda-ip-audit.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:ip-audit '17 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:ip-audit '17 * * * *'
-50 4 * * * /mnt/mmc1-4/System/Scripts/log-trim.sh && /mnt/mmc1-4/System/Scripts/hb ok r4s:weed-log-trim '50 4 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:weed-log-trim '50 4 * * *'
