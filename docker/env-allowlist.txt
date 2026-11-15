@@ -174,3 +174,17 @@ NEARBY_DISTRICT_BACKFILL_LIMIT
 # 未挂卷时 /api/admin/xhs/predictions 返回 source=disabled 优雅空态（代码侧兜底，
 # 非部署必需）——与上方 RL429_DIR 同款可选旋钮。
 XHS_DATA_DIR
+
+# ── 2026-11-15 #368 部署解拦：#375/#380 图库扩图/事件池爬虫软旋钮 ──
+#   同型「代码带默认值」可选调参（未配置 = 默认值，生产行为正确；
+#   crawl-nearby worker 旋钮非容器启动必需）：
+#   NEARBY_EVENT_POOL_PLATFORM（事件池定向源，默认 aucklandlibraries）、
+#   NEARBY_EVENT_POOL_LIMIT（单轮上限，默认 200）、
+#   NEARBY_PLACE_EXPAND_CATEGORY（place 扩图类别，category_slugs 首键）、
+#   NEARBY_PLACE_EXPAND_LIMIT（单轮行数，默认 100）、
+#   NEARBY_PLACE_EXPAND_LLM_LIMIT（LLM 调用上限，默认 600/轮）。
+NEARBY_EVENT_POOL_LIMIT
+NEARBY_EVENT_POOL_PLATFORM
+NEARBY_PLACE_EXPAND_CATEGORY
+NEARBY_PLACE_EXPAND_LIMIT
+NEARBY_PLACE_EXPAND_LLM_LIMIT
