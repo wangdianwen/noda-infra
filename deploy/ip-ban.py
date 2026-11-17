@@ -117,6 +117,16 @@ cf.client.bot+官方段+UA 自报家门三层豁免原样保留即不受影响�
   豁免（伪造 bot 字样也 403，家族 100% 出口在此），大云分支保留（GEO/SEO 爬虫
   实证全在大云）；官方清单 OpenAI 252 段全 Azure+Perplexity 8 段全 AWS，0 段
   落滥用 ASN；cf.client.bot/官方段/站主两分支都保留
+
+2026-11-17 修复（OAI-SearchBot 官方段误封判例）：51 黑名单里 17 个来自
+openai.com/searchbot.json 官方段（40.67.175.0/25 ×11 + 20.169.77.0/25 ×6，
+40.67.175.127 实证）——OpenAI 爬虫管线在 headless 默认 800×600 视口渲染页面
+执行 JS，撞 nearby 分辨率哨兵 /__trip，出口逐会话轮换一个封一个（守规矩不重试、
+换 IP 再撞），tripwire「真实受众零撞车」判例只验证过人类、没料到官方渲染器；
+CF 边缘 cf.client.bot 全规则豁免（firewall events 零事件实证，伪装 UA 拿不到
+该身份），源站层是唯一拦截层也必须同步豁免。修复=官方段真值入 is_crawler_ip/
+apply_safety（googlebot.json/bingbot.json 同款三号真值源），段外伪造
+OAI-SearchBot UA 仍按伪装计 bot、撞哨兵照封。
 """
 
 import ipaddress
@@ -261,13 +271,19 @@ VERIFY_CYCLES = 6
 
 OWNER_IPS = {"47.72.103.104"}               # 站主出口（nginx 白名单同源）
 
-# 官方爬虫网段真值源：googlebot.json / bingbot.json，运行时下载 + 缓存 24h，
-# 任一源失败回退内置全量快照（GOOGLEBOT_FALLBACK 317 段 / BINGBOT_FALLBACK 28 段，
-# 2026-10-22 抓取）。白名单 IP 优先、不看 UA：Google 段内也有 Chrome Privacy
+# 官方爬虫网段真值源：googlebot.json / bingbot.json / openai.com/searchbot.json，
+# 运行时下载 + 缓存 24h，任一源失败回退内置全量快照（GOOGLEBOT_FALLBACK 317 段 /
+# BINGBOT_FALLBACK 28 段，2026-10-22 抓取；OAI_FALLBACK 39 段，2026-11-17 抓取）。
+# 白名单 IP 优先、不看 UA：Google 段内也有 Chrome Privacy
 # Preserving Prefetch Proxy / GoogleOther 等不含 bot 字样的合法爬虫出口。
+# OpenAI 段判例（2026-11-17）：其爬虫管线在 headless 默认 800×600 视口渲染页面，
+# 撞 nearby 分辨率哨兵 /__trip，51 黑名单里 17 个是官方段出口——ChatGPT 搜索
+# 收录被逐出口掐断；CF 边缘 cf.client.bot 全规则豁免（firewall events 零事件
+# 实证），源站层必须同步豁免，否则白名单只剩半边。
 GOOGLEBOT_URL = ("https://developers.google.com/static/search/apis/"
                  "ipranges/googlebot.json")
 BINGBOT_URL = "https://www.bing.com/toolbox/bingbot.json"
+OAI_URL = "https://openai.com/searchbot.json"
 RANGES_CACHE = os.path.join(os.path.dirname(STATE_FILE),
                             "ip-ban.net-ranges.json")
 RANGES_CACHE_TTL = 24 * 3600
@@ -382,11 +398,30 @@ BINGBOT_FALLBACK = [
                        "20.74.197.0/28", "20.15.133.160/27", "40.77.177.0/24", "40.77.178.0/23",
                    ]
 
+# OAI-SearchBot 官方段（openai.com/searchbot.json 全量，2026-11-17 抓取）。
+# OpenAI 全家在 Azure（AS8075）——dc 规则 Azure 组靠 not cf.client.bot 豁免
+# googlebot 式放行，源站层靠此真值段对应豁免；敌对族无法从官方段发包（IP
+# 归属硬验证），豁免不破防。伪造 OAI-SearchBot UA 的段外流量不豁免（classify
+# 仍按伪装计 bot，2026-10-18 设计保持）。
+OAI_FALLBACK = [
+                 "4.227.36.0/25", "13.66.216.176/28", "20.14.99.96/28", "20.25.151.224/28",
+                 "20.42.10.176/28", "20.168.18.32/28", "20.169.6.224/28", "20.169.7.48/28",
+                 "20.169.77.0/25", "20.171.53.224/28", "20.171.123.64/28", "23.102.145.48/28",
+                 "40.67.175.0/25", "40.90.214.16/28", "51.8.102.0/24", "74.7.175.128/25",
+                 "74.7.228.0/25", "74.7.228.128/25", "74.7.229.0/25", "74.7.229.128/25",
+                 "74.7.230.0/25", "74.7.241.128/25", "74.7.242.128/25", "74.7.243.0/25",
+                 "74.7.244.0/25", "104.210.140.128/28", "135.234.64.0/24", "172.182.193.80/28",
+                 "172.182.193.224/28", "172.182.194.32/28", "172.182.194.144/28", "172.182.195.48/28",
+                 "172.182.209.208/28", "172.182.211.192/28", "172.182.213.192/28", "172.182.224.0/28",
+                 "172.203.190.80/28", "172.203.190.112/28", "172.203.190.128/28",
+                 ]
+
 # 可配置硬白名单：cron 不 source env 文件，ALLOW_CIDRS 依次从 os.environ（测试/
 # 手动注入优先）与 /etc/noda/ip-ban.env 读取，逗号分隔 CIDR，命中请求 IP 即完全跳过。
 ALLOW_CIDRS = os.environ.get("ALLOW_CIDRS") or ""
 GOOGLE_NETS = [ipaddress.ip_network(c) for c in GOOGLEBOT_FALLBACK]
 BING_NETS = [ipaddress.ip_network(c) for c in BINGBOT_FALLBACK]
+OAI_NETS = [ipaddress.ip_network(c) for c in OAI_FALLBACK]
 EXTRA_CRAWLER_NETS = [ipaddress.ip_network(c) for c in EXTRA_CRAWLER_RANGES]
 
 WINDOW_CAP = 1800                            # 单次扫描窗口上限 30 分钟
@@ -533,22 +568,24 @@ def parse_prefix_json(text):
 
 
 def load_crawler_ranges():
-    """刷新官方爬虫网段到全局 GOOGLE_NETS/BING_NETS（缓存 24h；任一源下载或解析
-    失败回退该源的内置快照——宁可白名单过宽也不丢保护）"""
-    global GOOGLE_NETS, BING_NETS
+    """刷新官方爬虫网段到全局 GOOGLE_NETS/BING_NETS/OAI_NETS（缓存 24h；任一源
+    下载或解析失败回退该源的内置快照——宁可白名单过宽也不丢保护）"""
+    global GOOGLE_NETS, BING_NETS, OAI_NETS
     now = int(time.time())
     try:
         cache = json.load(open(RANGES_CACHE))
         if now - cache.get("fetched_at", 0) < RANGES_CACHE_TTL:
             g = parse_cidrs(",".join(cache.get("googlebot", [])))
             b = parse_cidrs(",".join(cache.get("bingbot", [])))
-            if g and b:
-                GOOGLE_NETS, BING_NETS = g, b
+            o = parse_cidrs(",".join(cache.get("openai", [])))
+            if g and b and o:
+                GOOGLE_NETS, BING_NETS, OAI_NETS = g, b, o
                 return
     except Exception:
         pass
     fetched = {}
-    for name, url in (("googlebot", GOOGLEBOT_URL), ("bingbot", BINGBOT_URL)):
+    for name, url in (("googlebot", GOOGLEBOT_URL), ("bingbot", BINGBOT_URL),
+                      ("openai", OAI_URL)):
         try:
             fetched[name] = parse_prefix_json(fetch_text(url))
             if not fetched[name]:
@@ -557,7 +594,8 @@ def load_crawler_ranges():
             log("warn: fetch %s.json failed (%s), builtin fallback" % (name, e))
     data = {"fetched_at": now,
             "googlebot": fetched.get("googlebot") or GOOGLEBOT_FALLBACK,
-            "bingbot": fetched.get("bingbot") or BINGBOT_FALLBACK}
+            "bingbot": fetched.get("bingbot") or BINGBOT_FALLBACK,
+            "openai": fetched.get("openai") or OAI_FALLBACK}
     try:
         tmp = RANGES_CACHE + ".tmp"
         with open(tmp, "w") as f:
@@ -567,9 +605,10 @@ def load_crawler_ranges():
         log("warn: ranges cache write failed: %s" % e)
     GOOGLE_NETS = parse_cidrs(",".join(data["googlebot"]))
     BING_NETS = parse_cidrs(",".join(data["bingbot"]))
-    fallback = [n for n in ("googlebot", "bingbot") if n not in fetched]
-    log("crawler ranges loaded: googlebot=%d bingbot=%d%s"
-        % (len(GOOGLE_NETS), len(BING_NETS),
+    OAI_NETS = parse_cidrs(",".join(data["openai"]))
+    fallback = [n for n in ("googlebot", "bingbot", "openai") if n not in fetched]
+    log("crawler ranges loaded: googlebot=%d bingbot=%d openai=%d%s"
+        % (len(GOOGLE_NETS), len(BING_NETS), len(OAI_NETS),
            (" (fallback: %s)" % ",".join(fallback)) if fallback else ""))
 
 
@@ -895,11 +934,12 @@ _crawler_ip_cache = {}
 
 
 def is_crawler_ip(ip):
-    """请求 IP 是否命中官方爬虫网段（googlebot/bingbot 全量 + Google /19 兜底，
-    IP 优先不看 UA）"""
+    """请求 IP 是否命中官方爬虫网段（googlebot/bingbot/openai 全量 + Google /19
+    兜底，IP 优先不看 UA）"""
     hit = _crawler_ip_cache.get(ip)
     if hit is None:
         hit = (in_nets(ip, GOOGLE_NETS) or in_nets(ip, BING_NETS)
+               or in_nets(ip, OAI_NETS)
                or in_nets(ip, EXTRA_CRAWLER_NETS))
         _crawler_ip_cache[ip] = hit
     return hit
@@ -959,6 +999,7 @@ def apply_safety(proposals):
             del proposals[cidr]
             continue
         for name, nets in (("googlebot", GOOGLE_NETS), ("bingbot", BING_NETS),
+                           ("openai", OAI_NETS),
                            ("google-legacy /19", EXTRA_CRAWLER_NETS),
                            ("allow", allowed)):
             hit = next((n for n in nets if net.overlaps(n)), None)

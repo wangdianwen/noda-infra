@@ -486,6 +486,7 @@ def test_invalid_cidrs_logged_and_dropped(ip_ban, monkeypatch):
 GOOGLE_JSON = ('{"prefixes":[{"ipv4Prefix":"66.249.64.0/19"},'
                '{"ipv6Prefix":"2001:4860:4801:10::/64"}]}')
 BING_JSON = '{"prefixes":[{"ipv4Prefix":"157.55.39.0/24"}]}'
+OAI_JSON = '{"prefixes":[{"ipv4Prefix":"40.67.175.0/25"},{"ipv4Prefix":"20.169.77.0/25"}]}'
 
 
 def test_ranges_download_cache_and_fallback(monkeypatch, tmp_path):
@@ -494,11 +495,14 @@ def test_ranges_download_cache_and_fallback(monkeypatch, tmp_path):
     mod = load_ip_ban(monkeypatch, env_file=str(env))
     cache = tmp_path / "net-ranges.json"
     monkeypatch.setattr(mod, "RANGES_CACHE", str(cache))
-    urls = {mod.GOOGLEBOT_URL: GOOGLE_JSON, mod.BINGBOT_URL: BING_JSON}
+    urls = {mod.GOOGLEBOT_URL: GOOGLE_JSON, mod.BINGBOT_URL: BING_JSON,
+            mod.OAI_URL: OAI_JSON}
     monkeypatch.setattr(mod, "fetch_text",
                         lambda url, timeout=15: urls[url])
     mod.load_crawler_ranges()                       # 首次：下载 + 写缓存
     assert len(mod.GOOGLE_NETS) == 2 and len(mod.BING_NETS) == 1
+    assert mod.OAI_NETS == [ipaddress.ip_network(c)
+                            for c in ("40.67.175.0/25", "20.169.77.0/25")]
     assert cache.exists()
 
     def boom(url, timeout=15):
@@ -514,6 +518,8 @@ def test_ranges_download_cache_and_fallback(monkeypatch, tmp_path):
                                for c in mod.GOOGLEBOT_FALLBACK]
     assert mod.BING_NETS == [ipaddress.ip_network(c)
                              for c in mod.BINGBOT_FALLBACK]
+    assert mod.OAI_NETS == [ipaddress.ip_network(c)
+                            for c in mod.OAI_FALLBACK]
 
 
 def test_stale_cache_triggers_refetch(monkeypatch, tmp_path):
@@ -524,18 +530,20 @@ def test_stale_cache_triggers_refetch(monkeypatch, tmp_path):
     mod = load_ip_ban(monkeypatch, env_file=str(env))
     cache = tmp_path / "net-ranges.json"
     stale = {"fetched_at": int(_time.time()) - 2 * mod.RANGES_CACHE_TTL,
-             "googlebot": ["66.249.64.0/19"], "bingbot": ["157.55.39.0/24"]}
+             "googlebot": ["66.249.64.0/19"], "bingbot": ["157.55.39.0/24"],
+             "openai": mod.OAI_FALLBACK}
     cache.write_text(_json.dumps(stale))
     monkeypatch.setattr(mod, "RANGES_CACHE", str(cache))
     calls = []
 
     def fake_fetch(url, timeout=15):
         calls.append(url)
-        return GOOGLE_JSON if "googlebot" in url else BING_JSON
+        return {mod.GOOGLEBOT_URL: GOOGLE_JSON, mod.BINGBOT_URL: BING_JSON,
+                mod.OAI_URL: OAI_JSON}.get(url)
 
     monkeypatch.setattr(mod, "fetch_text", fake_fetch)
     mod.load_crawler_ranges()
-    assert len(calls) == 2                           # 过期 → 重新下载
+    assert len(calls) == 3                           # 过期 → 三源全部重新下载
 
 
 def test_parse_prefix_json_key_styles(ip_ban):
@@ -853,3 +861,62 @@ def test_trip_google_range_rejected_by_safety(ip_ban):
     proposals = ip_ban.trip_bans([("66.249.73.10", "/__trip", "UA", "403")])
     assert proposals                                        # 提案生成
     assert "66.249.73.10/32" not in ip_ban.apply_safety(proposals)  # SAFETY 拒绝
+
+
+# ---- ⑩ OAI-SearchBot 官方段真值豁免（2026-11-17 误封判例）----
+# 判例：51 黑名单里 17 个来自 openai.com/searchbot.json 官方段
+# （40.67.175.0/25 ×11 + 20.169.77.0/25 ×6）——OpenAI 爬虫管线在 headless
+# 默认 800×600 视口下渲染页面执行 JS，撞 nearby 分辨率哨兵 /__trip，
+# 出口轮换一次封一个，ChatGPT 搜索收录被逐出口掐断。cf.client.bot 在 CF
+# 边缘全规则豁免（firewall events 零事件实证），源站 tripwire 是唯一拦截层，
+# 官方段真值必须在此豁免（与 Google 2026-10-23 / Mediapartners 2026-10-24
+# 同款「官方网段 IP 真值优先」修复模式）。
+
+OAI_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36; compatible; "
+          "OAI-SearchBot/1.4; +https://openai.com/searchbot")
+
+
+def test_openai_official_ip_skips(ip_ban):
+    """官方段 IP + SearchBot UA → skip（不计入枚举/洪水/档案，永不封）"""
+    assert ip_ban.classify("40.67.175.127", OAI_UA) == "skip"
+    assert ip_ban.classify("40.67.175.36", OAI_UA) == "skip"
+    assert ip_ban.classify("20.169.77.14", OAI_UA) == "skip"
+
+
+def test_openai_official_ip_skips_without_bot_ua(ip_ban):
+    """IP 优先不看 UA：段内渲染器出口即使纯浏览器样式 UA（渲染管线常见）也 skip"""
+    chrome_ua = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 "
+                 "Safari/537.36")
+    assert ip_ban.is_crawler_ip("40.67.175.127")
+    assert ip_ban.classify("20.169.77.56", chrome_ua) == "skip"
+
+
+def test_trip_proposal_for_openai_ip_vetoed_by_safety(ip_ban):
+    """/__trip 命中 OpenAI 官方段出口 → 提案生成但 SAFETY 拒绝（本次误封的直接通道）"""
+    proposals = ip_ban.trip_bans([("40.67.175.127", "/__trip", OAI_UA, "403")])
+    assert "40.67.175.127/32" in proposals                 # 提案照常生成
+    assert "40.67.175.127/32" not in ip_ban.apply_safety(proposals)  # SAFETY 拒绝
+
+
+def test_trip_still_bans_non_official_800x600(ip_ban):
+    """非官方段出口撞哨兵照封——敌对 800x600 族主判例不回退"""
+    proposals = ip_ban.trip_bans([("198.51.100.7", "/__trip", OAI_UA, "403")])
+    assert proposals == {"198.51.100.7/32": ("fingerprint-tripwire",
+                                             ip_ban.TRIP_TTL)}
+    ip_ban.apply_safety(proposals)
+    assert list(proposals) == ["198.51.100.7/32"]
+
+
+def test_safety_rejects_openai_24_proposal(ip_ban):
+    """/24 级提案与官方段交集同样 veto（段内已知出口 +30 天全在 /25 内）"""
+    proposals = {"40.67.175.0/24": ("24h-enum", 604800)}
+    ip_ban.apply_safety(proposals)
+    assert proposals == {}
+
+
+def test_openai_fallback_snapshot_size(ip_ban):
+    """内置快照规模防护：官方段缺失/下载失败时白名单不许静默归零"""
+    assert len(ip_ban.OAI_FALLBACK) >= 30
+    assert ip_ban.OAI_NETS                                 # import 即可用（测试不联网）
