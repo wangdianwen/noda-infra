@@ -682,7 +682,9 @@ pipeline_test()
         local m
         for m in $modules; do
             log_info "Go 测试: $m"
-            ( cd "$apps_dir/$m" && go build ./... && go test ./... ) || return 1
+            # -timeout 25m：nearbydata 真库轮随数据扩充泳道（#392-#396）增长，
+            # CI 满载下 >默认 10m（#1468/#1473 两连 600.4s 超时实证），本地 6-8m
+            ( cd "$apps_dir/$m" && go build ./... && go test -timeout 25m ./... ) || return 1
         done
         log_success "Go 测试全部通过"
         ;;
