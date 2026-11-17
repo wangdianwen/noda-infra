@@ -112,7 +112,12 @@ geo-challenge 收编进 ip-ban.py 自愈（此前唯一手工维护规则，已�
 漂移/缺失只记日志+TG 告警（文案含前后全文与首个差异定位，state 指纹去重防 5 分钟刷屏）；
 enforce 漂移拉回+删除重建（继承 hotlink 自愈），跑一周零误报后才准切。仅 noda zone
 （`GEO_ZONES`，复用 `HOTLINK_ZONES` 模式），shuotong.wang 不受影响。健康判定只比
-expression/action/enabled，description 后缀不算漂移（desc 由 live 起步）。
+expression/action/enabled，description 后缀不算漂移（desc 由 live 起步）。零写承诺的
+边界：仅覆盖 expression/action/enabled 漂移与整条缺失——description **前缀**漂移不在
+承诺内，该规则归「未知」落入既有 `sort_rules_canonical` 顺序收敛（排尾重排触发 PUT），
+检测告警归 #20 前缀守护。
+description 逐字符原文（2026-11-17 live，独立留档供比对，= 代码常量 `GEO_DESC`）：
+`geo-challenge merged 2026-11-07 (www added 2026-11-17): admin non-NZ + web non-NZ/AU apex+www`
 
 ### 2026-11-04 三（iOS 微信 webview 全量误拦 11 天：UA 规则 v3 豁免修复）
 用户在微信内打开 noda.co.nz 见 CF「Sorry, you have been blocked」403 页报障。取证：r4s 用

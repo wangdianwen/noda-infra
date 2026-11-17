@@ -1114,6 +1114,46 @@ def test_trip_samples_ring_capacity_trim(ip_ban):
     assert len(out) == ip_ban.TRIP_SAMPLES_MAX
     assert out[0]["ip"] == "10.1.10.7"          # 最旧的 10 条被裁
     assert out[-1]["ip"] == "10.1.%d.7" % (ip_ban.TRIP_SAMPLES_MAX + 9)
+    # 评审修正后的新结构：下一轮老 IP 再命中 → 恒占 1 格（移到尾），
+    # 不因跨轮重复 append 挤占他人格位
+    out2 = ip_ban.record_trip_samples(
+        out, [("10.1.10.7", "/__trip", "UA-rehit", "403", "-")], 2)
+    assert len(out2) == ip_ban.TRIP_SAMPLES_MAX
+    ips = [s["ip"] for s in out2]
+    assert ips.count("10.1.10.7") == 1 and ips[-1] == "10.1.10.7"
+    assert out2[-1]["ua"] == "UA-rehit" and out2[-1]["ts"] == 2
+
+
+def test_trip_samples_cross_round_per_ip_dedupe_move_to_end(ip_ban):
+    """评审 Important：跨轮按 IP 去重（move-to-end）——SAFETY 豁免段
+    （AHREFS_NETS /23s）origin 持续可见反复撞 /__trip，append 式缓冲
+    4-8 小时即被单一 IP 挤满 50 容量、逐出真被封候选的取证样本。
+    新语义：每 IP 恒占 1 格、最近命中在尾。"""
+    # 跨轮同 IP：只留最新一条（ts/ua 刷新），且在缓冲末尾
+    r1 = ip_ban.record_trip_samples(
+        [], [("202.8.40.46", "/__trip", "UA-r1", "403", "-")], 100)
+    r2 = ip_ban.record_trip_samples(
+        r1, [("198.51.100.7", "/__trip", "UA-other", "403", "-")], 200)
+    r3 = ip_ban.record_trip_samples(
+        r2, [("202.8.40.46", "/__trip", "UA-r3", "403",
+              "https://ahrefs.com/")], 300)
+    assert [s["ip"] for s in r3] == ["198.51.100.7", "202.8.40.46"]
+    assert r3[-1] == {"ip": "202.8.40.46", "ua": "UA-r3",
+                      "referer": "https://ahrefs.com/", "ts": 300}
+    # 豁免段刷屏场景：同 IP 连撞 20 轮，仍恒占 1 格、不逐出他人样本
+    buf = ip_ban.record_trip_samples(
+        [], [("10.9.%d.9" % i, "/__trip", "UA-%d" % i, "403", "-")
+             for i in range(10)], 1)
+    for rnd in range(2, 22):
+        buf = ip_ban.record_trip_samples(
+            buf, [("202.8.42.173", "/__trip", "AhrefsBot-r%d" % rnd,
+                   "403", "-")], rnd)
+    assert len(buf) == 11                       # 10 个候选项 + 1 格豁免段
+    ahrefs = [s for s in buf if s["ip"] == "202.8.42.173"]
+    assert len(ahrefs) == 1 and ahrefs[0]["ua"] == "AhrefsBot-r21"
+    assert [s["ip"] for s in buf][-1] == "202.8.42.173"
+    kept = {s["ip"] for s in buf if s["ip"] != "202.8.42.173"}
+    assert kept == {"10.9.%d.9" % i for i in range(10)}   # 候选取证未被挤掉
 
 
 def test_trip_samples_last_hit_per_ip_in_round(ip_ban):

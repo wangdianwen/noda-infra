@@ -899,7 +899,10 @@ def apply_geo_rule(rules, mode, zone):
     丢了 ref 仍能收养）。
 
     observe：漂移/缺失只告警零写回；enforce：拉回/重建（DRY_RUN 下按 observe
-    处理——put_rules 被跳过，改内存对象是假自愈）。"""
+    处理——put_rules 被跳过，改内存对象是假自愈）。
+    零写承诺的边界：仅覆盖 expression/action/enabled 漂移与整条缺失。description
+    前缀漂移不在承诺内——该规则会归「未知」落入既有 sort_rules_canonical 顺序
+    收敛（排尾重排触发 PUT），其检测告警归 #20 前缀守护。"""
     rule = next((r for r in rules
                  if str(r.get("description", "")).startswith(GEO_MARKER)
                  or r.get("ref") == GEO_REF), None)
@@ -1184,23 +1187,27 @@ def trip_ua_map(events):
 
 
 def record_trip_samples(samples, events, now):
-    """#18 state 命中样本环形缓冲：本轮 /__trip 命中并入（同 IP 一轮取最后一条
-    的 UA，防单轮刷屏），字段 ip/ua/referer/ts（UA/referer 截断 TRIP_UA_MAX），
-    写入时容量裁剪到 TRIP_SAMPLES_MAX（防 state 膨胀）。返回新列表（不改动入参）。
+    """#18 state 命中样本环形缓冲（评审修正：跨轮按 IP 去重 move-to-end）。
+
+    语义=每 IP 恒占 1 格、最近命中在尾：本轮 /__trip 命中更新该 IP 的样本
+    （ua/referer/ts 刷新）并移到缓冲末尾，未命中 IP 原位保留；写入时容量裁剪
+    到 TRIP_SAMPLES_MAX（丢最久未命中）。字段 ip/ua/referer/ts，UA/referer 截断
+    TRIP_UA_MAX。返回新列表（不改动入参）。
+    跨轮去重的动机：SAFETY 豁免段（如 AHREFS_NETS /23s，因反复撞 /__trip 被
+    豁免、origin 持续可见）每 5 分钟命中一条，append 式缓冲 4-8 小时即被单一
+    IP 挤满容量、逐出真被封候选的取证样本——恰是 #18 要保的证据面。
     老格式 4 元组事件（无 referer）按 "-" 补位兼容。"""
-    latest = {}
-    order = []
+    buf = {s.get("ip"): dict(s) for s in samples}   # py3.7+ dict 保持插入序
     for ev in events:
         if ev[1] != TRIP_PATH:
             continue
         ip = ev[0]
-        if ip not in latest:
-            order.append(ip)
-        latest[ip] = {"ip": ip, "ua": ev[2][:TRIP_UA_MAX],
-                      "referer": (ev[4] if len(ev) > 4 else "-")[:TRIP_UA_MAX],
-                      "ts": now}
-    out = list(samples) + [latest[ip] for ip in order]
-    if len(out) > TRIP_SAMPLES_MAX:           # 环形裁剪：丢最旧（含防御性裁老 state 超量）
+        buf.pop(ip, None)                            # 命中即更新并移到末尾
+        buf[ip] = {"ip": ip, "ua": ev[2][:TRIP_UA_MAX],
+                   "referer": (ev[4] if len(ev) > 4 else "-")[:TRIP_UA_MAX],
+                   "ts": now}
+    out = list(buf.values())
+    if len(out) > TRIP_SAMPLES_MAX:          # 环形裁剪：丢最旧=最久未命中（含防御性裁老 state 超量）
         del out[:len(out) - TRIP_SAMPLES_MAX]
     return out
 
@@ -1614,7 +1621,9 @@ def main():
                 hl_changed = False
                 if zname in HOTLINK_ZONES:
                     rules, hl_changed = apply_hotlink_rule(rules)
-                # #19 geo-challenge 守护（仅 GEO_ZONES；observe 默认零写回，
+                # #19 geo-challenge 守护（仅 GEO_ZONES；observe 默认零写回——
+                # 零写承诺限 expression/action/enabled 漂移与整条缺失，desc
+                # 前缀漂移仍会触发下方 sort_rules_canonical 顺序收敛 PUT（#20 域）；
                 # 告警去重防每 5 分钟刷屏）
                 geo_changed = False
                 if zname in GEO_ZONES:
