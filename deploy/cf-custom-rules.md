@@ -14,7 +14,7 @@
 | 1 | ip-range-blacklist auto（28 段） | block | ip-ban.py 自动 |
 | 2 | datacenter-asn-block auto（31 ASN 两分支：滥用 18 无 UA 豁免/大云 13 保留；10-26 扩容） | block | ip-ban.py 自动 |
 | 3 | block empty/fake/script user agent | block | 手工（本次加严，见下） |
-| 4 | geo-challenge merged 2026-11-07（www added 2026-11-17）：admin non-NZ + web non-NZ/AU（apex+www 两 host；官方 Google 段豁免） | managed_challenge | 手工（11-07 由 admin 规则+CN 规则合并而成；11-17 补 www host） |
+| 4 | geo-challenge merged 2026-11-07（www added 2026-11-17）：admin non-NZ + web non-NZ/AU（apex+www 两 host；官方 Google 段豁免） | managed_challenge | ip-ban.py 守护（#19 `apply_geo_rule`：默认 observe 漂移只告警零回写；`GEO_RULE_MODE=enforce` 后拉回/重建；canonical 表达式 2026-11-17 逐字符取自 live） |
 | 5 | cdn-hotlink-block（Referer 反盗链，ip-ban.py 维护） | block | ip-ban.py 自动 |
 | RL | content-nav-burst-guard：150 req/10s（http_ratelimit 阶段，HTML 路径） | block | 手工（#37 放宽） |
 
@@ -91,6 +91,20 @@ IPv6 2407:7000:b051:ed00::/64）在微信内打开 `/zh/recipes/…` 被 block�
 ip-ban 行为闸照收——四层防线不减弱，符合 2026-10-25 三原则①「不误封正常用户」。
 
 ## 变更记录
+### 2026-11-17 四（#19 geo-challenge 收编 apply_geo_rule：observe 优先零回写）
+geo-challenge 收编进 ip-ban.py 自愈（此前唯一手工维护规则，已连产 11-07 顺序缺口 /
+11-17 www 盲区两次事故，文档快照防不了漂移）。canonical 表达式+description+ref+action
+**逐字符取自当日 CF live**（rule `b62507ea2ec243098ea2ce8eaac599e5` / ref
+`geo-admin-challenge`），脚本化比对留档（获取命令，全程只读 GET）：
+`ssh r4s "cat /etc/noda/ip-ban.env"` 取 DOPPLER_SERVICE_TOKEN → GET Doppler REST
+`/v3/configs/config/secret?project=noda&config=prd&name=CF_BAN_API_TOKEN` → GET
+`zones?name=noda.co.nz` → GET `zones/{id}/rulesets/phases/http_request_firewall_custom/entrypoint`。
+模式开关 `GEO_RULE_MODE`（env 文件/env var，默认 `observe`）：observe 每轮 GET 比对，
+漂移/缺失只记日志+TG 告警（文案含前后全文与首个差异定位，state 指纹去重防 5 分钟刷屏）；
+enforce 漂移拉回+删除重建（继承 hotlink 自愈），跑一周零误报后才准切。仅 noda zone
+（`GEO_ZONES`，复用 `HOTLINK_ZONES` 模式），shuotong.wang 不受影响。健康判定只比
+expression/action/enabled，description 后缀不算漂移（desc 由 live 起步）。
+
 ### 2026-11-04 三（iOS 微信 webview 全量误拦 11 天：UA 规则 v3 豁免修复）
 用户在微信内打开 noda.co.nz 见 CF「Sorry, you have been blocked」403 页报障。取证：r4s 用
 CF_REPORT_API_TOKEN 拉 firewallEventsAdaptive 48h，锁定 02:53:35Z One NZ 移动 IPv6

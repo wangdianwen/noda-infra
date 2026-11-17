@@ -1178,3 +1178,167 @@ def test_trip_bans_judgments_unchanged_with_referer_events(ip_ban):
     assert ip_ban.record_trip_samples(
         [], [("203.0.113.7", "/__trip", "UA", "403")], 5) == [
         {"ip": "203.0.113.7", "ua": "UA", "referer": "-", "ts": 5}]
+
+
+# ---- ⑮ #19 apply_geo_rule：geo-challenge 收编守护（observe 优先，enforce 备用）----
+# geo-challenge 是 noda zone 唯一手工维护规则，已连产两次事故（11-07 规则顺序
+# 缺口使 blacklist 失效 / 11-17 www 盲区=解挑战免费旁路）——文档快照防不了
+# 漂移，仿 cdn-hotlink-block 先例收编为代码自愈。canonical 表达式逐字符取自
+# 2026-11-17 CF live（rule b62507ea2ec243098ea2ce8eaac599e5 / ref
+# geo-admin-challenge），获取命令（只读 GET）：
+#   ssh r4s "cat /etc/noda/ip-ban.env" 拿 DOPPLER_SERVICE_TOKEN →
+#   GET api.doppler.com/v3/configs/config/secret?project=noda&config=prd&name=CF_BAN_API_TOKEN →
+#   GET api.cloudflare.com/client/v4/zones?name=noda.co.nz（zone 2ed51678bb82d8def5a5dcae28635c11）→
+#   GET zones/{zone}/rulesets/phases/http_request_firewall_custom/entrypoint
+
+GEO_LIVE_EXPR = ('(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ") '
+                 'or ((not cf.client.bot) and (not ip.src in {66.249.64.0/19 '
+                 '209.85.128.0/17 2001:4860:7::/48}) and '
+                 '(http.host in {"noda.co.nz" "www.noda.co.nz"}) and '
+                 '(not ip.geoip.country in {"NZ" "AU" "TW"}))')
+GEO_LIVE_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17): "
+                 "admin non-NZ + web non-NZ/AU apex+www")
+
+
+def _geo_live_rule():
+    return {"id": "b62507ea2ec243098ea2ce8eaac599e5",
+            "ref": "geo-admin-challenge", "action": "managed_challenge",
+            "enabled": True, "description": GEO_LIVE_DESC,
+            "expression": GEO_LIVE_EXPR}
+
+
+def test_geo_clause_matches_cf_live_2026_11_17(ip_ban):
+    """canonical=2026-11-17 CF live 逐字符一致（非手抄重构）——若本测试失败
+    = 有人改了 canonical，需重新对 CF API 校准并同步重发"""
+    assert ip_ban.GEO_CLAUSE == GEO_LIVE_EXPR
+    assert ip_ban.GEO_DESC == GEO_LIVE_DESC
+    assert ip_ban.GEO_REF == "geo-admin-challenge"
+    assert ip_ban.GEO_ACTION == "managed_challenge"
+    assert ip_ban.GEO_MARKER == "geo-challenge"      # 与 RULE_ORDER 前缀一致
+
+
+def test_geo_rule_zone_isolation(ip_ban):
+    """仅 noda.co.nz zone 生效（GEO_ZONES 复用 HOTLINK_ZONES 模式）——
+    shuotong.wang 无此规则，main 循环根本不会对它调 apply_geo_rule"""
+    assert ip_ban.GEO_ZONES == ("noda.co.nz",)
+    assert "shuotong.wang" not in ip_ban.GEO_ZONES
+    assert set(ip_ban.GEO_ZONES) <= set(ip_ban.ZONES)
+    assert ip_ban.GEO_MARKER in ip_ban.RULE_ORDER      # 收编后排序位不变
+
+
+def test_geo_rule_healthy_live_shape_noop_both_modes(ip_ban):
+    """live 现值形态（含 live description/ref）两模式都零动作——observe 零误报
+    是转 enforce 的前提"""
+    for mode in ("observe", "enforce"):
+        out, ch, alerts, fp = ip_ban.apply_geo_rule(
+            [_geo_live_rule()], mode, "noda.co.nz")
+        assert ch is False and alerts == [] and fp == "" and len(out) == 1
+
+
+def test_geo_rule_observe_drift_alerts_zero_write(ip_ban):
+    """observe：www 修复丢失形态（表达式被打回 apex-only）→ 只告警零写回，
+    文案含漂移前后全文 + 首个差异定位"""
+    drifted = _geo_live_rule()
+    drifted["expression"] = ('(http.host eq "noda.co.nz" and '
+                             'not ip.geoip.country in {"NZ" "AU"})')
+    out, ch, alerts, fp = ip_ban.apply_geo_rule([drifted], "observe",
+                                                "noda.co.nz")
+    assert ch is False                                   # 零写回
+    assert out[0]["expression"] != ip_ban.GEO_CLAUSE     # 规则对象未被动过
+    assert len(alerts) == 1 and fp
+    msg = alerts[0]
+    assert "observe" in msg and "零回写" in msg and "noda.co.nz" in msg
+    assert drifted["expression"] in msg                  # 漂移前（线上现值）
+    assert ip_ban.GEO_CLAUSE in msg                      # 漂移后（canonical 期望）
+    assert "首个差异@" in msg
+
+
+def test_geo_rule_observe_missing_alerts_no_create(ip_ban):
+    """observe：规则被删 → 告警缺失但不重建（零写回）"""
+    out, ch, alerts, fp = ip_ban.apply_geo_rule([], "observe", "noda.co.nz")
+    assert ch is False and len(out) == 0 and len(alerts) == 1 and fp == "missing"
+    assert "缺失" in alerts[0] and ip_ban.GEO_CLAUSE in alerts[0]
+
+
+def test_geo_rule_enforce_pulls_back_drift(ip_ban):
+    """enforce：表达式/action/enabled 任一漂移 → 原位拉回 canonical"""
+    drifted = _geo_live_rule()
+    drifted.update(expression="true", action="block", enabled=False)
+    out, ch, alerts, fp = ip_ban.apply_geo_rule([drifted], "enforce",
+                                                "noda.co.nz")
+    assert ch is True and fp
+    assert out[0]["expression"] == ip_ban.GEO_CLAUSE
+    assert out[0]["action"] == "managed_challenge" and out[0]["enabled"] is True
+    assert out[0]["description"] == ip_ban.GEO_DESC
+    assert any("拉回" in a for a in alerts)
+
+
+def test_geo_rule_enforce_recreates_deleted(ip_ban):
+    """enforce：规则被删 → 删除重建（继承 hotlink 自愈语义），ref/desc/expression
+    全 canonical"""
+    out, ch, alerts, fp = ip_ban.apply_geo_rule([], "enforce", "noda.co.nz")
+    assert ch is True and len(out) == 1 and fp == "missing"
+    r = out[0]
+    assert r["ref"] == ip_ban.GEO_REF and r["expression"] == ip_ban.GEO_CLAUSE
+    assert r["action"] == ip_ban.GEO_ACTION and r["enabled"] is True
+    assert r["description"] == ip_ban.GEO_DESC
+    assert any("重建" in a for a in alerts)
+
+
+def test_geo_rule_desc_not_compared_but_ref_adopts(ip_ban):
+    """健康判定只比 expression/action/enabled：description 后缀被改不算漂移
+    （desc 由 live 起步，比了会在 enforce 首轮产生无谓写）；description 前缀
+    丢了仍能被 ref 收养——前缀漂移的告警归 #20 前缀守护"""
+    r1 = _geo_live_rule()
+    r1["description"] = "geo-challenge 面板里被人改了后缀"
+    _out, ch, alerts, fp = ip_ban.apply_geo_rule([r1], "enforce", "noda.co.nz")
+    assert ch is False and alerts == [] and fp == ""
+    r2 = _geo_live_rule()
+    r2["description"] = "面板改名丢了前缀"          # 不再 startswith geo-challenge
+    _out, ch, alerts, fp = ip_ban.apply_geo_rule([r2], "observe", "noda.co.nz")
+    assert ch is False and alerts == [] and fp == ""   # ref 兜底找到=表达式健康
+
+
+def test_geo_rule_mode_env_and_default(monkeypatch, tmp_path):
+    """GEO_RULE_MODE：os.environ 优先 / ENV_FILE 兜底 / 默认 observe /
+    未知值不进 enforce（影响面大，宁守勿攻）"""
+    env = tmp_path / "ip-ban.env"
+    env.write_text("GEO_RULE_MODE=enforce\n")
+    mod = load_ip_ban(monkeypatch, env_file=str(env))
+    monkeypatch.delenv("GEO_RULE_MODE", raising=False)
+    assert mod.geo_rule_mode() == "enforce"             # ENV_FILE 兜底
+    monkeypatch.setenv("GEO_RULE_MODE", "observe")
+    assert mod.geo_rule_mode() == "observe"             # os.environ 优先
+    monkeypatch.setenv("GEO_RULE_MODE", " ENFORCE ")
+    assert mod.geo_rule_mode() == "enforce"             # 大小写/空白容错
+    monkeypatch.setenv("GEO_RULE_MODE", "garbage")
+    assert mod.geo_rule_mode() == "observe"             # 未知值回落 observe
+
+
+def test_geo_rule_dry_run_enforce_stays_observe(ip_ban, monkeypatch):
+    """DRY_RUN 下 enforce 不得改规则对象（put_rules 被跳过，改了就是假自愈）"""
+    monkeypatch.setattr(ip_ban, "DRY_RUN", True)
+    drifted = _geo_live_rule()
+    drifted["expression"] = "true"
+    out, ch, alerts, fp = ip_ban.apply_geo_rule([drifted], "enforce",
+                                                "noda.co.nz")
+    assert ch is False and out[0]["expression"] == "true"
+    assert fp and "DRY_RUN" in alerts[0] and "零回写" in alerts[0]
+
+
+def test_geo_guard_dedup_same_drift_and_recovery(ip_ban):
+    """observe 告警去重（cron */5，漂移持续会刷屏）：同指纹只发一次，变化再发；
+    解除记日志不再 TG"""
+    logs = []
+    guard, a1 = ip_ban.step_geo_guard({}, "noda.co.nz", "drift:x", ["m1"],
+                                      logs.append)
+    assert a1 == ["m1"] and guard["noda.co.nz"] == "drift:x"
+    guard, a2 = ip_ban.step_geo_guard(guard, "noda.co.nz", "drift:x", ["m1"],
+                                      logs.append)
+    assert a2 == [] and any("静默" in l for l in logs)     # 同漂移去重
+    guard, a3 = ip_ban.step_geo_guard(guard, "noda.co.nz", "drift:y", ["m2"],
+                                      logs.append)
+    assert a3 == ["m2"]                                    # 变化才再报
+    guard, a4 = ip_ban.step_geo_guard(guard, "noda.co.nz", "", [], logs.append)
+    assert a4 == [] and "noda.co.nz" not in guard          # 解除：只记日志
+    assert any("解除" in l for l in logs)

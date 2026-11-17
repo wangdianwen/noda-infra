@@ -663,13 +663,18 @@ def put_rules(cf, zone_id, rules):
     return r
 
 
+# 已知规则 description 前缀（apply_* 按前缀定位规则；#20 前缀守护按前缀对账）。
+GEO_MARKER = "geo-challenge"          # #19 起由 apply_geo_rule 守护（observe 优先）
+UA_MARKER = "block empty/fake"        # 手工维护（v3 演变见 cf-custom-rules.md）
+HOTLINK_MARKER = "cdn-hotlink-block"  # apply_hotlink_rule 托管（2026-11-07）
+
+
 # 规则顺序（first-match-wins：CF 自定义规则只执行第一条命中的）。最狠处置
 # 先行——2026-11-17 判例：blacklist 排 geo-challenge 之后时，136.66.124.196
 # 封禁后仍持续匹配挑战规则打出 200 次 managed_challenge 事件、零 block
 # （blacklist 根本轮不到执行），解掉挑战即穿透封禁名单。UA block 在 geo 之前：
 # headless UA 直接 403，不给解挑战的机会。手工/未知规则稳定排尾不吞没。
-RULE_ORDER = (RULE_MARKER, DC_MARKER, "block empty/fake",
-              "geo-challenge", "cdn-hotlink-block")
+RULE_ORDER = (RULE_MARKER, DC_MARKER, UA_MARKER, GEO_MARKER, HOTLINK_MARKER)
 
 
 def _rule_rank(rule):
@@ -729,7 +734,6 @@ def apply_blacklist(rules, bans):
 #     转介放行：Google 图片点击转介 Referer=google.*，中文站另保 baidu/sogou。
 # 已知松弛（接受）：Referer 是客户端可任意伪造的字段，contains 匹配可被构造
 # Referer 绕过——与空 Referer 绕过同性质，不值得为此上签名 URL。
-HOTLINK_MARKER = "cdn-hotlink-block"
 HOTLINK_HOST = "cdn.noda.co.nz"
 HOTLINK_REFERER_ALLOW = (   # contains 子串（lower() 后匹配；域锚自带，宁松勿误拦）
     "noda.co.nz",           # 自家 apex+子域（www/nearby/admin/…）
@@ -835,6 +839,123 @@ def apply_hotlink_rule(rules):
         % ("created" if created else "updated", HOTLINK_HOST,
            len(HOTLINK_REFERER_ALLOW)))
     return rules, True
+
+
+# ---- geo-challenge 规则守护（2026-11-17 #19：手工规则收编自愈，先 observe）----
+# geo-challenge 是 noda zone 唯一手工维护规则，已连产两次事故：①11-07 规则
+# 顺序缺口（first-match-wins 下排第 1 使 blacklist 失效，b773b3f 重排修复）；
+# ②11-17 www 盲区（表达式只 match apex，www 完全无挑战=解挑战免费旁路，当日
+# API 补 host in {apex www}）。文档快照防不了漂移——规则被手改/误删/重建后
+# www 修复会静默丢失，仿 cdn-hotlink-block 先例收编为代码自愈。
+# canonical 表达式逐字符取自 2026-11-17 CF live 现值（只读 GET，非手抄重构）：
+#   ssh r4s "cat /etc/noda/ip-ban.env" 取 DOPPLER_SERVICE_TOKEN →
+#   GET api.doppler.com .../secret?project=noda&config=prd&name=CF_BAN_API_TOKEN →
+#   GET zones?name=noda.co.nz（2ed51678bb82d8def5a5dcae28635c11）→
+#   GET zones/{id}/rulesets/phases/http_request_firewall_custom/entrypoint
+#   命中规则 id b62507ea2ec243098ea2ce8eaac599e5 / ref geo-admin-challenge。
+# 未来改动走代码+测试，不再面板手改。
+# Phase 1 observe（默认）：每轮 GET 比对，漂移只记日志+TG 告警（含前后 diff），
+#   零写回——零误报跑一周确认 canonical 与真实期望一致后才准转 enforce。
+# Phase 2 enforce（GEO_RULE_MODE=enforce）：漂移拉回+删除重建（继承 hotlink
+#   自愈语义）。该规则影响面大（非 NZ/AU/TW 全部 web 流量进挑战），默认不启用。
+GEO_REF = "geo-admin-challenge"       # 2026-11-07 合并规则沿用 ref（live 同名）
+GEO_ACTION = "managed_challenge"
+GEO_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17): "
+            "admin non-NZ + web non-NZ/AU apex+www")  # 2026-11-17 live 原文
+GEO_CLAUSE = (
+    '(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ") '
+    'or ((not cf.client.bot) and (not ip.src in {66.249.64.0/19 '
+    '209.85.128.0/17 2001:4860:7::/48}) and '
+    '(http.host in {"noda.co.nz" "www.noda.co.nz"}) and '
+    '(not ip.geoip.country in {"NZ" "AU" "TW"}))')
+GEO_ZONES = ("noda.co.nz",)   # shuotong.wang zone 无此规则，不受影响（复用
+                              # HOTLINK_ZONES 模式：main 循环只对成员 zone 调用）
+
+
+def geo_rule_mode():
+    """GEO_RULE_MODE（os.environ 优先，其次 ENV_FILE，同 ALLOW_CIDRS 口径）：
+    observe（默认）/ enforce。未知值一律回落 observe——影响面大，宁守勿攻。"""
+    raw = (os.environ.get("GEO_RULE_MODE")
+           or env_settings().get("GEO_RULE_MODE") or "").strip().lower()
+    return "enforce" if raw == "enforce" else "observe"
+
+
+def _geo_diff_note(live, canonical, ctx=40):
+    """首个差异定位（±ctx 字符上下文）——漂移往往只差一小段（如 www host 被
+    删），全文对照难一眼定位"""
+    i = 0
+    while i < min(len(live), len(canonical)) and live[i] == canonical[i]:
+        i += 1
+    return ("首个差异@%d: 线上 …%s… / canonical …%s…"
+            % (i, live[max(0, i - ctx):i + ctx],
+               canonical[max(0, i - ctx):i + ctx]))
+
+
+def apply_geo_rule(rules, mode, zone):
+    """geo-challenge 规则守护（#19）。返回 (同一列表, 是否有变化, TG 告警列表,
+    漂移指纹)。健康判定只比 expression/action/enabled——description 不比
+    （desc 由 live 起步，比了会在首轮 enforce 产生无谓写；前缀漂移归 #20 守护），
+    规则按 description 前缀 GEO_MARKER 或 ref GEO_REF 定位（desc 前缀被手改
+    丢了 ref 仍能收养）。
+
+    observe：漂移/缺失只告警零写回；enforce：拉回/重建（DRY_RUN 下按 observe
+    处理——put_rules 被跳过，改内存对象是假自愈）。"""
+    rule = next((r for r in rules
+                 if str(r.get("description", "")).startswith(GEO_MARKER)
+                 or r.get("ref") == GEO_REF), None)
+    if (rule and rule.get("expression") == GEO_CLAUSE
+            and rule.get("action") == GEO_ACTION
+            and rule.get("enabled", True)):
+        return rules, False, [], ""
+    enforce = mode == "enforce" and not DRY_RUN
+    label = ("enforce" if enforce else
+             "enforce+DRY_RUN" if mode == "enforce" else "observe")
+    if rule is None:
+        fp = "missing"
+        if enforce:
+            rules.append({"action": GEO_ACTION, "action_parameters": {},
+                          "expression": GEO_CLAUSE, "description": GEO_DESC,
+                          "enabled": True, "ref": GEO_REF})
+            log("geo-rule[%s]: missing → recreated (enforce)" % zone)
+            return rules, True, ["ip-ban: geo-challenge 规则缺失[%s]，%s 已按 "
+                                 "canonical 重建:\n%s"
+                                 % (zone, label, GEO_CLAUSE)], fp
+        log("geo-rule[%s]: missing（%s 只告警零回写）" % (zone, label))
+        return rules, False, ["ip-ban: geo-challenge 规则缺失[%s]（%s：零回写"
+                             "仅告警）——canonical 期望:\n%s"
+                             % (zone, label, GEO_CLAUSE)], fp
+    live = str(rule.get("expression", ""))
+    fp = "drift:%r:%s:%s" % (live, rule.get("action"), rule.get("enabled"))
+    if enforce:
+        rule["expression"] = GEO_CLAUSE
+        rule["action"] = GEO_ACTION
+        rule["description"] = GEO_DESC
+        rule["enabled"] = True
+        log("geo-rule[%s]: drifted → pulled back (enforce)" % zone)
+        return rules, True, ["ip-ban: geo-challenge 漂移[%s]，%s 已拉回 canonical。"
+                             "漂移前(线上):\n%s\n拉回后(canonical):\n%s\n%s"
+                             % (zone, label, live, GEO_CLAUSE,
+                                _geo_diff_note(live, GEO_CLAUSE))], fp
+    log("geo-rule[%s]: drift detected（%s 零回写）" % (zone, label))
+    return rules, False, ["ip-ban: geo-challenge 漂移[%s]（%s：零回写仅告警）。"
+                          "漂移前(线上):\n%s\n漂移后(canonical):\n%s\n%s"
+                          % (zone, label, live, GEO_CLAUSE,
+                             _geo_diff_note(live, GEO_CLAUSE))], fp
+
+
+def step_geo_guard(guard, zone, drift_fp, alerts, log):
+    """#19 observe 告警去重（cron */5 实跑，漂移持续会每轮刷屏 TG）：
+    同漂移指纹只发一次（记 state geo_guard[zone]），变化才再发；解除只记日志。
+    返回 (更新后 guard, 待发送 alerts)。"""
+    if drift_fp:
+        if guard.get(zone) == drift_fp:
+            log("geo-guard[%s]: 漂移持续（已告警，本轮静默）" % zone)
+            return guard, []
+        guard[zone] = drift_fp
+        return guard, alerts
+    if guard.pop(zone, None) is not None:
+        log("geo-guard[%s]: 漂移解除，live 已与 canonical 一致" % zone)
+    return guard, []
 
 
 def persist_key(ip):
@@ -1380,6 +1501,9 @@ def main():
     # 每轮都 GET 对账：除封禁变化外，还要校验 dc 常驻规则未被 Dashboard 手改漂移。
     unsynced = sorted(set(state.get("unsynced") or []))
     dc_expr = build_dc_expression(allowed, persist_cidrs=persist_hits)
+    geo_guard = state.get("geo_guard") or {}   # #19 observe 告警去重指纹
+    guard_alerts = []                         # #19/#20 守护告警（对账发现即收集）
+    geo_mode = geo_rule_mode()
     try:
         cf = load_cf_token()
         ids = {}
@@ -1406,12 +1530,22 @@ def main():
                 hl_changed = False
                 if zname in HOTLINK_ZONES:
                     rules, hl_changed = apply_hotlink_rule(rules)
+                # #19 geo-challenge 守护（仅 GEO_ZONES；observe 默认零写回，
+                # 告警去重防每 5 分钟刷屏）
+                geo_changed = False
+                if zname in GEO_ZONES:
+                    rules, geo_changed, g_alerts, geo_fp = apply_geo_rule(
+                        rules, geo_mode, zname)
+                    geo_guard, g_alerts = step_geo_guard(
+                        geo_guard, zname, geo_fp, g_alerts, log)
+                    guard_alerts.extend(g_alerts)
                 rules, order_changed = sort_rules_canonical(rules)
                 if order_changed:
                     log("rule order canonicalized: %s"
                         % " → ".join(str(r.get("description", ""))[:24]
                                      for r in rules))
-                if need_put or dc_changed or hl_changed or order_changed:
+                if need_put or dc_changed or hl_changed or geo_changed \
+                        or order_changed:
                     put_rules(cf, zid, rules)
                     if dc_changed and not DRY_RUN and not need_put:
                         tg("ip-ban: 机房 ASN 规则更新——%d 个 ASN 直接 %s"
@@ -1426,10 +1560,13 @@ def main():
         log("CF token/zone 解析失败: %s (kept, will retry)" % e)
         unsynced = sorted(set(unsynced) | set(ZONES))
     state["unsynced"] = unsynced
+    state["geo_guard"] = geo_guard
     if not unsynced:
         state["persist_listed"] = persist_hits   # 全 zone 同步成功才记账，失败下轮重试
 
     # ---- 通知 ----
+    for msg in guard_alerts:                    # #19/#20 守护告警（自带 ip-ban: 前缀）
+        tg(msg)
     for cidr, reason, ttl in new_bans:
         log("BAN: %s (%s), until %s" % (
             cidr, reason, time.strftime("%F %T", time.localtime(now + ttl))))
