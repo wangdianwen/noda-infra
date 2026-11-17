@@ -5,18 +5,32 @@
 > 手工改规则走 API 或面板均可，改完无需动 ip-ban.py。
 > 核验命令：见文末。
 
-## 规则清单（2026-11-07 快照）
+## 规则清单（2026-11-17 快照；11-07 初版见 git 历史）
 
 ### noda.co.nz（4 条自定义 + 1 条限速，按求值顺序）
 
 | # | 描述 | action | 维护方 |
 |---|---|---|---|
-| 1 | geo-challenge merged（admin non-NZ + web non-NZ/AU 两分支；官方 Google 段豁免 11-07 补，见当日判例） | managed_challenge | 手工（11-07 由 admin 规则+CN 规则合并而成） |
-| 2 | block empty/fake/script user agent | block | 手工（本次加严，见下） |
-| 3 | ip-range-blacklist auto（22 段） | block | ip-ban.py 自动 |
-| 4 | datacenter-asn-block auto（31 ASN 两分支：滥用 18 无 UA 豁免/大云 13 保留；10-26 扩容） | block | ip-ban.py 自动 |
+| 1 | ip-range-blacklist auto（28 段） | block | ip-ban.py 自动 |
+| 2 | datacenter-asn-block auto（31 ASN 两分支：滥用 18 无 UA 豁免/大云 13 保留；10-26 扩容） | block | ip-ban.py 自动 |
+| 3 | block empty/fake/script user agent | block | 手工（本次加严，见下） |
+| 4 | geo-challenge merged 2026-11-07（www added 2026-11-17）：admin non-NZ + web non-NZ/AU（apex+www 两 host；官方 Google 段豁免） | managed_challenge | 手工（11-07 由 admin 规则+CN 规则合并而成；11-17 补 www host） |
 | 5 | cdn-hotlink-block（Referer 反盗链，ip-ban.py 维护） | block | ip-ban.py 自动 |
 | RL | content-nav-burst-guard：150 req/10s（http_ratelimit 阶段，HTML 路径） | block | 手工（#37 放宽） |
+
+**顺序即语义（2026-11-17 判例）**：CF 自定义规则 first-match-wins，只有第一条命中规则的
+action 生效。原顺序 geo-challenge 排第 1、blacklist 排第 3 → 136.66.124.196 封禁后仍持续
+匹配挑战规则（200 次 managed_challenge 事件、零 block），解掉挑战即穿透封禁名单。
+同日 ip-ban.py 新增 `sort_rules_canonical`（RULE_ORDER=blacklist→dc→UA→geo→hotlink）
+每轮对账重排——**手工新建规则会排到已知规则之后（未知排尾稳定）；勿手改已知规则的
+description 前缀**（`ip-range-blacklist` / `datacenter-asn-block` / `block empty/fake` /
+`geo-challenge` / `cdn-hotlink-block`），前缀漂移会被当作未知规则排尾（UA 规则若漂移，
+headless UA 会落到挑战而非 403）。
+
+**geo-challenge 表达式（11-17 现行）**：
+`(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ") or ((not cf.client.bot) and (not ip.src in {66.249.64.0/19 209.85.128.0/17 2001:4860:7::/48}) and (http.host in {"noda.co.nz" "www.noda.co.nz"}) and (not ip.geoip.country in {"NZ" "AU" "TW"}))`
+——www.noda.co.nz 11-17 补入（原表达式只 match apex，www 完全无挑战=解挑战旁路；
+class.noda.co.nz 已下线不补）。
 
 ### shuotong.wang（3 条）
 

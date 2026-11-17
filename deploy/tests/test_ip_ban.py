@@ -997,3 +997,65 @@ def test_rule_order_unknown_rules_last_stable(ip_ban):
     assert [x["description"] for x in out] == [
         "ip-range-blacklist auto", "geo-challenge",
         "some-manual-rule", "another-manual-rule"]
+
+
+# ---- ⑫ 2026-11-17 复审修正：段外伪造官方爬虫 UA 按伪装计 bot ----
+# 复审判例（code review）：SELFID_MARKERS 含 "bot"，段外伪造 OAI-SearchBot/
+# AhrefsBot UA 原本拿到 skip（自报家门欢迎）=对枚举/洪水/攻击档案全隐身——
+# 与头注释「伪造 UA 仍按伪装计 bot」的声明相反。修正：镜像 fake-googlebot
+# 先例（2026-10-18），官方身份 UA + 段外 IP = 伪装计 bot；真爬虫在 IP 真值层
+# （is_crawler_ip）先行 skip，不受影响。
+
+def test_spoofed_official_bot_ua_outside_ranges_counts_as_bot(ip_ban):
+    """OAI/Ahrefs 官方 UA + 段外 IP → bot（计入枚举/洪水/攻击门，非 skip）"""
+    assert ip_ban.classify("198.51.100.7", OAI_UA) == "bot"
+    assert ip_ban.classify(
+        "198.51.100.8",
+        "Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)") == "bot"
+
+
+def test_real_official_bots_still_skip_via_ip_truth(ip_ban):
+    """真官方爬虫走 IP 真值层先行 skip，UA 伪装修正不影响它们"""
+    assert ip_ban.classify("40.67.175.127", OAI_UA) == "skip"
+    assert ip_ban.classify(
+        "202.8.42.173",
+        "Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)") == "skip"
+
+
+def test_selfid_ua_without_official_impersonation_still_welcomed(ip_ban):
+    """非冒充官方身份的自报家门爬虫不受影响（2026-10-18 设计保持）"""
+    assert ip_ban.classify(
+        "198.51.100.9", "Kimi-SearchBot/1.0 (+https://kimi.ai/)") == "skip"
+    assert ip_ban.classify(
+        "198.51.100.10", "Mozilla/5.0 (compatible; SiriBot/1.0)") == "skip"
+
+
+# ---- ⑬ 老格式缓存迁移（复审 Issue 3）：无 openai 键的新鲜缓存不降级 g/b ----
+
+def test_fresh_old_format_cache_migrates_without_downgrade(monkeypatch, tmp_path):
+    """老格式缓存（无 openai 键）命中缓存路径：g/b 保持缓存值，openai 用内置
+    快照补位，零网络请求——不因迁移缺键把 google/bing 降级到 10-22 旧快照"""
+    import json as _json
+    import time as _time
+    env = tmp_path / "ip-ban.env"
+    env.write_text("")
+    mod = load_ip_ban(monkeypatch, env_file=str(env))
+    cache = tmp_path / "net-ranges.json"
+    fresh_old = {"fetched_at": int(_time.time()) - 60,          # 新鲜（1 分钟前）
+                 "googlebot": ["66.249.64.0/19"],
+                 "bingbot": ["157.55.39.0/24"]}                 # 无 openai 键
+    cache.write_text(_json.dumps(fresh_old))
+    monkeypatch.setattr(mod, "RANGES_CACHE", str(cache))
+    calls = []
+
+    def boom(url, timeout=15):
+        calls.append(url)
+        raise OSError("network down")                           # 断网也应零请求
+
+    monkeypatch.setattr(mod, "fetch_text", boom)
+    mod.load_crawler_ranges()
+    assert calls == []                                          # 缓存路径零网络
+    assert mod.GOOGLE_NETS == [ipaddress.ip_network("66.249.64.0/19")]
+    assert mod.BING_NETS == [ipaddress.ip_network("157.55.39.0/24")]
+    assert mod.OAI_NETS == [ipaddress.ip_network(c)
+                            for c in mod.OAI_FALLBACK]          # 内置快照补位

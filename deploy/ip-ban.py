@@ -585,10 +585,15 @@ def load_crawler_ranges():
         if now - cache.get("fetched_at", 0) < RANGES_CACHE_TTL:
             g = parse_cidrs(",".join(cache.get("googlebot", [])))
             b = parse_cidrs(",".join(cache.get("bingbot", [])))
-            o = parse_cidrs(",".join(cache.get("openai", [])))
-            if g and b and o:
-                GOOGLE_NETS, BING_NETS, OAI_NETS = g, b, o
-                return
+            if g and b:
+                # 老格式缓存（无 openai 键）迁移：g/b 保持缓存新鲜值，openai
+                # 用内置快照补位（2026-11-17 抓取，24h 内零损失）——不因迁移
+                # 缺键把 google/bing 一并降级到 10-22 旧快照
+                o_raw = cache.get("openai")
+                o = parse_cidrs(",".join(o_raw)) if o_raw else OAI_NETS
+                if o:
+                    GOOGLE_NETS, BING_NETS, OAI_NETS = g, b, o
+                    return
     except Exception:
         pass
     fetched = {}
@@ -990,9 +995,13 @@ def classify(ip, ua, allowed=None):
     if is_crawler_ip(ip):
         return "skip"                        # 官方爬虫段 IP 优先，不看 UA
     u = ua.lower()
-    if "googlebot" in u or "bingbot" in u:
-        return "bot"          # 假 Googlebot/Bingbot（真段已在上面 skip）——
-                              # bingbot 不加会被 SELFID "bot" 误放行为 skip
+    if ("googlebot" in u or "bingbot" in u or "oai-searchbot" in u
+            or "ahrefsbot" in u):
+        return "bot"          # 假 Googlebot/Bingbot/OAI-SearchBot/AhrefsBot
+                              # （真段已在上面 skip）——不加会被 SELFID "bot"
+                              # 误放行为 skip：2026-11-17 判例②复审修正，UA
+                              # 冒充官方爬虫身份的段外流量按伪装计 bot（2026
+                              # -10-18 fake-googlebot 先例同款）
     if any(m in u for m in SELFID_MARKERS):
         return "skip"                                             # 自报家门的爬虫，欢迎
     if not ua.strip() or any(m in u for m in OBVIOUS_BOT_UA):
