@@ -214,7 +214,10 @@ def test_line_re_captures_status(ip_ban):
 
 def test_scan_window_emits_status(ip_ban, monkeypatch):
     lines = ('172.18.0.7 - - [23/Oct/2026:11:00:00 +0000] "GET /a HTTP/1.1" '
-             '200 10 "-" "Mozilla/5.0 Chrome/153.0" "203.0.113.5"\n')
+             '200 10 "-" "Mozilla/5.0 Chrome/153.0" "203.0.113.5"\n'
+             '172.18.0.7 - - [23/Oct/2026:11:00:01 +0000] "GET /b HTTP/1.1" '
+             '403 0 "https://www.google.com/" "Mozilla/5.0 Chrome/156.0" '
+             '"198.51.100.7"\n')
 
     class FakeOut:
         stdout = lines
@@ -222,7 +225,11 @@ def test_scan_window_emits_status(ip_ban, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: FakeOut())
     events = ip_ban.scan_window(0)
-    assert events == [("203.0.113.5", "/a", "Mozilla/5.0 Chrome/153.0", "200")]
+    # #18 起事件元组扩为 (ip, path, ua, status, referer)——tripwire 取证需要
+    assert events == [("203.0.113.5", "/a", "Mozilla/5.0 Chrome/153.0",
+                       "200", "-"),
+                      ("198.51.100.7", "/b", "Mozilla/5.0 Chrome/156.0",
+                       "403", "https://www.google.com/")]
 
 
 def test_decide_persistent_four_days_zero_evidence_passes(ip_ban):
@@ -1061,3 +1068,453 @@ def test_fresh_old_format_cache_migrates_without_downgrade(monkeypatch, tmp_path
     assert mod.BING_NETS == [ipaddress.ip_network("157.55.39.0/24")]
     assert mod.OAI_NETS == [ipaddress.ip_network(c)
                             for c in mod.OAI_FALLBACK]          # 内置快照补位
+
+
+# ---- ⑭ #18 tripwire 取证增强：candidate 日志带 UA + state 命中样本环形缓冲 ----
+# 背景（2026-11-17 判例链承接）：Ahrefs 段外出口（OVH/AWS）的 JS 渲染会话撞
+# /__trip 仍会单发即封 30 天——疑似实证 11-08 的 54.174.58.237/241（AWS，封禁
+# 相隔 5 分钟=单会话出口轮换，渲染器行为特征），但源站日志只留 8 小时，UA 已
+# 不可考，误封无处申诉。取证三件套：candidate 日志带 UA 样本（截断）+ state
+# 环形缓冲记 ip/ua/referer/时间（防日志滚动丢失）+ 写入时容量裁剪防膨胀。
+
+HEADLESS_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) HeadlessChrome/131.0.0.0 Safari/537.36")
+
+
+def test_trip_samples_record_ip_ua_referer_ts(ip_ban):
+    """/__trip 命中落样：四字段齐备；普通路径流量不落样"""
+    events = [("54.174.58.237", "/__trip", HEADLESS_UA, "403",
+               "https://www.google.com/"),
+              ("203.0.113.5", "/zh/queenstown", "Mozilla/5.0 Chrome/156.0",
+               "200", "-")]
+    out = ip_ban.record_trip_samples([], events, 1790000000)
+    assert len(out) == 1
+    s = out[0]
+    assert s["ip"] == "54.174.58.237"
+    assert s["ua"] == HEADLESS_UA
+    assert s["referer"] == "https://www.google.com/"
+    assert s["ts"] == 1790000000
+
+
+def test_trip_samples_truncate_ua_and_referer(ip_ban):
+    """UA/referer 截断到 TRIP_UA_MAX（200），防长样本撑爆 state"""
+    out = ip_ban.record_trip_samples(
+        [], [("198.51.100.9", "/__trip", "A" * 500, "403",
+              "https://example.com/" + "b" * 500)], 1)
+    assert ip_ban.TRIP_UA_MAX == 200
+    assert len(out[0]["ua"]) == 200 and len(out[0]["referer"]) == 200
+
+
+def test_trip_samples_ring_capacity_trim(ip_ban):
+    """环形缓冲写入时裁剪：超容丢最旧；容量 ≥20（issue 下限）"""
+    assert ip_ban.TRIP_SAMPLES_MAX >= 20
+    events = [("10.1.%d.7" % i, "/__trip", "UA-%d" % i, "403", "-")
+              for i in range(ip_ban.TRIP_SAMPLES_MAX + 10)]
+    out = ip_ban.record_trip_samples([], events, 1)
+    assert len(out) == ip_ban.TRIP_SAMPLES_MAX
+    assert out[0]["ip"] == "10.1.10.7"          # 最旧的 10 条被裁
+    assert out[-1]["ip"] == "10.1.%d.7" % (ip_ban.TRIP_SAMPLES_MAX + 9)
+    # 评审修正后的新结构：下一轮老 IP 再命中 → 恒占 1 格（移到尾），
+    # 不因跨轮重复 append 挤占他人格位
+    out2 = ip_ban.record_trip_samples(
+        out, [("10.1.10.7", "/__trip", "UA-rehit", "403", "-")], 2)
+    assert len(out2) == ip_ban.TRIP_SAMPLES_MAX
+    ips = [s["ip"] for s in out2]
+    assert ips.count("10.1.10.7") == 1 and ips[-1] == "10.1.10.7"
+    assert out2[-1]["ua"] == "UA-rehit" and out2[-1]["ts"] == 2
+
+
+def test_trip_samples_cross_round_per_ip_dedupe_move_to_end(ip_ban):
+    """评审 Important：跨轮按 IP 去重（move-to-end）——SAFETY 豁免段
+    （AHREFS_NETS /23s）origin 持续可见反复撞 /__trip，append 式缓冲
+    4-8 小时即被单一 IP 挤满 50 容量、逐出真被封候选的取证样本。
+    新语义：每 IP 恒占 1 格、最近命中在尾。"""
+    # 跨轮同 IP：只留最新一条（ts/ua 刷新），且在缓冲末尾
+    r1 = ip_ban.record_trip_samples(
+        [], [("202.8.40.46", "/__trip", "UA-r1", "403", "-")], 100)
+    r2 = ip_ban.record_trip_samples(
+        r1, [("198.51.100.7", "/__trip", "UA-other", "403", "-")], 200)
+    r3 = ip_ban.record_trip_samples(
+        r2, [("202.8.40.46", "/__trip", "UA-r3", "403",
+              "https://ahrefs.com/")], 300)
+    assert [s["ip"] for s in r3] == ["198.51.100.7", "202.8.40.46"]
+    assert r3[-1] == {"ip": "202.8.40.46", "ua": "UA-r3",
+                      "referer": "https://ahrefs.com/", "ts": 300}
+    # 豁免段刷屏场景：同 IP 连撞 20 轮，仍恒占 1 格、不逐出他人样本
+    buf = ip_ban.record_trip_samples(
+        [], [("10.9.%d.9" % i, "/__trip", "UA-%d" % i, "403", "-")
+             for i in range(10)], 1)
+    for rnd in range(2, 22):
+        buf = ip_ban.record_trip_samples(
+            buf, [("202.8.42.173", "/__trip", "AhrefsBot-r%d" % rnd,
+                   "403", "-")], rnd)
+    assert len(buf) == 11                       # 10 个候选项 + 1 格豁免段
+    ahrefs = [s for s in buf if s["ip"] == "202.8.42.173"]
+    assert len(ahrefs) == 1 and ahrefs[0]["ua"] == "AhrefsBot-r21"
+    assert [s["ip"] for s in buf][-1] == "202.8.42.173"
+    kept = {s["ip"] for s in buf if s["ip"] != "202.8.42.173"}
+    assert kept == {"10.9.%d.9" % i for i in range(10)}   # 候选取证未被挤掉
+
+
+def test_trip_samples_last_hit_per_ip_in_round(ip_ban):
+    """同 IP 一轮多次 beacon 只留一条（取最后 UA），防单轮刷屏占满缓冲"""
+    events = [("198.51.100.7", "/__trip", "UA-first", "403", "-"),
+              ("198.51.100.7", "/__trip", "UA-second", "403", "-")]
+    out = ip_ban.record_trip_samples([], events, 1)
+    assert len(out) == 1 and out[0]["ua"] == "UA-second"
+
+
+def test_trip_samples_only_exact_trip_path(ip_ban):
+    """与 trip_bans 判例同口径：只有 exact /__trip 落样（子路径不构陷）"""
+    events = [("198.51.100.7", "/__trip/x", "UA", "403", "-"),
+              ("198.51.100.8", "/trip", "UA", "200", "-")]
+    assert ip_ban.record_trip_samples([], events, 1) == []
+
+
+def test_trip_ua_map_truncates_and_last_wins(ip_ban):
+    """cidr → 本轮最后 UA（截断 200）：candidate 日志取证的数据源"""
+    events = [("198.51.100.7", "/__trip", "U" * 500, "403", "-"),
+              ("198.51.100.7", "/__trip", "short", "403", "-")]
+    assert ip_ban.trip_ua_map(events) == {"198.51.100.7/32": "short"}
+    m = ip_ban.trip_ua_map([("2001:db8:1::1", "/__trip", "x" * 300, "403", "-")])
+    assert m == {"2001:db8:1::/64": "x" * 200}
+
+
+def test_trip_candidate_log_carries_ua(ip_ban, capsys):
+    """candidate 日志行必须带 UA 样本（#18 验收：封禁时取证同步留痕）"""
+    events = [("54.174.58.237", "/__trip",
+               "Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)",
+               "403", "-")]
+    proposals = {}
+    new = ip_ban.apply_trip_proposals(events, {}, proposals)
+    out = capsys.readouterr().out
+    assert "54.174.58.237/32" in proposals
+    assert "ua=Mozilla/5.0 (compatible; AhrefsBot/7.0" in out
+    assert len(new) == 1 and new[0][0] == "54.174.58.237/32"
+
+
+def test_trip_candidate_skips_known_cidr_no_log(ip_ban, capsys):
+    """既有判例不回退：已在 proposals/bans 的 cidr 不重复提案、不打 candidate"""
+    events = [("54.174.58.237", "/__trip", "UA", "403", "-")]
+    proposals = {"54.174.58.237/32": ("single-ip flood", 86400)}
+    assert ip_ban.apply_trip_proposals(events, {}, proposals) == []
+    assert ip_ban.apply_trip_proposals(
+        events, {"54.174.58.237/32": {"until": 9}}, proposals) == []
+    assert "candidate" not in capsys.readouterr().out
+
+
+def test_trip_bans_judgments_unchanged_with_referer_events(ip_ban):
+    """事件元组扩为 (ip, path, ua, status, referer) 后既有 trip 判例不回退"""
+    events = [("203.0.113.7", "/__trip", "Mozilla/5.0 Chrome/156.0", "403",
+               "https://nearby.noda.co.nz/"),
+              ("203.0.113.7", "/zh/queenstown", "Mozilla/5.0 Chrome/156.0",
+               "200", "-"),
+              ("203.0.113.8", "/__trip/x", "UA", "403", "-")]
+    assert ip_ban.trip_bans(events) == {
+        "203.0.113.7/32": ("fingerprint-tripwire", ip_ban.TRIP_TTL)}
+    # 老 4 元组（无 referer）同样兼容——纯函数按索引取值不炸
+    assert ip_ban.trip_bans([("203.0.113.7", "/__trip", "UA", "403")]) == {
+        "203.0.113.7/32": ("fingerprint-tripwire", ip_ban.TRIP_TTL)}
+    assert ip_ban.record_trip_samples(
+        [], [("203.0.113.7", "/__trip", "UA", "403")], 5) == [
+        {"ip": "203.0.113.7", "ua": "UA", "referer": "-", "ts": 5}]
+
+
+# ---- ⑮ #19 apply_geo_rule：geo-challenge 收编守护（observe 优先，enforce 备用）----
+# geo-challenge 是 noda zone 唯一手工维护规则，已连产两次事故（11-07 规则顺序
+# 缺口使 blacklist 失效 / 11-17 www 盲区=解挑战免费旁路）——文档快照防不了
+# 漂移，仿 cdn-hotlink-block 先例收编为代码自愈。canonical 表达式逐字符取自
+# 2026-11-17 CF live（rule b62507ea2ec243098ea2ce8eaac599e5 / ref
+# geo-admin-challenge），获取命令（只读 GET）：
+#   ssh r4s "cat /etc/noda/ip-ban.env" 拿 DOPPLER_SERVICE_TOKEN →
+#   GET api.doppler.com/v3/configs/config/secret?project=noda&config=prd&name=CF_BAN_API_TOKEN →
+#   GET api.cloudflare.com/client/v4/zones?name=noda.co.nz（zone 2ed51678bb82d8def5a5dcae28635c11）→
+#   GET zones/{zone}/rulesets/phases/http_request_firewall_custom/entrypoint
+
+GEO_LIVE_EXPR = ('(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ") '
+                 'or ((not cf.client.bot) and (not ip.src in {66.249.64.0/19 '
+                 '209.85.128.0/17 2001:4860:7::/48}) and '
+                 '(http.host in {"noda.co.nz" "www.noda.co.nz"}) and '
+                 '(not ip.geoip.country in {"NZ" "AU" "TW"}))')
+GEO_LIVE_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17): "
+                 "admin non-NZ + web non-NZ/AU apex+www")
+
+
+def _geo_live_rule():
+    return {"id": "b62507ea2ec243098ea2ce8eaac599e5",
+            "ref": "geo-admin-challenge", "action": "managed_challenge",
+            "enabled": True, "description": GEO_LIVE_DESC,
+            "expression": GEO_LIVE_EXPR}
+
+
+def test_geo_clause_matches_cf_live_2026_11_17(ip_ban):
+    """canonical=2026-11-17 CF live 逐字符一致（非手抄重构）——若本测试失败
+    = 有人改了 canonical，需重新对 CF API 校准并同步重发"""
+    assert ip_ban.GEO_CLAUSE == GEO_LIVE_EXPR
+    assert ip_ban.GEO_DESC == GEO_LIVE_DESC
+    assert ip_ban.GEO_REF == "geo-admin-challenge"
+    assert ip_ban.GEO_ACTION == "managed_challenge"
+    assert ip_ban.GEO_MARKER == "geo-challenge"      # 与 RULE_ORDER 前缀一致
+
+
+def test_geo_rule_zone_isolation(ip_ban):
+    """仅 noda.co.nz zone 生效（GEO_ZONES 复用 HOTLINK_ZONES 模式）——
+    shuotong.wang 无此规则，main 循环根本不会对它调 apply_geo_rule"""
+    assert ip_ban.GEO_ZONES == ("noda.co.nz",)
+    assert "shuotong.wang" not in ip_ban.GEO_ZONES
+    assert set(ip_ban.GEO_ZONES) <= set(ip_ban.ZONES)
+    assert ip_ban.GEO_MARKER in ip_ban.RULE_ORDER      # 收编后排序位不变
+
+
+def test_geo_rule_healthy_live_shape_noop_both_modes(ip_ban):
+    """live 现值形态（含 live description/ref）两模式都零动作——observe 零误报
+    是转 enforce 的前提"""
+    for mode in ("observe", "enforce"):
+        out, ch, alerts, fp = ip_ban.apply_geo_rule(
+            [_geo_live_rule()], mode, "noda.co.nz")
+        assert ch is False and alerts == [] and fp == "" and len(out) == 1
+
+
+def test_geo_rule_observe_drift_alerts_zero_write(ip_ban):
+    """observe：www 修复丢失形态（表达式被打回 apex-only）→ 只告警零写回，
+    文案含漂移前后全文 + 首个差异定位"""
+    drifted = _geo_live_rule()
+    drifted["expression"] = ('(http.host eq "noda.co.nz" and '
+                             'not ip.geoip.country in {"NZ" "AU"})')
+    out, ch, alerts, fp = ip_ban.apply_geo_rule([drifted], "observe",
+                                                "noda.co.nz")
+    assert ch is False                                   # 零写回
+    assert out[0]["expression"] != ip_ban.GEO_CLAUSE     # 规则对象未被动过
+    assert len(alerts) == 1 and fp
+    msg = alerts[0]
+    assert "observe" in msg and "零回写" in msg and "noda.co.nz" in msg
+    assert drifted["expression"] in msg                  # 漂移前（线上现值）
+    assert ip_ban.GEO_CLAUSE in msg                      # 漂移后（canonical 期望）
+    assert "首个差异@" in msg
+
+
+def test_geo_rule_observe_missing_alerts_no_create(ip_ban):
+    """observe：规则被删 → 告警缺失但不重建（零写回）"""
+    out, ch, alerts, fp = ip_ban.apply_geo_rule([], "observe", "noda.co.nz")
+    assert ch is False and len(out) == 0 and len(alerts) == 1 and fp == "missing"
+    assert "缺失" in alerts[0] and ip_ban.GEO_CLAUSE in alerts[0]
+
+
+def test_geo_rule_enforce_pulls_back_drift(ip_ban):
+    """enforce：表达式/action/enabled 任一漂移 → 原位拉回 canonical"""
+    drifted = _geo_live_rule()
+    drifted.update(expression="true", action="block", enabled=False)
+    out, ch, alerts, fp = ip_ban.apply_geo_rule([drifted], "enforce",
+                                                "noda.co.nz")
+    assert ch is True and fp
+    assert out[0]["expression"] == ip_ban.GEO_CLAUSE
+    assert out[0]["action"] == "managed_challenge" and out[0]["enabled"] is True
+    assert out[0]["description"] == ip_ban.GEO_DESC
+    assert any("拉回" in a for a in alerts)
+
+
+def test_geo_rule_enforce_recreates_deleted(ip_ban):
+    """enforce：规则被删 → 删除重建（继承 hotlink 自愈语义），ref/desc/expression
+    全 canonical"""
+    out, ch, alerts, fp = ip_ban.apply_geo_rule([], "enforce", "noda.co.nz")
+    assert ch is True and len(out) == 1 and fp == "missing"
+    r = out[0]
+    assert r["ref"] == ip_ban.GEO_REF and r["expression"] == ip_ban.GEO_CLAUSE
+    assert r["action"] == ip_ban.GEO_ACTION and r["enabled"] is True
+    assert r["description"] == ip_ban.GEO_DESC
+    assert any("重建" in a for a in alerts)
+
+
+def test_geo_rule_desc_not_compared_but_ref_adopts(ip_ban):
+    """健康判定只比 expression/action/enabled：description 后缀被改不算漂移
+    （desc 由 live 起步，比了会在 enforce 首轮产生无谓写）；description 前缀
+    丢了仍能被 ref 收养——前缀漂移的告警归 #20 前缀守护"""
+    r1 = _geo_live_rule()
+    r1["description"] = "geo-challenge 面板里被人改了后缀"
+    _out, ch, alerts, fp = ip_ban.apply_geo_rule([r1], "enforce", "noda.co.nz")
+    assert ch is False and alerts == [] and fp == ""
+    r2 = _geo_live_rule()
+    r2["description"] = "面板改名丢了前缀"          # 不再 startswith geo-challenge
+    _out, ch, alerts, fp = ip_ban.apply_geo_rule([r2], "observe", "noda.co.nz")
+    assert ch is False and alerts == [] and fp == ""   # ref 兜底找到=表达式健康
+
+
+def test_geo_rule_mode_env_and_default(monkeypatch, tmp_path):
+    """GEO_RULE_MODE：os.environ 优先 / ENV_FILE 兜底 / 默认 observe /
+    未知值不进 enforce（影响面大，宁守勿攻）"""
+    env = tmp_path / "ip-ban.env"
+    env.write_text("GEO_RULE_MODE=enforce\n")
+    mod = load_ip_ban(monkeypatch, env_file=str(env))
+    monkeypatch.delenv("GEO_RULE_MODE", raising=False)
+    assert mod.geo_rule_mode() == "enforce"             # ENV_FILE 兜底
+    monkeypatch.setenv("GEO_RULE_MODE", "observe")
+    assert mod.geo_rule_mode() == "observe"             # os.environ 优先
+    monkeypatch.setenv("GEO_RULE_MODE", " ENFORCE ")
+    assert mod.geo_rule_mode() == "enforce"             # 大小写/空白容错
+    monkeypatch.setenv("GEO_RULE_MODE", "garbage")
+    assert mod.geo_rule_mode() == "observe"             # 未知值回落 observe
+
+
+def test_geo_rule_dry_run_enforce_stays_observe(ip_ban, monkeypatch):
+    """DRY_RUN 下 enforce 不得改规则对象（put_rules 被跳过，改了就是假自愈）"""
+    monkeypatch.setattr(ip_ban, "DRY_RUN", True)
+    drifted = _geo_live_rule()
+    drifted["expression"] = "true"
+    out, ch, alerts, fp = ip_ban.apply_geo_rule([drifted], "enforce",
+                                                "noda.co.nz")
+    assert ch is False and out[0]["expression"] == "true"
+    assert fp and "DRY_RUN" in alerts[0] and "零回写" in alerts[0]
+
+
+def test_geo_guard_dedup_same_drift_and_recovery(ip_ban):
+    """observe 告警去重（cron */5，漂移持续会刷屏）：同指纹只发一次，变化再发；
+    解除记日志不再 TG"""
+    logs = []
+    guard, a1 = ip_ban.step_geo_guard({}, "noda.co.nz", "drift:x", ["m1"],
+                                      logs.append)
+    assert a1 == ["m1"] and guard["noda.co.nz"] == "drift:x"
+    guard, a2 = ip_ban.step_geo_guard(guard, "noda.co.nz", "drift:x", ["m1"],
+                                      logs.append)
+    assert a2 == [] and any("静默" in l for l in logs)     # 同漂移去重
+    guard, a3 = ip_ban.step_geo_guard(guard, "noda.co.nz", "drift:y", ["m2"],
+                                      logs.append)
+    assert a3 == ["m2"]                                    # 变化才再报
+    guard, a4 = ip_ban.step_geo_guard(guard, "noda.co.nz", "", [], logs.append)
+    assert a4 == [] and "noda.co.nz" not in guard          # 解除：只记日志
+    assert any("解除" in l for l in logs)
+
+
+# ---- ⑯ #20 规则清单前缀漂移检测告警（缺失/重复/正常 × 分 zone 期望集）----
+# ip-ban.py 按 description 前缀定位规则。前缀漂移后果不对称且部分静默：
+# blacklist/dc 漂移 → apply_* 找不到 → 新建第二条 → Free 版 5 条上限立刻
+# 6/5、PUT 每轮失败（高）；UA-block 漂移 → 排尾落到 geo-challenge 之后，
+# headless UA 从 403 降级挑战（中，静默变松）。检测+告警兜底，TG 带现场清单。
+
+NODA_HEALTHY_DESCS = [
+    "ip-range-blacklist auto (28 active; managed by ip-ban.py)",
+    "datacenter-asn-block auto (31 ASNs + cdn hotlink; managed by ip-ban.py)",
+    "block empty/fake/script user agent",
+    GEO_LIVE_DESC,
+    "cdn-hotlink-block (Referer anti-hotlink; managed by ip-ban.py)",
+]
+SHUOTONG_HEALTHY_DESCS = NODA_HEALTHY_DESCS[:3]   # geo/hotlink 仅 noda zone
+
+
+def _rules(descs):
+    return [{"description": d} for d in descs]
+
+
+def test_expected_prefixes_by_zone(ip_ban):
+    """分 zone 期望集：blacklist/dc/UA 两 zone 都应在；geo/hotlink 仅 noda"""
+    assert ip_ban.expected_rule_prefixes("noda.co.nz") == (
+        ip_ban.RULE_MARKER, ip_ban.DC_MARKER, ip_ban.UA_MARKER,
+        ip_ban.GEO_MARKER, ip_ban.HOTLINK_MARKER)
+    assert ip_ban.expected_rule_prefixes("shuotong.wang") == (
+        ip_ban.RULE_MARKER, ip_ban.DC_MARKER, ip_ban.UA_MARKER)
+
+
+def test_rule_guard_healthy_no_alert_both_zones(ip_ban):
+    """正常态：两 zone 期望集齐全且无重复 → 零告警，guard 不留痕"""
+    for zone, descs in (("noda.co.nz", NODA_HEALTHY_DESCS),
+                        ("shuotong.wang", SHUOTONG_HEALTHY_DESCS)):
+        guard, alerts = ip_ban.step_rule_guard({}, zone, _rules(descs),
+                                               lambda m: None)
+        assert alerts == [] and guard == {}
+
+
+def test_rule_guard_geo_hotlink_absence_fine_in_shuotong(ip_ban):
+    """zone 期望集隔离：shuotong 没有 geo/hotlink 不是漂移（noda 才期望它们）"""
+    missing, dups = ip_ban.check_rule_inventory(
+        "shuotong.wang", _rules(SHUOTONG_HEALTHY_DESCS))
+    assert missing == [] and dups == []
+
+
+def test_rule_guard_missing_prefix_alerts_with_listing(ip_ban):
+    """缺失（noda 的 UA-block 被 Dashboard 改名）：告警带 zone+前缀+现场全部
+    规则 description 清单（可直接定位手改了什么）"""
+    descs = [d for d in NODA_HEALTHY_DESCS
+             if not d.startswith("block empty/fake")]
+    guard, alerts = ip_ban.step_rule_guard({}, "noda.co.nz", _rules(descs),
+                                           lambda m: None)
+    assert len(alerts) == 1
+    msg = alerts[0]
+    assert "noda.co.nz" in msg and "block empty/fake" in msg and "缺失" in msg
+    for d in descs:                       # 现场清单全量在文案里
+        assert d in msg
+    assert guard["noda.co.nz"]            # 指纹入 state（去重用）
+
+
+def test_rule_guard_missing_geo_in_noda_flagged(ip_ban):
+    descs = [d for d in NODA_HEALTHY_DESCS if not d.startswith("geo-challenge")]
+    missing, _ = ip_ban.check_rule_inventory("noda.co.nz", _rules(descs))
+    assert ip_ban.GEO_MARKER in missing
+
+
+def test_rule_guard_missing_blacklist_in_shuotong_flagged(ip_ban):
+    """blacklist/dc 是两 zone 共同期望——shuotong 缺 blacklist 同样告警"""
+    missing, _ = ip_ban.check_rule_inventory(
+        "shuotong.wang", _rules(SHUOTONG_HEALTHY_DESCS[1:]))
+    assert ip_ban.RULE_MARKER in missing and ip_ban.DC_MARKER not in missing
+
+
+def test_rule_guard_duplicate_alerts(ip_ban):
+    """重复（blacklist 前缀命中两条=漂移产物）：告警带两条 description"""
+    descs = NODA_HEALTHY_DESCS + ["ip-range-blacklist dashboard 手建第二条"]
+    guard, alerts = ip_ban.step_rule_guard({}, "noda.co.nz", _rules(descs),
+                                           lambda m: None)
+    assert len(alerts) == 1
+    assert "重复" in alerts[0] and "ip-range-blacklist" in alerts[0]
+    assert "dashboard 手建第二条" in alerts[0]
+
+
+def test_rule_guard_dedup_same_drift_silent(ip_ban):
+    """同一漂移不每 5 分钟重复轰炸：同指纹第二轮静默"""
+    rules = _rules([d for d in NODA_HEALTHY_DESCS
+                    if not d.startswith("geo-challenge")])
+    guard, a1 = ip_ban.step_rule_guard({}, "noda.co.nz", rules, lambda m: None)
+    guard, a2 = ip_ban.step_rule_guard(guard, "noda.co.nz", rules, lambda m: None)
+    assert len(a1) == 1 and a2 == []
+
+
+def test_rule_guard_changed_drift_realerts(ip_ban):
+    """漂移变化（缺失→重复）才再报"""
+    missing_only = _rules([d for d in NODA_HEALTHY_DESCS
+                           if not d.startswith("geo-challenge")])
+    guard, a1 = ip_ban.step_rule_guard({}, "noda.co.nz", missing_only,
+                                       lambda m: None)
+    dup_too = _rules(NODA_HEALTHY_DESCS + ["datacenter-asn-block 重复"])
+    guard, a2 = ip_ban.step_rule_guard(guard, "noda.co.nz", dup_too,
+                                       lambda m: None)
+    assert len(a1) == 1 and len(a2) == 1
+
+
+def test_rule_guard_recovery_alerts_once(ip_ban):
+    """解除后报恢复（带此前漂移指纹可定位），再健康则持续静默"""
+    bad = _rules([d for d in NODA_HEALTHY_DESCS
+                  if not d.startswith("geo-challenge")])
+    guard, _ = ip_ban.step_rule_guard({}, "noda.co.nz", bad, lambda m: None)
+    guard, a2 = ip_ban.step_rule_guard(guard, "noda.co.nz",
+                                       _rules(NODA_HEALTHY_DESCS),
+                                       lambda m: None)
+    assert len(a2) == 1 and "恢复" in a2[0] and "geo-challenge" in a2[0]
+    guard, a3 = ip_ban.step_rule_guard(guard, "noda.co.nz",
+                                       _rules(NODA_HEALTHY_DESCS),
+                                       lambda m: None)
+    assert a3 == [] and "noda.co.nz" not in guard
+
+
+def test_rule_guard_disabled_blacklist_still_counts(ip_ban):
+    """黑名单空时 disable 休眠形态（规则对象保留）不算缺失"""
+    rules = _rules(NODA_HEALTHY_DESCS)
+    rules[0]["enabled"] = False
+    rules[0]["description"] = ("ip-range-blacklist auto (empty; "
+                               "managed by ip-ban.py)")
+    missing, dups = ip_ban.check_rule_inventory("noda.co.nz", rules)
+    assert missing == [] and dups == []
+
+
+def test_rule_guard_blank_description_not_crash(ip_ban):
+    """无 description 的规则（理论上的手工残渣）按空串处理，不误匹配前缀"""
+    missing, dups = ip_ban.check_rule_inventory("shuotong.wang",
+                                                [{"expression": "true"}])
+    assert len(missing) == 3 and dups == []
