@@ -486,6 +486,8 @@ CHROME_VER_RE = re.compile(r"chrome/(\d+)\.", re.I)
 TRIP_PATH = "/__trip"                # 800x600 指纹 tripwire 自报端点（nearby 内联 JS sendBeacon）
 TRIP_TTL = ATTACK_TTL                # 单发即封 30 天：出口逐会话轮换，同 IP 凑不出复犯
 TRIP_REASON = "fingerprint-tripwire" # 800x600 headless 族（GA4 判例 2026-10-24 真实受众零撞车）
+TRIP_UA_MAX = 200                    # #18 取证样本 UA/referer 截断长度（合理长度，防撑爆日志/state）
+TRIP_SAMPLES_MAX = 50                # #18 state 命中样本环形缓冲容量（issue 下限 ≥20；单轮样本≈1 条，50 条≈数天）
 LINE_RE = re.compile(
     r'^\S+ \S+ \S+ \[[^\]]+\] "(\S+) ([^"]*) HTTP/[^"]*" (\d{3}) \d+ '
     r'"([^"]*)" "([^"]*)" "([^"]+)"')
@@ -883,7 +885,8 @@ def client_ip_from_xff(raw):
 
 
 def scan_window(since_epoch):
-    """返回解析后的访问事件列表 [(ip, path, ua, status)]，解析失败的行丢弃"""
+    """返回解析后的访问事件列表 [(ip, path, ua, status, referer)]，解析失败的行丢弃。
+    referer 2026-11-17（#18）起保留——tripwire 命中取证需要（此前在解析层丢弃）。"""
     out = subprocess.run(
         ["docker", "logs", "--since", str(since_epoch), NGINX_CONTAINER],
         capture_output=True, text=True, timeout=120)
@@ -894,7 +897,7 @@ def scan_window(since_epoch):
             ip = client_ip_from_xff(m.group(6))
             if ip:                          # XFF 无合法 IP（含 "-"）→ 跳过该行
                 events.append((ip, m.group(2).split("?", 1)[0], m.group(5),
-                               m.group(3)))
+                               m.group(3), m.group(4)))
     return events
 
 
@@ -930,7 +933,7 @@ def step_verification(verify, events, new_bans, log):
         v["left"] -= 1
         if v.pop("skip_first", False):
             continue
-        seen = sum(1 for ip, _p, _u, _s in events if in_ranges(ip, [cidr]))
+        seen = sum(1 for ev in events if in_ranges(ev[0], [cidr]))
         v["hits"] += seen
         if seen:
             v["alerted"] = True
@@ -961,12 +964,62 @@ def trip_bans(events):
     族出口逐会话轮换，同 IP 凑不出第二次命中 → 单发即封 30 天；速率闸
     （60/5min）与 persist 网（14 天 4 到访日）都够不上的低慢速模式由此补位，
     且出口无关（不依赖 ABUSE_ASNS 名单）。分辨率清单漂移由 GA4 哨兵人工判读
-    后与读数层 BOT_RESOLUTIONS 同步扩表，不自动扩。"""
+    后与读数层 BOT_RESOLUTIONS 同步扩表，不自动扩。
+    #18 起 UA/referer 不再在判定层丢弃：取证交给 trip_ua_map /
+    record_trip_samples（按索引取值，老 4 元组事件兼容）。"""
     out = {}
-    for ip, path, _ua, _status in events:
-        if path == TRIP_PATH:
-            out[persist_key(ip)] = (TRIP_REASON, TRIP_TTL)
+    for ev in events:
+        if ev[1] == TRIP_PATH:
+            out[persist_key(ev[0])] = (TRIP_REASON, TRIP_TTL)
     return out
+
+
+def trip_ua_map(events):
+    """cidr → 本轮 /__trip 最后见到的 UA（截断 TRIP_UA_MAX）。
+    #18 取证：candidate 日志行带 UA 样本——11-08 AWS 54.174.58.237/241 疑似
+    Ahrefs 段外渲染器出口，但源站日志只留 8 小时 UA 不可考，封禁时取证同步留痕。"""
+    out = {}
+    for ev in events:
+        if ev[1] == TRIP_PATH:
+            out[persist_key(ev[0])] = ev[2][:TRIP_UA_MAX]
+    return out
+
+
+def record_trip_samples(samples, events, now):
+    """#18 state 命中样本环形缓冲：本轮 /__trip 命中并入（同 IP 一轮取最后一条
+    的 UA，防单轮刷屏），字段 ip/ua/referer/ts（UA/referer 截断 TRIP_UA_MAX），
+    写入时容量裁剪到 TRIP_SAMPLES_MAX（防 state 膨胀）。返回新列表（不改动入参）。
+    老格式 4 元组事件（无 referer）按 "-" 补位兼容。"""
+    latest = {}
+    order = []
+    for ev in events:
+        if ev[1] != TRIP_PATH:
+            continue
+        ip = ev[0]
+        if ip not in latest:
+            order.append(ip)
+        latest[ip] = {"ip": ip, "ua": ev[2][:TRIP_UA_MAX],
+                      "referer": (ev[4] if len(ev) > 4 else "-")[:TRIP_UA_MAX],
+                      "ts": now}
+    out = list(samples) + [latest[ip] for ip in order]
+    if len(out) > TRIP_SAMPLES_MAX:           # 环形裁剪：丢最旧（含防御性裁老 state 超量）
+        del out[:len(out) - TRIP_SAMPLES_MAX]
+    return out
+
+
+def apply_trip_proposals(events, bans, proposals):
+    """tripwire 提案并入 proposals（main 的原内联逻辑，#18 起日志带 UA 样本）。
+    返回本轮新增提案 [(cidr, reason, ttl)]；已在 proposals/bans 的 cidr 跳过
+    （既有判例）。SAFETY 复核由调用方统一执行。"""
+    new = []
+    uas = trip_ua_map(events)
+    for cidr, (reason, ttl) in trip_bans(events).items():
+        if cidr not in proposals and cidr not in bans:
+            proposals[cidr] = (reason, ttl)
+            new.append((cidr, reason, ttl))
+            log("candidate %s: %s（tripwire 自报，SAFETY 复核后生效）ua=%s"
+                % (cidr, reason, uas.get(cidr, "-")))
+    return new
 
 
 _crawler_ip_cache = {}
@@ -1123,6 +1176,13 @@ def main():
                 print("  %-22s left=%s hits=%d%s"
                       % (cidr, e.get("left"), e.get("hits", 0),
                          " skip-first" if e.get("skip_first") else ""))
+        ts = s.get("trip_samples") or []
+        print("tripwire samples: %d (cap %d)" % (len(ts), TRIP_SAMPLES_MAX))
+        for t in ts[-3:]:                    # #18 取证样本（最近 3 条）
+            print("  %-40s %s ua=%r ref=%r"
+                  % (t.get("ip"),
+                     time.strftime("%F %T", time.localtime(t.get("ts", 0))),
+                     t.get("ua", ""), t.get("referer", "")))
         return
 
     load_crawler_ranges()                     # 官方爬虫段（缓存 24h，失败回退内置）
@@ -1144,7 +1204,7 @@ def main():
 
     # ---- 事件入轨 ----
     window_ip_stats = {}                         # ip -> [请求数, 生命周期信号, bot-UA 数]
-    for ip, path, ua, status in events:
+    for ip, path, ua, status, _ref in events:
         cls = classify(ip, ua, allowed)
         if cls == "whitelist" or cls == "skip":
             continue
@@ -1256,10 +1316,11 @@ def main():
 
     # ---- 爬虫指纹 tripwire（800x600 headless 族，出口无关，单发即封）----
     # 站主/官方爬虫段兜底交给 apply_safety（提案含站主 IP 或撞白名单段即拒）。
-    for cidr, (reason, ttl) in trip_bans(events).items():
-        if cidr not in proposals and cidr not in bans:
-            proposals[cidr] = (reason, ttl)
-            log("candidate %s: %s（tripwire 自报，SAFETY 复核后生效）" % (cidr, reason))
+    # #18 取证增强：candidate 日志带 UA 样本；命中样本入 state 环形缓冲
+    # （ip/ua/referer/时间——源站日志只留 8 小时，state 是唯一长期取证面）。
+    apply_trip_proposals(events, bans, proposals)
+    state["trip_samples"] = record_trip_samples(
+        state.get("trip_samples") or [], events, now)
 
     # ---- 坚持不懈来访者（原则 3 收口网）：档案裁剪 + 评估 ----
     persist_cut = now - PERSIST_WINDOW

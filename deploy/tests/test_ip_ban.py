@@ -214,7 +214,10 @@ def test_line_re_captures_status(ip_ban):
 
 def test_scan_window_emits_status(ip_ban, monkeypatch):
     lines = ('172.18.0.7 - - [23/Oct/2026:11:00:00 +0000] "GET /a HTTP/1.1" '
-             '200 10 "-" "Mozilla/5.0 Chrome/153.0" "203.0.113.5"\n')
+             '200 10 "-" "Mozilla/5.0 Chrome/153.0" "203.0.113.5"\n'
+             '172.18.0.7 - - [23/Oct/2026:11:00:01 +0000] "GET /b HTTP/1.1" '
+             '403 0 "https://www.google.com/" "Mozilla/5.0 Chrome/156.0" '
+             '"198.51.100.7"\n')
 
     class FakeOut:
         stdout = lines
@@ -222,7 +225,11 @@ def test_scan_window_emits_status(ip_ban, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: FakeOut())
     events = ip_ban.scan_window(0)
-    assert events == [("203.0.113.5", "/a", "Mozilla/5.0 Chrome/153.0", "200")]
+    # #18 起事件元组扩为 (ip, path, ua, status, referer)——tripwire 取证需要
+    assert events == [("203.0.113.5", "/a", "Mozilla/5.0 Chrome/153.0",
+                       "200", "-"),
+                      ("198.51.100.7", "/b", "Mozilla/5.0 Chrome/156.0",
+                       "403", "https://www.google.com/")]
 
 
 def test_decide_persistent_four_days_zero_evidence_passes(ip_ban):
@@ -1061,3 +1068,113 @@ def test_fresh_old_format_cache_migrates_without_downgrade(monkeypatch, tmp_path
     assert mod.BING_NETS == [ipaddress.ip_network("157.55.39.0/24")]
     assert mod.OAI_NETS == [ipaddress.ip_network(c)
                             for c in mod.OAI_FALLBACK]          # 内置快照补位
+
+
+# ---- ⑭ #18 tripwire 取证增强：candidate 日志带 UA + state 命中样本环形缓冲 ----
+# 背景（2026-11-17 判例链承接）：Ahrefs 段外出口（OVH/AWS）的 JS 渲染会话撞
+# /__trip 仍会单发即封 30 天——疑似实证 11-08 的 54.174.58.237/241（AWS，封禁
+# 相隔 5 分钟=单会话出口轮换，渲染器行为特征），但源站日志只留 8 小时，UA 已
+# 不可考，误封无处申诉。取证三件套：candidate 日志带 UA 样本（截断）+ state
+# 环形缓冲记 ip/ua/referer/时间（防日志滚动丢失）+ 写入时容量裁剪防膨胀。
+
+HEADLESS_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) HeadlessChrome/131.0.0.0 Safari/537.36")
+
+
+def test_trip_samples_record_ip_ua_referer_ts(ip_ban):
+    """/__trip 命中落样：四字段齐备；普通路径流量不落样"""
+    events = [("54.174.58.237", "/__trip", HEADLESS_UA, "403",
+               "https://www.google.com/"),
+              ("203.0.113.5", "/zh/queenstown", "Mozilla/5.0 Chrome/156.0",
+               "200", "-")]
+    out = ip_ban.record_trip_samples([], events, 1790000000)
+    assert len(out) == 1
+    s = out[0]
+    assert s["ip"] == "54.174.58.237"
+    assert s["ua"] == HEADLESS_UA
+    assert s["referer"] == "https://www.google.com/"
+    assert s["ts"] == 1790000000
+
+
+def test_trip_samples_truncate_ua_and_referer(ip_ban):
+    """UA/referer 截断到 TRIP_UA_MAX（200），防长样本撑爆 state"""
+    out = ip_ban.record_trip_samples(
+        [], [("198.51.100.9", "/__trip", "A" * 500, "403",
+              "https://example.com/" + "b" * 500)], 1)
+    assert ip_ban.TRIP_UA_MAX == 200
+    assert len(out[0]["ua"]) == 200 and len(out[0]["referer"]) == 200
+
+
+def test_trip_samples_ring_capacity_trim(ip_ban):
+    """环形缓冲写入时裁剪：超容丢最旧；容量 ≥20（issue 下限）"""
+    assert ip_ban.TRIP_SAMPLES_MAX >= 20
+    events = [("10.1.%d.7" % i, "/__trip", "UA-%d" % i, "403", "-")
+              for i in range(ip_ban.TRIP_SAMPLES_MAX + 10)]
+    out = ip_ban.record_trip_samples([], events, 1)
+    assert len(out) == ip_ban.TRIP_SAMPLES_MAX
+    assert out[0]["ip"] == "10.1.10.7"          # 最旧的 10 条被裁
+    assert out[-1]["ip"] == "10.1.%d.7" % (ip_ban.TRIP_SAMPLES_MAX + 9)
+
+
+def test_trip_samples_last_hit_per_ip_in_round(ip_ban):
+    """同 IP 一轮多次 beacon 只留一条（取最后 UA），防单轮刷屏占满缓冲"""
+    events = [("198.51.100.7", "/__trip", "UA-first", "403", "-"),
+              ("198.51.100.7", "/__trip", "UA-second", "403", "-")]
+    out = ip_ban.record_trip_samples([], events, 1)
+    assert len(out) == 1 and out[0]["ua"] == "UA-second"
+
+
+def test_trip_samples_only_exact_trip_path(ip_ban):
+    """与 trip_bans 判例同口径：只有 exact /__trip 落样（子路径不构陷）"""
+    events = [("198.51.100.7", "/__trip/x", "UA", "403", "-"),
+              ("198.51.100.8", "/trip", "UA", "200", "-")]
+    assert ip_ban.record_trip_samples([], events, 1) == []
+
+
+def test_trip_ua_map_truncates_and_last_wins(ip_ban):
+    """cidr → 本轮最后 UA（截断 200）：candidate 日志取证的数据源"""
+    events = [("198.51.100.7", "/__trip", "U" * 500, "403", "-"),
+              ("198.51.100.7", "/__trip", "short", "403", "-")]
+    assert ip_ban.trip_ua_map(events) == {"198.51.100.7/32": "short"}
+    m = ip_ban.trip_ua_map([("2001:db8:1::1", "/__trip", "x" * 300, "403", "-")])
+    assert m == {"2001:db8:1::/64": "x" * 200}
+
+
+def test_trip_candidate_log_carries_ua(ip_ban, capsys):
+    """candidate 日志行必须带 UA 样本（#18 验收：封禁时取证同步留痕）"""
+    events = [("54.174.58.237", "/__trip",
+               "Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)",
+               "403", "-")]
+    proposals = {}
+    new = ip_ban.apply_trip_proposals(events, {}, proposals)
+    out = capsys.readouterr().out
+    assert "54.174.58.237/32" in proposals
+    assert "ua=Mozilla/5.0 (compatible; AhrefsBot/7.0" in out
+    assert len(new) == 1 and new[0][0] == "54.174.58.237/32"
+
+
+def test_trip_candidate_skips_known_cidr_no_log(ip_ban, capsys):
+    """既有判例不回退：已在 proposals/bans 的 cidr 不重复提案、不打 candidate"""
+    events = [("54.174.58.237", "/__trip", "UA", "403", "-")]
+    proposals = {"54.174.58.237/32": ("single-ip flood", 86400)}
+    assert ip_ban.apply_trip_proposals(events, {}, proposals) == []
+    assert ip_ban.apply_trip_proposals(
+        events, {"54.174.58.237/32": {"until": 9}}, proposals) == []
+    assert "candidate" not in capsys.readouterr().out
+
+
+def test_trip_bans_judgments_unchanged_with_referer_events(ip_ban):
+    """事件元组扩为 (ip, path, ua, status, referer) 后既有 trip 判例不回退"""
+    events = [("203.0.113.7", "/__trip", "Mozilla/5.0 Chrome/156.0", "403",
+               "https://nearby.noda.co.nz/"),
+              ("203.0.113.7", "/zh/queenstown", "Mozilla/5.0 Chrome/156.0",
+               "200", "-"),
+              ("203.0.113.8", "/__trip/x", "UA", "403", "-")]
+    assert ip_ban.trip_bans(events) == {
+        "203.0.113.7/32": ("fingerprint-tripwire", ip_ban.TRIP_TTL)}
+    # 老 4 元组（无 referer）同样兼容——纯函数按索引取值不炸
+    assert ip_ban.trip_bans([("203.0.113.7", "/__trip", "UA", "403")]) == {
+        "203.0.113.7/32": ("fingerprint-tripwire", ip_ban.TRIP_TTL)}
+    assert ip_ban.record_trip_samples(
+        [], [("203.0.113.7", "/__trip", "UA", "403")], 5) == [
+        {"ip": "203.0.113.7", "ua": "UA", "referer": "-", "ts": 5}]
