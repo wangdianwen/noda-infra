@@ -1342,3 +1342,139 @@ def test_geo_guard_dedup_same_drift_and_recovery(ip_ban):
     guard, a4 = ip_ban.step_geo_guard(guard, "noda.co.nz", "", [], logs.append)
     assert a4 == [] and "noda.co.nz" not in guard          # 解除：只记日志
     assert any("解除" in l for l in logs)
+
+
+# ---- ⑯ #20 规则清单前缀漂移检测告警（缺失/重复/正常 × 分 zone 期望集）----
+# ip-ban.py 按 description 前缀定位规则。前缀漂移后果不对称且部分静默：
+# blacklist/dc 漂移 → apply_* 找不到 → 新建第二条 → Free 版 5 条上限立刻
+# 6/5、PUT 每轮失败（高）；UA-block 漂移 → 排尾落到 geo-challenge 之后，
+# headless UA 从 403 降级挑战（中，静默变松）。检测+告警兜底，TG 带现场清单。
+
+NODA_HEALTHY_DESCS = [
+    "ip-range-blacklist auto (28 active; managed by ip-ban.py)",
+    "datacenter-asn-block auto (31 ASNs + cdn hotlink; managed by ip-ban.py)",
+    "block empty/fake/script user agent",
+    GEO_LIVE_DESC,
+    "cdn-hotlink-block (Referer anti-hotlink; managed by ip-ban.py)",
+]
+SHUOTONG_HEALTHY_DESCS = NODA_HEALTHY_DESCS[:3]   # geo/hotlink 仅 noda zone
+
+
+def _rules(descs):
+    return [{"description": d} for d in descs]
+
+
+def test_expected_prefixes_by_zone(ip_ban):
+    """分 zone 期望集：blacklist/dc/UA 两 zone 都应在；geo/hotlink 仅 noda"""
+    assert ip_ban.expected_rule_prefixes("noda.co.nz") == (
+        ip_ban.RULE_MARKER, ip_ban.DC_MARKER, ip_ban.UA_MARKER,
+        ip_ban.GEO_MARKER, ip_ban.HOTLINK_MARKER)
+    assert ip_ban.expected_rule_prefixes("shuotong.wang") == (
+        ip_ban.RULE_MARKER, ip_ban.DC_MARKER, ip_ban.UA_MARKER)
+
+
+def test_rule_guard_healthy_no_alert_both_zones(ip_ban):
+    """正常态：两 zone 期望集齐全且无重复 → 零告警，guard 不留痕"""
+    for zone, descs in (("noda.co.nz", NODA_HEALTHY_DESCS),
+                        ("shuotong.wang", SHUOTONG_HEALTHY_DESCS)):
+        guard, alerts = ip_ban.step_rule_guard({}, zone, _rules(descs),
+                                               lambda m: None)
+        assert alerts == [] and guard == {}
+
+
+def test_rule_guard_geo_hotlink_absence_fine_in_shuotong(ip_ban):
+    """zone 期望集隔离：shuotong 没有 geo/hotlink 不是漂移（noda 才期望它们）"""
+    missing, dups = ip_ban.check_rule_inventory(
+        "shuotong.wang", _rules(SHUOTONG_HEALTHY_DESCS))
+    assert missing == [] and dups == []
+
+
+def test_rule_guard_missing_prefix_alerts_with_listing(ip_ban):
+    """缺失（noda 的 UA-block 被 Dashboard 改名）：告警带 zone+前缀+现场全部
+    规则 description 清单（可直接定位手改了什么）"""
+    descs = [d for d in NODA_HEALTHY_DESCS
+             if not d.startswith("block empty/fake")]
+    guard, alerts = ip_ban.step_rule_guard({}, "noda.co.nz", _rules(descs),
+                                           lambda m: None)
+    assert len(alerts) == 1
+    msg = alerts[0]
+    assert "noda.co.nz" in msg and "block empty/fake" in msg and "缺失" in msg
+    for d in descs:                       # 现场清单全量在文案里
+        assert d in msg
+    assert guard["noda.co.nz"]            # 指纹入 state（去重用）
+
+
+def test_rule_guard_missing_geo_in_noda_flagged(ip_ban):
+    descs = [d for d in NODA_HEALTHY_DESCS if not d.startswith("geo-challenge")]
+    missing, _ = ip_ban.check_rule_inventory("noda.co.nz", _rules(descs))
+    assert ip_ban.GEO_MARKER in missing
+
+
+def test_rule_guard_missing_blacklist_in_shuotong_flagged(ip_ban):
+    """blacklist/dc 是两 zone 共同期望——shuotong 缺 blacklist 同样告警"""
+    missing, _ = ip_ban.check_rule_inventory(
+        "shuotong.wang", _rules(SHUOTONG_HEALTHY_DESCS[1:]))
+    assert ip_ban.RULE_MARKER in missing and ip_ban.DC_MARKER not in missing
+
+
+def test_rule_guard_duplicate_alerts(ip_ban):
+    """重复（blacklist 前缀命中两条=漂移产物）：告警带两条 description"""
+    descs = NODA_HEALTHY_DESCS + ["ip-range-blacklist dashboard 手建第二条"]
+    guard, alerts = ip_ban.step_rule_guard({}, "noda.co.nz", _rules(descs),
+                                           lambda m: None)
+    assert len(alerts) == 1
+    assert "重复" in alerts[0] and "ip-range-blacklist" in alerts[0]
+    assert "dashboard 手建第二条" in alerts[0]
+
+
+def test_rule_guard_dedup_same_drift_silent(ip_ban):
+    """同一漂移不每 5 分钟重复轰炸：同指纹第二轮静默"""
+    rules = _rules([d for d in NODA_HEALTHY_DESCS
+                    if not d.startswith("geo-challenge")])
+    guard, a1 = ip_ban.step_rule_guard({}, "noda.co.nz", rules, lambda m: None)
+    guard, a2 = ip_ban.step_rule_guard(guard, "noda.co.nz", rules, lambda m: None)
+    assert len(a1) == 1 and a2 == []
+
+
+def test_rule_guard_changed_drift_realerts(ip_ban):
+    """漂移变化（缺失→重复）才再报"""
+    missing_only = _rules([d for d in NODA_HEALTHY_DESCS
+                           if not d.startswith("geo-challenge")])
+    guard, a1 = ip_ban.step_rule_guard({}, "noda.co.nz", missing_only,
+                                       lambda m: None)
+    dup_too = _rules(NODA_HEALTHY_DESCS + ["datacenter-asn-block 重复"])
+    guard, a2 = ip_ban.step_rule_guard(guard, "noda.co.nz", dup_too,
+                                       lambda m: None)
+    assert len(a1) == 1 and len(a2) == 1
+
+
+def test_rule_guard_recovery_alerts_once(ip_ban):
+    """解除后报恢复（带此前漂移指纹可定位），再健康则持续静默"""
+    bad = _rules([d for d in NODA_HEALTHY_DESCS
+                  if not d.startswith("geo-challenge")])
+    guard, _ = ip_ban.step_rule_guard({}, "noda.co.nz", bad, lambda m: None)
+    guard, a2 = ip_ban.step_rule_guard(guard, "noda.co.nz",
+                                       _rules(NODA_HEALTHY_DESCS),
+                                       lambda m: None)
+    assert len(a2) == 1 and "恢复" in a2[0] and "geo-challenge" in a2[0]
+    guard, a3 = ip_ban.step_rule_guard(guard, "noda.co.nz",
+                                       _rules(NODA_HEALTHY_DESCS),
+                                       lambda m: None)
+    assert a3 == [] and "noda.co.nz" not in guard
+
+
+def test_rule_guard_disabled_blacklist_still_counts(ip_ban):
+    """黑名单空时 disable 休眠形态（规则对象保留）不算缺失"""
+    rules = _rules(NODA_HEALTHY_DESCS)
+    rules[0]["enabled"] = False
+    rules[0]["description"] = ("ip-range-blacklist auto (empty; "
+                               "managed by ip-ban.py)")
+    missing, dups = ip_ban.check_rule_inventory("noda.co.nz", rules)
+    assert missing == [] and dups == []
+
+
+def test_rule_guard_blank_description_not_crash(ip_ban):
+    """无 description 的规则（理论上的手工残渣）按空串处理，不误匹配前缀"""
+    missing, dups = ip_ban.check_rule_inventory("shuotong.wang",
+                                                [{"expression": "true"}])
+    assert len(missing) == 3 and dups == []

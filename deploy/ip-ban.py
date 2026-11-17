@@ -958,6 +958,83 @@ def step_geo_guard(guard, zone, drift_fp, alerts, log):
     return guard, []
 
 
+# ---- 规则清单前缀守护（2026-11-17 #20：防 description 前缀漂移静默降级）----
+# ip-ban.py 按 description 前缀定位规则（apply_* 各认自家前缀 + RULE_ORDER
+# 排序）。前缀漂移（Dashboard 手改 description）后果不对称且部分静默：
+#   - ip-range-blacklist / datacenter-asn-block：apply_* 找不到 → 新建第二条
+#     → Free 版 5 条上限立刻 6/5 报错，PUT 每轮失败（高）；
+#   - block empty/fake（UA-block，手工规则）：sort_rules_canonical 归「未知」
+#     排尾 → 落到 geo-challenge 之后，headless UA 从 403 降级为挑战（中，
+#     静默变松）；
+#   - geo-challenge / cdn-hotlink-block：同上排尾（hotlink/#19 有自愈拉回，低）。
+# 文档防不了手滑——每轮 zone 对账时校验清单形态，异常 TG 告警（带 zone +
+# 前缀 + 现场全部规则 description 清单，可直接定位手改了什么）。
+
+
+def expected_rule_prefixes(zone):
+    """分 zone 期望集（单一真值源 RULE_ORDER）：blacklist/dc/UA 两 zone 都应在
+    （ZONES 全员）；geo/hotlink 仅其托管 zone（GEO_ZONES/HOTLINK_ZONES）。"""
+    zone_scoped = {GEO_MARKER: GEO_ZONES, HOTLINK_MARKER: HOTLINK_ZONES}
+    return tuple(p for p in RULE_ORDER
+                 if p not in zone_scoped or zone in zone_scoped[p])
+
+
+def check_rule_inventory(zone, rules):
+    """规则清单形态校验（纯函数）：返回 (缺失前缀列表, 重复 [(前缀, [全部命中
+    description])])。同前缀多条=漂移产物（apply_* 只改第一条，第二条是手建
+    残渣）。无 description 的规则按空串处理（不误匹配任何前缀）。"""
+    descs = [str(r.get("description", "")) for r in rules]
+    missing, dups = [], []
+    for prefix in expected_rule_prefixes(zone):
+        hits = [d for d in descs if d.startswith(prefix)]
+        if not hits:
+            missing.append(prefix)
+        elif len(hits) > 1:
+            dups.append((prefix, hits))
+    return missing, dups
+
+
+def inventory_fingerprint(missing, dups):
+    """漂移指纹（state 去重键）：缺失前缀 + 重复前缀及其全部现场 description
+    ——漂移形态变（如重复第二条又改名）指纹即变，变化才再报。"""
+    return ";".join(["missing:%s" % p for p in missing]
+                    + ["dup:%s:%s" % (p, "|".join(ds)) for p, ds in dups])
+
+
+def step_rule_guard(guard, zone, rules, log):
+    """#20 前缀守护（每轮 zone 对账时调用，输入为 GET 到的 live 清单）。
+
+    告警去重：state rule_guard[zone] 记已告警指纹，同一漂移不每 5 分钟重复
+    轰炸，变化才再报；解除后报恢复（带此前指纹可定位）。返回 (更新后 guard,
+    本轮 TG 告警列表)。"""
+    missing, dups = check_rule_inventory(zone, rules)
+    fp = inventory_fingerprint(missing, dups)
+    prev = guard.get(zone)
+    alerts = []
+    if fp:
+        if fp != prev:
+            listing = "\n".join(
+                "%d. %s" % (i + 1, str(r.get("description", "")) or "(无 description)")
+                for i, r in enumerate(rules))
+            parts = ["ip-ban: 规则清单漂移[%s]（前缀守护）" % zone]
+            if missing:
+                parts.append("缺失前缀: %s" % ", ".join(missing))
+            for p, ds in dups:
+                parts.append("重复前缀 %s ×%d: %s" % (p, len(ds), " | ".join(ds)))
+            parts.append("现场规则清单:\n%s" % listing)
+            alerts.append("\n".join(parts))
+            guard[zone] = fp
+            log("rule-guard[%s]: 漂移告警（%s）" % (zone, fp))
+        else:
+            log("rule-guard[%s]: 漂移持续（已告警，本轮静默）" % zone)
+    elif prev:
+        alerts.append("ip-ban: 规则清单恢复[%s]：此前漂移（%s）已解除，"
+                      "期望前缀全部在位且无重复" % (zone, prev))
+        log("rule-guard[%s]: 恢复" % zone)
+        guard.pop(zone, None)
+    return guard, alerts
+
+
 def persist_key(ip):
     """坚持不懈档案键：v4 用 /32，v6 用 /64（家宽 v6 后缀逐日轮换，/64 才追得上）"""
     a = ipaddress.ip_address(ip)
@@ -1502,6 +1579,7 @@ def main():
     unsynced = sorted(set(state.get("unsynced") or []))
     dc_expr = build_dc_expression(allowed, persist_cidrs=persist_hits)
     geo_guard = state.get("geo_guard") or {}   # #19 observe 告警去重指纹
+    rule_guard = state.get("rule_guard") or {}  # #20 前缀守护告警去重指纹
     guard_alerts = []                         # #19/#20 守护告警（对账发现即收集）
     geo_mode = geo_rule_mode()
     try:
@@ -1525,7 +1603,13 @@ def main():
                 unsynced = sorted(set(unsynced) | {zname})
                 continue
             try:
-                rules = apply_blacklist(get_rules(cf, zid), bans)
+                rules = get_rules(cf, zid)
+                # #20 前缀守护：对账 live 清单（apply_* 改写前的现场形态）——
+                # 缺失/重复前缀即 TG 告警（同漂移指纹去重，解除报恢复）
+                rule_guard, r_alerts = step_rule_guard(rule_guard, zname,
+                                                       rules, log)
+                guard_alerts.extend(r_alerts)
+                rules = apply_blacklist(rules, bans)
                 rules, dc_changed = apply_dc_rule(rules, dc_expr)
                 hl_changed = False
                 if zname in HOTLINK_ZONES:
@@ -1561,6 +1645,7 @@ def main():
         unsynced = sorted(set(unsynced) | set(ZONES))
     state["unsynced"] = unsynced
     state["geo_guard"] = geo_guard
+    state["rule_guard"] = rule_guard
     if not unsynced:
         state["persist_listed"] = persist_hits   # 全 zone 同步成功才记账，失败下轮重试
 

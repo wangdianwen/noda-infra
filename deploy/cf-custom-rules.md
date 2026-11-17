@@ -25,7 +25,8 @@ action 生效。原顺序 geo-challenge 排第 1、blacklist 排第 3 → 136.66
 每轮对账重排——**手工新建规则会排到已知规则之后（未知排尾稳定）；勿手改已知规则的
 description 前缀**（`ip-range-blacklist` / `datacenter-asn-block` / `block empty/fake` /
 `geo-challenge` / `cdn-hotlink-block`），前缀漂移会被当作未知规则排尾（UA 规则若漂移，
-headless UA 会落到挑战而非 403）。
+headless UA 会落到挑战而非 403）；#20 起 `step_rule_guard` 每轮对账检测前缀缺失/重复并
+TG 告警（分 zone 期望集，同漂移指纹去重，解除报恢复）。
 
 **geo-challenge 表达式（11-17 现行）**：
 `(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ") or ((not cf.client.bot) and (not ip.src in {66.249.64.0/19 209.85.128.0/17 2001:4860:7::/48}) and (http.host in {"noda.co.nz" "www.noda.co.nz"}) and (not ip.geoip.country in {"NZ" "AU" "TW"}))`
@@ -91,6 +92,14 @@ IPv6 2407:7000:b051:ed00::/64）在微信内打开 `/zh/recipes/…` 被 block�
 ip-ban 行为闸照收——四层防线不减弱，符合 2026-10-25 三原则①「不误封正常用户」。
 
 ## 变更记录
+### 2026-11-17 五（#20 规则清单前缀守护 step_rule_guard：缺失/重复 TG 告警）
+前缀漂移后果不对称（blacklist/dc 漂移→apply_* 新建第二条→Free 版 6/5 PUT 每轮失败；
+UA-block 漂移→排尾落 geo 之后→headless UA 从 403 静默降级挑战），文档防不了手滑。
+ip-ban.py 每轮 zone 对账时按分 zone 期望集校验 live 规则清单（blacklist/dc/UA 两 zone
+都应在；geo/hotlink 仅 noda.co.nz，单一真值源 RULE_ORDER）：缺失/同前缀重复即 TG 告警，
+文案带 zone+前缀+现场全部规则 description 清单；state `rule_guard` 指纹去重（同漂移只报
+一次，变化才再报，解除报恢复）。2026-11-17 live 实弹 drill：两 zone 期望集全在位零误报。
+
 ### 2026-11-17 四（#19 geo-challenge 收编 apply_geo_rule：observe 优先零回写）
 geo-challenge 收编进 ip-ban.py 自愈（此前唯一手工维护规则，已连产 11-07 顺序缺口 /
 11-17 www 盲区两次事故，文档快照防不了漂移）。canonical 表达式+description+ref+action
