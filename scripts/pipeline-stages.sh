@@ -896,6 +896,7 @@ _start_prod_jobs()
             --tmpfs /tmp \
             --tmpfs /app/crawl-output:uid=1001,gid=1001,mode=0755 \
             -v $PROD_STATIC_ROOT/cdn:/data/blobstore \
+            -v /mnt/mmc1-4/Data/overture:/mnt/mmc1-4/Data/overture:ro \
             --memory 256m \
             --memory-reservation 64m \
             --cpus 0.5 \
@@ -927,6 +928,7 @@ _start_prod_jobs()
             --read-only \
             --tmpfs /tmp \
             --tmpfs /app/crawl-output:uid=1001,gid=1001,mode=0755 \
+            -v /mnt/mmc1-4/Data/overture:/mnt/mmc1-4/Data/overture:ro \
             --memory 256m \
             --memory-reservation 64m \
             --cpus 0.5 \
