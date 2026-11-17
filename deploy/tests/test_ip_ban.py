@@ -920,3 +920,80 @@ def test_openai_fallback_snapshot_size(ip_ban):
     """内置快照规模防护：官方段缺失/下载失败时白名单不许静默归零"""
     assert len(ip_ban.OAI_FALLBACK) >= 30
     assert ip_ban.OAI_NETS                                 # import 即可用（测试不联网）
+
+
+# ---- ⑪ Ahrefs 官方段豁免 + 规则顺序重排（2026-11-17 判例②③）----
+# Ahrefs 判例：34 黑名单里 6 个 202.8.40-43.x 全部属 AS140577（APNIC
+# AHREFS-AS-AP 注册段）——cf.client.bot 认证 bot 边缘零事件实证（11-14/11-15
+# 封禁在 72h 保留期内却零事件），其 JS 渲染器（Site Audit）800×600 撞哨兵，
+# OpenAI 同款第二例。/23 注册段（2003 年起）稳定，静态常量即可。
+# 规则顺序判例：CF 自定义规则 first-match-wins，geo-challenge 排第 1、
+# blacklist 排第 3 → 136.66.124.196 在 11-15 封禁后仍 200 次 managed_challenge
+# 事件、零 block——blacklist 对持续匹配挑战规则的请求根本轮不到执行，
+# 解掉挑战即穿透封禁名单。重排=最狠处置先行（blacklist→dc→UA→geo→hotlink）。
+
+def test_ahrefs_official_ip_skips(ip_ban):
+    """APNIC 注册段 IP 优先不看 UA → skip（不计枚举/洪水/档案，永不封）"""
+    ahrefs_ua = "Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)"
+    assert ip_ban.classify("202.8.40.46", ahrefs_ua) == "skip"
+    assert ip_ban.classify("202.8.42.173", ahrefs_ua) == "skip"
+    assert ip_ban.is_crawler_ip("202.8.43.130")
+    assert ip_ban.is_crawler_ip("202.8.41.110")
+
+
+def test_trip_proposal_for_ahrefs_ip_vetoed_by_safety(ip_ban):
+    """/__trip 命中 Ahrefs 段出口 → 提案生成但 SAFETY 拒绝"""
+    proposals = ip_ban.trip_bans([("202.8.42.173", "/__trip", "UA", "403")])
+    assert "202.8.42.173/32" in proposals
+    assert not ip_ban.apply_safety(proposals)
+
+
+def test_ahrefs_24_proposal_vetoed_by_safety(ip_ban):
+    """/24 级提案与 Ahrefs /23 注册段交集同样 veto"""
+    proposals = {"202.8.40.0/24": ("24h-enum", 604800)}
+    ip_ban.apply_safety(proposals)
+    assert proposals == {}
+
+
+def test_rule_order_canonical_reorder(ip_ban):
+    """first-match-wins 下最狠处置先行：blacklist→dc→UA→geo→hotlink"""
+    def r(desc):
+        return {"description": desc, "expression": "true", "action": "block"}
+    rules = [r("geo-challenge merged 2026-11-07"),
+             r("block empty/fake/script user agent"),
+             r("ip-range-blacklist auto (34 active; managed by ip-ban.py)"),
+             r("datacenter-asn-block auto (31 ASNs; managed by ip-ban.py)"),
+             r("cdn-hotlink-block (Referer anti-hotlink; managed by ip-ban.py)")]
+    out, changed = ip_ban.sort_rules_canonical(rules)
+    assert changed
+    descs = [x["description"] for x in out]
+    assert descs[0].startswith("ip-range-blacklist")
+    assert descs[1].startswith("datacenter-asn-block")
+    assert descs[2].startswith("block empty/fake")
+    assert descs[3].startswith("geo-challenge")
+    assert descs[4].startswith("cdn-hotlink-block")
+
+
+def test_rule_order_canonical_noop_when_sorted(ip_ban):
+    """已合规顺序不触发重排（changed=False，PUT 不空转）"""
+    def r(desc):
+        return {"description": desc}
+    rules = [r("ip-range-blacklist auto"), r("datacenter-asn-block auto"),
+             r("block empty/fake"), r("geo-challenge merged"),
+             r("cdn-hotlink-block")]
+    out, changed = ip_ban.sort_rules_canonical(rules)
+    assert not changed
+    assert [x["description"] for x in out] == [x["description"] for x in rules]
+
+
+def test_rule_order_unknown_rules_last_stable(ip_ban):
+    """手工/未知规则排尾且保持相对顺序（不吞没 Dashboard 手建规则）"""
+    def r(desc):
+        return {"description": desc}
+    rules = [r("some-manual-rule"), r("ip-range-blacklist auto"),
+             r("another-manual-rule"), r("geo-challenge")]
+    out, changed = ip_ban.sort_rules_canonical(rules)
+    assert changed
+    assert [x["description"] for x in out] == [
+        "ip-range-blacklist auto", "geo-challenge",
+        "some-manual-rule", "another-manual-rule"]

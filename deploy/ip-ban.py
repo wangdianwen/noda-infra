@@ -416,12 +416,20 @@ OAI_FALLBACK = [
                  "172.203.190.80/28", "172.203.190.112/28", "172.203.190.128/28",
                  ]
 
+# Ahrefs 官方段（APNIC AHREFS-AS-AP 注册段，AS140577；2026-11-17 判例）：
+# 34 黑名单里 6 个 202.8.40-43.x——cf.client.bot 认证 bot 边缘零事件实证
+# （11-14/11-15 封禁在 72h 保留期内却零事件=没匹配任何规则），其 JS 渲染器
+# （Site Audit）800×600 撞 nearby 分辨率哨兵，OpenAI 同款第二例。/23 注册段
+# 2003 年起稳定，静态常量即可（无需运行时源）。
+AHREFS_RANGES = ["202.8.40.0/23", "202.8.42.0/23"]
+
 # 可配置硬白名单：cron 不 source env 文件，ALLOW_CIDRS 依次从 os.environ（测试/
 # 手动注入优先）与 /etc/noda/ip-ban.env 读取，逗号分隔 CIDR，命中请求 IP 即完全跳过。
 ALLOW_CIDRS = os.environ.get("ALLOW_CIDRS") or ""
 GOOGLE_NETS = [ipaddress.ip_network(c) for c in GOOGLEBOT_FALLBACK]
 BING_NETS = [ipaddress.ip_network(c) for c in BINGBOT_FALLBACK]
 OAI_NETS = [ipaddress.ip_network(c) for c in OAI_FALLBACK]
+AHREFS_NETS = [ipaddress.ip_network(c) for c in AHREFS_RANGES]
 EXTRA_CRAWLER_NETS = [ipaddress.ip_network(c) for c in EXTRA_CRAWLER_RANGES]
 
 WINDOW_CAP = 1800                            # 单次扫描窗口上限 30 分钟
@@ -646,6 +654,32 @@ def put_rules(cf, zone_id, rules):
     if not r.get("success"):
         raise RuntimeError("CF put: %s" % r.get("errors"))
     return r
+
+
+# 规则顺序（first-match-wins：CF 自定义规则只执行第一条命中的）。最狠处置
+# 先行——2026-11-17 判例：blacklist 排 geo-challenge 之后时，136.66.124.196
+# 封禁后仍持续匹配挑战规则打出 200 次 managed_challenge 事件、零 block
+# （blacklist 根本轮不到执行），解掉挑战即穿透封禁名单。UA block 在 geo 之前：
+# headless UA 直接 403，不给解挑战的机会。手工/未知规则稳定排尾不吞没。
+RULE_ORDER = (RULE_MARKER, DC_MARKER, "block empty/fake",
+              "geo-challenge", "cdn-hotlink-block")
+
+
+def _rule_rank(rule):
+    desc = str(rule.get("description", ""))
+    for i, prefix in enumerate(RULE_ORDER):
+        if desc.startswith(prefix):
+            return i
+    return len(RULE_ORDER)
+
+
+def sort_rules_canonical(rules):
+    """规则顺序重排为 RULE_ORDER（稳定排序，未知规则保持相对顺序排尾）。
+    返回 (rules, order_changed)。"""
+    out = sorted(rules, key=_rule_rank)
+    changed = ([r.get("description") for r in out]
+               != [r.get("description") for r in rules])
+    return out, changed
 
 
 def apply_blacklist(rules, bans):
@@ -934,12 +968,12 @@ _crawler_ip_cache = {}
 
 
 def is_crawler_ip(ip):
-    """请求 IP 是否命中官方爬虫网段（googlebot/bingbot/openai 全量 + Google /19
-    兜底，IP 优先不看 UA）"""
+    """请求 IP 是否命中官方爬虫网段（googlebot/bingbot/openai/ahrefs 全量 +
+    Google /19 兜底，IP 优先不看 UA）"""
     hit = _crawler_ip_cache.get(ip)
     if hit is None:
         hit = (in_nets(ip, GOOGLE_NETS) or in_nets(ip, BING_NETS)
-               or in_nets(ip, OAI_NETS)
+               or in_nets(ip, OAI_NETS) or in_nets(ip, AHREFS_NETS)
                or in_nets(ip, EXTRA_CRAWLER_NETS))
         _crawler_ip_cache[ip] = hit
     return hit
@@ -999,7 +1033,7 @@ def apply_safety(proposals):
             del proposals[cidr]
             continue
         for name, nets in (("googlebot", GOOGLE_NETS), ("bingbot", BING_NETS),
-                           ("openai", OAI_NETS),
+                           ("openai", OAI_NETS), ("ahrefs", AHREFS_NETS),
                            ("google-legacy /19", EXTRA_CRAWLER_NETS),
                            ("allow", allowed)):
             hit = next((n for n in nets if net.overlaps(n)), None)
@@ -1301,7 +1335,12 @@ def main():
                 hl_changed = False
                 if zname in HOTLINK_ZONES:
                     rules, hl_changed = apply_hotlink_rule(rules)
-                if need_put or dc_changed or hl_changed:
+                rules, order_changed = sort_rules_canonical(rules)
+                if order_changed:
+                    log("rule order canonicalized: %s"
+                        % " → ".join(str(r.get("description", ""))[:24]
+                                     for r in rules))
+                if need_put or dc_changed or hl_changed or order_changed:
                     put_rules(cf, zid, rules)
                     if dc_changed and not DRY_RUN and not need_put:
                         tg("ip-ban: 机房 ASN 规则更新——%d 个 ASN 直接 %s"
