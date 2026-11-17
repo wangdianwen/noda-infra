@@ -159,3 +159,13 @@
 30 6 * * 0 /mnt/mmc1-4/System/Scripts/container-update-check.sh >> /var/log/noda-container-update.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:container-update-check '30 6 * * 0' || /mnt/mmc1-4/System/Scripts/hb fail r4s:container-update-check '30 6 * * 0'
 # ===== ip-audit 判据式 bot 判定（2026-10-31 分级自动处置，shadow 期（切实时去掉 IP_AUDIT_SHADOW=1））=====
 17 * * * * IP_AUDIT_SHADOW=1 python3 /mnt/mmc1-4/System/Scripts/ip-audit.py >> /var/log/noda-ip-audit.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:ip-audit '17 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:ip-audit '17 * * * *'
+
+# ===== Overture NZ places 月度链（每月 1 号 06:00，2026-11-18 noda-apps #392 T6）=====
+#       duckdb 自检（缺则 venv 安装）→ fetch-overture-nz.py 下载 NZ 子集（S3 官方
+#       通道，单次全 bbox 扫描 ~25min，日期版本目录不覆盖上月）→ HTTP 触发
+#       noda-jobs crawl-overture job（含失效 diff expireOvertureClosedPlaces）→
+#       TG 回执；任一步失败 TG 告警 + hb fail。幂等：成功写 .done-<YYYY-MM> 标记。
+#       脚本 /mnt/mmc1-4/System/Scripts/overture/overture-monthly.sh
+#       （存档 deploy/overture/；⚠ 假定本机时区=NZ，安装前 `date` 核对，非 NZ 需
+#        换算 NZST=UTC+12 / NZDT=UTC+13；前置=apps 侧 crawl-overture job 已部署）
+0 6 1 * * /mnt/mmc1-4/System/Scripts/overture/overture-monthly.sh >> /var/log/noda-overture-monthly.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:overture-monthly '0 6 1 * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:overture-monthly '0 6 1 * *'
