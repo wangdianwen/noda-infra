@@ -995,13 +995,14 @@ def classify(ip, ua, allowed=None):
     if is_crawler_ip(ip):
         return "skip"                        # 官方爬虫段 IP 优先，不看 UA
     u = ua.lower()
-    if ("googlebot" in u or "bingbot" in u or "oai-searchbot" in u
-            or "ahrefsbot" in u):
-        return "bot"          # 假 Googlebot/Bingbot/OAI-SearchBot/AhrefsBot
-                              # （真段已在上面 skip）——不加会被 SELFID "bot"
-                              # 误放行为 skip：2026-11-17 判例②复审修正，UA
-                              # 冒充官方爬虫身份的段外流量按伪装计 bot（2026
-                              # -10-18 fake-googlebot 先例同款）
+    if "googlebot" in u or "bingbot" in u or "oai-searchbot" in u:
+        return "bot"          # 假 Googlebot/Bingbot/OAI-SearchBot（真段已在
+                              # 上面 skip）——不加会被 SELFID "bot" 误放行为
+                              # skip（2026-11-17 复审修正，fake-googlebot
+                              # 2026-10-18 先例同款）。注意 ahrefsbot 有意
+                              # 不列：Ahrefs 官方段只覆盖 APNIC /23s（其
+                              # OVH/AWS 真实出口在段外），列了会把真爬虫计
+                              # bot 开新误封通道；其真值源不完整是已知残留
     if any(m in u for m in SELFID_MARKERS):
         return "skip"                                             # 自报家门的爬虫，欢迎
     if not ua.strip() or any(m in u for m in OBVIOUS_BOT_UA):

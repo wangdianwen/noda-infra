@@ -1007,11 +1007,13 @@ def test_rule_order_unknown_rules_last_stable(ip_ban):
 # （is_crawler_ip）先行 skip，不受影响。
 
 def test_spoofed_official_bot_ua_outside_ranges_counts_as_bot(ip_ban):
-    """OAI/Ahrefs 官方 UA + 段外 IP → bot（计入枚举/洪水/攻击门，非 skip）"""
+    """OAI 官方 UA + 段外 IP → bot（计入枚举/洪水/攻击门，非 skip）。
+    ahrefsbot 有意不在伪官方分支：官方段只覆盖 APNIC /23s，段外 UA 可能是
+    Ahrefs 自己的 OVH/AWS 真实出口——列了反而开新误封通道（复审自纠）"""
     assert ip_ban.classify("198.51.100.7", OAI_UA) == "bot"
     assert ip_ban.classify(
         "198.51.100.8",
-        "Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)") == "bot"
+        "Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)") == "skip"
 
 
 def test_real_official_bots_still_skip_via_ip_truth(ip_ban):
