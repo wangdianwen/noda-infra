@@ -896,8 +896,9 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # A2-⑤ 旧城市分类页 /{city}/{category25}（geo.go 四组 25 slug 全集）
-    location ~ ^/(?:en/|zh/|zh-TW/)?(?:auckland|wellington|christchurch|hamilton|rotorua|tauranga|queenstown|dunedin)/(?:family|market|music|sports|culture|food|free|playground|art|viewpoint|beach|garden|venues|recreation|policy|livelihood|transport|education|community|leisure|grocery|homeware|electronics|fuel|other)$ {
+    # A2-⑤ 旧城市分类页 /{city}/{category25}（geo.go 四组 25 slug 全集；
+    #    food 除外——/{city}/food 为「吃」频道城市线落桶静态，见 prod 块 ⑤ 注释 WS6 #397）
+    location ~ ^/(?:en/|zh/|zh-TW/)?(?:auckland|wellington|christchurch|hamilton|rotorua|tauranga|queenstown|dunedin)/(?:family|market|music|sports|culture|free|playground|art|viewpoint|beach|garden|venues|recreation|policy|livelihood|transport|education|community|leisure|grocery|homeware|electronics|fuel|other)$ {
         proxy_pass http://preprod-noda-api:3014;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
