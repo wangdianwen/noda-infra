@@ -159,6 +159,15 @@ pipeline {
                     // pipeline_deploy_nginx 以最新 tag 重建容器
                     script {
                         if (params.SERVICE == 'nginx') {
+                            // 自愈守卫（2026-11-19 悬案破案）：ws 内 noda-apps 曾被手动
+                            // symlink 到宿主仓库 ~/Project/noda-apps（2026-09-13 建，
+                            // 疑为省 clone），git 插件 checkout -f 穿透 symlink 直接
+                            // 操作宿主仓——HEAD 被强制 detach 到 origin/main tip，未提交
+                            // 已跟踪编辑被静默还原（三案实锤：11-10 ×2、11-19 build#103
+                            // 08:13:02 与宿主 reflog 秒级吻合）。见链接先拆，让下方
+                            // checkout 落真实克隆，宿主仓库与 Jenkins 彻底隔离；
+                            // 首次构建多一次 clone 成本，之后 ws 常驻与旧链等效。
+                            sh 'if [ -L noda-apps ]; then rm noda-apps && echo "[hazard-guard] removed noda-apps symlink -> host repo"; fi'
                             dir('noda-apps') {
                                 checkout([
                                     $class: 'GitSCM',
