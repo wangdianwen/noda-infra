@@ -61,6 +61,15 @@ def test_city_for_point_rejects_outside():
     assert fo.city_for_point(180.0, -40.0) is None     # NZ bbox 外
 
 
+def test_process_row_national_fallback():
+    # #392 AC1（2026-11-19）：8 城 bbox 外行不再丢弃——city_slug 置空串收录
+    rec, reason = fo.process_row(_row(id="n1", lng=172.0, lat=-41.0))
+    assert reason is None and rec["city_slug"] == ""
+    # Northland 小镇同形态（apps 侧归 northland 大区）
+    rec2, _ = fo.process_row(_row(id="n2", lng=174.324, lat=-35.732))
+    assert rec2["city_slug"] == ""
+
+
 def test_city_bbox_within_nz_bbox():
     nz = fo.NZ_BBOX
     for slug, x0, x1, y0, y1 in fo.CITY_BBOXES:
@@ -117,12 +126,12 @@ def test_category_drop_before_confidence():
 
 def test_run_chain_stage_counts_and_conservation(tmp_path):
     rows = [
-        _row(id="k1"),                                             # 收
+        _row(id="k1"),                                             # 收（城市行）
         _row(id="d1", basic_category="hotel"),                     # 类目（餐饮已放行，改 hotel 锁丢弃分支）
         _row(id="d2", confidence=0.5),                             # conf
         _row(id="d3", name=None),                                  # 名称
         _row(id="d4", operating_status="closed"),                  # 状态
-        _row(id="d5", lng=172.0, lat=-41.0),                       # 无城
+        _row(id="n1", lng=172.0, lat=-41.0),                       # 8 城外（#392 AC1 全国兜底收）
     ]
     out = tmp_path / "o.jsonl"
     stats = fo.new_stats("test")
@@ -134,13 +143,18 @@ def test_run_chain_stage_counts_and_conservation(tmp_path):
     assert st["after_confidence"] == 4
     assert st["after_name_coord"] == 3
     assert st["after_status"] == 2
-    assert st["kept"] == 1
+    assert st["kept"] == 2
     assert dr == {"category": 1, "confidence": 1, "name_coord": 1,
-                  "status": 1, "no_city": 1}
+                  "status": 1}                                     # no_city 不再是丢弃原因
     assert st["bbox_rows"] == st["kept"] + sum(dr.values())       # 守恒
     assert stats["cities"] == {"auckland": 1}
-    assert stats["categories"] == {"park": 1}
+    assert stats["national"] == 1                                  # 全国兜底计数
+    assert st["kept"] == sum(stats["cities"].values()) + stats["national"]
+    assert stats["categories"] == {"park": 2}
     assert stats["dropped_status_values"] == {"closed": 1}
+    # 全国行 city_slug 空串（apps adapter 兜底 national + 大区归属）
+    recs = [json.loads(ln) for ln in open(out, encoding="utf-8")]
+    assert {r["id"]: r["city_slug"] for r in recs} == {"k1": "auckland", "n1": ""}
 
 
 def test_jsonl_line_contract(tmp_path):

@@ -23,7 +23,11 @@ JSONL 契约（apps 侧 T2 overture.go adapter 依赖，字段顺序固定）:
   {"id","name","basic_category","taxonomy","lat","lng","confidence",
    "address","locality","website","phone","city_slug"}
   lat/lng = bbox 中心 (xmin+xmax)/2,(ymin+ymax)/2（point 数据二者相等），6 位小数；
-  city_slug 由 8 城外接矩形判定，未命中城市的行丢弃并计数（national 非地理判定）。
+  city_slug 由 8 城外接矩形判定（#392 AC1 region≥12 全国扩容，2026-11-19：未命中
+  城市的行不再丢弃——city_slug 输出空串，apps adapter 侧走全国兜底：'national'
+  哨兵 + geo.ResolveRegionPoint 坐标锚点归属 16 大区；餐饮行的 5 城门在 apps 侧
+  拦截无城市行。旧 apps adapter（全国兜底前）对空 city_slug 行按 DroppedNoCity
+  丢弃，两仓部署顺序任意、双向兼容）。
 """
 
 import argparse
@@ -99,13 +103,15 @@ JSONL_FIELDS = ("id", "name", "basic_category", "taxonomy", "lat", "lng",
 # 过滤链阶段名（顺序即执行序；after_X = 通过第 X 步后剩余行数）。
 STAGE_KEYS = ("after_category", "after_confidence", "after_name_coord",
               "after_status", "kept")
-# 丢弃原因 → 已通过的阶段数（category=第一步就没过，no_city=前四步全过）。
+# 丢弃原因 → 已通过的阶段数（category=第一步就没过；全过 = 收录）。
+# no_city 不再是丢弃原因（#392 AC1 region≥12 全国扩容，2026-11-19：8 城
+# bbox 外行 city_slug 置空收录，全国行计数在 stats["national"]）。
 _PASSED_STAGES = {"category": 0, "confidence": 1, "name_coord": 2,
-                  "status": 3, "no_city": 4, None: 5}
+                  "status": 3, None: 5}
 
 
 def city_for_point(lng, lat):
-    """命中首个城市外接矩形即返回 slug；未命中返回 None（丢弃计数）。"""
+    """命中首个城市外接矩形即返回 slug；未命中返回 None（全国兜底，非丢弃）。"""
     for slug, x0, x1, y0, y1 in CITY_BBOXES:
         if x0 <= lng <= x1 and y0 <= lat <= y1:
             return slug
@@ -118,7 +124,8 @@ def new_stats(release=""):
         "stages": {"bbox_rows": 0, "after_category": 0, "after_confidence": 0,
                    "after_name_coord": 0, "after_status": 0, "kept": 0},
         "dropped": {"category": 0, "confidence": 0, "name_coord": 0,
-                    "status": 0, "no_city": 0},
+                    "status": 0},
+        "national": 0,  # #392 AC1：city_slug 空（8 城外全国行）的收录数
         "dropped_status_values": {},
         "dropped_categories_top": {},
         "cities": {},
@@ -130,8 +137,11 @@ def process_row(row):
     """单行过滤链（纯函数，selftest 与生产共用）。
 
     返回 (record, None) 收录；或 (None, drop_reason) 丢弃。
-    reason ∈ {category, confidence, name_coord, status, no_city}。
+    reason ∈ {category, confidence, name_coord, status}。
     row 键 = build_query 的 SELECT 列名（duckdb 行字典或 fixture）。
+    #392 AC1：城市 bbox 外行不再丢弃——city_slug 置空串（apps adapter 全国
+    兜底：'national' 哨兵 + geo.ResolveRegionPoint 16 大区坐标归属；餐饮行
+    的 5 城门在 apps 侧拦截无城市行）。
     """
     # ① 类目白名单
     cat = row.get("basic_category")
@@ -157,10 +167,8 @@ def process_row(row):
     status = row.get("operating_status")
     if status not in OPERATING_STATUS_ALLOW:
         return None, "status"
-    # ⑤ 城市打区（bbox 外丢弃计数）
-    slug = city_for_point(lng, lat)
-    if slug is None:
-        return None, "no_city"
+    # ⑤ 城市打区（8 城 bbox；未命中 = 全国兜底 city_slug=""，#392 AC1）
+    slug = city_for_point(lng, lat) or ""
     rec = {
         "id": row["id"],
         "name": str(name).strip(),
@@ -200,7 +208,10 @@ def run_chain(rows, out_fh, stats):
                 stats["dropped_status_values"][sv] = \
                     stats["dropped_status_values"].get(sv, 0) + 1
             continue
-        stats["cities"][rec["city_slug"]] = stats["cities"].get(rec["city_slug"], 0) + 1
+        if rec["city_slug"]:
+            stats["cities"][rec["city_slug"]] = stats["cities"].get(rec["city_slug"], 0) + 1
+        else:
+            stats["national"] += 1
         stats["categories"][rec["basic_category"]] = \
             stats["categories"].get(rec["basic_category"], 0) + 1
         out_fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -266,8 +277,8 @@ def fetch_and_write(release, out):
     stats["duckdb_version"] = duckdb.__version__
     with open(out + ".stats.json", "w", encoding="utf-8") as fh:
         json.dump(stats, fh, ensure_ascii=False, indent=1, sort_keys=True)
-    print("kept=%d dropped_nocity=%d minutes=%s out=%s"
-          % (stats["stages"]["kept"], stats["dropped"]["no_city"],
+    print("kept=%d national=%d minutes=%s out=%s"
+          % (stats["stages"]["kept"], stats["national"],
              stats["minutes"], out))
     return stats
 
@@ -321,15 +332,20 @@ SELFTEST_ROWS = [
     # 收录：viewpoint，Queenstown 坐标（conf=0.8 边界含）
     _fixture_row("08f1a2selftest0009", "Queenstown Lookout", "scenic_lookout",
                  0.8, "operating", 168.66, -45.03),
-    # 丢弃 no_city：whitelist+conf+status 全过但坐标不在任何城市矩形
+    # 收录（#392 AC1 全国兜底）：whitelist+conf+status 全过、坐标不在任何城市
+    # 矩形（West Coast 荒野）→ city_slug 空串，apps 侧走 national + 大区归属
     _fixture_row("08f1a2selftest0010", "Wild Coast Park", "park", 0.9, "operating",
                  172.0, -41.0),
+    # 收录（#392 AC1）：Northland 小镇（Whangārei）行——8 城外全国面主形态
+    _fixture_row("08f1a2selftest0013", "Whangarei Reserve", "playground", 0.85,
+                 "operating", 174.324, -35.732),
 ]
 
 SELFTEST_EXPECT = {
-    "kept": 5,
+    "kept": 7,
+    "national": 2,
     "dropped": {"category": 1, "confidence": 1, "name_coord": 2,
-                "status": 2, "no_city": 1},
+                "status": 2},
     "cities": {"auckland": 3, "wellington": 1, "queenstown": 1},
 }
 
@@ -352,14 +368,17 @@ def selftest():
     assert st["kept"] == SELFTEST_EXPECT["kept"], st
     assert stats["dropped"] == SELFTEST_EXPECT["dropped"], stats["dropped"]
     assert stats["cities"] == SELFTEST_EXPECT["cities"], stats["cities"]
-    # 各阶段剩余精确值（12 行 → cat 过 11 → conf 过 10 → name/coord 过 8
-    #   → status 过 6 → 城市（kept）5）
-    assert st["after_category"] == 11, st
-    assert st["after_confidence"] == 10, st
-    assert st["after_name_coord"] == 8, st
-    assert st["after_status"] == 6, st
+    # 各阶段剩余精确值（13 行 → cat 过 12 → conf 过 11 → name/coord 过 9
+    #   → status 过 7 → kept 7（含 2 行全国兜底，#392 AC1））
+    assert st["after_category"] == 12, st
+    assert st["after_confidence"] == 11, st
+    assert st["after_name_coord"] == 9, st
+    assert st["after_status"] == 7, st
     # 链上守恒：bbox_rows = kept + 全部丢弃
     assert st["bbox_rows"] == st["kept"] + sum(stats["dropped"].values())
+    # 全国兜底（#392 AC1）：kept = 城市行 + 全国行
+    assert stats["national"] == SELFTEST_EXPECT["national"], stats
+    assert st["kept"] == sum(stats["cities"].values()) + stats["national"], st
     # status 丢弃按值计数可见
     assert stats["dropped_status_values"] == {"closed": 1, "permanently_closed": 1}
     # JSONL 契约：字段顺序/类型/rounding/UTF-8 保留
@@ -372,7 +391,8 @@ def selftest():
         assert isinstance(rec["name"], str) and rec["name"]
         assert isinstance(rec["lat"], float) and isinstance(rec["lng"], float)
         assert isinstance(rec["confidence"], float) and rec["confidence"] >= 0.8
-        assert rec["city_slug"] in {c[0] for c in CITY_BBOXES}
+        # 城市行 slug 在 8 城；全国行空串（#392 AC1，apps 兜底 national+大区）
+        assert rec["city_slug"] in {c[0] for c in CITY_BBOXES} | {""}
     by_id = {r["id"]: r for r in recs}
     zh = by_id["08f1a2selftest0008"]
     assert zh["name"] == "Botanic Playground 花园"      # ensure_ascii=False
@@ -381,6 +401,11 @@ def selftest():
     full = by_id["08f1a2selftest0001"]
     assert full["lat"] == round(-36.897, 6) and full["lng"] == round(174.779, 6)
     assert full["phone"] == "+64 9 000 0000"
+    # 全国兜底行（#392 AC1）：city_slug 空串、其余字段与城市行同构
+    wild = by_id["08f1a2selftest0010"]
+    assert wild["city_slug"] == "" and wild["operating_status"] == "operating"
+    north = by_id["08f1a2selftest0013"]
+    assert north["city_slug"] == "" and north["confidence"] == 0.85
     # 白名单/状态门语义抽查（餐饮 6 类 WS6 #397 起放行；fast_food 必须写
     # Overture 实名 fast_food_restaurant）
     assert "restaurant" in CATEGORY_WHITELIST and "cafe" in CATEGORY_WHITELIST

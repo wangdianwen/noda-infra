@@ -195,17 +195,19 @@ fi
 if [ "$DRYRUN" = 0 ]; then
     KEPT=$(python3 -c "import json;print(json.load(open('$STATS'))['stages']['kept'])" 2>/dev/null || echo -1)
     [ "$KEPT" -gt 0 ] 2>/dev/null || fail "sanity 不通过：stats kept=${KEPT}（白名单/上游 schema 变化?）"
-    NOCITY=$(python3 -c "import json;print(json.load(open('$STATS'))['dropped']['no_city'])" 2>/dev/null || echo "?")
+    # #392 AC1 全国扩容（2026-11-19）：8 城外行走全国兜底（city_slug 空，apps
+    # 侧归 'national' + 16 大区），不再有 no_city 丢弃——计数改读 national 桶
+    NATIONAL=$(python3 -c "import json;print(json.load(open('$STATS')).get('national','?'))" 2>/dev/null || echo "?")
     MINS=$(python3 -c "import json;print(json.load(open('$STATS')).get('minutes','?'))" 2>/dev/null || echo "?")
     CITIES=$(python3 -c "
 import json
 c = json.load(open('$STATS'))['cities']
-print(', '.join('%s=%d' % kv for kv in sorted(c.items(), key=lambda x: -x[1])[:3]))" 2>/dev/null || echo "?")
+print(', '.join('%s=%d' % kv for kv in sorted(c.items(), key=lambda x: -x[1])[:3])" 2>/dev/null || echo "?")
     ln -sfn "$MONTH/overture-nz.jsonl" "$LATEST" || fail "latest 符号链接失败"
     SIZE=$(wc -c < "$OUT" 2>/dev/null || echo 0)
-    log "步骤3 sanity 通过：kept=$KEPT no_city=$NOCITY ${MINS}min ${SIZE}B cities[$CITIES]"
+    log "步骤3 sanity 通过：kept=$KEPT national=$NATIONAL ${MINS}min ${SIZE}B cities[$CITIES]"
 else
-    KEPT="?"; NOCITY="?"; MINS="?"; CITIES="?"; SIZE=0
+    KEPT="?"; NATIONAL="?"; MINS="?"; CITIES="?"; SIZE=0
     log "[dryrun] 步骤3 跳过 sanity/latest 符号链接（$LATEST → $MONTH/overture-nz.jsonl）"
 fi
 
@@ -337,7 +339,7 @@ if [ "$JOB_STATUS" = "success" ]; then
         log "清理旧月目录 $d"
         rm -rf "$d"
     done
-    tg "✅ kept=$KEPT no_city=$NOCITY ${MINS}min $((SIZE / 1024 / 1024))MB cities[$CITIES] job=$JOB_STATUS ${JOB_SUMMARY:+摘要:$JOB_SUMMARY}"
+    tg "✅ kept=$KEPT national=$NATIONAL ${MINS}min $((SIZE / 1024 / 1024))MB cities[$CITIES] job=$JOB_STATUS ${JOB_SUMMARY:+摘要:$JOB_SUMMARY}"
     log "DONE kept=$KEPT job=$JOB_STATUS"
     exit 0
 fi
