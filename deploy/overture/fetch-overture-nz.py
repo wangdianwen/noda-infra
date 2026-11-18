@@ -233,6 +233,13 @@ def fetch_and_write(release, out):
     stats = new_stats(release)
     con = duckdb.connect()
     con.execute("INSTALL httpfs; LOAD httpfs; SET s3_region='us-west-2';")
+    # duckdb 1.4+ 弃用单箭头 lambda（build_query 的 list_transform 用 x -> ... 形态，
+    # 2026-11-18 docker 兜底首跑 BinderException 判例）：新版本显式开回旧语法兼容，
+    # 旧版本不识该 SET 则忽略（本查询 lambda 形态在旧版本本就合法）。
+    try:
+        con.execute("SET lambda_syntax='ENABLE_SINGLE_ARROW'")
+    except Exception:
+        pass
     cur = con.execute(build_query(release))
     cols = [d[0] for d in cur.description]
     tmp = out + ".tmp"
