@@ -54,6 +54,14 @@ CATEGORY_WHITELIST = frozenset({
     "sport_or_fitness_facility", "gym", "fitness_studio",
     "swimming_pool", "recreation_center", "botanical_garden",
     "art_studio", "arena",
+    # 餐饮业态 6 类（WS6 #397，2026-11-18 拍板 IA=B「吃」垂直 5 大城先行）：
+    # fast_food 在 Overture 的 basic_category 实名是 fast_food_restaurant
+    # （#392 量级实测：restaurant 10,343 / cafe 3,687 / casual_eatery 2,755 /
+    # bar 1,989 / coffee_shop 1,805 / fast_food_restaurant 1,045）。T1 是 8 城
+    # 通用通道，非首批 5 城的餐饮行由 apps 侧 adapter FoodFirstBatchCities 门
+    # 丢弃计数（feat/397-food），本层不做城市预滤。
+    "restaurant", "cafe", "bar", "casual_eatery", "coffee_shop",
+    "fast_food_restaurant",
 })
 
 # operating_status 门：正常/未知放行（NULL=未知），closed/removed 类拒收。
@@ -292,9 +300,15 @@ SELFTEST_ROWS = [
     # 丢弃 status：permanently_closed（removed 类拒收）
     _fixture_row("08f1a2selftest0004", "Gone Pool", "swimming_pool", 0.99,
                  "permanently_closed", 174.78, -36.90),
-    # 丢弃 category：餐饮类排除
-    _fixture_row("08f1a2selftest0005", "Cafe One", "restaurant", 0.99, "operating",
+    # 丢弃 category：住宿类排除（餐饮 6 类自 WS6 #397 起放行，改用 hotel 锁丢弃分支）
+    _fixture_row("08f1a2selftest0005", "Grand Hotel", "hotel", 0.99, "operating",
                  174.78, -36.90),
+    # 收录：餐饮业态（WS6 #397 放行面），auckland
+    _fixture_row("08f1a2selftest0011", "Cafe One", "restaurant", 0.99, "operating",
+                 174.78, -36.90),
+    # 收录：餐饮 fast_food_restaurant（Overture 实名，勿写 fast_food）
+    _fixture_row("08f1a2selftest0012", "Kiwiburger Takeaway", "fast_food_restaurant",
+                 0.9, "operating", 174.79, -36.91),
     # 丢弃 name_coord：无名称
     _fixture_row("08f1a2selftest0006", None, "park", 0.99, "operating",
                  174.78, -36.90),
@@ -313,10 +327,10 @@ SELFTEST_ROWS = [
 ]
 
 SELFTEST_EXPECT = {
-    "kept": 3,
+    "kept": 5,
     "dropped": {"category": 1, "confidence": 1, "name_coord": 2,
                 "status": 2, "no_city": 1},
-    "cities": {"auckland": 1, "wellington": 1, "queenstown": 1},
+    "cities": {"auckland": 3, "wellington": 1, "queenstown": 1},
 }
 
 
@@ -338,12 +352,12 @@ def selftest():
     assert st["kept"] == SELFTEST_EXPECT["kept"], st
     assert stats["dropped"] == SELFTEST_EXPECT["dropped"], stats["dropped"]
     assert stats["cities"] == SELFTEST_EXPECT["cities"], stats["cities"]
-    # 各阶段剩余精确值（10 行 → cat 过 9 → conf 过 8 → name/coord 过 6
-    #   → status 过 4 → 城市（kept）3）
-    assert st["after_category"] == 9, st
-    assert st["after_confidence"] == 8, st
-    assert st["after_name_coord"] == 6, st
-    assert st["after_status"] == 4, st
+    # 各阶段剩余精确值（12 行 → cat 过 11 → conf 过 10 → name/coord 过 8
+    #   → status 过 6 → 城市（kept）5）
+    assert st["after_category"] == 11, st
+    assert st["after_confidence"] == 10, st
+    assert st["after_name_coord"] == 8, st
+    assert st["after_status"] == 6, st
     # 链上守恒：bbox_rows = kept + 全部丢弃
     assert st["bbox_rows"] == st["kept"] + sum(stats["dropped"].values())
     # status 丢弃按值计数可见
@@ -367,10 +381,14 @@ def selftest():
     full = by_id["08f1a2selftest0001"]
     assert full["lat"] == round(-36.897, 6) and full["lng"] == round(174.779, 6)
     assert full["phone"] == "+64 9 000 0000"
-    # 白名单/状态门语义抽查
-    assert "restaurant" not in CATEGORY_WHITELIST
+    # 白名单/状态门语义抽查（餐饮 6 类 WS6 #397 起放行；fast_food 必须写
+    # Overture 实名 fast_food_restaurant）
+    assert "restaurant" in CATEGORY_WHITELIST and "cafe" in CATEGORY_WHITELIST
+    assert "fast_food_restaurant" in CATEGORY_WHITELIST
+    assert "fast_food" not in CATEGORY_WHITELIST
+    assert "hotel" not in CATEGORY_WHITELIST
     assert "park" in CATEGORY_WHITELIST and "arena" in CATEGORY_WHITELIST
-    assert len(CATEGORY_WHITELIST) == 20
+    assert len(CATEGORY_WHITELIST) == 26
     for bad in ("closed", "permanently_closed", "temporarily_closed",
                 "relocated", "removed"):
         assert bad not in OPERATING_STATUS_ALLOW
