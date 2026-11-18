@@ -124,15 +124,44 @@ else
             PYTHONPATH="$PYLIB${PYTHONPATH:+:$PYTHONPATH}"
             export PYTHONPATH
             PY="python3"
+        elif command -v docker >/dev/null 2>&1; then
+            # 2026-11-18 首跑判例：r4s=iStoreOS musl（OpenWrt 系），venv 模块缺失且
+            # duckdb 无 musl wheel（pip 走源码构建，CMake 缺失失败）——宿主 python 不可
+            # 用，第三级兜底改走 docker glibc 容器跑 T1（python:3.12-slim manylinux
+            # aarch64 wheel 即装即用）。pip/duckdb 扩展缓存持久化到宿主避免月度重下。
+            USE_DOCKER_PY=1
+            PY="docker:${OVERTURE_DOCKER_PY_IMAGE:-python:3.12-slim}"
         else
-            fail "duckdb 环境安装失败（venv 与 pip --target 均不可用）"
+            fail "duckdb 环境安装失败（venv 与 pip --target 均不可用，且无 docker 兜底）"
         fi
     fi
-    # httpfs 扩展预热（首次从 extensions.duckdb.org 下载并缓存）
-    "$PY" -c "import duckdb; c=duckdb.connect(); c.execute('INSTALL httpfs'); c.execute('LOAD httpfs')" \
-        || fail "duckdb httpfs 扩展不可用（网络/缓存问题）"
-    DDB_VER=$("$PY" -c 'import duckdb; print(duckdb.__version__)' 2>/dev/null || echo '?')
-    log "步骤1 duckdb 自检通过（${PY}, duckdb ${DDB_VER}）"
+    CACHE_DIR="$SCRIPT_DIR/.dcache"
+    if [ "$USE_DOCKER_PY" = 1 ]; then
+        mkdir -p "$CACHE_DIR/pip" "$CACHE_DIR/duckdb" "$OUT_DIR" \
+            || fail "docker 兜底缓存/输出目录不可建"
+        docker pull -q "${OVERTURE_DOCKER_PY_IMAGE:-python:3.12-slim}" >/dev/null 2>&1 \
+            || fail "docker pull ${OVERTURE_DOCKER_PY_IMAGE:-python:3.12-slim} 失败"
+        # httpfs 扩展预热（容器内缓存卷持久化，首次从 extensions.duckdb.org 下载）
+        docker run --rm \
+            -v "$SCRIPT_DIR":/opt/overture:ro \
+            -v "$CACHE_DIR/pip":/root/.cache/pip \
+            -v "$CACHE_DIR/duckdb":/root/.duckdb \
+            "${OVERTURE_DOCKER_PY_IMAGE:-python:3.12-slim}" \
+            sh -c "pip install --quiet duckdb && python -c 'import duckdb; c=duckdb.connect(); c.execute(\"INSTALL httpfs\"); c.execute(\"LOAD httpfs\")'" \
+            || fail "docker 兜底 duckdb/httpfs 不可用（网络/缓存问题）"
+        DDB_VER=$(docker run --rm \
+            -v "$CACHE_DIR/pip":/root/.cache/pip \
+            "${OVERTURE_DOCKER_PY_IMAGE:-python:3.12-slim}" \
+            sh -c "pip install --quiet duckdb && python -c 'import duckdb; print(duckdb.__version__)'" \
+            2>/dev/null || echo '?')
+        log "步骤1 duckdb 自检通过（docker 兜底 ${PY}, duckdb ${DDB_VER}）"
+    else
+        # httpfs 扩展预热（首次从 extensions.duckdb.org 下载并缓存）
+        "$PY" -c "import duckdb; c=duckdb.connect(); c.execute('INSTALL httpfs'); c.execute('LOAD httpfs')" \
+            || fail "duckdb httpfs 扩展不可用（网络/缓存问题）"
+        DDB_VER=$("$PY" -c 'import duckdb; print(duckdb.__version__)' 2>/dev/null || echo '?')
+        log "步骤1 duckdb 自检通过（${PY}, duckdb ${DDB_VER}）"
+    fi
 fi
 
 # ---------------------------------------------------------------- 2. T1 下载
@@ -142,6 +171,18 @@ RELEASE_ARG=""
 
 if [ "$DRYRUN" = 1 ]; then
     log "[dryrun] 步骤2 跳过下载：$PY $FETCH $RELEASE_ARG --out ${OUT}（单次 S3 全 bbox 扫描 ~25min）"
+elif [ "${USE_DOCKER_PY:-0}" = 1 ]; then
+    log "步骤2 下载开始（docker 兜底）：release=${OVERTURE_RELEASE:-默认} out=$OUT"
+    docker run --rm \
+        -v "$SCRIPT_DIR":/opt/overture:ro \
+        -v "$DATA_DIR":/data \
+        -v "$CACHE_DIR/pip":/root/.cache/pip \
+        -v "$CACHE_DIR/duckdb":/root/.duckdb \
+        -w /opt/overture \
+        "${OVERTURE_DOCKER_PY_IMAGE:-python:3.12-slim}" \
+        sh -c "pip install --quiet duckdb && python fetch-overture-nz.py $RELEASE_ARG --out /data/$MONTH/overture-nz.jsonl" \
+        || fail "T1 下载失败（docker 兜底 fetch-overture-nz.py 非零退出）"
+    [ -f "$STATS" ] || fail "stats 缺失：$STATS"
 else
     log "步骤2 下载开始：release=${OVERTURE_RELEASE:-默认} out=$OUT"
     # shellcheck disable=SC2086
