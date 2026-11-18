@@ -26,14 +26,20 @@ fetch-overture-nz.py [--release 2026-10-21.0]
 ### 过滤链（顺序执行；stats 逐阶段计数）
 
 1. SQL 侧 NZ bbox `166,178.6,-47.3,-34.4`（parquet 行组裁剪，单次 S3 扫描）
-2. 类目白名单 `CATEGORY_WHITELIST`（20 个 basic_category，osmKinds 7 类语义；
-   餐饮/住宿/博物馆等排除，类目扩展另立单）
+2. 类目白名单 `CATEGORY_WHITELIST`（26 个 basic_category，osmKinds 7 类语义 +
+   餐饮业态 6 类（WS6 #397）；住宿/博物馆等排除，类目扩展另立单）
 3. `confidence >= 0.8`（边界含）
 4. 有名称有坐标
 5. operating_status：`NULL`/`operating` 放行，`closed`/`permanently_closed` 等
    closed/removed 类拒收（白名单式：新枚举值保守拒收，值见
    `stats.dropped_status_values` 供人工核对）
-6. 8 城外接矩形打区 `city_slug`；未命中城市的行丢弃并计数（national 非地理判定）
+6. 8 城外接矩形打区 `city_slug`；未命中城市的行**不再丢弃**（#392 AC1
+   region≥12 全国扩容，2026-11-19）——`city_slug` 输出空串走全国兜底，apps
+   adapter 侧落 `city_slug='national'` + `geo.ResolveRegionPoint` 坐标锚点
+   归属 16 大区（`fix/392-overture-nationwide` 对应 apps 仓
+   `fix/392-confidence-region`）；无城市餐饮行由 apps 侧 5 城门拦截。全国行
+   计数见 `stats.national`。旧 apps adapter（全国兜底前）对空 `city_slug` 按
+   DroppedNoCity 丢弃——两仓部署顺序任意、双向兼容。
 
 ### JSONL 字段契约（apps T2 adapter 依赖；顺序固定）
 
@@ -49,7 +55,7 @@ fetch-overture-nz.py [--release 2026-10-21.0]
 | `locality` | str | addresses 首个 locality，缺省 "" |
 | `website` | str | websites[1]，缺省 "" |
 | `phone` | str | phones[1]，缺省 "" |
-| `city_slug` | str | 8 城之一（auckland/wellington/christchurch/hamilton/rotorua/tauranga/queenstown/dunedin） |
+| `city_slug` | str | 8 城之一（auckland/wellington/christchurch/hamilton/rotorua/tauranga/queenstown/dunedin）或空串（#392 AC1 全国兜底：8 城外行，apps 侧 national+大区归属） |
 | `operating_status` | str | 恒 `"operating"`（收录语义：NULL/unknown 按开放收录后归一。⚠ T3 失效 diff 勿以裸值比较 unknown——见 fetch 脚本 JSONL_FIELDS 注释） |
 
 示例行：
@@ -58,9 +64,9 @@ fetch-overture-nz.py [--release 2026-10-21.0]
 ### stats（`<out>.stats.json`）
 
 `stages`（bbox_rows → after_category → after_confidence → after_name_coord →
-after_status → kept）、`dropped`（逐原因）、`dropped_status_values`（status 丢值直方图）、
-`dropped_categories_top`、`cities`（各城分布）、`categories`（收录类目分布）、
-`minutes`、`duckdb_version`。
+after_status → kept）、`dropped`（逐原因）、`national`（#392 AC1 全国兜底收录数）、
+`dropped_status_values`（status 丢值直方图）、`dropped_categories_top`、`cities`
+（各城分布）、`categories`（收录类目分布）、`minutes`、`duckdb_version`。
 
 ### 城市 bbox 来源
 
