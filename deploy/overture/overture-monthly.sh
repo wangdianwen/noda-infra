@@ -215,39 +215,45 @@ jobs_status() {   # 容器内 3016 状态端点（noda-jobs 同镜像，wget 已
     docker exec "$JOBS_CONTAINER" wget -qO- -T 20 "$STATUS_URL" 2>/dev/null
 }
 
-state_of() {      # $1=job $2=pre_startedAt；stdin 收 status JSON；输出 RUNNING|WAIT|DONE<TAB>status
-    # ⚠️ 数据走 env 而非 `python3 -` stdin——heredoc 程序体会占用/串接 stdin，
-    # json.load(sys.stdin) 在管道数据上必然 EOF/语法错（2026-11-19 两轮「解析
-    # lastExecution 失败」判例实证：printf 管道与 <<'PYEOF' 并存时 python 读到
-    # 的是两段拼接流）。`-c` + env 是唯一稳态形态。
-    STATUS_JSON="$(cat)" JOB="$1" PRE="$2" python3 -c '
+running_of() {    # $1=job；stdin 收 status JSON；输出 RUNNING|IDLE|ERR|MISSING
+    # ⚠️ python 数据一律 env 传参（`-c` 形态），禁 heredoc——heredoc 程序体会
+    # 占用/串接 stdin，json.load(sys.stdin) 必炸（2026-11-19「解析 lastExecution
+    # 失败」两轮判例；env 传参是唯一稳态形态）。
+    STATUS_JSON="$(cat)" JOB="$1" python3 -c '
 import json, os
-job, pre = os.environ["JOB"], os.environ["PRE"]
 try:
     d = json.loads(os.environ["STATUS_JSON"])
 except Exception:
     print("ERR"); raise SystemExit
 for j in d.get("jobs", []):
-    if j.get("name") == job:
-        if j.get("isRunning"):
-            print("RUNNING"); raise SystemExit
-        started = str((j.get("lastExecution") or {}).get("startedAt") or "-")
-        if started != pre:
-            st = (j.get("lastExecution") or {}).get("status", "")
-            print("DONE\t%s" % st); raise SystemExit
-        print("WAIT"); raise SystemExit
+    if j.get("name") == os.environ["JOB"]:
+        print("RUNNING" if j.get("isRunning") else "IDLE"); raise SystemExit
 print("MISSING")
 '
 }
 
+resp_of() {       # stdin 收 trigger 同步响应；输出 DONE<TAB>summary | ERRRESP<TAB>body | PARSE_FAIL
+    RESP_JSON="$(cat)" python3 -c '
+import json, os
+try:
+    d = json.loads(os.environ["RESP_JSON"])
+except Exception:
+    print("PARSE_FAIL"); raise SystemExit
+r = d.get("result")
+if r is None:
+    print("ERRRESP\t%s" % str(d.get("error") or d)[:200]); raise SystemExit
+print("DONE\t%s" % str(r.get("summary") or r)[:200])
+'
+}
+
 if [ "$DRYRUN" = 1 ]; then
-    log "[dryrun] 步骤4 跳过触发：preflight(status 含 $JOB) → docker exec -d $JOBS_CONTAINER wget --post-data='' $TRIGGER_URL → 轮询 $STATUS_URL 至完成（≤${WAIT_TIMEOUT}s）"
+    log "[dryrun] 步骤4 跳过触发：preflight(status 含 $JOB) → 清响应文件 → docker exec -d $JOBS_CONTAINER wget --post-data='' $TRIGGER_URL → 轮询响应文件至落盘（同步触发响应=执行结果，≤${WAIT_TIMEOUT}s）"
     log "[dryrun] 步骤5 跳过：TG 回执 + $MARKER + 旧目录清理（保留 $KEEP_MONTHS 个月）"
     log "[dryrun] DONE（hb 由 cron 行按退出码上报）"
     exit 0
 fi
 
-log "步骤4 触发 ${JOB}（失效 diff 在 job 内执行——apps T3 expireOvertureClosedPlaces）"
+log "步骤4 触发 ${JOB}（同步触发：HTTP 响应=执行结果；失效 diff 在 job 内执行——apps T3 expireOvertureClosedPlaces）"
 # preflight 带重试：2026-11-18 首跑判例——状态端点偶发瞬时抖动（wget -qO- 空/截断
 # 输出但退出 0），单次探测即 fail 太脆；3 次×5s 间隔重试后仍失败才判死。
 pre_json_get() {
@@ -265,55 +271,61 @@ pre_json_get() {
 }
 PRE_JSON=$(pre_json_get) || fail "noda-jobs 状态端点不可达/非 JSON（重试 3 次；$JOBS_CONTAINER ${STATUS_URL}）"
 echo "$PRE_JSON" | grep -q "\"$JOB\"" || fail "$JOB 未注册（apps T3 未部署?）"
-PRE=$(PRE_JSON="$(printf '%s' "$PRE_JSON")" JOB="$JOB" python3 -c '
-import json, os
-d = json.loads(os.environ["PRE_JSON"])
-for j in d.get("jobs", []):
-    if j.get("name") == os.environ["JOB"]:
-        le = j.get("lastExecution") or {}
-        print(le.get("startedAt") or "-")
-        break
-') || fail "解析 lastExecution 失败"
 
+# 完成检测（2026-11-19 判例）：crawl-overture 不挂 addCron（#400，纯 HTTP 触发），
+# 而 apps triggerImpl→triggerNearby 手动路径不写内存 lastExecution（impl.go，仅
+# cron 路径 nearbyRun 写 setLastSummary）——状态端点的 startedAt 快照不等轮询对
+# 该 job 永远 WAIT，300s 后必假报「trigger 未生效」（isRunning 会置位但
+# lastExecution 恒 null，快照比较无从变化）。改为等待同步触发的响应文件：HTTP 200
+# 返回即执行完成，body=NearbyResult 全量；isRunning 仍可作 landing 佐证。
 TRIGGER_OUT="/tmp/overture-trigger-$MONTH.json"
+docker exec "$JOBS_CONTAINER" rm -f "$TRIGGER_OUT" 2>/dev/null || true   # 残留响应会令轮询瞬间误判完成
 docker exec -d "$JOBS_CONTAINER" wget -qO "$TRIGGER_OUT" -T 3600 --post-data='' "$TRIGGER_URL" \
     || fail "trigger 发送失败（docker exec）"
 
 deadline=$(( $(date +%s) + WAIT_TIMEOUT ))
 land_deadline=$(( $(date +%s) + TRIGGER_LAND_TIMEOUT ))
+seen_running=0
+idle_since=0
+JOB_STATUS=""
+JOB_SUMMARY=""
 while :; do
     now=$(date +%s)
     [ "$now" -lt "$deadline" ] || fail "$JOB 等待超时（${WAIT_TIMEOUT}s；查 docker logs ${JOBS_CONTAINER}）"
-    state=$(jobs_status | state_of "$JOB" "$PRE")
-    case "$state" in
-        RUNNING)
-            sleep 30
-            ;;
-        WAIT)
-            [ "$now" -lt "$land_deadline" ] || fail "trigger 未生效（${TRIGGER_LAND_TIMEOUT}s 内 job 未启动；可能 409/容器异常）"
-            sleep 10
-            ;;
+    parsed=$(docker exec "$JOBS_CONTAINER" cat "$TRIGGER_OUT" 2>/dev/null | resp_of)
+    case "$parsed" in
         DONE*)
-            JOB_STATUS=$(printf '%s' "$state" | cut -f2)
+            JOB_STATUS="success"
+            JOB_SUMMARY=$(printf '%s' "$parsed" | cut -f2)
             break
             ;;
-        *)
-            sleep 15     # ERR（容器/网络抖动）：总 deadline 兜底
+        ERRRESP*)
+            JOB_STATUS="failure"
+            JOB_SUMMARY=$(printf '%s' "$parsed" | cut -f2)
+            break
             ;;
     esac
+    run=$(jobs_status | running_of "$JOB")
+    case "$run" in
+        RUNNING)
+            seen_running=1
+            idle_since=0
+            ;;
+        IDLE)
+            if [ "$seen_running" = 1 ]; then
+                # 执行体已结束而响应迟迟不落盘：非 2xx（busybox wget 不存错误 body）
+                [ "$idle_since" = 0 ] && idle_since=$now
+                [ $((now - idle_since)) -gt 120 ] && fail "$JOB 已结束但 trigger 响应未落盘（非 2xx=执行失败——查 docker logs ${JOBS_CONTAINER}）"
+            fi
+            [ "$now" -lt "$land_deadline" ] || fail "trigger 未生效（${TRIGGER_LAND_TIMEOUT}s 内 job 未启动且无响应；可能 409/快速失败/容器异常——查 docker logs ${JOBS_CONTAINER}）"
+            ;;
+        *)
+            sleep 15    # ERR/MISSING（容器/网络抖动）：总 deadline 兜底
+            ;;
+    esac
+    sleep 30
 done
-log "步骤4 job 结束：status=$JOB_STATUS"
-
-# 触发响应（NearbyResult）回读进 TG 回执；读不到不致命
-TRIGGER_RESP=$(docker exec "$JOBS_CONTAINER" cat "$TRIGGER_OUT" 2>/dev/null || echo "")
-JOB_SUMMARY=$(printf '%s' "$TRIGGER_RESP" | python3 -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-    r = d.get('result') or {}
-    print(str(r.get('summary') or r)[:200])
-except Exception:
-    print('')" 2>/dev/null || echo "")
+log "步骤4 job 结束：status=$JOB_STATUS${JOB_SUMMARY:+ 摘要:$JOB_SUMMARY}"
 
 # ---------------------------------------------------------------- 5. 收尾：TG 回执 + 幂等标记 + 清理
 
