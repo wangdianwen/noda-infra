@@ -244,7 +244,22 @@ if [ "$DRYRUN" = 1 ]; then
 fi
 
 log "步骤4 触发 ${JOB}（失效 diff 在 job 内执行——apps T3 expireOvertureClosedPlaces）"
-PRE_JSON=$(jobs_status) || fail "noda-jobs 状态端点不可达（$JOBS_CONTAINER ${STATUS_URL}）"
+# preflight 带重试：2026-11-18 首跑判例——状态端点偶发瞬时抖动（wget -qO- 空/截断
+# 输出但退出 0），单次探测即 fail 太脆；3 次×5s 间隔重试后仍失败才判死。
+pre_json_get() {
+    i=0
+    while [ "$i" -lt 3 ]; do
+        out=$(jobs_status) || out=""
+        if [ -n "$out" ] && printf '%s' "$out" | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null 2>&1; then
+            printf '%s' "$out"
+            return 0
+        fi
+        i=$((i + 1))
+        [ "$i" -lt 3 ] && sleep 5
+    done
+    return 1
+}
+PRE_JSON=$(pre_json_get) || fail "noda-jobs 状态端点不可达/非 JSON（重试 3 次；$JOBS_CONTAINER ${STATUS_URL}）"
 echo "$PRE_JSON" | grep -q "\"$JOB\"" || fail "$JOB 未注册（apps T3 未部署?）"
 PRE=$(printf '%s' "$PRE_JSON" | python3 - "$JOB" <<'PYEOF'
 import json, sys

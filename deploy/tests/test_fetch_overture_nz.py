@@ -72,15 +72,18 @@ def test_city_bbox_within_nz_bbox():
 
 def test_whitelist_semantics_osm_kinds_alignment():
     wl = fo.CATEGORY_WHITELIST
-    # 7 类语义锚点（osm.go osmKinds 同源类目必须收；餐饮/住宿/馆类排除）
+    # 7 类语义锚点（osm.go osmKinds 同源类目必须收）+ 餐饮 6 类（WS6 #397 放行）
     for keep in ("playground", "beach", "park", "garden", "botanical_garden",
                  "viewpoint", "scenic_lookout", "art_gallery", "public_art",
-                 "theater", "stadium", "gym", "swimming_pool", "arena"):
+                 "theater", "stadium", "gym", "swimming_pool", "arena",
+                 "restaurant", "cafe", "bar", "casual_eatery", "coffee_shop",
+                 "fast_food_restaurant"):
         assert keep in wl, keep
-    for drop in ("restaurant", "cafe", "bar", "hotel", "museum", "shop",
-                 "supermarket", "atm", "hospital"):
+    for drop in ("hotel", "museum", "shop", "supermarket", "atm", "hospital"):
         assert drop not in wl, drop
-    assert len(wl) == 20
+    # fast_food 是 Overture 未用名——实名 fast_food_restaurant（#392 实测）
+    assert "fast_food" not in wl
+    assert len(wl) == 26
 
 
 def test_confidence_gate_boundary():
@@ -105,8 +108,8 @@ def test_name_and_coords_required():
 
 
 def test_category_drop_before_confidence():
-    # 餐饮类即使 conf 高也不进 conf 阶段计数（链序：白名单最前）
-    rec, reason = fo.process_row(_row(basic_category="restaurant", confidence=0.5))
+    # 住宿类即使 conf 高也不进 conf 阶段计数（链序：白名单最前；餐饮已放行）
+    rec, reason = fo.process_row(_row(basic_category="hotel", confidence=0.5))
     assert rec is None and reason == "category"
 
 
@@ -115,7 +118,7 @@ def test_category_drop_before_confidence():
 def test_run_chain_stage_counts_and_conservation(tmp_path):
     rows = [
         _row(id="k1"),                                             # 收
-        _row(id="d1", basic_category="restaurant"),                # 类目
+        _row(id="d1", basic_category="hotel"),                     # 类目（餐饮已放行，改 hotel 锁丢弃分支）
         _row(id="d2", confidence=0.5),                             # conf
         _row(id="d3", name=None),                                  # 名称
         _row(id="d4", operating_status="closed"),                  # 状态
