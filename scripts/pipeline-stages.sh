@@ -3351,6 +3351,22 @@ _publish_static_to_prod_fs()
         fi
     fi
 
+    # 发布后版本断言（#408 收尾批：「发布=最新」铁律）：活目录指纹 sha 必须
+    # 等于本次构建工作区 HEAD（构建段写入 out/.noda-artifact-hash，b_sha=
+    # git rev-parse HEAD）。防两类历史代码发布：①workspace out/ 陈旧（构建
+    # 段失败后发布段误跑——管线顺序已挡，此处兜底）；②切错目录/回滚锚误切
+    # （文件数对账只验数量不验内容）。mismatch = 发布失败（蓝绿双跳可逆，
+    # 旧版保持服务）；「内容未变更」跳过路径天然满足断言（tree 一致即同源）。
+    local live_fp live_sha b_sha
+    live_fp=$(remote_exec "cat $root/$product/.noda-artifact-hash 2>/dev/null | head -1" 30 2>/dev/null | head -1 || true)
+    b_sha=$(head -1 "$out_dir/.noda-artifact-hash" 2>/dev/null | awk '{print $1}')
+    live_sha=$(printf '%s' "$live_fp" | awk '{print $1}')
+    if [ -z "$b_sha" ] || [ "$live_sha" != "$b_sha" ]; then
+        log_error "发布后版本断言失败（fs）：live sha=${live_sha:-none} ≠ 构建 sha=${b_sha:-none}——疑似历史产物发布，立即核查（旧版仍在服务，回滚窗口 open）"
+        return 1
+    fi
+    log_success "版本断言通过（fs）：live sha=${live_sha:0:12}… == 构建 HEAD"
+
     log_success "$product 静态站 fs 发布完成：$root/$product/（$objs 个文件，与源一致）"
     return 0
 }
@@ -3409,6 +3425,18 @@ _publish_static_to_stg_fs()
         log_error "切换后哨兵缺失（fs stg）：$root/$product/$sentinel"
         return 1
     fi
+
+    # 发布后版本断言（#408 收尾批，与 prod fs 同口径）：live sha == 构建 HEAD，
+    # 「发布=最新」铁律 stg 侧同步生效。
+    local live_fp live_sha b_sha
+    b_sha=$(head -1 "$out_dir/.noda-artifact-hash" 2>/dev/null | awk '{print $1}')
+    live_fp=$(head -1 "$root/$product/.noda-artifact-hash" 2>/dev/null || true)
+    live_sha=$(printf '%s' "$live_fp" | awk '{print $1}')
+    if [ -z "$b_sha" ] || [ "$live_sha" != "$b_sha" ]; then
+        log_error "发布后版本断言失败（fs stg）：live sha=${live_sha:-none} ≠ 构建 sha=${b_sha:-none}——疑似历史产物发布，立即核查"
+        return 1
+    fi
+    log_success "版本断言通过（fs stg）：live sha=${live_sha:0:12}… == 构建 HEAD"
 
     log_success "$product preprod fs 发布完成：$root/$product/（$objs 个文件，与源一致）"
     return 0
