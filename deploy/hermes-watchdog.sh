@@ -28,6 +28,26 @@ tg_state(){
   python3 -c "import json;print(json.load(open('$STATE_F')).get('platforms',{}).get('telegram',{}).get('state','unknown'))" 2>/dev/null
 }
 
+# 精确进程探测：读 /proc/*/cmdline，argv 最后两个参数恰为 "gateway run"/"gateway restart" 才算命中。
+# 不用 ps|grep——ssh 排障时 sh -c 包装进程的整串命令行含同样字样会误匹配（2026-11-19 实测踩坑）。
+# 输出形如 "GW=1 HUNG=0 PIDS="
+proc_probe(){
+  python3 - <<'PY' 2>/dev/null
+import os
+gw=hung=0; pids=[]
+for pid in os.listdir('/proc'):
+    if not pid.isdigit(): continue
+    try:
+        a=[x.decode(errors='replace') for x in open(f'/proc/{pid}/cmdline','rb').read().split(b'\0') if x]
+    except Exception:
+        continue
+    if len(a)>=2 and a[-2]=='gateway' and a[-1]=='run': gw+=1
+    elif len(a)>=2 and a[-2]=='gateway' and a[-1]=='restart':
+        hung+=1; pids.append(pid)
+print(f'GW={gw} HUNG={hung} PIDS={",".join(pids)}')
+PY
+}
+
 # 0) 维护挂起 / 冷却期内静默退出
 if [ -f "$PAUSE_F" ]; then log "PAUSED: $PAUSE_F 存在，跳过"; exit 0; fi
 now=$(date +%s)
@@ -35,8 +55,10 @@ last=$(cat "$COOLDOWN_F" 2>/dev/null)
 case "$last" in ''|*[!0-9]*) last=0;; esac
 if [ $(( now - last )) -lt $COOLDOWN_SECS ]; then exit 0; fi
 
-gw=$(ps w | grep -F 'hermes gateway run' | grep -v grep | wc -l)
-hung=$(ps w | grep -F 'hermes gateway restart' | grep -v grep | wc -l)
+probe=$(proc_probe); case "$probe" in GW=*) ;; *) probe="GW=0 HUNG=0 PIDS=";; esac
+gw=$(echo "$probe" | sed 's/GW=\([0-9]*\).*/\1/')
+hung=$(echo "$probe" | sed 's/.*HUNG=\([0-9]*\).*/\1/')
+hung_pids=$(echo "$probe" | sed 's/.*PIDS=//')
 state=$(tg_state); case "$state" in ''|unreadable) state=unknown;; esac
 
 bad=0; reason=""
@@ -58,13 +80,13 @@ echo "$strikes" > "$STRIKES_F"
 log "DEGRADED $strikes/$MAX_STRIKES: $reason"
 if [ "$strikes" -lt "$MAX_STRIKES" ]; then exit 0; fi
 
-log "ACTION: 杀挂死 restart($hung) → 清 gateway.pid/lock → procd restart"
-for pid in $(ps w | grep -F 'hermes gateway restart' | grep -v grep | awk '{print $1}'); do
-  kill "$pid" 2>/dev/null
+log "ACTION: 杀挂死 restart($hung: $hung_pids) → 清 gateway.pid/lock → procd restart"
+for pid in $(echo "$hung_pids" | tr ',' ' '); do
+  [ -n "$pid" ] && kill "$pid" 2>/dev/null
 done
 sleep 3
-for pid in $(ps w | grep -F 'hermes gateway restart' | grep -v grep | awk '{print $1}'); do
-  kill -9 "$pid" 2>/dev/null
+for pid in $(echo "$hung_pids" | tr ',' ' '); do
+  [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null
 done
 rm -f "$HERMES/gateway.pid" "$HERMES/gateway.lock"
 /etc/init.d/hermes restart
