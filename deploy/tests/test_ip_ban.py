@@ -200,6 +200,33 @@ def test_dc_asns_cover_datacamp_and_proxy_exits(ip_ban):
     assert 211590 in ip_ban.DATACENTER_ASNS
 
 
+def test_dc_asns_cover_hk_datacenter_batch(ip_ban):
+    """2026-11-18 判例：45.138.12.6/.16（AS218785 TC DATACENTER，HK 机房）真
+    Chrome/133 Linux UA 解掉 managed_challenge 后打 /.git/.svn/.hg 密探路径
+    （attack-urls 8/11 hits）。用户裁定「香港机房全部加入黑名单」：RIPE+APNIC
+    delegated 全量 1385 ASN 筛查出 216 个机房/托管 ASN 入滥用分支"""
+    assert 218785 in ip_ban.DATACENTER_ASNS        # 本案主犯 TC DATACENTER
+    assert 132839 in ip_ban.DATACENTER_ASNS        # POWER LINE DATACENTER
+    assert 135377 in ip_ban.DATACENTER_ASNS        # UCloud HK
+    assert 23881 in ip_ban.DATACENTER_ASNS         # UDomain Web Hosting
+    # 住宅/固网 ISP 不得混入（Towngas 固网有真家庭用户；Juniper=厂商网）
+    assert 9899 not in ip_ban.DATACENTER_ASNS
+    assert 10098 not in ip_ban.DATACENTER_ASNS
+    assert 10132 not in ip_ban.DATACENTER_ASNS
+    assert 24023 not in ip_ban.DATACENTER_ASNS
+
+
+def test_dc_expression_hk_batch_in_abuse_branch_and_length_guard(ip_ban):
+    """HK 批落滥用分支（无 UA 豁免）；234+13 ASN 后表达式仍须低于 CF 4096
+    上限——Free 版 5 条规则配额已满，机房 ASN 只能挤单条 DC 规则，越限即死"""
+    expr = ip_ban.build_dc_expression(ip_ban.parse_cidrs(""))
+    parts = expr.split(") or (")
+    assert len(parts) == 2                          # 无 persist 名单=恰好两支
+    abuse = parts[0]
+    assert "218785" in abuse and "132839" in abuse
+    assert len(expr) < 4096
+
+
 # ---- ②c 2026-10-25 坚持不懈来访者挑战网（用户三原则 #3）----
 
 def test_line_re_captures_status(ip_ban):
@@ -748,8 +775,9 @@ def test_dc_expression_exempts_selfid_ai_crawlers(ip_ban):
 
 
 def test_abuse_and_cloud_asns_partition(ip_ban):
-    """18+13 拆分覆盖原 19 个+10-26 扩容 11 个+10-26 终验补录 19148,无交集无遗漏"""
-    assert len(ip_ban.ABUSE_ASNS) == 18 and len(ip_ban.CLOUD_ASNS) == 13
+    """234+13 拆分覆盖原 19 个+10-26 扩容 11 个+10-26 终验补录 19148+
+    11-19 HK 机房批 216（用户裁定），无交集无遗漏"""
+    assert len(ip_ban.ABUSE_ASNS) == 234 and len(ip_ban.CLOUD_ASNS) == 13
     assert set(ip_ban.ABUSE_ASNS) & set(ip_ban.CLOUD_ASNS) == set()
     assert set(ip_ban.DATACENTER_ASNS) == set(ip_ban.ABUSE_ASNS) | set(ip_ban.CLOUD_ASNS)
     # 10-26 批回归锁:GA 溯源定案的 11 家不得缺失,大云 13 家不得误挪

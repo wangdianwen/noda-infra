@@ -12,7 +12,7 @@
 | # | 描述 | action | 维护方 |
 |---|---|---|---|
 | 1 | ip-range-blacklist auto（28 段） | block | ip-ban.py 自动 |
-| 2 | datacenter-asn-block auto（31 ASN 两分支：滥用 18 无 UA 豁免/大云 13 保留；10-26 扩容） | block | ip-ban.py 自动 |
+| 2 | datacenter-asn-block auto（247 ASN 两分支：滥用 234 无 UA 豁免/大云 13 保留；10-26 扩容 + 11-19 HK 机房全禁批 216——AS218785 判例，RIPE+APNIC 全量筛查，剔除住宅 ISP/误报 7+112 个） | block | ip-ban.py 自动 |
 | 3 | block empty/fake/script user agent | block | 手工（本次加严，见下） |
 | 4 | geo-challenge merged 2026-11-07（www added 2026-11-17）：admin non-NZ + web non-NZ/AU（apex+www 两 host；官方 Google 段豁免） | managed_challenge | ip-ban.py 守护（#19 `apply_geo_rule`：默认 observe 漂移只告警零回写；`GEO_RULE_MODE=enforce` 后拉回/重建；canonical 表达式 2026-11-17 逐字符取自 live） |
 | 5 | cdn-hotlink-block（Referer 反盗链，ip-ban.py 维护） | block | ip-ban.py 自动 |
@@ -216,7 +216,7 @@ ip-ban 速率窗）都要有「覆盖时长」意识；这类哨兵的告警文�
    skypeuripreview（Twitterbot/Slackbot/Discordbot/LinkedInBot 带 bot 已覆盖）。
 3. 家族指纹留档：UA=Chrome/125.0.0.0（2024 年中版本；真实现网 145/142）——
    暂不做 UA 版本拦截（误伤真实老旧浏览器），CHROME_VER_RE<100 门槛维持。
-4. 尺寸回归测试：dc 表达式在 MAX_PERSIST_LIST=80×最长压缩 /64（24 字符）下
+4. 尺寸回归测试：dc 表达式在 MAX_PERSIST_LIST=48×最长压缩 /64（24 字符）下
    =2752 字符 < 4095-200 余量。
 5. **盘点补遗：noda zone 另有一条 http_ratelimit 阶段规则**（此前文档漏记）：
    `content-nav-burst-guard`：150 req/10s block，`not cf.client.bot`，覆盖
@@ -232,8 +232,8 @@ ip-ban 速率窗）都要有「覆盖时长」意识；这类哨兵的告警文�
 1. **persist 名单并入 dc 规则**（严重）：Free 版自定义规则上限 5 条，实测第 6 条
    PUT 报 50001 "exceeded the maximum number of rules: 6 out of 5"——独立
    persistent-visitor-challenge 规则建不出来，首名单出现时将永远同步失败。
-   现 OR 进 dc 规则表达式（同 managed_challenge 语义），MAX_PERSIST_LIST=80
-   保护单规则 4095 字符表达式上限。
+   现 OR 进 dc 规则表达式（同 managed_challenge 语义），MAX_PERSIST_LIST=48
+   （2026-11-19 HK 机房批 216 ASN 后从 80 重平衡）保护单规则 4095 字符表达式上限。
 2. **/24 枚举闸 OR→AND**（误封通道）：原 `低资源 OR botua≥50% OR paths≥15`
    允许纯 paths 单独触发——Google Mediapartners 段（assets 76%/paths 35）与
    2026-10-21 日本家宽共享出口正是此通道误封。改 `(低资源 OR botua) AND paths≥15`

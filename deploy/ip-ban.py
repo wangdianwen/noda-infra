@@ -179,9 +179,12 @@ PERSIST_MIN_REQS = 40                # 累计请求下限：真人日访 1-3 条
                                     # 上下文整页冷加载 45+ 条，4 天即 ~180（2026-10-25
                                     # 三出口实测：_next×89+geo.json×3+graphql×9）
 MAX_PERSIST_TRACK = 3000             # 档案容量（按 last 裁最旧）
-MAX_PERSIST_LIST = 80                # 名单上限：与 dc 规则共用表达式，须留余量
+MAX_PERSIST_LIST = 48                # 名单上限：与 dc 规则共用 4095 字符表达式须留余量
                                     # （CF 单规则表达式 4095 字符；Free 版自定义
-                                    #  规则上限 5 条，2026-10-25 实测 "6 out of 5"）
+                                    #  规则上限 5 条，2026-10-25 实测 "6 out of 5"）。
+                                    # 2026-11-19 HK 机房批 216 ASN 后 80→48 重平衡：
+                                    # worst case 实测 3604<3895 守卫线（安全余量 200）；
+                                    # persist_listed 实际用量 0，LRU 保最新，功能无损。
 # 坚持不懈判定的「真人否决信号」只认 PWA 生命周期端点——2026-10-25 实测爬虫家族
 # 会拉满 _next/static×89+geo.json×3（JS 执行≠真人），但 sw.js/manifest 从 0 触碰
 # （真浏览器每次导航都做 SW 更新检查/注册，且 SW 脚本按规范绕过 HTTP 缓存）。
@@ -239,6 +242,239 @@ ABUSE_ASNS = (
                     #  headless 2 分钟 46 请求完整渲染 /zh/item/{uuid}：_next chunks×30+/
                     #  geo.json/POST graphql——与 7203（152.163.156.0/22）判例同指纹，
                     #  邻段姐妹 ASN 一起封，noda-infra#3 终验 live 抓获）
+    # ---- 2026-11-18/19 HK 机房全禁批（用户裁定「香港机房全部加入黑名单」）----
+    # 判例：45.138.12.6/.16（AS218785 TC DATACENTER）真 Chrome/133 Linux UA 解掉
+    # managed_challenge 后打 /.git/.svn/.hg 密探路径（源站全 404 零泄密，
+    # attack-urls 8/11 hits 30 天封禁）——真浏览器能解挑战（2026-10-25 DC action
+    # 升级 block 的同款判例），AS218785 名单外裸奔只吃到软防线。
+    # 全量筛查：RIPE(215)+APNIC(1170) delegated 文件 CC=HK 共 1385 ASN →
+    # Team Cymru 批量取名 → 关键词分类（datacenter/hosting/cloud/vps/idc/
+    # server/colo/cdn + network hk|hong|ltd|limited）：
+    #   入列 216 个机房/托管 ASN（下方逐条带机构名）→ 滥用分支（无 UA 豁免；
+    #   HK 官方爬虫零落点，cf.client.bot/官方段/站主豁免保留）；
+    #   剔除关键词误报 7 个：Towngas 固网 ISP 9899/10098/10132（真家庭用户）、
+    #   Reach IX 转接 17500、Juniper 厂商网 24023、HomeISP/Sakura 219462、
+    #   Haruue 社区网 146950；
+    #   保守排除：住宅/移动运营商 112 个（HKT/PCCW/HKBN/CMHK/Smartone/HGC 等
+    #   CARRIER_RE 拦下）+ 1050 个无 hosting 信号名称（银行/大学/企业网/IX）。
+    # 长度实测：表达式 2331-2450 字符 / 4096 上限（Free 版 5 条规则配额，
+    # 机房 ASN 只能挤单条 DC 规则；余量 ~1600 字符够未来再扩容）。
+    2042,        # GCT-HK - HK Global Cloud DataCenter
+    4142,        # ERX-GIN-HK - Global Information Networks Limited
+    4614,        # ASIAONLINE-HK-AS - VDC Powerbase Hong Kong Data Centers Limited
+    4748,        # RESOLINK-AS-AP - Resources Link Network Limited
+    4899,        # WENJING-HK - Hongkong Wen Jing Network Limited
+    9259,        # WEBHOST-AS-AP - Web Host Limited
+    9826,        # ILINK-HK-AP - VDC Powerbase Hong Kong Data Centers Limited
+    17476,       # CHL-AS-AP - CloudRadium (HK) Limited
+    23749,       # GLOBAL-TRANSIT-AS-HKCOLO-AP - HKCOLO ltd. Internet Service Provide
+    23881,       # UDOMAIN-AS-AP - UDomain Web Hosting Company Ltd
+    24345,       # FH-HK - Fasthost Limited
+    24544,       # LAWSCLOUDINFRASTRUCTURELIMITED-AS-HK - Law_s Cloud Infrastructure 
+    45187,       # RACKSPACE-AP - Rackspace IT Hosting AS IT Hosting Provider Hong Ko
+    55369,       # DEDIPOWERHK-AS - DediPower Managed Hosting Limited
+    55558,       # SPEEDYGROUPCLOUD-AS-AP - Speedy Group Cloud Limited
+    55933,       # CLOUDIE-AS-AP - Cloudie Limited
+    58627,       # ONEASIA-NET-AS - OneAsia Network Limited
+    58797,       # CARPATHIAHOSTING-HK - Carpathia Hosting
+    59270,       # CLOUD-RELY - Cloud Rely Limited
+    59436,       # AKARI-AS-HK - Akari Networks Limited
+    60699,       # SixtyNet - CDN1.com Limited
+    62325,       # HDHK - HUNGTAK International Network Limited
+    63849,       # EASYTONENETWORKLIMITED-AS-HK - Easy Tone Network Limited
+    63857,       # CLOUD-RELY - Cloud Rely Limited
+    63889,       # CLOUDIVLIMITED-AS - Cloud Iv Limited
+    63959,       # HKSTL-HK - Hong Kong Syscloud Technology Limited
+    64004,       # SSDHOSTING-HK - 18/F, Well Tech Centre
+    64009,       # HK36CLOUD-HK - 18/F, Well Tech Centre
+    64050,       # BGNL-HK - BGP Network Limited
+    64087,       # CNET-HK - Clouds Network Limited
+    131224,      # SGC-CAL-AS - SGC-Cloud Alliance Limited
+    131324,      # M9TCL-AS-AP - 92Cloud Technology Co., Limited
+    132139,      # VECLOUD1-AS-AP - VECLOUD LIMITED
+    132304,      # MC-AS-AP - MIND CLOUD (HK)LIMITED
+    132422,      # TELECOM-HK - Hong Kong Telecom Global Data Centre
+    132499,      # HKCOLONETLIMITED-AS-AP - HKCOLO.NET LIMITED
+    132597,      # SERVERWORKS-AS - Hong Kong Serverworks Limited
+    132705,      # UDOMAIN-AS - UDomain Web Hosting Company Limited
+    132813,      # AISI-AS-AP - HK AISI CLOUD COMPUTING LIMITED
+    132839,      # POWERLINE-AS-AP - POWER LINE DATACENTER
+    133012,      # CONL-AS-AP - Cocoa Oriental Network Limited
+    133178,      # SAITEIDCLIMITED-AS-AP - SAITEIDC Limited
+    133199,      # SONDERCLOUDLIMITED-AS-AP - SonderCloud Limited
+    133441,      # CLOUDITIDC-KR - CloudITIDC Global
+    133454,      # WGNL-AS-AP - Wexstack Global Network Limited
+    133526,      # HENGDA-AS-AP - HENGDA NETWORK LIMITED
+    133549,      # GCT-AS-AP - Global Cloud DataCenter
+    133731,      # CLOUDIE-AS-AP - Cloudie Limited
+    133744,      # BETTER-HK - Better Cloud Limited
+    133861,      # SONDERCLOUDLIMITED-AS-AP - SonderCloud Limited
+    133871,      # GIGAHOST-AS-AP - Gigahost Limited
+    133893,      # DIYIXIAN-DIC-AS - Dyxnet Data Centre Services Limited
+    134120,      # HVISCL-HK - HongKong Virtual Internal Server Company Limited
+    134121,      # RAINBOW-HK - Rainbow network limited
+    134130,      # WENJING-HK - Hongkong Wen Jing Network Limited
+    134176,      # CLOUDIE-AS-AP - Cloudie Limited
+    134198,      # CLOUD-RELY - Cloud Rely Limited
+    134200,      # CLOUD-RELY - Cloud Rely Limited
+    134207,      # CNIPV4-AS - Asia Pacific Cloud (Hong Kong) Holdings Limited
+    134366,      # CCHL-AS-AP - Cloud Computing HK Limited
+    134428,      # ECG-AS-AP - Edge Cloud Globe Co., Limited
+    134492,      # GSJZCHINATECHNOLO-AS-AP - Guosheng IDC lease
+    134520,      # GigsGigsCloud-AS-AP - GigsGigs Network Services
+    134664,      # LAYER1-AS-AP - LayerOne Network Limited
+    134675,      # HKSERVER-AS-AP - 7/F, TRANS ASIA CTR 18 KIN HONG ST, KWAI CHUNG HO
+    134687,      # TWIDC-AS-AP - TWIDC Limited
+    134700,      # SINOYCLOUD-AS-AP - Sinoycloud Limited
+    134727,      # PING-AS-AP - Ping Network Limited
+    134815,      # FIRSTNETWORK-AS-AP - First Network Limited
+    134835,      # SNL-HK - Starry Network Limited
+    134972,      # IKUUU-AS-AP - IKUUU NETWORK LTD
+    135017,      # DCNL-HK - Data Center Network Limited
+    135097,      # MYCLOUD-AS-AP - LUOGELANG (FRANCE) LIMITED
+    135143,      # HKDCL-AS-AP - Hong Kong Data Centre Limited
+    135293,      # EZCHK-AS-AP - Ezlink Cloud Technology Co., Limted
+    135314,      # IMCLOUD-AS-AP - IMCLOUD TECHNOLOGY COMPANY LIMITED
+    135338,      # STARCLOUD-AS-AP - STARCLOUD INFORMATION LIMITED
+    135377,      # UCLOUD-HK-AS-AP - UCLOUD INFORMATION TECHNOLOGY (HK) LIMITED
+    135392,      # MILLENIALHOSTLIMITED-AS-GB - MillenialHost Limited
+    135398,      # ASIATECH-HK - E-Tech Media Company Data Centre
+    135489,      # FENGYENET-AS - FENGYE NETWORKS LIMITED
+    135515,      # NPNHL-AS-AP - NEW POS NETWORK HK LIMITED
+    136038,      # HDTIDCCLOUD-AS-AP - HDTIDC LIMITED
+    136160,      # M92HOSTLIMITED-AS-AP - 92host Limited
+    136162,      # ANL-AS-AP - ANSON NETWORK LIMITED
+    136222,      # BAJICLOUD-AS-AP - HK BAJI CLOUD COMPUTING LIMITED
+    136387,      # DEEPIDC-AS-AP - Deepidc technology international co.,limted
+    136472,      # CLOUDYIX-AS-AP - CLOUDYIX Limited
+    136476,      # HRMNL-AS-AP - HK RUN MEI NETWORK LIMITED
+    136526,      # ALLCLOUD-AS-AP - ALLCLOUD LIMITED
+    136576,      # CNIPV4-AS - Asia Pacific Cloud (Hong Kong) Holdings Limited
+    136578,      # IPS1-AS-AP - IP SERVERONE SOLUTIONS (HK) LIMITED
+    136739,      # ASIACOLOHKLIMITED-AS-HK - Asia Colo (HK) Limited
+    136746,      # XRCLOUDNETINC-AS-AP - XRCLOUD.NET INC.
+    136897,      # ENJOYVC-AS-AP - Enjoyvc Cloud Group Limited.
+    136907,      # HWCLOUDS-AS-AP - HUAWEI CLOUDS
+    136950,      # HIITL-AS-AP - Hong Kong FireLine Network LTD
+    136970,      # YISUCLOUDLTD-AS-AP - YISU CLOUD LTD
+    136993,      # CVTL-AS-AP - CLOUD VALLEY TECHNOLOGY LIMITED
+    137280,      # KSYUNGLOBAL-AS-AP - Kingsoft cloud corporation limited
+    137427,      # KIDC2-AS-AP - KIDC LIMITED
+    137523,      # YUNDUNETWORK-AS-AP - HONGKONG CLOUD NETWORK TECHNOLOGY CO., LIMITE
+    137816,      # CLOUDNET-AS-AP - Cloud Net Technologies Limited
+    137877,      # LIGHTCLOUD-AS-AP - LIGHT CLOUD (HK) LIMITED
+    137913,      # EAST-AS-AP - EDISON Global Networks Limited
+    137944,      # CLOUDBASE-AS-AP - HONG KONG CLOUDBASE TECHNOLOGY CO., LIMITED
+    138152,      # YISUCLOUDLTD-HK - YISU CLOUD LTD
+    138196,      # ONEASIA-NET-AS-TH - OneAsia Network Limited
+    138456,      # OCTL-AS-AP - OceanBlue Cloud Technology Limited
+    138564,      # GAOSHI-CLOUD - Gaoshi Cloud
+    138571,      # SUPERCLOUDSLIMITED-AS-AP - SUPERCLOUDS LIMITED
+    138576,      # CODECCLOUD-AS-AP - CodecCloud (HK) Limited
+    138586,      # GAOSHICLOUD-AS-AP - CodecCloud (HK) Limited
+    138672,      # TRCLOUD-AS-AP - TR CLOUD CO,. LIMITED
+    138915,      # KAOPU-HK - Kaopu Cloud HK Limited
+    138995,      # ANTBOX1-AS-AP - Antbox Networks Limited
+    139086,      # ONL-HK - OCEAN NETWORK LIMITED
+    139228,      # STREAMLINESERVERS-AS - Streamline Servers Limited
+    139293,      # UFO-AS-AP - UFO Network Limited
+    139327,      # UCLOUD-AS-AP - UCLOUD INFORMATION TECHNOLOGY (HK) LIMITED
+    139340,      # GIGALINK-AS-AP - HONG KONG GIGALINK NETWORK LIMITED
+    139606,      # SPEEDYGROUPCLOUD-IX - Internet Service Provider - Speedy Group Clo
+    139638,      # ANTBOX1-AS-AP - Antbox Networks Limited
+    139659,      # LUCID-AS-AP - LUCIDACLOUD LIMITED
+    139750,      # IDCSERVICESNETINC-AS-AP - IDCServices.net Inc
+    139797,      # HONGKONG-CLOUD-AP - Unit 3110, 31/F
+    139800,      # CLOUDBASE-AS-AP - HONG KONG CLOUDBASE TECHNOLOGY CO., LIMITED
+    139803,      # INLWW-AS-AP - iOVZ Networks Limited
+    139817,      # GIGALINK-AS-AP - HONG KONG GIGALINK NETWORK LIMITED
+    139851,      # CICCL-AS-AP - CHINA INTERNATIONAL CRANCLOUD CO., LIMITED
+    139918,      # CNSERVERSLLC-AS-AP - CNSERVERS LLC
+    140048,      # MCTL-AS-AP - MAX CLOUD TECHNOLOGY LIMITED
+    140212,      # ZUNCLOUDLIMITED-AS-AP - ZUN CLOUD LIMITED
+    140525,      # GIGALINK-AS-AP - HONG KONG GIGALINK NETWORK LIMITED
+    140570,      # HKBCS-AS-AP - Hong Kong Beecloud System Technology Services Limite
+    140634,      # CODECCLOUD-CDN - CodecCloud (HK) Limited
+    140688,      # KAOPU-HK - Kaopu Cloud HK Limited
+    140723,      # EDGECLOUDCAMBODIACOLTD-AS-KH - EDGE CLOUD (CAMBODIA) CO., LTD
+    140733,      # WUJIDUN-AS-AP - Wujidun Network Limited
+    140841,      # LING1-AS-AP - Ling Cloud Corporation Limited
+    140882,      # CCHL-AS-AP - Cloud Computing HK Limited
+    141444,      # WICKED-AS-AP - Wicked Networks Limited
+    141724,      # ITL1-AS-AP - icloud telecom limited
+    141750,      # HCJBTC-AS-AP - PC Cloud
+    141884,      # INL-AS-AP - Immerse Networks Limited
+    142040,      # HKCTNTC-AS-AP - Hong Kong Cloud Times Network Technology Co.,Limit
+    142113,      # ESERVER-AS-AP - eServer
+    142142,      # LING1-AS-AP - Ling Cloud Corporation Limited
+    142259,      # M92HOSTLIMITED-AS-AP - 92host Limited
+    142267,      # HKBEE-AS-AP - Hong Kong Beecloud System Technology Services Limite
+    142286,      # HKIDC-AS-AP - LUOGELANG (FRANCE) LIMITED
+    142403,      # YISUCLOUDLTD-HK - YISU CLOUD LTD
+    142645,      # O2NETWORKLIMITED-AS-AP - O2 Network Limited
+    148996,      # GCNL-AS-AP - GLOBAL COMMUNICATION NETWORK LIMITED
+    149042,      # SITCL-AS-AP - Silicon Cloud Global (US)
+    149045,      # SITCL-AS-AP - Silicon Cloud Global (JP)
+    149457,      # ANGELCLOUDLIMITED-AS-AP - Angel cloud Limited
+    149625,      # NETCLOUD1-AS-AP - NETCLOUD INTERNATIONAL DATA CENTRE LIMITED
+    149641,      # HKXC-AS-AP - XCLOUD TECHNOLOGY LIMITED
+    149651,      # BETTER-AS-AP - Better Cloud Limited
+    149769,      # GCTKL-AS-AP - GA Cloud
+    150337,      # HKPENG-AS-AP - PENG CLOUD TECHNOLOGY LIMITED
+    151206,      # HKCLOUDDATA-AS-AP - HK CLOUD DATA CO., LIMITED
+    151338,      # POLONETWORK-AS-AP - POLONETWORK LIMITED
+    151352,      # LIGHT-AS-AP - Light Moon Networks Limited
+    151487,      # AWESOMECLOUD-AS-AP - Awesomecloud Limited
+    151492,      # ELINK2-AS-AP - E-LINK CLOUD LIMITED
+    151850,      # CTG-AS-AP - CTG Server Limited
+    151970,      # OCTL-AS-AP - OceanBlue Cloud Technology Limited
+    152159,      # HZCL-AS-AP - HK ZUNGWAI CLOUD LIMITED
+    152179,      # GCNL-AS-AP - GLOBAL COMMUNICATION NETWORK LIMITED
+    152187,      # HOMURANETWORKLTD-AS-AP - Homura Network LTD
+    152194,      # CTGSERVERLIMITED-AS-AP - CTG Server Limited
+    152705,      # GCTL-AS-AP - Gcc Cloud Technology Limited
+    152740,      # IXTECH-AS-AP - IXTECH NETWORK LIMITED
+    153457,      # VIEWCLOUD-AS-AP - VIEWCLOUD NETWORK LIMITED
+    153476,      # ALICENETWORKSLTD-AS-AP - Alice Networks LTD
+    153567,      # NUCLEUSCLOUDLLC-AS-AP - Nucleus Cloud LLC
+    153611,      # CLOUDHKLIMITED-AS-AP - CLOUD (HK) LIMITED
+    153686,      # SPEED1-AS-AP - SPEED CLOUD LIMITED
+    153757,      # IMC-AS-AP - IMC NETWORKS LIMITED
+    153867,      # WIDEWIRED-AS-AP - WideWired Networks Limited
+    153974,      # ECG-AS-AP - EDGE CLOUD (THAILAND) COMPANY LIMITED
+    154107,      # DGNL-AS-AP - DigitalLink Global Network Limited
+    154206,      # CDN1COM-AS-AP - CDN1.com Limited
+    154309,      # INTELLIGENT1-AS-AP - Intelligent Cloud Limited
+    154346,      # OCTL-AS-AP - OceanBlue Cloud Technology Limited
+    154432,      # BIL-AS-AP - BeeCloud ICT Limited
+    154493,      # CNOL-AS-AP - Cloud Net Operations Limited
+    154696,      # ANDCLOUDLTD-AS-AP - Andcloud Limited
+    154832,      # HALOCLOUD-AS-HK - HaloCloud Network Limited
+    197196,      # PANSTAR-AS - PANSTAR CLOUD LIMITED
+    199107,      # HUANGSHENGLONG - Nexatrise Hosting Limited
+    201245,      # PZYTA-Network-Limited - PZYTA Network Limited
+    204071,      # AS-DEBEE - DEBEE NETWORK LIMITED
+    204708,      # ANGELCLOUD - ANGEL CLOUD LIMITED
+    205960,      # HDT - HDTIDC LIMITED
+    206675,      # PumpCloud - PAN-LIAN TECHNOLOGY CO., LIMITED
+    209642,      # MEJIRONETWORK - Mejiro Network Limited
+    210110,      # KVMCLOUD-AS - Kvmcloud Network CO., LIMITED
+    212921,      # HDT - HDTIDC LIMITED
+    214053,      # CLUSTERFAST-AS - ClusterFast Network Limited
+    214134,      # Hakimi - Hakimi Network Limited
+    214454,      # PoloNetwork-Limited-AS - PoloNetwork Limited
+    215958,      # FENGYE - FENGYE NETWORKS LIMITED
+    216101,      # HOMURA-AS-RIPE - Homura Network Limited
+    218130,      # orientalvps - HONG KONG ORIENTAL SCIENCE AND TECHNOLOGY CO., LIMIT
+    218304,      # NEWCLOUD-NET - HONG KONG NEW CLOUD NETWORK TECHNOLOGY CO., LIMITED
+    218692,      # KIDC - KIDC LIMITED
+    218694,      # TermRatNetworkLimited - TermRat Network Limited
+    218785,      # TC-DATACENTER - TC DATACENTER LIMITED
+    218915,      # OPENSKY - OpenSky Cloud Infrastructure Limited
+    218955,      # Zenlayer - LOCKLINE NETWORKS LIMITED
+    218968,      # NOVALINK - NovaLink Integrated Networks Limited
+    219263,      # ALLCLOUD - ALLCLOUD LIMITED
+    219499,      # ZUNGWAICLOUD - HK ZUNGWAI CLOUD LIMITED
 )
 # 大云 ASN：保留 UA 自报家门豁免——GEO/SEO 爬虫实证全在此（GPTBot/ChatGPT-User/
 # OAI-SearchBot 全 Azure、Amazonbot/PerplexityBot 全 AWS、AhrefsBot 主力 OVH、
