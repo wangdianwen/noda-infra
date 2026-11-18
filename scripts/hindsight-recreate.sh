@@ -17,6 +17,10 @@
 #   hindsight-recreate.sh rebuild  # 删旧容器并按固化定义重建（卷保留）
 #
 # 服务地址 http://localhost:8888（API/MCP），UI http://localhost:9999。
+# 端口绑定（2026-11-19 修回归）：API 8888 必须绑 0.0.0.0——r4s 的 hermes 以
+# local_external 模式直连 http://192.168.100.133:8888；11-13 rebuild 版误绑
+# 127.0.0.1 导致 hermes 记忆静默断链（Connection refused）。UI 9999 无鉴权，
+# 继续仅本机。
 #
 # --shm-size 2g（2026-10-25）：PG 并行查询的动态共享内存段放在 /dev/shm，
 # Docker 默认仅 64M；实测 533MB 段扩容失败报 DiskFullError「No space left
@@ -86,7 +90,7 @@ docker rm -f "$NAME" 2>/dev/null || true
 docker run -d --name "$NAME" \
   --restart unless-stopped \
   --shm-size 2g \
-  -p 127.0.0.1:8888:8888 -p 127.0.0.1:9999:9999 \
+  -p 8888:8888 -p 127.0.0.1:9999:9999 \
   -v "$VOLUME":/home/hindsight/.pg0 \
   "${LLM_ARGS[@]}" \
   -e HINDSIGHT_API_RERANKER_MAX_CANDIDATES=100 \
