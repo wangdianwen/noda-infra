@@ -215,12 +215,16 @@ jobs_status() {   # 容器内 3016 状态端点（noda-jobs 同镜像，wget 已
     docker exec "$JOBS_CONTAINER" wget -qO- -T 20 "$STATUS_URL" 2>/dev/null
 }
 
-state_of() {      # $1=job $2=pre_startedAt；输出 RUNNING|WAIT|DONE<TAB>status
-    python3 - "$1" "$2" <<'PYEOF'
-import json, sys
-job, pre = sys.argv[1], sys.argv[2]
+state_of() {      # $1=job $2=pre_startedAt；stdin 收 status JSON；输出 RUNNING|WAIT|DONE<TAB>status
+    # ⚠️ 数据走 env 而非 `python3 -` stdin——heredoc 程序体会占用/串接 stdin，
+    # json.load(sys.stdin) 在管道数据上必然 EOF/语法错（2026-11-19 两轮「解析
+    # lastExecution 失败」判例实证：printf 管道与 <<'PYEOF' 并存时 python 读到
+    # 的是两段拼接流）。`-c` + env 是唯一稳态形态。
+    STATUS_JSON="$(cat)" JOB="$1" PRE="$2" python3 -c '
+import json, os
+job, pre = os.environ["JOB"], os.environ["PRE"]
 try:
-    d = json.load(sys.stdin)
+    d = json.loads(os.environ["STATUS_JSON"])
 except Exception:
     print("ERR"); raise SystemExit
 for j in d.get("jobs", []):
@@ -233,7 +237,7 @@ for j in d.get("jobs", []):
             print("DONE\t%s" % st); raise SystemExit
         print("WAIT"); raise SystemExit
 print("MISSING")
-PYEOF
+'
 }
 
 if [ "$DRYRUN" = 1 ]; then
@@ -261,16 +265,15 @@ pre_json_get() {
 }
 PRE_JSON=$(pre_json_get) || fail "noda-jobs 状态端点不可达/非 JSON（重试 3 次；$JOBS_CONTAINER ${STATUS_URL}）"
 echo "$PRE_JSON" | grep -q "\"$JOB\"" || fail "$JOB 未注册（apps T3 未部署?）"
-PRE=$(printf '%s' "$PRE_JSON" | python3 - "$JOB" <<'PYEOF'
-import json, sys
-d = json.load(sys.stdin)
+PRE=$(PRE_JSON="$(printf '%s' "$PRE_JSON")" JOB="$JOB" python3 -c '
+import json, os
+d = json.loads(os.environ["PRE_JSON"])
 for j in d.get("jobs", []):
-    if j.get("name") == sys.argv[1]:
+    if j.get("name") == os.environ["JOB"]:
         le = j.get("lastExecution") or {}
         print(le.get("startedAt") or "-")
         break
-PYEOF
-) || fail "解析 lastExecution 失败"
+') || fail "解析 lastExecution 失败"
 
 TRIGGER_OUT="/tmp/overture-trigger-$MONTH.json"
 docker exec -d "$JOBS_CONTAINER" wget -qO "$TRIGGER_OUT" -T 3600 --post-data='' "$TRIGGER_URL" \
