@@ -75,6 +75,12 @@ while IFS= read -r arg; do LLM_ARGS+=("$arg"); done < <(llm_args)
 [ "${#LLM_ARGS[@]}" -gt 0 ] || { echo "LLM 参数为空：缺 $LLM_ENV_FILE 且 Doppler 密钥不可读，中止"; exit 1; }
 echo "LLM 配置来源：$([ -f "$LLM_ENV_FILE" ] && echo "$LLM_ENV_FILE" || echo 'Doppler noda/prd (z.ai)')"
 
+# 2026-11-13 修复 recall 超时：本地 cross-encoder 在 2 vCPU 上对默认 300 候选全量
+# 打分 avg 76s（max 238s，80% 超 30s），被 ZCode MCP 默认 30s 超时杀掉——表象即
+# 「hindsight 总是不可用」。降候选数+桶批处理（官方 36-54% 提速）+截断候选长度。
+# 同时不再硬编码 RETAIN_MAX_COMPLETION_TOKENS：glm-5.3-flash 推理 token 计入输出
+# 预算，4000 不够、12000 才稳（env.zai 已配），此前脚本值会覆盖 env 文件导致
+# retain 反复报 runaway reply。各 env 文件自带该值（env.zai=12000/env.deepseek=4000）。
 docker rm -f "$NAME" 2>/dev/null || true
 # 卷不删——记忆全在里面；确要清空：docker volume rm hindsight-data（不可逆）
 docker run -d --name "$NAME" \
@@ -83,7 +89,9 @@ docker run -d --name "$NAME" \
   -p 127.0.0.1:8888:8888 -p 127.0.0.1:9999:9999 \
   -v "$VOLUME":/home/hindsight/.pg0 \
   "${LLM_ARGS[@]}" \
-  -e HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS=4000 \
+  -e HINDSIGHT_API_RERANKER_MAX_CANDIDATES=100 \
+  -e HINDSIGHT_API_RERANKER_LOCAL_BUCKET_BATCHING=true \
+  -e HINDSIGHT_API_RERANKER_MAX_TOKENS_PER_CANDIDATE=512 \
   -e HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION=false \
   -e HINDSIGHT_API_REFLECT_LLM_REASONING_EFFORT=low \
   -e HINDSIGHT_API_WORKER_ID=local-worker-1 \
