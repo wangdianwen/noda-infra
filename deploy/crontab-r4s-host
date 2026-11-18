@@ -33,7 +33,6 @@
 # noda-ops:3017 静态心跳（admin/cronjobs 页 noda-ops-cron service 可见）；
 # wrapper 存档 deploy/hb（运行时 /mnt/mmc1-4/System/Scripts/hb）。
 # openclash / hermes 看门狗为个人/私有职责，不接。
-#
 # 安装：scp 本文件到 r4s 后执行 `crontab deploy/crontab-r4s-host`
 # 注意：iStoreOS 无 logrotate，日志收敛用 find + truncate；BusyBox crond
 
@@ -121,43 +120,15 @@
 #       冷页 + postgres + clash/hermes；Linux 不主动换回），满载时新换页需求=OOM/
 #       抖动——实测拖慢 docker 建容器 191s（#661 诊断）与 weed 轮转 4-6 倍波动。
 #       动作=swapoff+swapon 强制冷页回内存；安全阈值硬性：MemAvailable > SwapUsed
-#       +512MB 且 1min 负载 <2，不满足 TG 告警跳过（人肉窗口 docker restart
-#       immich_server 直接丢弃其 ~470MB 匿名页最快）。排周日 05:30 避开 05:10
-#       快照（同盘 IO）与 03:30 百度上传。脚本
-#       r4s:/mnt/mmc1-4/System/Scripts/swap-debt-guard.sh（2026-10-07 部署并试运行验证）=====
-30 5 * * 0 /mnt/mmc1-4/System/Scripts/swap-debt-guard.sh >> /var/log/noda-swap-guard.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:swap-debt-guard '30 5 * * 0' || /mnt/mmc1-4/System/Scripts/hb fail r4s:swap-debt-guard '30 5 * * 0'
 
-# ===== weed 定时 vacuum（每天 02:00）：master garbageThreshold 0.6→0.99 关闭自动
-#       触发后（2026-10-07 #680：snagme 50k 对象时代每次全量发布=42k 垃圾→发布结束
-#       必自动 vacuum→单盘 util 96%/iowait 89%），vacuum 移到凌晨窗口手动执行。
-#       脚本三重守卫：tmp-s3-relay 存在=发布中跳过 / load≥4 跳过 / avail<500MB
 #       跳过；TG 汇报垃圾回收量。02:00 取位理由：避开夜发尾巴（#679 00:56 仍在
-#       发布）与 03:30 百度上传。⚠️ master 阈值改动须重启 weed 容器生效——择低峰
-#       窗口，发布中绝不可重启。脚本 r4s:/mnt/mmc1-4/System/Scripts/
 
-# ===== IP 段黑名单（2026-10-18 通用化重写，取代搜狗专用版 sogou-ban.py）=====
-#       自动发现 spam 网段（/24 行为指纹 6h 滚动窗 + 单 IP 洪水 /32 + 机密探测路径攻击惯犯）
-#       → CF WAF 封禁（普通 7 天 / 攻击型 30 天）→ 静默满自动解封
-#       欢迎名单：真 Googlebot(UA+段双验证)/自报身份爬虫/站主 IP；规则 ref=ip-range-blacklist；全 API 操作
 
-# ===== misban-watch 误封哨兵+admin 安全报表（2026-10-26，UI 内嵌 admin /security 页,数据端点 /security-report/）=====
 # D1 事件流误封检测（需 CF_REPORT_API_TOKEN 加进 /etc/noda/ip-ban.env，Zone→Analytics→Read）
 # D2 源站心跳（零权限）：Googlebot/Bingbot 官方段源站消失即 TG——不等 Google 发邮件
 */10 * * * * python3 /mnt/mmc1-4/System/Scripts/misban-watch.py >> /var/log/noda-misban-watch.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:misban-watch '*/10 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:misban-watch '*/10 * * * *'
 
-# ===== immich 任务队列解除暂停（live 补录，2026-10-18 对账时发现存量缺失）=====
-0 21 * * * docker exec immich_redis redis-cli eval "for i,q in ipairs({\"thumbnailGeneration\",\"videoConversion\",\"smartSearch\",\"faceDetection\",\"duplicateDetection\"}) do redis.call(\"HDEL\", \"immich_bull:\"..q..\":meta\", \"paused\") while redis.call(\"LLEN\", \"immich_bull:\"..q..\":paused\") > 0 do redis.call(\"LMOVE\", \"immich_bull:\"..q..\":paused\", \"immich_bull:\"..q..\":wait\", \"LEFT\", \"RIGHT\") end end" 0
-20 5 * * * sh /mnt/mmc1-4/System/Scripts/b2-quota-tg-guard.sh && /mnt/mmc1-4/System/Scripts/hb ok r4s:b2-quota-tg-guard '20 5 * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:b2-quota-tg-guard '20 5 * * *'
-# （已移除 2026-10-21）pd-watchdog 一次性看护：脚本已自删、行残留每天 144 次静默失败
 
-# ===== 容器镜像版本巡检（每周日 06:30；2026-10-27 emSign 证书事件新增）=====
-#       pull 对比 RepoDigests 报告可更新容器（默认只报告不动容器，白名单机制见
-#       脚本头）+ cloudflared 运行版本 vs GitHub latest 专项（noda-ops 容器内
-#       二进制的版本新鲜度此前无任何机制跟踪）。脚本
-#       /mnt/mmc1-4/System/Scripts/container-update-check.sh
-#       （存档 deploy/container-update-check.sh，Mac mini 周日 06:00 同款跑 mac 角色）
-30 6 * * 0 /mnt/mmc1-4/System/Scripts/container-update-check.sh >> /var/log/noda-container-update.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:container-update-check '30 6 * * 0' || /mnt/mmc1-4/System/Scripts/hb fail r4s:container-update-check '30 6 * * 0'
-# ===== ip-audit 判据式 bot 判定（2026-10-31 分级自动处置，shadow 期（切实时去掉 IP_AUDIT_SHADOW=1））=====
 17 * * * * IP_AUDIT_SHADOW=1 python3 /mnt/mmc1-4/System/Scripts/ip-audit.py >> /var/log/noda-ip-audit.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:ip-audit '17 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:ip-audit '17 * * * *'
 
 # ===== Overture NZ places 月度链（每月 1 号 06:00，2026-11-18 noda-apps #392 T6）=====
@@ -169,3 +140,34 @@
 #       （存档 deploy/overture/；⚠ 假定本机时区=NZ，安装前 `date` 核对，非 NZ 需
 #        换算 NZST=UTC+12 / NZDT=UTC+13；前置=apps 侧 crawl-overture job 已部署）
 0 6 1 * * /mnt/mmc1-4/System/Scripts/overture/overture-monthly.sh >> /var/log/noda-overture-monthly.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:overture-monthly '0 6 1 * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:overture-monthly '0 6 1 * *'
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# 2026-11-19 hermes gateway watchdog：TG 无响应第三次事故（gateway 自杀重启后
+# self-restart 进程挂死于 procd 之外）后新增；连续 3 轮异常即自动修复并 TG 通报
+*/5 * * * * /mnt/mmc1-4/System/Scripts/hermes-watchdog.sh >> /var/log/noda-hermes-watchdog.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:hermes-watchdog '*/5 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:hermes-watchdog '*/5 * * * *'
