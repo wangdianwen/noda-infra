@@ -221,10 +221,26 @@ def test_dc_expression_hk_batch_in_abuse_branch_and_length_guard(ip_ban):
     上限——Free 版 5 条规则配额已满，机房 ASN 只能挤单条 DC 规则，越限即死"""
     expr = ip_ban.build_dc_expression(ip_ban.parse_cidrs(""))
     parts = expr.split(") or (")
-    assert len(parts) == 2                          # 无 persist 名单=恰好两支
+    assert len(parts) == 3                          # 无 persist 名单=恰好三支(滥用/大云/死站)
     abuse = parts[0]
     assert "218785" in abuse and "132839" in abuse
     assert len(expr) < 4096
+
+
+def test_dc_expression_dead_hosts_clause(ip_ban):
+    """死站收口第三分支（2026-11-19 攻击判例）：liuyao/snagme 整 host block、
+    无豁免子句——挑战盲区入口（geo-challenge 只盖 admin 非 NZ + apex/www
+    非 NZ/AU/TW）直接在 CF 边缘断掉，不再 410 到源站；nearby 是 301 桥
+    （GSC 积压衰减用，11 月底退役）不得提前入列"""
+    expr = ip_ban.build_dc_expression(ip_ban.parse_cidrs(""))
+    dead = expr.split(") or (")[2]
+    assert 'http.host in {"liuyao.noda.co.nz" "snagme.noda.co.nz"}' in dead
+    assert "cf.client.bot" not in dead               # 无豁免：验证爬虫也 403
+    assert "asnum" not in dead and "user_agent" not in dead
+    assert "nearby.noda.co.nz" not in expr           # 301 桥保留到 11 月底
+    # 与 persist 名单合并正交（两个合并先例共存）
+    e2 = ip_ban.build_dc_expression([], persist_cidrs=["203.0.113.9/32"])
+    assert "liuyao.noda.co.nz" in e2 and "ip.src in {203.0.113.9/32" in e2
 
 
 # ---- ②c 2026-10-25 坚持不懈来访者挑战网（用户三原则 #3）----
@@ -748,7 +764,7 @@ def test_dc_expression_exempts_selfid_ai_crawlers(ip_ban):
     官方段/站主豁免保留"""
     expr = ip_ban.build_dc_expression(ip_ban.parse_cidrs(""))
     parts = expr.split(") or (")
-    assert len(parts) == 2                          # 无 persist 名单=恰好两支
+    assert len(parts) == 3                          # 无 persist 名单=恰好三支(滥用/大云/死站)
     abuse, cloud = parts[0], parts[1]
     # 滥用分支:6 个滥用 ASN、零 UA 豁免、豁免三层保留
     assert "asnum in {18779" in abuse and "212238" in abuse
@@ -775,15 +791,17 @@ def test_dc_expression_exempts_selfid_ai_crawlers(ip_ban):
 
 
 def test_abuse_and_cloud_asns_partition(ip_ban):
-    """234+13 拆分覆盖原 19 个+10-26 扩容 11 个+10-26 终验补录 19148+
-    11-19 HK 机房批 216（用户裁定），无交集无遗漏"""
-    assert len(ip_ban.ABUSE_ASNS) == 234 and len(ip_ban.CLOUD_ASNS) == 13
+    """235+13 拆分覆盖原 19 个+10-26 扩容 11 个+10-26 终验补录 19148+
+    11-19 HK 机房批 216（用户裁定）+11-19 attack-urls 判例批 48090，无交集无遗漏"""
+    assert len(ip_ban.ABUSE_ASNS) == 235 and len(ip_ban.CLOUD_ASNS) == 13
     assert set(ip_ban.ABUSE_ASNS) & set(ip_ban.CLOUD_ASNS) == set()
     assert set(ip_ban.DATACENTER_ASNS) == set(ip_ban.ABUSE_ASNS) | set(ip_ban.CLOUD_ASNS)
     # 10-26 批回归锁:GA 溯源定案的 11 家不得缺失,大云 13 家不得误挪
     for a in (60068, 9009, 262287, 11798, 203020, 136557, 30058, 7203,
               60781, 51167, 199524, 19148):
         assert a in ip_ban.ABUSE_ASNS
+    # 11-19 attack-urls 判例批:盲区入口直达源站的 195.178.110.94 归属段
+    assert 48090 in ip_ban.ABUSE_ASNS
     for a in (16509, 14618, 396982, 8075, 24940):
         assert a in ip_ban.CLOUD_ASNS
 

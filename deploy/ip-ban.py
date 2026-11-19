@@ -475,6 +475,15 @@ ABUSE_ASNS = (
     218968,      # NOVALINK - NovaLink Integrated Networks Limited
     219263,      # ALLCLOUD - ALLCLOUD LIMITED
     219499,      # ZUNGWAICLOUD - HK ZUNGWAI CLOUD LIMITED
+
+    # ---- 2026-11-19 attack-urls 判例批（CF 挑战盲区入口直达源站实证）----
+    # 判例：195.178.110.94（AS48090 DMZHOST/TECHOFF SRV LIMITED，RIPE BG 段
+    # GB 注册）5min 窗 306 req 洪水 + 54 条攻击 URL（/.git/config、/.circleci/
+    # .azure-pipelines、gcloud access_tokens.db 等密探路径）→ /32 封 30 天。
+    # 攻击窗内 CF 事件 0 条（noda zone 其余 IP 有 200 条 challenge/block 事件）
+    # = 未走 apex/www 的 geo-challenge，经无挑战 proxied 入口直达源站——入口
+    # 收口见 DEAD_HOSTS 子句（2026-11-19 同日落地）。
+    48090,          # DMZHOST - TECHOFF SRV LIMITED（195.178.110.0/24）
 )
 # 大云 ASN：保留 UA 自报家门豁免——GEO/SEO 爬虫实证全在此（GPTBot/ChatGPT-User/
 # OAI-SearchBot 全 Azure、Amazonbot/PerplexityBot 全 AWS、AhrefsBot 主力 OVH、
@@ -987,6 +996,16 @@ HOTLINK_CLAUSE = (
         'lower(http.referer) contains "%s"' % s for s in HOTLINK_REFERER_ALLOW)))
 HOTLINK_ZONES = ("noda.co.nz",)   # cdn host 只在 noda zone，shuotong 不建（不占配额）
 
+# ---- 死站收口（2026-11-19 攻击判例：挑战盲区入口直接 block，不再 410 到源站）----
+# geo-challenge 只盖 admin 非 NZ + apex/www 非 NZ/AU/TW；liuyao/snagme 是已退役
+# proxied host（源站 410），实测零挑战覆盖——195.178.110.94 攻击（见 ABUSE_ASNS
+# 判例批）正是经此类入口打穿到源站（CF 事件 0 条实锤）。并入 dc 规则 block
+# （Free 版 5 条配额占满，复用 hotlink/persist 合并先例）；无豁免子句——死站
+# 不存在合法流量，验证爬虫也该吃 403 而不是 410（打更狠的「此路永久不通」）。
+# nearby.noda.co.nz 是 301 桥（GSC 18k 发现积压自然衰减用，llm-context 定到
+# 2026-11 月底退役）——退役当日把 host 追加进本元组即完成收口，勿提前。
+DEAD_HOSTS = ("liuyao.noda.co.nz", "snagme.noda.co.nz")
+
 
 def build_dc_expression(allowed=None, persist_cidrs=None):
     """机房 ASN 常驻封禁规则表达式（纯函数，单测直接打）。2026-10-25 起两分支：
@@ -995,8 +1014,10 @@ def build_dc_expression(allowed=None, persist_cidrs=None):
       流量，官方爬虫清单 0 命中——伪造 bot 字样也 403（堵 UA 伪造绕过 block 的洞）。
     - 大云分支（CLOUD_ASNS，block 且保留 UA 自报家门豁免）：GEO/SEO 爬虫实证全在
       此（cf.client.bot 不覆盖 AI 爬虫，靠 UA 豁免活——守规矩才敢自报家门）。
+    - 死站分支（DEAD_HOSTS，2026-11-19）：已退役 proxied host 整 host block，
+      无豁免——挑战盲区入口收口（攻击判例见常量注释）。
     - 两分支共同豁免：cf.client.bot（IP 级验证不可伪造，Googlebot/Bingbot 稳保）
-      + 66.249.64.0/19 兜底 + 站主 IP + ALLOW_CIDRS。
+      + 66.249.64.0/19 兜底 + 站主 IP + ALLOW_CIDRS（死站分支不参与）。
 
     persist_cidrs 非空时 OR 进坚持不懈来访者子句（继承 dc action=block）：
     Free 版自定义规则上限 5 条，无第 6 条配额（2026-10-25 实测
@@ -1013,6 +1034,11 @@ def build_dc_expression(allowed=None, persist_cidrs=None):
     cloud = ("(ip.src.asnum in {%s}) and not cf.client.bot and not %s and not %s"
              % (" ".join(str(a) for a in CLOUD_ASNS), ua, ip_ex))
     dc = "(%s) or (%s)" % (abuse, cloud)
+    if DEAD_HOSTS:
+        # 死站收口第三分支（2026-11-19 判例）：无豁免——死站不存在合法流量，
+        # block 全员（含验证爬虫），省掉源站 410 的每请求成本
+        dc += ' or (http.host in {%s})' % " ".join(
+            '"%s"' % h for h in DEAD_HOSTS)
     if not persist_cidrs:
         return dc
     owners = " ".join(sorted(OWNER_IPS))
@@ -1033,7 +1059,7 @@ def apply_dc_rule(rules, expr):
             and rule.get("action") == DC_ACTION and rule.get("enabled", True)):
         return rules, False
     created = rule is None
-    desc = "%s auto (%d ASNs + cdn hotlink; managed by ip-ban.py)" % (
+    desc = "%s auto (%d ASNs + dead-hosts; managed by ip-ban.py)" % (
         DC_MARKER, len(DATACENTER_ASNS))
     if rule:
         rule["expression"] = expr
