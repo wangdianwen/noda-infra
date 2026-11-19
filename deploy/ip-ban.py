@@ -1000,8 +1000,14 @@ HOTLINK_ZONES = ("noda.co.nz",)   # cdn host 只在 noda zone，shuotong 不建�
 # geo-challenge 只盖 admin 非 NZ + apex/www 非 NZ/AU/TW；liuyao/snagme 是已退役
 # proxied host（源站 410），实测零挑战覆盖——195.178.110.94 攻击（见 ABUSE_ASNS
 # 判例批）正是经此类入口打穿到源站（CF 事件 0 条实锤）。并入 dc 规则 block
-# （Free 版 5 条配额占满，复用 hotlink/persist 合并先例）；无豁免子句——死站
-# 不存在合法流量，验证爬虫也该吃 403 而不是 410（打更狠的「此路永久不通」）。
+# （Free 版 5 条配额占满，复用 hotlink/persist 合并先例）。
+# 豁免修正（2026-11-19 misban-watch 实锤，上线 ~1 分钟内告警）：初版「无豁免——
+# 验证爬虫也该吃 403」的判据是错的——66.249.72.5/.6 真 Googlebot 上线即被拦，
+# 它爬 snagme /wiki/* 三语旧路径正是 GSC 18k 积压衰减机制本体（爬到 410 才弃，
+# 源站语义不变），403 会重演 2026-10「Blocked due to access forbidden (403)」
+# 索引事故。故死站分支照 abuse 分支豁免集（cf.client.bot + 官方段/站主 IP）放行
+# 验证爬虫，非验证扫描器流量照封。教训：retired host 的「无合法流量」不含官方
+# 爬虫——衰减期爬虫流量是合法流量。
 # nearby.noda.co.nz 是 301 桥（GSC 18k 发现积压自然衰减用，llm-context 定到
 # 2026-11 月底退役）——退役当日把 host 追加进本元组即完成收口，勿提前。
 DEAD_HOSTS = ("liuyao.noda.co.nz", "snagme.noda.co.nz")
@@ -1035,10 +1041,11 @@ def build_dc_expression(allowed=None, persist_cidrs=None):
              % (" ".join(str(a) for a in CLOUD_ASNS), ua, ip_ex))
     dc = "(%s) or (%s)" % (abuse, cloud)
     if DEAD_HOSTS:
-        # 死站收口第三分支（2026-11-19 判例）：无豁免——死站不存在合法流量，
-        # block 全员（含验证爬虫），省掉源站 410 的每请求成本
-        dc += ' or (http.host in {%s})' % " ".join(
-            '"%s"' % h for h in DEAD_HOSTS)
+        # 死站收口第三分支（2026-11-19 判例）：豁免集照 abuse 分支（cf.client.bot
+        # + 官方段/站主 IP）——GSC 积压衰减靠官方爬虫爬到 410（misban-watch 实锤
+        # 修正，见 DEAD_HOSTS 常量注释），非验证扫描器流量照封
+        dc += (' or (http.host in {%s} and not cf.client.bot and not %s)'
+               % (" ".join('"%s"' % h for h in DEAD_HOSTS), ip_ex))
     if not persist_cidrs:
         return dc
     owners = " ".join(sorted(OWNER_IPS))

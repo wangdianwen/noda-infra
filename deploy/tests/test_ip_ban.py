@@ -228,14 +228,17 @@ def test_dc_expression_hk_batch_in_abuse_branch_and_length_guard(ip_ban):
 
 
 def test_dc_expression_dead_hosts_clause(ip_ban):
-    """死站收口第三分支（2026-11-19 攻击判例）：liuyao/snagme 整 host block、
-    无豁免子句——挑战盲区入口（geo-challenge 只盖 admin 非 NZ + apex/www
-    非 NZ/AU/TW）直接在 CF 边缘断掉，不再 410 到源站；nearby 是 301 桥
-    （GSC 积压衰减用，11 月底退役）不得提前入列"""
+    """死站收口第三分支（2026-11-19 攻击判例）：liuyao/snagme 整 host block——
+    挑战盲区入口（geo-challenge 只盖 admin 非 NZ + apex/www 非 NZ/AU/TW）
+    直接在 CF 边缘断掉，不再 410 到源站；豁免集照 abuse 分支（cf.client.bot +
+    官方段/站主）——GSC 18k 积压衰减靠官方爬虫爬到 410（misban-watch 实锤：
+    66.249.72.5/.6 真 Googlebot 爬 snagme /wiki/* 被无豁免初版拦截），403 会
+    重演 2026-10 403 索引事故；nearby 是 301 桥（11 月底退役）不得提前入列"""
     expr = ip_ban.build_dc_expression(ip_ban.parse_cidrs(""))
     dead = expr.split(") or (")[2]
     assert 'http.host in {"liuyao.noda.co.nz" "snagme.noda.co.nz"}' in dead
-    assert "cf.client.bot" not in dead               # 无豁免：验证爬虫也 403
+    assert "cf.client.bot" in dead and "66.249.64.0/19" in dead \
+        and "47.72.103.104" in dead                  # 豁免三层保留（衰减信号=410）
     assert "asnum" not in dead and "user_agent" not in dead
     assert "nearby.noda.co.nz" not in expr           # 301 桥保留到 11 月底
     # 与 persist 名单合并正交（两个合并先例共存）
