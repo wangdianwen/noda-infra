@@ -171,3 +171,8 @@
 # 2026-11-19 hermes gateway watchdog：TG 无响应第三次事故（gateway 自杀重启后
 # self-restart 进程挂死于 procd 之外）后新增；连续 3 轮异常即自动修复并 TG 通报
 */5 * * * * /mnt/mmc1-4/System/Scripts/hermes-watchdog.sh >> /var/log/noda-hermes-watchdog.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:hermes-watchdog '*/5 * * * *' || /mnt/mmc1-4/System/Scripts/hb fail r4s:hermes-watchdog '*/5 * * * *'
+
+# 2026-11-22 #19 geo-challenge observe→enforce 定时翻转：observe 自 11-17 满
+# 一周（11-24 17:30）后自动翻 GEO_RULE_MODE=enforce；守卫=日志零漂移才翻
+# （geo-enforce-flip.sh 内建，marker 防年度重放；回滚=删 env 行）
+30 17 24 11 * /mnt/mmc1-4/System/Scripts/geo-enforce-flip.sh >> /var/log/noda-ip-ban.log 2>&1
