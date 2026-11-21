@@ -33,6 +33,13 @@ TG 告警（分 zone 期望集，同漂移指纹去重，解除报恢复）。
 ——www.noda.co.nz 11-17 补入（原表达式只 match apex，www 完全无挑战=解挑战旁路；
 class.noda.co.nz 已下线不补）。
 
+**#19 收编自愈（11-22 记档）**：`apply_geo_rule` 每轮对账 canonical（上面表达式
+逐字符）；observe 模式（默认）漂移只 TG 告警零回写，state `geo_guard` 留痕（11-17
+至 11-22 零漂移）。**enforce 翻转自动化**：`geo-enforce-flip.sh`（crontab 年度
+11-24 17:30）守卫「日志零 geo-rule 漂移/缺失」才写 `GEO_RULE_MODE=enforce` 入
+`/etc/noda/ip-ban.env`（marker `/etc/noda/geo-enforce-flipped` 防重放）；翻后漂移
+自动拉回 canonical、缺失自动重建（继承 hotlink 自愈语义）。回滚=删 env 行。
+
 ### shuotong.wang（3 条）
 
 | # | 描述 | action | 维护方 |
