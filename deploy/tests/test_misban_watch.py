@@ -220,7 +220,82 @@ def test_alert_recovery_removes_key(mw, ipb):
     assert alerts and state["alerted"] == ["canary:google"]
 
 
+def test_alert_cooldown_suppresses_and_resumes(mw, ipb):
+    """2026-11-23 判例：TG 按 cool_key 冷却降噪——窗口内只发首条 TG，jsonl
+    全量记账（suppressed 标记）；窗过期再触发时附静默计数并清零。
+    判例原型：SERanking 30min 重试 robots.txt 连轰 D3；::f4/fa 13min 两条实锤"""
+    state = {}
+    alerts = []
+    ck = "misban-d3:46.4.28.29|firewallCustom"
+    mw.alert(ipb, state, "k1", "first", alerts, cool_key=ck, cool_h=24)
+    mw.alert(ipb, state, "k2", "second", alerts, cool_key=ck, cool_h=24)
+    mw.alert(ipb, state, "k3", "third", alerts, cool_key=ck, cool_h=24)
+    assert [r["msg"] for r in alerts] == ["first", "second", "third"]
+    lines = [json.loads(l) for l in open(mw.ALERTS_JSONL)]
+    assert [r["msg"] for r in lines] == ["first", "second", "third"]
+    assert lines[1].get("suppressed") and lines[2].get("suppressed")
+    assert state["cool_suppressed"][ck] == 2
+    # 冷却窗过期（时钟回拨模拟）
+    state["cooldown"][ck] -= 25 * 3600
+    mw.alert(ipb, state, "k4", "fourth", alerts, cool_key=ck, cool_h=24)
+    assert "冷却窗内另有 2 次" in alerts[3]["msg"]
+    assert ck not in state["cool_suppressed"]
+    # 冷却位重置后再次触发 → 重新进入静默
+    mw.alert(ipb, state, "k5", "fifth", alerts, cool_key=ck, cool_h=24)
+    assert alerts[4].get("suppressed")
+
+
+def test_prune_cooldown_expired(mw):
+    """超 COOL_MAX_AGE 的冷却位清掉，静默计数随位清，孤儿计数不残留"""
+    now = 1_800_000_000
+    state = {"cooldown": {"old": now - mw.COOL_MAX_AGE - 10,
+                          "fresh": now - 60},
+             "cool_suppressed": {"old": 3, "fresh": 1, "ghost": 9}}
+    mw.prune_cooldown(state, now)
+    assert state["cooldown"] == {"fresh": now - 60}
+    assert state["cool_suppressed"] == {"fresh": 1}
+
+
 # ---- build_report ----
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._p = payload
+
+    def read(self):
+        return json.dumps(self._p).encode()
+
+
+def test_fetch_events_lt_pagination_and_dedup(mw, monkeypatch):
+    """2026-11-23 判例：datetime_lt 排他翻页（页边界必然前移，虚增读数不再
+    原地死循环烧尽 EVENT_MAX）+ 行级去重（同 (ts,ip,path,action,source) 只计
+    一次）——SERanking 4 事件只报 2 的漏报根因"""
+    event = {"action": "block", "source": "firewallCustom",
+             "clientRequestPath": "/a", "userAgent": "ua",
+             "clientRequestHTTPHost": "noda.co.nz"}
+    page1 = [dict(event, datetime="2026-11-23T10:00:00Z", clientIP="1.2.3.4")
+             for _ in range(mw.EVENT_PAGE_LIMIT)]     # 50 条同键重复行=虚增读数
+    page2 = [dict(event, datetime="2026-11-23T09:00:00Z", clientIP="5.6.7.8"),
+             dict(event, datetime="2026-11-23T08:00:00Z", clientIP="9.9.9.9")]
+    seen_vars = []
+
+    def fake_urlopen(req, timeout=30):
+        body = json.loads(req.data.decode())
+        seen_vars.append(body["variables"])
+        payload = {"data": {"viewer": {"zones": [{
+            "firewallEventsAdaptive":
+                page1 if len(seen_vars) == 1 else page2}]}}}
+        return _FakeResp(payload)
+
+    monkeypatch.setattr(mw.urllib.request, "urlopen", fake_urlopen)
+    out = mw.fetch_events("tok", "zone", "2026-11-23T00:00:00Z")
+    assert len(out) == 3                              # 50 重复行收敛为 1 条
+    assert [e["clientIP"] for e in out].count("1.2.3.4") == 1
+    # 首页 lt=当前时刻（非 since）；翻页 lt=上页最旧 ts（排他前进）；geq 恒为 since
+    assert seen_vars[0]["lt"] != "2026-11-23T00:00:00Z"
+    assert seen_vars[1]["lt"] == "2026-11-23T10:00:00Z"
+    assert seen_vars[1]["since"] == "2026-11-23T00:00:00Z"
+
 
 def test_build_report_shape(mw, ipb):
     now = 1_800_000_000

@@ -239,6 +239,9 @@ def test_dc_expression_dead_hosts_clause(ip_ban):
     assert 'http.host in {"liuyao.noda.co.nz" "snagme.noda.co.nz"}' in dead
     assert "cf.client.bot" in dead and "66.249.64.0/19" in dead \
         and "47.72.103.104" in dead                  # 豁免三层保留（衰减信号=410）
+    # 2026-11-23 判例：豁免集镜像 EXTRA_CRAWLER 三段——f0bc802 只补 IPv4 /19，
+    # 2001:4860:7:80b::f4/fa（IPv6 Read Aloud 族）在 snagme wiki 仍被 block 复发
+    assert "209.85.128.0/17" in dead and "2001:4860:7::/48" in dead
     assert "asnum" not in dead and "user_agent" not in dead
     assert "nearby.noda.co.nz" not in expr           # 301 桥保留到 11 月底
     # 与 persist 名单合并正交（两个合并先例共存）
@@ -1404,11 +1407,14 @@ def test_trip_bans_judgments_unchanged_with_referer_events(ip_ban):
 #   GET zones/{zone}/rulesets/phases/http_request_firewall_custom/entrypoint
 
 GEO_LIVE_EXPR = ('(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ") '
-                 'or ((not cf.client.bot) and (not ip.src in {66.249.64.0/19 '
+                 'or ((not cf.client.bot) and (ip.geoip.asnum ne 15169 '
+                 'and ip.geoip.asnum ne 396982) and '
+                 '(not ip.src in {66.249.64.0/19 '
                  '209.85.128.0/17 2001:4860:7::/48}) and '
                  '(http.host in {"noda.co.nz" "www.noda.co.nz"}) and '
                  '(not ip.geoip.country in {"NZ" "AU" "TW"}))')
-GEO_LIVE_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17): "
+GEO_LIVE_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17, "
+                 "Google ASN exempt 2026-11-23): "
                  "admin non-NZ + web non-NZ/AU apex+www")
 
 
@@ -1419,8 +1425,8 @@ def _geo_live_rule():
             "expression": GEO_LIVE_EXPR}
 
 
-def test_geo_clause_matches_cf_live_2026_11_17(ip_ban):
-    """canonical=2026-11-17 CF live 逐字符一致（非手抄重构）——若本测试失败
+def test_geo_clause_matches_cf_live_2026_11_23(ip_ban):
+    """canonical=2026-11-23 CF live 逐字符一致（非手抄重构）——若本测试失败
     = 有人改了 canonical，需重新对 CF API 校准并同步重发"""
     assert ip_ban.GEO_CLAUSE == GEO_LIVE_EXPR
     assert ip_ban.GEO_DESC == GEO_LIVE_DESC

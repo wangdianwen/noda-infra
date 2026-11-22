@@ -19,6 +19,11 @@ misban-watch.py — 误封哨兵 + admin 安全报表（2026-10-26 用户需求�
   （自报 UA）被 firewallCustom block = 疑似误封（ABUSE ASN 无 UA 豁免/hotlink
   规则/blacklist 残留），⚠️告警待人工复核 ASN 归属。challenge（geo 裁定面）与
   fake UA（伪装本该拦）不报。
+- 可靠性收口（2026-11-23 判例）：CF Free 虚增读数下原 datetime_geq 含头翻页
+  会原地重复拉同一批行烧尽 EVENT_MAX 漏报（SERanking 4 事件只报 2，11-08 判例
+  机制本轮实证）——fetch_events 改 datetime_lt 排他翻页 + 行级去重；D1/D3 告警
+  按 cool_key 冷却（官方段 1h、D3 24h：SERanking 30min 重试 robots.txt 连轰，
+  ::f4/fa 13min 两条实锤只发首条），jsonl 全量记账不丢审计。
   2026-10-25 判例：部署重建容器会截断 docker logs（access.log→stdout，随容器归零），
   48h 扫描窗瞬间只剩几分钟数据，「窗口内零到访」被误报成「48 小时未见」——修复
   三件套：① None 态静默按「日志实际覆盖时长」封顶；② canary_last 高水位入
@@ -63,6 +68,12 @@ PAGE_FETCH_WINDOW = 80        # 心跳扫描窗口（小时）——必须 ≥ B
 HW_MAX_AGE = 14 * 86400       # 心跳高水位保留期（超期视为失忆，重新观测）
 EVENT_PAGE_LIMIT = 50         # GraphQL 单页事件数（稳妥）
 EVENT_MAX = 1000              # 单轮回看事件上限（防首次回灌刷屏；截断记进报表）
+EVENT_MAX_PAGES = 200         # lt 翻页页数上限（虚增读数下页数兜底防异常死循环）
+D1_COOL_H = 1                 # 官方段实锤冷却（同 ip+action+source；11-23 ::f4/fa
+                              # 13min 两条只发首条——衰减爬虫连访属正常高频）
+D3_COOL_H = 24                # D3 自报 UA 冷却（同 ip+source；SERanking 30min
+                              # 重试 robots.txt 连轰判例，复核后无告警价值）
+COOL_MAX_AGE = 14 * 86400     # 冷却记账保留期（watch-state 防无限膨胀）
 DASH_URL = "https://admin.noda.co.nz/security/"
 
 # 后台 host 前缀：被挑战/封禁=正确行为，不计误封（robots.txt 全站 Disallow 在位）
@@ -72,10 +83,10 @@ NON_CONTENT_PREFIX = ("admin.", "auth.", "comments.", "api.", "health.",
 CONTENT_SUFFIX = ("noda.co.nz", "shuotong.wang")
 WATCH_ACTIONS = ("block", "managed_challenge", "challenge", "js_challenge")
 
-EVENTS_QUERY = """query($z: String!, $since: Time!) {
+EVENTS_QUERY = """query($z: String!, $since: Time!, $lt: Time) {
   viewer { zones(filter: {zoneTag: $z}) {
     firewallEventsAdaptive(limit: %d, orderBy: [datetime_DESC],
-      filter: {datetime_geq: $since}) {
+      filter: {datetime_geq: $since, datetime_lt: $lt}) {
       action source datetime clientIP clientCountryName
       clientRequestHTTPHost clientRequestPath userAgent
     } } } }""" % EVENT_PAGE_LIMIT
@@ -97,12 +108,31 @@ def tg(ipb, msg):
     ipb.tg("[misban-watch] " + msg)
 
 
-def alert(ipb, state, key, msg, alerts):
-    """去重告警：同 key 只发一次（state.alerted 记账），全部落 alerts.jsonl"""
+def alert(ipb, state, key, msg, alerts, cool_key=None, cool_h=0):
+    """去重告警：同 key 只发一次（state.alerted 记账），全部落 alerts.jsonl。
+    cool_key/cool_h（2026-11-23）：TG 按 cool_key 冷却——窗口内只发首条，后续
+    事件静默记账（jsonl 带 suppressed 标记计数，不丢审计）；冷却窗过后再触发
+    时把静默计数并入消息后清零。无 cool_key 保持原语义。"""
     if key in state.get("alerted", []):
         return
     state.setdefault("alerted", []).append(key)
-    rec = {"t": int(time.time()), "key": key, "msg": msg}
+    now = int(time.time())
+    if cool_key and cool_h:
+        cool = state.setdefault("cooldown", {})
+        sup = state.setdefault("cool_suppressed", {})
+        last = cool.get(cool_key, 0)
+        if last and now - last < cool_h * 3600:
+            sup[cool_key] = sup.get(cool_key, 0) + 1
+            rec = {"t": now, "key": key, "msg": msg, "suppressed": True}
+            alerts.append(rec)
+            with open(ALERTS_JSONL, "a") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            return
+        n = sup.pop(cool_key, 0)
+        if n:
+            msg += "（冷却窗内另有 %d 次同类事件，已静默记账）" % n
+        cool[cool_key] = now
+    rec = {"t": now, "key": key, "msg": msg}
     alerts.append(rec)
     with open(ALERTS_JSONL, "a") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -145,14 +175,22 @@ def classify_event(ev, ipb):
 
 
 def fetch_events(cf_token, zone_id, since_iso):
-    """GraphQL 增量事件（分页拉全窗口内事件，上限 EVENT_MAX）"""
-    out = []
-    after = since_iso
-    while len(out) < EVENT_MAX:
+    """GraphQL 增量事件（datetime_lt 排他翻页 + 行级去重，上限 EVENT_MAX）。
+
+    2026-11-23 判例修正：CF Free 版 firewallEventsAdaptive 读数虚增（11-08 判例：
+    同一窗口三轮读数 99/4000/49 条）叠加原 datetime_geq 含头边界，虚增窗口里
+    翻页会原地重复拉同一批行烧尽 EVENT_MAX，真实事件被挤出截断线漏报（本轮
+    SERanking 4 事件只报 2）。改 lt 排他前进（DESC 末条=最旧，下一页排除它，
+    页边界必然前移）+ (datetime,clientIP,path,action,source) 去重，重复行不再
+    挤占配额；页数上限 EVENT_MAX_PAGES 兜底 API 异常。"""
+    out, seen = [], set()
+    boundary = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for _ in range(EVENT_MAX_PAGES):
         req = urllib.request.Request(
             "https://api.cloudflare.com/client/v4/graphql",
             data=json.dumps({"query": EVENTS_QUERY,
-                             "variables": {"z": zone_id, "since": after}}).encode(),
+                             "variables": {"z": zone_id, "since": since_iso,
+                                           "lt": boundary}}).encode(),
             headers={"Authorization": "Bearer " + cf_token,
                      "Content-Type": "application/json"})
         r = json.load(urllib.request.urlopen(req, timeout=30))
@@ -161,10 +199,16 @@ def fetch_events(cf_token, zone_id, since_iso):
         evs = r["data"]["viewer"]["zones"][0]["firewallEventsAdaptive"]
         if not evs:
             break
-        out.extend(evs)
+        for ev in evs:
+            k = (ev.get("datetime"), ev.get("clientIP"),
+                 ev.get("clientRequestPath"), ev.get("action"), ev.get("source"))
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(ev)
         if len(evs) < EVENT_PAGE_LIMIT:
             break
-        after = evs[-1]["datetime"]        # DESC 末条 = 最旧，下一页从它往前
+        boundary = evs[-1]["datetime"]     # DESC 末条=最旧，lt 排他前进
         if len(out) >= EVENT_MAX:
             out = out[:EVENT_MAX]
             break
@@ -367,6 +411,7 @@ def main():
     state["last_run"] = now
     if len(state.get("alerted", [])) > MAX_DEDUP:
         state["alerted"] = state["alerted"][-MAX_DEDUP:]
+    prune_cooldown(state, now)
 
     ipb_state = ipb.load_state()
     report = build_report(now, ipb_state, ipb_state["bans"], ipb,
@@ -391,6 +436,18 @@ def alerts_tail(n=50):
         return [json.loads(l) for l in reversed(lines)]
     except FileNotFoundError:
         return []
+
+
+def prune_cooldown(state, now):
+    """冷却记账过期清理（2026-11-23）：超 COOL_MAX_AGE 的冷却位清掉，静默计数
+    随冷却位一起清（计数只对活跃冷却位有意义），watch-state 不无限膨胀"""
+    cool = state.get("cooldown") or {}
+    if cool:
+        state["cooldown"] = {k: t for k, t in cool.items()
+                             if now - t < COOL_MAX_AGE}
+        sup = state.get("cool_suppressed") or {}
+        state["cool_suppressed"] = {k: v for k, v in sup.items()
+                                    if k in state["cooldown"]}
 
 
 def collect_events(ipb, cf_token, since, now, state, alerts):
@@ -442,13 +499,17 @@ def collect_events(ipb, cf_token, since, now, state, alerts):
                           "⚠️疑似误封（D3 自报UA被block）：IP %s UA=%s 被 %s/%s 拦截"
                           "（%s%s）——不在官方段，请人工复核 ASN 归属！%s"
                           % (ip, item["ua"][:60], zname, src, host,
-                             item["path"], DASH_URL), alerts)
+                             item["path"], DASH_URL), alerts,
+                          cool_key="misban-d3:%s|%s" % (ip, src),
+                          cool_h=D3_COOL_H)
                 else:
                     alert(ipb, state,
                           "misban:%s|%s|%s|%s" % (item["ts"], ip, item["action"], src),
                           "🚨误封实锤：官方爬虫段 IP %s 被 %s/%s 拦截（%s%s UA=%s）"
                           "——查豁免！%s" % (ip, zname, src, host, item["path"],
-                                            item["ua"][:60], DASH_URL), alerts)
+                                            item["ua"][:60], DASH_URL), alerts,
+                          cool_key="misban-ip:%s|%s|%s" % (ip, item["action"], src),
+                          cool_h=D1_COOL_H)
     recent.sort(key=lambda x: x["ts"] or "", reverse=True)
     digest["counts"] = per_class
     digest["by_source"] = by_source

@@ -14,7 +14,7 @@
 | 1 | ip-range-blacklist auto（28 段） | block | ip-ban.py 自动 |
 | 2 | datacenter-asn-block auto（247 ASN 两分支：滥用 234 无 UA 豁免/大云 13 保留；10-26 扩容 + 11-19 HK 机房全禁批 216——AS218785 判例，RIPE+APNIC 全量筛查，剔除住宅 ISP/误报 7+112 个） | block | ip-ban.py 自动 |
 | 3 | block empty/fake/script user agent | block | 手工（本次加严，见下） |
-| 4 | geo-challenge merged 2026-11-07（www added 2026-11-17）：admin non-NZ + web non-NZ/AU（apex+www 两 host；官方 Google 段豁免） | managed_challenge | ip-ban.py 守护（#19 `apply_geo_rule`：默认 observe 漂移只告警零回写；`GEO_RULE_MODE=enforce` 后拉回/重建；canonical 表达式 2026-11-17 逐字符取自 live） |
+| 4 | geo-challenge merged 2026-11-07（www added 2026-11-17；Google ASN exempt 2026-11-23）：admin non-NZ + web non-NZ/AU（apex+www 两 host；静态三段+Google ASN 豁免） | managed_challenge | ip-ban.py 守护（#19 `apply_geo_rule`：默认 observe 漂移只告警零回写；`GEO_RULE_MODE=enforce` 后拉回/重建；canonical 表达式 2026-11-23 逐字符取自 live） |
 | 5 | cdn-hotlink-block（Referer 反盗链，ip-ban.py 维护） | block | ip-ban.py 自动 |
 | RL | content-nav-burst-guard：150 req/10s（http_ratelimit 阶段，HTML 路径） | block | 手工（#37 放宽） |
 
@@ -28,10 +28,13 @@ description 前缀**（`ip-range-blacklist` / `datacenter-asn-block` / `block em
 headless UA 会落到挑战而非 403）；#20 起 `step_rule_guard` 每轮对账检测前缀缺失/重复并
 TG 告警（分 zone 期望集，同漂移指纹去重，解除报恢复）。
 
-**geo-challenge 表达式（11-17 现行）**：
-`(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ") or ((not cf.client.bot) and (not ip.src in {66.249.64.0/19 209.85.128.0/17 2001:4860:7::/48}) and (http.host in {"noda.co.nz" "www.noda.co.nz"}) and (not ip.geoip.country in {"NZ" "AU" "TW"}))`
+**geo-challenge 表达式（11-23 现行）**：
+`(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ") or ((not cf.client.bot) and (ip.geoip.asnum ne 15169 and ip.geoip.asnum ne 396982) and (not ip.src in {66.249.64.0/19 209.85.128.0/17 2001:4860:7::/48}) and (http.host in {"noda.co.nz" "www.noda.co.nz"}) and (not ip.geoip.country in {"NZ" "AU" "TW"}))`
 ——www.noda.co.nz 11-17 补入（原表达式只 match apex，www 完全无挑战=解挑战旁路；
-class.noda.co.nz 已下线不补）。
+class.noda.co.nz 已下线不补）。11-23 补 `ip.geoip.asnum ne 15169 and ip.geoip.asnum ne 396982`
+（Storebot geo-crawl 判例：cf.client.bot 验不出 Google 特种爬虫，静态三段追不上
+geo-crawl 新基建扩张；15169=Google proper、396982=GCP。层级保护不破——dc 大云
+分支本就含 396982 且带自报 UA 豁免，非 bot 的 GCP 租户仍被 dc 分支先拦）。
 
 **#19 收编自愈（11-22 记档）**：`apply_geo_rule` 每轮对账 canonical（上面表达式
 逐字符）；observe 模式（默认）漂移只 TG 告警零回写，state `geo_guard` 留痕（11-17
@@ -99,6 +102,15 @@ IPv6 2407:7000:b051:ed00::/64）在微信内打开 `/zh/recipes/…` 被 block�
 ip-ban 行为闸照收——四层防线不减弱，符合 2026-10-25 三原则①「不误封正常用户」。
 
 ## 变更记录
+### 2026-11-23 六（11-22 复查后官方段告警三连的收口：geo ASN 豁免 + dc 死站豁免镜像 + misban-watch lt 翻页/冷却）
+11-22 复查部署（f5b09c3）之后 30h 内又收 6 条误封告警（4 独立事件），全查实为复查未覆盖的残留缺口，三处修复：
+
+1. **Storebot geo-crawl geo 豁免**：34.155.98.39（AS396982 GCP，PTR geo-crawl-34-155-98-39.geo.googlebot.com 正反确认，UA 与 Google 文档逐字一致 Chrome/147 Storebot-Google/1.0）在 noda.co.nz/cdn-cgi/rum 被 geo-challenge managed_challenge 403（rule b62507ea，2026-11-22T19:26:12Z）。cf.client.bot 验不出 Storebot（与 11-07 prefetch proxy 同型），静态三段追不上 geo-crawl 新基建（googlebot.json 已收录数十个 34.x /28）。canonical 表达式补 `ip.geoip.asnum ne 15169 and ip.geoip.asnum ne 396982`（Cymru 实测 geo-crawl=396982 非 15169，两 ASN 都要豁免；dc 大云分支本就含 396982 且带自报 UA 豁免，层级保护不破）。实际伤害评估：源站 7 天 Storebot 38 访全走旧豁免段 66.249.83.x（内容页/graphql/图片全 200），仅 1 条 beacon 撞墙，Shopping 收录主链路无损——修的是结构性缺口非现症。
+2. **死站分支豁免镜像 EXTRA 三段**：2001:4860:7:80b::f4/fa（IPv6 Read Aloud 族，geo 豁免同款段）在 snagme /en/wiki/* 被 dc 死站分支 block（rule 3f9673bd，11-22 03:25/03:38Z）——f0bc802 豁免集只补了 IPv4 /19 漏了 209.85.128.0/17 与 2001:4860:7::/48，违反 11-19「衰减期官方爬虫=合法流量」判据。`build_dc_expression` 的 ip_ex 由 `["66.249.64.0/19"]` 换成 EXTRA_CRAWLER_RANGES 三段镜像（abuse/cloud/dead-hosts 三分支同源，单测断言补齐）。
+3. **misban-watch 可靠性收口**：① fetch_events 的 geq 含头翻页在 CF Free 虚增读数下原地重复拉行烧尽 EVENT_MAX 漏报（11-08 判例机制本轮实证：SERanking 46.4.28.29 四次 snagme robots.txt block 只报 2 条，17:45Z/20:21Z 两条被挤出截断线）——改 datetime_lt 排他翻页 + (datetime,ip,path,action,source) 行级去重，页数上限 200 兜底；② 告警按 cool_key 冷却降噪：官方段实锤同 ip+action+source 1h 只发首条（::f4/fa 13min 两条只发 1 条）、D3 自报 UA 同 ip+source 24h（SERanking 30min 重试 robots.txt 连轰），jsonl 全量记账带 suppressed 标记不丢审计，冷却过期再触发附静默计数。
+   判定口径：DuckAssistBot（20.253.114.51，官方 duckduckbot.json 段 + Azure AS8075）维持 geo 挑战——10-17 AI bot 全 Block 裁定优先于「官方清单=欢迎」教义（DuckAssistBot=Duck.ai 助手 bot）；Azure ASN 不可整段豁免，UA 豁免选项留观。11-20 的 202.8.41.72（Ahrefs Site Audit 渲染器）已由 11-22 sweep_exempt_bans 清退，不属本批。
+   部署：commit push → r4s git pull → `GEO_RULE_MODE=enforce python3 deploy/ip-ban.py` 单次手动拉回（geo canonical 新表达式 + dc 死站分支新豁免一次对账），observe 守护恢复常态。
+
 ### 2026-11-17 五（#20 规则清单前缀守护 step_rule_guard：缺失/重复 TG 告警）
 前缀漂移后果不对称（blacklist/dc 漂移→apply_* 新建第二条→Free 版 6/5 PUT 每轮失败；
 UA-block 漂移→排尾落 geo 之后→headless UA 从 403 静默降级挑战），文档防不了手滑。

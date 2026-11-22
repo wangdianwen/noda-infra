@@ -556,8 +556,11 @@ OWNER_IPS = {"47.72.103.104"}               # 站主出口（nginx 白名单同�
 # 撞 nearby 分辨率哨兵 /__trip，51 黑名单里 17 个是官方段出口——ChatGPT 搜索
 # 收录被逐出口掐断；CF 边缘 cf.client.bot 全规则豁免（firewall events 零事件
 # 实证），源站层必须同步豁免，否则白名单只剩半边。
-GOOGLEBOT_URL = ("https://developers.google.com/static/search/apis/"
-                 "ipranges/googlebot.json")
+# 2026-11-23 实测旧路径 302 至 common-crawlers.json（同 317 段结构，
+# 34.155.98.32/28 等 geo-crawl 段在列，66.249.x 在列）——直接指向新路径，
+# 防 Google 未来砍掉旧跳转
+GOOGLEBOT_URL = ("https://developers.google.com/static/crawling/"
+                 "ipranges/common-crawlers.json")
 BINGBOT_URL = "https://www.bing.com/toolbox/bingbot.json"
 OAI_URL = "https://openai.com/searchbot.json"
 # DuckDuckGo 官方段（duckduckbot.json，Google 式 prefixes 结构，parse_prefix_json
@@ -572,6 +575,9 @@ RANGES_CACHE_TTL = 24 * 3600
 # Preserving Prefetch Proxy / GoogleOther 等同属 Google 的出口（如 66.249.84.x，
 # 2026-10 真实日志的多级 XFF 里出现过），保留老 GOOGLE_RANGES=66.249.64.0/19
 # 与官方 json 取并集（全部属 Google AS15169；伪造 XFF 头跳无效——取的是尾跳）。
+# 2026-11-23 起本清单同时是 CF 边缘豁免集的单一真值源：build_dc_expression
+# 各分支 ip_ex 与 geo-challenge 静态豁免段均镜像此清单（11-23 死站分支只补
+# IPv4 /19 漏掉 IPv6 段复发 ::f4/fa 的判例教训——豁免面必须同源同步）。
 EXTRA_CRAWLER_RANGES = ["66.249.64.0/19",
                         # Mediapartners-Google（AdSense 官方爬虫）出口段，
                         # 2026-10-24 判例：不在 googlebot.json、UA 无 bot 字样，
@@ -1557,9 +1563,12 @@ def build_dc_expression(allowed=None, persist_cidrs=None):
     - 大云分支（CLOUD_ASNS，block 且保留 UA 自报家门豁免）：GEO/SEO 爬虫实证全在
       此（cf.client.bot 不覆盖 AI 爬虫，靠 UA 豁免活——守规矩才敢自报家门）。
     - 死站分支（DEAD_HOSTS，2026-11-19）：已退役 proxied host 整 host block，
-      无豁免——挑战盲区入口收口（攻击判例见常量注释）。
-    - 两分支共同豁免：cf.client.bot（IP 级验证不可伪造，Googlebot/Bingbot 稳保）
-      + 66.249.64.0/19 兜底 + 站主 IP + ALLOW_CIDRS（死站分支不参与）。
+      豁免集照 abuse 分支——衰减期官方爬虫流量=合法流量（攻击判例见常量注释）。
+    - 各分支共同豁免：cf.client.bot（IP 级验证不可伪造，Googlebot/Bingbot 稳保）
+      + EXTRA_CRAWLER_RANGES 三段（2026-11-23 判例：原集只含 IPv4 /19，
+      2001:4860:7:80b::f4/fa IPv6 Read Aloud 族在死站分支被 block 复发——
+      豁免面必须镜像 geo-challenge 同款三段，与源站 EXTRA_CRAWLER_NETS 同源）
+      + 站主 IP + ALLOW_CIDRS。
 
     persist_cidrs 非空时 OR 进坚持不懈来访者子句（继承 dc action=block）：
     Free 版自定义规则上限 5 条，无第 6 条配额（2026-10-25 实测
@@ -1567,7 +1576,7 @@ def build_dc_expression(allowed=None, persist_cidrs=None):
     （CDN 防盗链 2026-11-07 曾因同配额压力并入本规则，同日 challenge 规则合并
     腾位后升格独立规则 HOTLINK_MARKER，不再走这里。）"""
     ip_ex = "ip.src in {%s}" % " ".join(
-        ["66.249.64.0/19"] + sorted(OWNER_IPS)
+        list(EXTRA_CRAWLER_RANGES) + sorted(OWNER_IPS)
         + [str(n) for n in (allowed if allowed is not None else allow_nets())])
     abuse = ("(ip.src.asnum in {%s}) and not cf.client.bot and not %s"
              % (" ".join(str(a) for a in ABUSE_ASNS), ip_ex))
@@ -1579,7 +1588,10 @@ def build_dc_expression(allowed=None, persist_cidrs=None):
     if DEAD_HOSTS:
         # 死站收口第三分支（2026-11-19 判例）：豁免集照 abuse 分支（cf.client.bot
         # + 官方段/站主 IP）——GSC 积压衰减靠官方爬虫爬到 410（misban-watch 实锤
-        # 修正，见 DEAD_HOSTS 常量注释），非验证扫描器流量照封
+        # 修正，见 DEAD_HOSTS 常量注释），非验证扫描器流量照封。
+        # 2026-11-23 二次判例：f0bc802 豁免集只含 IPv4 /19，2001:4860:7:80b::f4/fa
+        # （IPv6 Read Aloud 族，geo 豁免同款段）在 snagme /wiki/* 仍被本分支
+        # block——豁免面必须镜像 EXTRA_CRAWLER 三段（见 ip_ex），非全量重演一遍
         dc += (' or (http.host in {%s} and not cf.client.bot and not %s)'
                % (" ".join('"%s"' % h for h in DEAD_HOSTS), ip_ex))
     if not persist_cidrs:
@@ -1665,11 +1677,22 @@ def apply_hotlink_rule(rules):
 #   自愈语义）。该规则影响面大（非 NZ/AU/TW 全部 web 流量进挑战），默认不启用。
 GEO_REF = "geo-admin-challenge"       # 2026-11-07 合并规则沿用 ref（live 同名）
 GEO_ACTION = "managed_challenge"
-GEO_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17): "
-            "admin non-NZ + web non-NZ/AU apex+www")  # 2026-11-17 live 原文
+GEO_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17, "
+            "Google ASN exempt 2026-11-23): "
+            "admin non-NZ + web non-NZ/AU apex+www")
+# 2026-11-23 Storebot geo-crawl 判例扩 Google ASN 豁免：34.155.98.39（Google
+# 新 geo-crawl 基建，AS396982 GCP，PTR geo-crawl-*.geo.googlebot.com 正反确认）
+# 在 /cdn-cgi/rum 被 managed_challenge——cf.client.bot 验不出 Storebot，静态
+# 三段追不上 Google 段扩张（googlebot.json 已收录数十个 34.x /28）。按 ASN
+# 豁免一劳永逸：15169=Google proper（legacy crawl/209.85 Mediapartners 段），
+# 396982=GCP（geo-crawl 现役及未来扩张）。层级保护不破：dc 大云分支本就含
+# 396982 且带自报 UA 豁免，非 bot 的 GCP 租户流量仍被 dc 分支先拦
+# （first-match 顺序 dc→geo），geo 豁免只是不再重复挑战同一批 IP。
 GEO_CLAUSE = (
     '(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ") '
-    'or ((not cf.client.bot) and (not ip.src in {66.249.64.0/19 '
+    'or ((not cf.client.bot) and (ip.geoip.asnum ne 15169 '
+    'and ip.geoip.asnum ne 396982) and '
+    '(not ip.src in {66.249.64.0/19 '
     '209.85.128.0/17 2001:4860:7::/48}) and '
     '(http.host in {"noda.co.nz" "www.noda.co.nz"}) and '
     '(not ip.geoip.country in {"NZ" "AU" "TW"}))')
