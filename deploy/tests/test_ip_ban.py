@@ -540,6 +540,7 @@ GOOGLE_JSON = ('{"prefixes":[{"ipv4Prefix":"66.249.64.0/19"},'
                '{"ipv6Prefix":"2001:4860:4801:10::/64"}]}')
 BING_JSON = '{"prefixes":[{"ipv4Prefix":"157.55.39.0/24"}]}'
 OAI_JSON = '{"prefixes":[{"ipv4Prefix":"40.67.175.0/25"},{"ipv4Prefix":"20.169.77.0/25"}]}'
+DDG_JSON = '{"prefixes":[{"ipv4Prefix":"104.43.54.127/32"},{"ipv4Prefix":"40.114.177.156/32"}]}'
 
 
 def test_ranges_download_cache_and_fallback(monkeypatch, tmp_path):
@@ -549,13 +550,15 @@ def test_ranges_download_cache_and_fallback(monkeypatch, tmp_path):
     cache = tmp_path / "net-ranges.json"
     monkeypatch.setattr(mod, "RANGES_CACHE", str(cache))
     urls = {mod.GOOGLEBOT_URL: GOOGLE_JSON, mod.BINGBOT_URL: BING_JSON,
-            mod.OAI_URL: OAI_JSON}
+            mod.OAI_URL: OAI_JSON, mod.DDG_URL: DDG_JSON}
     monkeypatch.setattr(mod, "fetch_text",
                         lambda url, timeout=15: urls[url])
     mod.load_crawler_ranges()                       # 首次：下载 + 写缓存
     assert len(mod.GOOGLE_NETS) == 2 and len(mod.BING_NETS) == 1
     assert mod.OAI_NETS == [ipaddress.ip_network(c)
                             for c in ("40.67.175.0/25", "20.169.77.0/25")]
+    assert mod.DDG_NETS == [ipaddress.ip_network(c)
+                            for c in ("104.43.54.127/32", "40.114.177.156/32")]
     assert cache.exists()
 
     def boom(url, timeout=15):
@@ -573,6 +576,8 @@ def test_ranges_download_cache_and_fallback(monkeypatch, tmp_path):
                              for c in mod.BINGBOT_FALLBACK]
     assert mod.OAI_NETS == [ipaddress.ip_network(c)
                             for c in mod.OAI_FALLBACK]
+    assert mod.DDG_NETS == [ipaddress.ip_network(c)
+                            for c in mod.DDG_FALLBACK]
 
 
 def test_stale_cache_triggers_refetch(monkeypatch, tmp_path):
@@ -592,11 +597,54 @@ def test_stale_cache_triggers_refetch(monkeypatch, tmp_path):
     def fake_fetch(url, timeout=15):
         calls.append(url)
         return {mod.GOOGLEBOT_URL: GOOGLE_JSON, mod.BINGBOT_URL: BING_JSON,
-                mod.OAI_URL: OAI_JSON}.get(url)
+                mod.OAI_URL: OAI_JSON, mod.DDG_URL: DDG_JSON}.get(url)
 
     monkeypatch.setattr(mod, "fetch_text", fake_fetch)
     mod.load_crawler_ranges()
-    assert len(calls) == 3                           # 过期 → 三源全部重新下载
+    assert len(calls) == 4                           # 过期 → 四源全部重新下载
+
+
+def test_old_cache_without_ddg_migrates(monkeypatch, tmp_path):
+    """老缓存（三源无 ddg 键）迁移：g/b/o 保缓存值，ddg 用内置快照补位——
+    不因缺新键把老源降级到旧快照（2026-11-17 openai 迁移先例同款）"""
+    import json as _json
+    import time as _time
+    env = tmp_path / "ip-ban.env"
+    env.write_text("")
+    mod = load_ip_ban(monkeypatch, env_file=str(env))
+    cache = tmp_path / "net-ranges.json"
+    fresh = {"fetched_at": int(_time.time()) - 60,
+             "googlebot": ["66.249.64.0/19"], "bingbot": ["157.55.39.0/24"],
+             "openai": ["40.67.175.0/25"]}
+    cache.write_text(_json.dumps(fresh))
+    monkeypatch.setattr(mod, "RANGES_CACHE", str(cache))
+
+    def boom(url, timeout=15):
+        raise OSError("network down")
+
+    monkeypatch.setattr(mod, "fetch_text", boom)
+    mod.load_crawler_ranges()                       # 缓存新鲜：不联网
+    assert mod.GOOGLE_NETS == [ipaddress.ip_network("66.249.64.0/19")]
+    assert mod.BING_NETS == [ipaddress.ip_network("157.55.39.0/24")]
+    assert mod.OAI_NETS == [ipaddress.ip_network("40.67.175.0/25")]
+    assert mod.DDG_NETS == [ipaddress.ip_network(c)
+                            for c in mod.DDG_FALLBACK]   # 缺键 → 内置快照补位
+
+
+def test_ddg_truth_source_layers(ip_ban):
+    """DDG 官方段贯穿四层：is_crawler_ip 放行 / classify=skip 不计数 /
+    SAFETY 拒提案 / sweep 清退存量（2026-11-22 第四真值源接线验收）"""
+    ip = ip_ban.DDG_FALLBACK[0]                     # "104.43.54.127/32" 段内 IP
+    addr = ip.split("/")[0]
+    assert ip_ban.is_crawler_ip(addr)
+    assert ip_ban.classify(addr, "Mozilla/5.0 Chrome/156.0") == "skip"
+    proposals = {"104.43.54.0/24": ("24h-enum", 604800)}
+    assert "104.43.54.0/24" not in ip_ban.apply_safety(proposals)
+    bans = {"104.43.54.0/24": {"until": 9e12, "reason": "x", "ttl": 1},
+            "203.0.113.9/32": {"until": 9e12, "reason": "x", "ttl": 1}}
+    swept = ip_ban.sweep_exempt_bans(bans, allowed=[])
+    assert [c for c, _ in swept] == ["104.43.54.0/24"]
+    assert "203.0.113.9/32" in bans
 
 
 def test_parse_prefix_json_key_styles(ip_ban):

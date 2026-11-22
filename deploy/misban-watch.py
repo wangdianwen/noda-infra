@@ -4,7 +4,7 @@
 misban-watch.py — 误封哨兵 + admin 安全报表（2026-10-26 用户需求：报表上 admin 站
 随时看 + 主动消息 + 误封自动发现「不要等 Google 发邮件」）
 
-两个检测器（互补，一个断另一个仍活）：
+三个检测器（互补，一个断另一个仍活）：
 - D1 事件流（需 CF_REPORT_API_TOKEN 带 Zone→Analytics→Read；CF_BAN_API_TOKEN/
   CF_API_TOKEN 均无此权限 2026-10-26 实测）：CF GraphQL firewallEventsAdaptive
   双 zone 增量拉封禁/挑战事件 → 命中官方爬虫段（googlebot.json/bingbot.json/
@@ -15,6 +15,10 @@ misban-watch.py — 误封哨兵 + admin 安全报表（2026-10-26 用户需求�
   爬虫 IP 定期打源站；源站日志里 Googlebot 连续 GOOGLE_SILENCE_H 小时无踪 = 疑似
   边缘误封（含 GSC 之外的静默 403），TG 即报；恢复自动解除。反向价值：心跳在 =
   「Google 能进」的持续证明。
+- D3 自报 UA 被 block（2026-11-22 HubSpot 判例）：官方清单之外的守规矩爬虫
+  （自报 UA）被 firewallCustom block = 疑似误封（ABUSE ASN 无 UA 豁免/hotlink
+  规则/blacklist 残留），⚠️告警待人工复核 ASN 归属。challenge（geo 裁定面）与
+  fake UA（伪装本该拦）不报。
   2026-10-25 判例：部署重建容器会截断 docker logs（access.log→stdout，随容器归零），
   48h 扫描窗瞬间只剩几分钟数据，「窗口内零到访」被误报成「48 小时未见」——修复
   三件套：① None 态静默按「日志实际覆盖时长」封顶；② canary_last 高水位入
@@ -126,10 +130,18 @@ def ua_class(ua, ipb):
 
 def classify_event(ev, ipb):
     """事件 → (类别, 是否误封)。官方段 IP 命中即 misban（IP 真值优先，与
-    ip-ban.py 白名单同源）；UA 类别只作计数归档。"""
+    ip-ban.py 白名单同源）；UA 类别只作计数归档。
+    D3（2026-11-22 HubSpot 判例）：官方清单外的自报 UA 被 block = 疑似误封
+    （ABUSE ASN 无 UA 豁免/hotlink 规则/blacklist 残留都可能拦到守规矩爬虫）
+    → 告警待人工复核。challenge 不算（geo-challenge 用户裁定面）；fake UA
+    （伪装 googlebot/bingbot 字样）不算（本就该拦）。"""
     if ev.get("_official_ip"):
         return "misban", True
-    return ua_class(ev.get("ua") or "", ipb), False
+    cls = ua_class(ev.get("ua") or "", ipb)
+    if (cls == "selfid" and (ev.get("action") or "").lower() == "block"
+            and (ev.get("source") or "").startswith("firewallCustom")):
+        return "selfid-block", True
+    return cls, False
 
 
 def fetch_events(cf_token, zone_id, since_iso):
@@ -424,11 +436,19 @@ def collect_events(ipb, cf_token, since, now, state, alerts):
             recent.append(item)
             if misban:
                 misban_seen += 1
-                alert(ipb, state,
-                      "misban:%s|%s|%s|%s" % (item["ts"], ip, item["action"], src),
-                      "🚨误封实锤：官方爬虫段 IP %s 被 %s/%s 拦截（%s%s UA=%s）"
-                      "——查豁免！%s" % (ip, zname, src, host, item["path"],
-                                        item["ua"][:60], DASH_URL), alerts)
+                if cls == "selfid-block":
+                    alert(ipb, state,
+                          "misban:%s|%s|%s|%s" % (item["ts"], ip, item["action"], src),
+                          "⚠️疑似误封（D3 自报UA被block）：IP %s UA=%s 被 %s/%s 拦截"
+                          "（%s%s）——不在官方段，请人工复核 ASN 归属！%s"
+                          % (ip, item["ua"][:60], zname, src, host,
+                             item["path"], DASH_URL), alerts)
+                else:
+                    alert(ipb, state,
+                          "misban:%s|%s|%s|%s" % (item["ts"], ip, item["action"], src),
+                          "🚨误封实锤：官方爬虫段 IP %s 被 %s/%s 拦截（%s%s UA=%s）"
+                          "——查豁免！%s" % (ip, zname, src, host, item["path"],
+                                            item["ua"][:60], DASH_URL), alerts)
     recent.sort(key=lambda x: x["ts"] or "", reverse=True)
     digest["counts"] = per_class
     digest["by_source"] = by_source

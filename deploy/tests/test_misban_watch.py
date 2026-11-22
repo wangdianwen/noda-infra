@@ -111,6 +111,35 @@ def test_human_ua_block_is_info_not_misban(mw, ipb):
     assert mw.classify_event(ev, ipb) == ("human", False)
 
 
+# ---- D3：官方清单外自报 UA 被 block = 疑似误封（2026-11-22 HubSpot 判例）----
+# ABUSE ASN 无 UA 豁免/hotlink 规则/blacklist 残留都可能拦到守规矩爬虫——
+# official 段之外 D1 看不见，D3 用 UA 维度补盲区（block 才报，challenge 是
+# geo-challenge 用户裁定面；fake UA 本就该拦不报）。
+
+def test_selfid_ua_block_is_suspected_misban(mw, ipb):
+    ev = {"ip": "203.0.113.9", "action": "block", "source": "firewallCustom",
+          "ua": "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; "
+                "HubSpot Crawler; +https://www.hubspot.com/)", "_official_ip": False}
+    cls, misban = mw.classify_event(ev, ipb)
+    assert misban is True and cls == "selfid-block"
+
+
+def test_selfid_ua_challenge_not_flagged(mw, ipb):
+    """challenge 是 geo-challenge 裁定面，不算误封候选"""
+    ev = {"ip": "203.0.113.9", "action": "managed_challenge",
+          "source": "firewallCustom", "ua": "Twitterbot/1.0", "_official_ip": False}
+    cls, misban = mw.classify_event(ev, ipb)
+    assert misban is False and cls == "selfid"
+
+
+def test_selfid_ua_non_custom_source_not_flagged(mw, ipb):
+    """非 firewallCustom 来源（如 ratelimit）不归 D3 管"""
+    ev = {"ip": "203.0.113.9", "action": "block", "source": "ratelimit",
+          "ua": "AhrefsBot/7.0", "_official_ip": False}
+    cls, misban = mw.classify_event(ev, ipb)
+    assert misban is False and cls == "selfid"
+
+
 # ---- decide_canary / canary_quiet_hours ----
 
 def test_canary_google_silence_threshold(mw):
