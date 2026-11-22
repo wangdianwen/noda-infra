@@ -44,7 +44,8 @@ OUT_DEFAULT = "/mnt/mmc1-4/Data/overture/overture-nz.jsonl"
 NZ_BBOX = (166.0, 178.6, -47.3, -34.4)
 
 # 类目白名单：与 apps 侧 osmKinds 7 类语义对齐的 basic_category 集合
-# （#400 计划 Task 1 Step 1 候选集；餐饮/住宿/博物馆等不在首批——类目扩展另立单）。
+# （#400 首批 20 类；餐饮 6 类 WS6 #397、住宿 5 类 WS #477 增补——apps 侧
+# geo 白名单同步扩容，映射走 T2 overtureCategoryMap + env 放行）。
 # 映射真值源 = osm.go osmKinds + T2 overtureCategoryMap：
 #   playground→playground; beach→beach; garden/botanical_garden/park→garden/recreation;
 #   viewpoint/scenic_lookout→viewpoint; art_gallery/public_art/art_studio→art;
@@ -66,6 +67,11 @@ CATEGORY_WHITELIST = frozenset({
     # 丢弃计数（feat/397-food），本层不做城市预滤。
     "restaurant", "cafe", "bar", "casual_eatery", "coffee_shop",
     "fast_food_restaurant",
+    # 住宿业态 5 类（WS #477，2026-11-23；apps 侧 geo 白名单同步扩 accommodation）：
+    # 映射经 NEARBY_OVERTURE_CATEGORY_EXTRAS=hotel=accommodation,... 走 env 放行；
+    # resort 抽样噪音 ~40%（误分类零售/酒铺/美发）不收，campground 与既有
+    # campsites 目录同域重叠不收（#477 报告 §1 取舍）。
+    "hotel", "lodging", "bed_and_breakfast", "private_lodging", "inn",
 })
 
 # operating_status 门：正常/未知放行（NULL=未知），closed/removed 类拒收。
@@ -311,7 +317,9 @@ SELFTEST_ROWS = [
     # 丢弃 status：permanently_closed（removed 类拒收）
     _fixture_row("08f1a2selftest0004", "Gone Pool", "swimming_pool", 0.99,
                  "permanently_closed", 174.78, -36.90),
-    # 丢弃 category：住宿类排除（餐饮 6 类自 WS6 #397 起放行，改用 hotel 锁丢弃分支）
+    # 收录：住宿业态（WS #477 放行面），auckland（原 hotel 锁丢弃分支的行，
+    # 住宿 5 类放行后转为收录样本；丢弃 category 分支改由 dropped.category=0
+    # 断言覆盖——本批 fixture 已无 category 丢弃行）
     _fixture_row("08f1a2selftest0005", "Grand Hotel", "hotel", 0.99, "operating",
                  174.78, -36.90),
     # 收录：餐饮业态（WS6 #397 放行面），auckland
@@ -342,11 +350,11 @@ SELFTEST_ROWS = [
 ]
 
 SELFTEST_EXPECT = {
-    "kept": 7,
+    "kept": 8,
     "national": 2,
-    "dropped": {"category": 1, "confidence": 1, "name_coord": 2,
+    "dropped": {"category": 0, "confidence": 1, "name_coord": 2,
                 "status": 2},
-    "cities": {"auckland": 3, "wellington": 1, "queenstown": 1},
+    "cities": {"auckland": 4, "wellington": 1, "queenstown": 1},
 }
 
 
@@ -368,12 +376,12 @@ def selftest():
     assert st["kept"] == SELFTEST_EXPECT["kept"], st
     assert stats["dropped"] == SELFTEST_EXPECT["dropped"], stats["dropped"]
     assert stats["cities"] == SELFTEST_EXPECT["cities"], stats["cities"]
-    # 各阶段剩余精确值（13 行 → cat 过 12 → conf 过 11 → name/coord 过 9
-    #   → status 过 7 → kept 7（含 2 行全国兜底，#392 AC1））
-    assert st["after_category"] == 12, st
-    assert st["after_confidence"] == 11, st
-    assert st["after_name_coord"] == 9, st
-    assert st["after_status"] == 7, st
+    # 各阶段剩余精确值（13 行 → cat 过 13（#477 住宿放行后全过）→ conf 过 12
+    #   → name/coord 过 10 → status 过 8 → kept 8（含 2 行全国兜底，#392 AC1））
+    assert st["after_category"] == 13, st
+    assert st["after_confidence"] == 12, st
+    assert st["after_name_coord"] == 10, st
+    assert st["after_status"] == 8, st
     # 链上守恒：bbox_rows = kept + 全部丢弃
     assert st["bbox_rows"] == st["kept"] + sum(stats["dropped"].values())
     # 全国兜底（#392 AC1）：kept = 城市行 + 全国行
@@ -406,14 +414,19 @@ def selftest():
     assert wild["city_slug"] == "" and wild["operating_status"] == "operating"
     north = by_id["08f1a2selftest0013"]
     assert north["city_slug"] == "" and north["confidence"] == 0.85
-    # 白名单/状态门语义抽查（餐饮 6 类 WS6 #397 起放行；fast_food 必须写
-    # Overture 实名 fast_food_restaurant）
+    # 白名单/状态门语义抽查（餐饮 6 类 WS6 #397 起放行；住宿 5 类 WS #477 起
+    # 放行；fast_food 必须写 Overture 实名 fast_food_restaurant）
     assert "restaurant" in CATEGORY_WHITELIST and "cafe" in CATEGORY_WHITELIST
     assert "fast_food_restaurant" in CATEGORY_WHITELIST
     assert "fast_food" not in CATEGORY_WHITELIST
-    assert "hotel" not in CATEGORY_WHITELIST
+    assert "hotel" in CATEGORY_WHITELIST
+    for cat in ("lodging", "bed_and_breakfast", "private_lodging", "inn"):
+        assert cat in CATEGORY_WHITELIST, cat
+    # #477 取舍：resort 噪音 ~40%、campground 与 campsites 目录重叠，均不收
+    assert "resort" not in CATEGORY_WHITELIST
+    assert "campground" not in CATEGORY_WHITELIST
     assert "park" in CATEGORY_WHITELIST and "arena" in CATEGORY_WHITELIST
-    assert len(CATEGORY_WHITELIST) == 26
+    assert len(CATEGORY_WHITELIST) == 31
     for bad in ("closed", "permanently_closed", "temporarily_closed",
                 "relocated", "removed"):
         assert bad not in OPERATING_STATUS_ALLOW
