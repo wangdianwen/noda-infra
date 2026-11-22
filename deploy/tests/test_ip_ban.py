@@ -795,8 +795,9 @@ def test_dc_expression_exempts_selfid_ai_crawlers(ip_ban):
 
 def test_abuse_and_cloud_asns_partition(ip_ban):
     """235+13 拆分覆盖原 19 个+10-26 扩容 11 个+10-26 终验补录 19148+
-    11-19 HK 机房批 216（用户裁定）+11-19 attack-urls 判例批 48090，无交集无遗漏"""
-    assert len(ip_ban.ABUSE_ASNS) == 235 and len(ip_ban.CLOUD_ASNS) == 13
+    11-19 HK 机房批 216（用户裁定）+11-19 attack-urls 判例批 48090
+    +11-22 姊妹 ASN 批 396356/207990，无交集无遗漏"""
+    assert len(ip_ban.ABUSE_ASNS) == 237 and len(ip_ban.CLOUD_ASNS) == 13
     assert set(ip_ban.ABUSE_ASNS) & set(ip_ban.CLOUD_ASNS) == set()
     assert set(ip_ban.DATACENTER_ASNS) == set(ip_ban.ABUSE_ASNS) | set(ip_ban.CLOUD_ASNS)
     # 10-26 批回归锁:GA 溯源定案的 11 家不得缺失,大云 13 家不得误挪
@@ -805,6 +806,9 @@ def test_abuse_and_cloud_asns_partition(ip_ban):
         assert a in ip_ban.ABUSE_ASNS
     # 11-19 attack-urls 判例批:盲区入口直达源站的 195.178.110.94 归属段
     assert 48090 in ip_ban.ABUSE_ASNS
+    # 11-22 姊妹 ASN 批:Latitude.sh 二号牌(104.252.188.x 判例)+
+    # HostRoyale 二号牌(persist 网实证 194.31.179.168/195.3.137.167)
+    assert 396356 in ip_ban.ABUSE_ASNS and 207990 in ip_ban.ABUSE_ASNS
     for a in (16509, 14618, 396982, 8075, 24940):
         assert a in ip_ban.CLOUD_ASNS
 
@@ -917,6 +921,77 @@ def test_trip_google_range_rejected_by_safety(ip_ban):
     proposals = ip_ban.trip_bans([("66.249.73.10", "/__trip", "UA", "403")])
     assert proposals                                        # 提案生成
     assert "66.249.73.10/32" not in ip_ban.apply_safety(proposals)  # SAFETY 拒绝
+
+
+# ---- ⑨b tripwire 自报家门 UA 豁免（2026-11-22 HubSpot 判例）----
+# 54.174.58.233/.237/.238（AWS AS14618，UA 自报 "HubSpot Crawler"）撞 /__trip
+# 被 30 天封禁——官方 IP 清单（googlebot/bingbot/openai/ahrefs json）不覆盖的
+# 合法渲染器出口漏网，违反原则①「自报家门=守规矩才敢自报」。豁免含伪装反制：
+# UA 报 googlebot/bingbot/oai-searchbot 而 IP 不在官方段=伪装，照封不豁免。
+
+def test_trip_selfid_crawler_ua_exempt(ip_ban):
+    """自报家门 UA（HubSpot Crawler 等）撞 /__trip 不提案封禁——原则①欢迎"""
+    events = [("54.174.58.233", "/__trip",
+               "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; "
+               "HubSpot Crawler; +https://www.hubspot.com/)", "200")]
+    assert ip_ban.trip_bans(events) == {}
+
+
+def test_trip_selfid_markers_variants_exempt(ip_ban):
+    """Twitterbot/telegram 预览等自报变体一律豁免（SELFID_MARKERS 全集语义）"""
+    for ua in ("Twitterbot/1.0", "facebookexternalhit/1.1", "TelegramBot",
+               "meta-externalagent/1.1"):
+        assert ip_ban.trip_bans([("203.0.113.50", "/__trip", ua, "200")]) == {}
+
+
+def test_trip_fake_bot_ua_still_banned(ip_ban):
+    """UA 伪装官方 bot 字样（段外）不豁免——classify 反制 2026-11-17 先例同款"""
+    for ua in ("Mozilla/5.0 (compatible; bingbot/2.0)",
+               "Mozilla/5.0 (compatible; Googlebot/2.1)",
+               "Mozilla/5.0 (compatible; OAI-SearchBot/1.0)"):
+        bans = ip_ban.trip_bans([("203.0.113.60", "/__trip", ua, "403")])
+        assert "203.0.113.60/32" in bans
+
+
+def test_trip_plain_chrome_ua_still_banned(ip_ban):
+    """素浏览器 UA（800x600 族真实形态）照封不豁免——tripwire 主防线不变"""
+    bans = ip_ban.trip_bans([("203.0.113.7", "/__trip",
+                              "Mozilla/5.0 Chrome/156.0", "403")])
+    assert "203.0.113.7/32" in bans
+
+
+# ---- ⑨c 存量黑名单豁免面对账清退（2026-11-22 Ahrefs 滞留判例）----
+# 11-17 AHREFS_RANGES 修复只堵新提案，已入库 6 条 202.8.40-43.x 等 7 天 TTL
+# 到 11-21 才自然消失——misban-watch 11-20 实锤 202.8.41.72 仍被边缘 block。
+# sweep_exempt_bans：每轮清退与豁免面相交的存量条目并触发 CF 同步。
+
+def test_sweep_removes_entries_overlapping_crawler_ranges(ip_ban):
+    """黑名单里混入官方爬虫段（如修复前入库的 Ahrefs/Google 段）→ 清退"""
+    bans = {"202.8.41.0/24": {"until": 9e12, "reason": "24h-enum", "ttl": 604800},
+            "66.249.73.0/24": {"until": 9e12, "reason": "24h-enum", "ttl": 604800},
+            "203.0.113.9/32": {"until": 9e12, "reason": "attack-urls", "ttl": 2592000}}
+    swept = ip_ban.sweep_exempt_bans(bans, allowed=[])
+    swept_cidrs = {c for c, _ in swept}
+    assert swept_cidrs == {"202.8.41.0/24", "66.249.73.0/24"}
+    assert "203.0.113.9/32" in bans                        # 普通攻击条目不动
+    assert all(c not in bans for c in swept_cidrs)         # 清退即删
+
+
+def test_sweep_v6_and_owner_and_allow(ip_ban):
+    """v6 条目与官方段 /48 相交也清退；含站主 IP/ALLOW 相交一并清退"""
+    bans = {"2001:4860:7:40b::/64": {"until": 9e12, "reason": "x", "ttl": 1},
+            "192.0.2.0/24": {"until": 9e12, "reason": "x", "ttl": 1}}
+    swept = ip_ban.sweep_exempt_bans(
+        bans, allowed=ip_ban.parse_cidrs("192.0.2.0/24"))
+    assert {c for c, _ in swept} == {"2001:4860:7:40b::/64", "192.0.2.0/24"}
+
+
+def test_sweep_clean_bans_untouched(ip_ban):
+    """干净黑名单（纯攻击 IP）零清退零扰动"""
+    bans = {"203.0.113.9/32": {"until": 9e12, "reason": "attack-urls", "ttl": 2592000},
+            "45.148.10.64/32": {"until": 9e12, "reason": "attack-urls", "ttl": 2592000}}
+    assert ip_ban.sweep_exempt_bans(bans, allowed=[]) == []
+    assert len(bans) == 2
 
 
 # ---- ⑩ OAI-SearchBot 官方段真值豁免（2026-11-17 误封判例）----
@@ -1230,16 +1305,16 @@ def test_trip_ua_map_truncates_and_last_wins(ip_ban):
 
 
 def test_trip_candidate_log_carries_ua(ip_ban, capsys):
-    """candidate 日志行必须带 UA 样本（#18 验收：封禁时取证同步留痕）"""
-    events = [("54.174.58.237", "/__trip",
-               "Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)",
-               "403", "-")]
+    """candidate 日志行必须带 UA 样本（#18 验收：封禁时取证同步留痕）。
+    2026-11-22 起用素浏览器 UA——原用例的 AhrefsBot/54.174.58.237 实为
+    HubSpot Crawler 误封判例（自报 UA 已豁免，见 ⑨b），不能再用作封禁样本"""
+    events = [("198.51.100.9", "/__trip", "Mozilla/5.0 Chrome/156.0", "403", "-")]
     proposals = {}
     new = ip_ban.apply_trip_proposals(events, {}, proposals)
     out = capsys.readouterr().out
-    assert "54.174.58.237/32" in proposals
-    assert "ua=Mozilla/5.0 (compatible; AhrefsBot/7.0" in out
-    assert len(new) == 1 and new[0][0] == "54.174.58.237/32"
+    assert "198.51.100.9/32" in proposals
+    assert "ua=Mozilla/5.0 Chrome/156.0" in out
+    assert len(new) == 1 and new[0][0] == "198.51.100.9/32"
 
 
 def test_trip_candidate_skips_known_cidr_no_log(ip_ban, capsys):

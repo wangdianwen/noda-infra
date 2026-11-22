@@ -127,6 +127,23 @@ CF 边缘 cf.client.bot 全规则豁免（firewall events 零事件实证，伪�
 该身份），源站层是唯一拦截层也必须同步豁免。修复=官方段真值入 is_crawler_ip/
 apply_safety（googlebot.json/bingbot.json 同款三号真值源），段外伪造
 OAI-SearchBot UA 仍按伪装计 bot、撞哨兵照封。
+
+2026-11-22 修复（misban 全面复查，三处）：
+- HubSpot Crawler 误封判例：54.174.58.233/.237/.238（AWS AS14618，UA 自报
+  "HubSpot Crawler"）撞 /__trip 被 30 天封禁——tripwire 原版只认官方 IP 清单，
+  不在清单里的合法渲染器出口漏网。修复=trip_exempt_ua：UA 自报家门
+  （SELFID_MARKERS）豁免 trip 提案；伪装 googlebot/bingbot/oai-searchbot 字样
+  不豁免照封（classify 反制先例）。当日解封三条。
+- Ahrefs 存量条目滞留判例：11-17 AHREFS_RANGES 修复只堵新提案（SAFETY 闸），
+  已入库 6 条 202.8.40-43.x 等 7 天 TTL 到 11-21 才自然消失——misban-watch
+  11-20 07:07 实锤 202.8.41.72 仍被 blacklist block（/sw.js，Site Audit 渲染器
+  拉 PWA 生命周期端点）。修复=sweep_exempt_bans：每轮把存量黑名单与豁免面
+  （官方段/ALLOW/站主）对账，相交即清退+触发 CF 同步，清单更新即刻生效。
+- 姊妹 ASN 补列：396356（Latitude.sh 二号牌，104.252.188.x 判例）、207990
+  （HostRoyale 二号牌，persist 网实证 194.31.179.168/195.3.137.167）——同
+  Datacamp 212238/60068 判例。复查确认无误封保留：9.142.x(RCN)×10/
+  185.201.43.x+5.182.186.178(Comcast)×3=800×600 族换住宅代理池出口，
+  27.115.124.0/24（上海联通）=枚举指纹 AND 闸达标，均维持。
 """
 
 import ipaddress
@@ -484,6 +501,16 @@ ABUSE_ASNS = (
     # = 未走 apex/www 的 geo-challenge，经无挑战 proxied 入口直达源站——入口
     # 收口见 DEAD_HOSTS 子句（2026-11-19 同日落地）。
     48090,          # DMZHOST - TECHOFF SRV LIMITED（195.178.110.0/24）
+    # ---- 2026-11-22 姊妹 ASN 补列批（同公司双牌判例：212238/60068 Datacamp
+    # 先例、7203/60781 LeaseWeb 先例——主牌入列后家族换姐妹 ASN 继续出口）----
+    396356,         # Latitude.sh 裸金属云市场二号 ASN（主牌 262287 已列；2026-11-22
+                    # 实证 104.252.188.251/.173/.110 800×600 headless 撞 /__trip
+                    # 30 天封禁×3——Team Cymru org 同为 LATITUDE-SH，与 10-26
+                    # 判例 104.252.109.130(AS262287) 同指纹同公司）
+    207990,         # HostRoyale Technologies 二号 ASN（主牌 203020 已列；2026-11-22
+                    # 实证 194.31.179.168/195.3.137.167 14 天 4 到访日零信号零 304
+                    # 进 persist 挑战名单——Team Cymru org HR-CUSTOMER HostRoyale
+                    # 同公司；此前只吃到 persist 软防线，ASnum 名单漏接）
 )
 # 大云 ASN：保留 UA 自报家门豁免——GEO/SEO 爬虫实证全在此（GPTBot/ChatGPT-User/
 # OAI-SearchBot 全 Azure、Amazonbot/PerplexityBot 全 AWS、AhrefsBot 主力 OVH、
@@ -1436,12 +1463,72 @@ def trip_bans(events):
     且出口无关（不依赖 ABUSE_ASNS 名单）。分辨率清单漂移由 GA4 哨兵人工判读
     后与读数层 BOT_RESOLUTIONS 同步扩表，不自动扩。
     #18 起 UA/referer 不再在判定层丢弃：取证交给 trip_ua_map /
-    record_trip_samples（按索引取值，老 4 元组事件兼容）。"""
+    record_trip_samples（按索引取值，老 4 元组事件兼容）。
+    2026-11-22 HubSpot 判例：UA 自报家门的守规矩爬虫（不在任何官方 IP 清单）
+    撞 /__trip 不再提案封禁——trip_exempt_ua 豁免，伪装 bot 字样不豁免。"""
     out = {}
     for ev in events:
-        if ev[1] == TRIP_PATH:
-            out[persist_key(ev[0])] = (TRIP_REASON, TRIP_TTL)
+        if ev[1] != TRIP_PATH:
+            continue
+        if trip_exempt_ua(ev[2]):
+            log("trip-exempt %s: selfid crawler UA %s"
+                % (ev[0], ev[2][:TRIP_UA_MAX]))
+            continue
+        out[persist_key(ev[0])] = (TRIP_REASON, TRIP_TTL)
     return out
+
+
+# tripwire 豁免的 UA 反制名单：与 classify 的 fake-bot 反制同语义（真官方段
+# 在 IP 层已放行，段内流量根本不会走到 UA 判定；UA 报 googlebot/bingbot/
+# oai-searchbot 而 IP 不在官方段=伪装，2026-11-17 复审修正先例）。
+TRIP_FAKE_UA = ("googlebot", "bingbot", "oai-searchbot")
+
+
+def trip_exempt_ua(ua):
+    """/__trip 命中请求是否自报家门的守规矩爬虫（2026-11-22 HubSpot 判例）。
+
+    官方 IP 清单（googlebot/bingbot/openai/ahrefs json + Google 兜底段）只
+    覆盖搜索巨头与 OpenAI/Ahrefs；HubSpot Crawler、各平台链接预览等合法
+    渲染器出口不在任何清单里，撞 800×600 哨兵按原逻辑被 30 天封禁——违反
+    原则①「自报家门=守规矩才敢自报，欢迎」。豁免规则：UA 含 SELFID_MARKERS
+    即豁免；含 TRIP_FAKE_UA（伪装官方 bot）不豁免照封。伪装自报以逃避
+    tripwire=自降为「自报家门的爬虫」流量类（public 页设计接受该残余，
+    速率闸/攻击闸/persist 网仍在）。"""
+    u = (ua or "").lower()
+    if any(m in u for m in TRIP_FAKE_UA):
+        return False
+    return any(m in u for m in SELFID_MARKERS)
+
+
+def sweep_exempt_bans(bans, allowed=None):
+    """清退黑名单中与新豁免面相交的条目（2026-11-22 Ahrefs 判例的根治面）。
+
+    判例：2026-11-17 AHREFS_RANGES 修复只堵了新提案（SAFETY 闸），修复日前
+    已入库的 6 条 202.8.40-43.x 只能等 7 天 TTL 自然过期——其间 Ahrefs 渲染
+    器持续被边缘 blacklist block（misban-watch 11-20 07:07 实锤 /sw.js）。
+    本闸每轮把存量黑名单与官方爬虫段/ALLOW_CIDRS/站主 IP 对账，相交即清退
+    并记日志（下次官方清单更新新增段时同样自动生效）。返回清退列表（并入
+    unbanned → 触发 need_put 同步 CF + TG 通知）。"""
+    allowed = allow_nets() if allowed is None else allowed
+    swept = []
+    for cidr in list(bans):
+        b = bans[cidr]
+        net = ipaddress.ip_network(cidr)
+        if any(ipaddress.ip_address(o) in net for o in OWNER_IPS):
+            name = "owner-ip"
+        else:
+            hit = next((n for nets in (GOOGLE_NETS, BING_NETS, OAI_NETS,
+                                       AHREFS_NETS, EXTRA_CRAWLER_NETS,
+                                       allowed)
+                        for n in nets if net.overlaps(n)), None)
+            if hit is None:
+                continue
+            name = str(hit)
+        log("sweep: %s overlaps exempt %s, unbanned early"
+            % (cidr, name))
+        swept.append((cidr, b.get("ttl", BAN_TTL)))
+        del bans[cidr]
+    return swept
 
 
 def trip_ua_map(events):
@@ -1844,6 +1931,10 @@ def main():
                 if b["until"] <= now]
     for c, _ in unbanned:
         del bans[c]
+
+    # ---- 豁免面对账清退（2026-11-22 Ahrefs 判例根治：修复日存量条目不再
+    # 等 TTL 自然过期，立即清退并触发 CF 同步）----
+    unbanned = unbanned + sweep_exempt_bans(bans, allowed)
 
     # ---- 封禁后源站验证（观察窗内被封 IP 仍现于源站=CF 执行缺口，TG 告警）----
     verify = state.get("verify") or {}
