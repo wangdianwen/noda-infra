@@ -1412,9 +1412,10 @@ GEO_LIVE_EXPR = ('(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ")
                  '(not ip.src in {66.249.64.0/19 '
                  '209.85.128.0/17 2001:4860:7::/48}) and '
                  '(http.host in {"noda.co.nz" "www.noda.co.nz"}) and '
-                 '(not ip.geoip.country in {"NZ" "AU" "TW"}))')
+                 '(not ip.geoip.country in {"NZ" "AU" "TW"}) and '
+                 'not http.user_agent contains "DuckAssistBot")')
 GEO_LIVE_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17, "
-                 "Google ASN exempt 2026-11-23): "
+                 "Google ASN exempt 2026-11-23, DuckAssistBot exempt 2026-11-23): "
                  "admin non-NZ + web non-NZ/AU apex+www")
 
 
@@ -1426,8 +1427,11 @@ def _geo_live_rule():
 
 
 def test_geo_clause_matches_cf_live_2026_11_23(ip_ban):
-    """canonical=2026-11-23 CF live 逐字符一致（非手抄重构）——若本测试失败
-    = 有人改了 canonical，需重新对 CF API 校准并同步重发"""
+    """canonical=CF live 逐字符一致（非手抄重构）——若本测试失败
+    = 有人改了 canonical，需重新对 CF API 校准并同步重发。
+    快照版本：2026-11-23 晚 DuckAssistBot UA 豁免（用户拍板放行，enforce 部署
+    后 CF live 即此值；部署前 live 仍为 Google-ASN 版，observe 守护会报一次
+    漂移属预期）"""
     assert ip_ban.GEO_CLAUSE == GEO_LIVE_EXPR
     assert ip_ban.GEO_DESC == GEO_LIVE_DESC
     assert ip_ban.GEO_REF == "geo-admin-challenge"

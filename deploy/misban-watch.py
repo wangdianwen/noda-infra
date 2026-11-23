@@ -88,6 +88,8 @@ WATCH_ACTIONS = ("block", "managed_challenge", "challenge", "js_challenge")
 
 # 官方段+managed_challenge 政策豁口 UA（小写 contains；2026-11-23 DuckAssistBot
 # 判例：10-17 AI bot 全 Block 裁定优先，geo 挑战属政策执行非误封，见 classify_event）
+# 同日晚用户拍板放行——GEO_CLAUSE web 分支加 DuckAssistBot UA 豁免后 geo 不再拦它，
+# 本豁口转兜底（表达式漂移回旧版时仍压告警不刷屏；block 类事件照常告警）。
 POLICY_CHALLENGE_UAS = ("duckassistbot",)
 
 EVENTS_QUERY = """query($z: String!, $since: Time!, $lt: Time) {

@@ -1678,7 +1678,7 @@ def apply_hotlink_rule(rules):
 GEO_REF = "geo-admin-challenge"       # 2026-11-07 合并规则沿用 ref（live 同名）
 GEO_ACTION = "managed_challenge"
 GEO_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17, "
-            "Google ASN exempt 2026-11-23): "
+            "Google ASN exempt 2026-11-23, DuckAssistBot exempt 2026-11-23): "
             "admin non-NZ + web non-NZ/AU apex+www")
 # 2026-11-23 Storebot geo-crawl 判例扩 Google ASN 豁免：34.155.98.39（Google
 # 新 geo-crawl 基建，AS396982 GCP，PTR geo-crawl-*.geo.googlebot.com 正反确认）
@@ -1688,6 +1688,13 @@ GEO_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17, "
 # 396982=GCP（geo-crawl 现役及未来扩张）。层级保护不破：dc 大云分支本就含
 # 396982 且带自报 UA 豁免，非 bot 的 GCP 租户流量仍被 dc 分支先拦
 # （first-match 顺序 dc→geo），geo 豁免只是不再重复挑战同一批 IP。
+# 2026-11-23 DuckAssistBot 放行（用户拍板，web 分支 UA 豁免）：DuckAssistBot=
+# Duck.ai 用户引用的服务端执行器（官方 duckduckbot.json 段收录其 486 个 Azure
+# 出口，抓 sw.js 等 PWA 生命周期端点），不做训练采集——与 UA 规则豁免
+# ChatGPT-User 等五家「GEO 引用漏斗」同构（GA 实证 chatgpt.com/ai-assistant
+# 互动率 73% 全站最高，AI 引用渠道质量最优）。伪造面≈0：managed_challenge 本是
+# 软面，伪造 UA 仅获真人同等浏览能力，洪水/枚举有源站四闸+限速兜底。admin 分支
+# 不豁（后台挑战正确）；搜索爬虫 DuckDuckBot 是 CF verified bot 本就放行。
 GEO_CLAUSE = (
     '(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ") '
     'or ((not cf.client.bot) and (ip.geoip.asnum ne 15169 '
@@ -1695,7 +1702,8 @@ GEO_CLAUSE = (
     '(not ip.src in {66.249.64.0/19 '
     '209.85.128.0/17 2001:4860:7::/48}) and '
     '(http.host in {"noda.co.nz" "www.noda.co.nz"}) and '
-    '(not ip.geoip.country in {"NZ" "AU" "TW"}))')
+    '(not ip.geoip.country in {"NZ" "AU" "TW"}) and '
+    'not http.user_agent contains "DuckAssistBot")')
 GEO_ZONES = ("noda.co.nz",)   # shuotong.wang zone 无此规则，不受影响（复用
                               # HOTLINK_ZONES 模式：main 循环只对成员 zone 调用）
 
