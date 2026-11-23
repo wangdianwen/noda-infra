@@ -99,6 +99,39 @@ def test_official_ip_hit_human_ua_still_misban(mw, ipb):
     assert mw.classify_event(ev, ipb)[1] is True
 
 
+# ---- 官方段政策豁口（2026-11-23 DuckAssistBot 判例）----
+# DuckAssistBot=Duck.ai AI 助手爬虫（duckduckbot.json 官方段收录其 486 个 Azure
+# 出口），10-17「AI bot 全 Block」裁定优先于「官方清单=欢迎」教义——geo-challenge
+# managed_challenge 拦它属政策执行非误封，出口轮换不该轮番触发「误封实锤」
+# （11-22 的 20.253.114.51 → 11-23 的 20.80.135.7 连报实据）。豁口只对
+# managed_challenge；action=block 仍告警兜底真异常。
+
+def test_duckassist_managed_challenge_is_policy_not_misban(mw, ipb):
+    ev = {"ip": "20.80.135.7", "action": "managed_challenge",
+          "source": "firewallCustom",
+          "ua": "DuckAssistBot/1.2; (+http://duckduckgo.com/duckassistbot.htm)",
+          "_official_ip": True}
+    assert mw.classify_event(ev, ipb) == ("policy-challenge", False)
+
+
+def test_duckassist_block_still_misban(mw, ipb):
+    # block（如撞 blacklist）不是 geo 裁定面，仍告警兜底
+    ev = {"ip": "20.80.135.7", "action": "block", "source": "firewallCustom",
+          "ua": "DuckAssistBot/1.2; (+http://duckduckgo.com/duckassistbot.htm)",
+          "_official_ip": True}
+    cls, misban = mw.classify_event(ev, ipb)
+    assert misban is True and cls == "misban"
+
+
+def test_official_ip_other_ua_challenge_still_misban(mw, ipb):
+    # 豁口只认 DuckAssistBot：官方段其他 UA 被 challenge 仍属误封实锤
+    ev = {"ip": "66.249.73.130", "action": "managed_challenge",
+          "source": "firewallCustom",
+          "ua": "Mozilla/5.0 (compatible; Googlebot/2.1)", "_official_ip": True}
+    cls, misban = mw.classify_event(ev, ipb)
+    assert misban is True and cls == "misban"
+
+
 def test_fake_googlebot_ua_non_official_ip_not_misban(mw, ipb):
     ev = {"ip": "203.0.113.9", "ua": "Mozilla/5.0 (compatible; Googlebot/2.1)",
           "_official_ip": False}

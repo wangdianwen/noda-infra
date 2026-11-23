@@ -24,6 +24,9 @@ misban-watch.py — 误封哨兵 + admin 安全报表（2026-10-26 用户需求�
   机制本轮实证）——fetch_events 改 datetime_lt 排他翻页 + 行级去重；D1/D3 告警
   按 cool_key 冷却（官方段 1h、D3 24h：SERanking 30min 重试 robots.txt 连轰，
   ::f4/fa 13min 两条实锤只发首条），jsonl 全量记账不丢审计。
+- 政策豁口（2026-11-23 DuckAssistBot 判例）：官方段+DuckAssistBot UA+managed_challenge
+  = 10-17 AI bot 全 Block 裁定面的政策执行非误封 → policy-challenge 归档不告警
+  （486 个 Azure 出口轮换不再轮番触发「误封实锤」；action=block 仍告警兜底）。
   2026-10-25 判例：部署重建容器会截断 docker logs（access.log→stdout，随容器归零），
   48h 扫描窗瞬间只剩几分钟数据，「窗口内零到访」被误报成「48 小时未见」——修复
   三件套：① None 态静默按「日志实际覆盖时长」封顶；② canary_last 高水位入
@@ -82,6 +85,10 @@ NON_CONTENT_PREFIX = ("admin.", "auth.", "comments.", "api.", "health.",
                       "auth-preprod.")
 CONTENT_SUFFIX = ("noda.co.nz", "shuotong.wang")
 WATCH_ACTIONS = ("block", "managed_challenge", "challenge", "js_challenge")
+
+# 官方段+managed_challenge 政策豁口 UA（小写 contains；2026-11-23 DuckAssistBot
+# 判例：10-17 AI bot 全 Block 裁定优先，geo 挑战属政策执行非误封，见 classify_event）
+POLICY_CHALLENGE_UAS = ("duckassistbot",)
 
 EVENTS_QUERY = """query($z: String!, $since: Time!, $lt: Time) {
   viewer { zones(filter: {zoneTag: $z}) {
@@ -161,11 +168,22 @@ def ua_class(ua, ipb):
 def classify_event(ev, ipb):
     """事件 → (类别, 是否误封)。官方段 IP 命中即 misban（IP 真值优先，与
     ip-ban.py 白名单同源）；UA 类别只作计数归档。
+    政策豁口（2026-11-23 DuckAssistBot 判例，cf-custom-rules.md 同日节）：
+    DuckAssistBot=Duck.ai AI 助手爬虫（duckduckbot.json 官方段收录其 Azure
+    出口），10-17「AI bot 全 Block」裁定优先于「官方清单=欢迎」教义——geo-challenge
+    managed_challenge 拦它属政策执行非误封，486 个 Azure 出口轮换不该轮番触发
+    「误封实锤」。豁口只对 managed_challenge 生效；action=block（如撞 blacklist）
+    仍告警兜底真异常。搜索爬虫 DuckDuckBot 是 CF verified bot（cf.client.bot），
+    geo 规则豁免放行，不受本豁口影响。
     D3（2026-11-22 HubSpot 判例）：官方清单外的自报 UA 被 block = 疑似误封
     （ABUSE ASN 无 UA 豁免/hotlink 规则/blacklist 残留都可能拦到守规矩爬虫）
     → 告警待人工复核。challenge 不算（geo-challenge 用户裁定面）；fake UA
     （伪装 googlebot/bingbot 字样）不算（本就该拦）。"""
     if ev.get("_official_ip"):
+        u = (ev.get("ua") or "").lower()
+        if (any(marker in u for marker in POLICY_CHALLENGE_UAS)
+                and (ev.get("action") or "").lower() == "managed_challenge"):
+            return "policy-challenge", False
         return "misban", True
     cls = ua_class(ev.get("ua") or "", ipb)
     if (cls == "selfid" and (ev.get("action") or "").lower() == "block"
