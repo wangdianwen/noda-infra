@@ -82,17 +82,23 @@ def test_city_bbox_within_nz_bbox():
 def test_whitelist_semantics_osm_kinds_alignment():
     wl = fo.CATEGORY_WHITELIST
     # 7 类语义锚点（osm.go osmKinds 同源类目必须收）+ 餐饮 6 类（WS6 #397 放行）
+    # + 住宿 5 类（WS #477，2026-11-23 激活）
     for keep in ("playground", "beach", "park", "garden", "botanical_garden",
                  "viewpoint", "scenic_lookout", "art_gallery", "public_art",
                  "theater", "stadium", "gym", "swimming_pool", "arena",
                  "restaurant", "cafe", "bar", "casual_eatery", "coffee_shop",
-                 "fast_food_restaurant"):
+                 "fast_food_restaurant",
+                 "hotel", "lodging", "bed_and_breakfast", "private_lodging",
+                 "inn"):
         assert keep in wl, keep
-    for drop in ("hotel", "museum", "shop", "supermarket", "atm", "hospital"):
+    for drop in ("museum", "shop", "supermarket", "atm", "hospital",
+                 # resort 抽样噪音 ~40%（误分类零售/酒铺/美发）不收；
+                 # campground 与既有 campsites 目录同域重叠不收（#477 报告 §1）
+                 "resort", "campground"):
         assert drop not in wl, drop
     # fast_food 是 Overture 未用名——实名 fast_food_restaurant（#392 实测）
     assert "fast_food" not in wl
-    assert len(wl) == 26
+    assert len(wl) == 31
 
 
 def test_confidence_gate_boundary():
@@ -117,9 +123,16 @@ def test_name_and_coords_required():
 
 
 def test_category_drop_before_confidence():
-    # 住宿类即使 conf 高也不进 conf 阶段计数（链序：白名单最前；餐饮已放行）
-    rec, reason = fo.process_row(_row(basic_category="hotel", confidence=0.5))
+    # 链序：白名单最前——未收类目即使 conf 高也在 category 阶段丢弃
+    # （餐饮/住宿已放行，用 museum 锁链序分支）
+    rec, reason = fo.process_row(_row(basic_category="museum", confidence=0.9))
     assert rec is None and reason == "category"
+    # 住宿 5 类已放行（#477）：hotel 低 conf 穿过 category 门、落在 conf 门
+    rec, reason = fo.process_row(_row(basic_category="hotel", confidence=0.5))
+    assert rec is None and reason == "confidence"
+    # hotel 正常 conf 应收
+    rec, reason = fo.process_row(_row(basic_category="hotel"))
+    assert reason is None and rec is not None
 
 
 # ---------------------------------------------------------------- 链/契约
@@ -127,10 +140,11 @@ def test_category_drop_before_confidence():
 def test_run_chain_stage_counts_and_conservation(tmp_path):
     rows = [
         _row(id="k1"),                                             # 收（城市行）
-        _row(id="d1", basic_category="hotel"),                     # 类目（餐饮已放行，改 hotel 锁丢弃分支）
+        _row(id="d1", basic_category="museum"),                    # 类目（未收类目锁丢弃分支；住宿已放行不再适用）
         _row(id="d2", confidence=0.5),                             # conf
         _row(id="d3", name=None),                                  # 名称
         _row(id="d4", operating_status="closed"),                  # 状态
+        _row(id="h1", basic_category="hotel"),                     # 住宿放行（#477）：全程通过计入 kept
         _row(id="n1", lng=172.0, lat=-41.0),                       # 8 城外（#392 AC1 全国兜底收）
     ]
     out = tmp_path / "o.jsonl"
@@ -138,23 +152,23 @@ def test_run_chain_stage_counts_and_conservation(tmp_path):
     with open(out, "w", encoding="utf-8") as fh:
         fo.run_chain(rows, fh, stats)
     st, dr = stats["stages"], stats["dropped"]
-    assert st["bbox_rows"] == 6
-    assert st["after_category"] == 5
-    assert st["after_confidence"] == 4
-    assert st["after_name_coord"] == 3
-    assert st["after_status"] == 2
-    assert st["kept"] == 2
+    assert st["bbox_rows"] == 7
+    assert st["after_category"] == 6
+    assert st["after_confidence"] == 5
+    assert st["after_name_coord"] == 4
+    assert st["after_status"] == 3
+    assert st["kept"] == 3
     assert dr == {"category": 1, "confidence": 1, "name_coord": 1,
                   "status": 1}                                     # no_city 不再是丢弃原因
     assert st["bbox_rows"] == st["kept"] + sum(dr.values())       # 守恒
-    assert stats["cities"] == {"auckland": 1}
+    assert stats["cities"] == {"auckland": 2}
     assert stats["national"] == 1                                  # 全国兜底计数
     assert st["kept"] == sum(stats["cities"].values()) + stats["national"]
-    assert stats["categories"] == {"park": 2}
+    assert stats["categories"] == {"park": 2, "hotel": 1}          # 住宿放行计入（#477）
     assert stats["dropped_status_values"] == {"closed": 1}
     # 全国行 city_slug 空串（apps adapter 兜底 national + 大区归属）
     recs = [json.loads(ln) for ln in open(out, encoding="utf-8")]
-    assert {r["id"]: r["city_slug"] for r in recs} == {"k1": "auckland", "n1": ""}
+    assert {r["id"]: r["city_slug"] for r in recs} == {"k1": "auckland", "h1": "auckland", "n1": ""}
 
 
 def test_jsonl_line_contract(tmp_path):
