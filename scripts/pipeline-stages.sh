@@ -2410,13 +2410,31 @@ pipeline_sync_zh_longtail_map()
         log_error "zh 长尾 map 数据源缺失: $src（noda-apps 构建产物未产出？）"
         return 1
     fi
-    # 条目数下限哨兵：生成物历来 ≥2,800 条（2026-11-03 首版 2,866）；意外
-    # 空表（如 prune 脚本误删光）落进 nginx 会让全部退场页 404，宁红勿发
+    # 条目数哨兵（2026-11-25 重校准，#1596 误红判例）：本 map=「zh 富化未
+    # 达标的退场面」，随 EnrichTracks 批次推进单调收缩（11-03 首版 2,866 →
+    # 11-24 2,062 → 11-25 1,923：单批 content-enrich 翻转 139 条 track 转可
+    # 索引，zh 详情总页数恒 7,227 零丢失实证）——固定高下限与机制终态相悖，
+    # 会误红合法构建。改双重哨兵防真正的生成物损坏：
+    # ① 灾难下限 100：空表/近空表（prune 误删光）落进 nginx 会让全部退场页
+    #    404，宁红勿发；
+    # ② 同源一致性：conf 301 表条目数（grep 口径仅命中 redirect 段，bypass
+    #    段缩进不同零命中，2026-11-25 ws 实证）必须等于同轮产物
+    #    zh-longtail-retired.json 的 retired 数——同一扫描产物，divergence
+    #    即截断/损坏签名。
     local entries
     entries=$(grep -c '^    /zh/places/' "$src" || true)
-    if [ "$entries" -lt 2000 ]; then
-        log_error "zh 长尾 map 数据源条目异常（${entries} 条 <2000 下限），疑似生成物损坏: $src"
+    if [ "$entries" -lt 100 ]; then
+        log_error "zh 长尾 map 条目异常（${entries} 条 <100 灾难下限），疑似误删光: $src"
         return 1
+    fi
+    local manifest="$apps_dir/nearby/web/out/zh-longtail-retired.json"
+    if [ -f "$manifest" ]; then
+        local manifest_count
+        manifest_count=$(python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["retired"]))' "$manifest" 2>/dev/null || echo -1)
+        if [ "$manifest_count" -ne "$entries" ]; then
+            log_error "zh 长尾 map 与退役面清单不一致（conf=${entries} vs manifest=${manifest_count}），疑似生成物损坏: $src"
+            return 1
+        fi
     fi
 
     remote_exec "mkdir -p $dst_dir" || return 1
