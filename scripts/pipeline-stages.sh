@@ -29,6 +29,12 @@ source "$PROJECT_ROOT/scripts/lib/cleanup.sh"
 # ============================================
 HEALTH_CHECK_MAX_RETRIES="${HEALTH_CHECK_MAX_RETRIES:-30}"
 HEALTH_CHECK_INTERVAL="${HEALTH_CHECK_INTERVAL:-4}"
+# static 容器 nginx 启动宽限（2026-11-27 #1616 判例）：新构建 nginx 在 0.25 CPU
+# cap + r4s 基线负载下绑定监听实测 ~120s（大 map 集解析），旧 120s 健康门临界
+# 失败→蓝绿回滚。start-period 须盖过启动期（期间探活不计 retries），蓝绿
+# 等待窗须盖过 start-period。
+STATIC_HEALTH_START_PERIOD="${STATIC_HEALTH_START_PERIOD:-240}"
+STATIC_HEALTH_WAIT="${STATIC_HEALTH_WAIT:-420}"
 # 探针窗 10×3s=30s：#76 www 实证——对账补传 mirror 刚灌完 ~300MB 写，seaweedfs
 # 短暂 502，旧窗 5×2s=10s 全落在恢复期内 → 部署成功却 FAILED（假阴性）
 E2E_MAX_RETRIES="${E2E_MAX_RETRIES:-10}"
@@ -1028,7 +1034,7 @@ _start_prod_static()
             --health-interval 5s \
             --health-timeout 5s \
             --health-retries 3 \
-            --health-start-period 10s \
+            --health-start-period ${STATIC_HEALTH_START_PERIOD}s \
             $image"
     else
         docker rm -f "$PROD_STATIC_CONTAINER" >/dev/null 2>&1 || true
@@ -1071,7 +1077,7 @@ _start_prod_static()
             --health-interval 5s \
             --health-timeout 5s \
             --health-retries 3 \
-            --health-start-period 10s \
+            --health-start-period "${STATIC_HEALTH_START_PERIOD}s" \
             "$image"
     fi
 }
@@ -1104,9 +1110,9 @@ _deploy_prod_static_bluegreen()
         remote_exec "docker rm -f $next_container >/dev/null 2>&1 || true"
         return 1
     fi
-    # 健康门（默认 30×4=120s，与 api 蓝绿同口径；静态站 health-start-period 10s，
-    # 正常 ~15s 内 healthy）
-    if ! wait_container_healthy "$next_container" "$((HEALTH_CHECK_MAX_RETRIES * HEALTH_CHECK_INTERVAL))" true true; then
+    # 健康门（STATIC_HEALTH_WAIT 缺省 420s：2026-11-27 #1616 判例——新构建
+    # nginx 0.25 CPU 下绑定监听实测 ~120s，旧 120s 门临界失败回滚）
+    if ! wait_container_healthy "$next_container" "$STATIC_HEALTH_WAIT" true true; then
         log_error "蓝绿：新 static 容器（${next_container}）未通过健康门 — 移除新容器，旧容器继续服务（自动回滚）"
         remote_exec "docker rm -f $next_container >/dev/null 2>&1 || true"
         return 1
