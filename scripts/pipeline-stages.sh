@@ -1387,7 +1387,11 @@ pipeline_deploy_prod_inner()
             _rollback_prod_containers remote
             return 1
         fi
-        if _layer_want_web && ! wait_container_healthy "$PROD_STATIC_CONTAINER" "$health_timeout" true true; then
+        # static 健康等待用 STATIC_HEALTH_WAIT（缺省 420s ≥ start-period 240s）——
+        # 2026-11-27 #1628 判例：health_timeout(120s) < start-period(240s)，新 nginx
+        # 健康位还在 starting 就判超时→误回滚（#1616 blue-green 同判例已修，直发路径
+        # 此处补齐同口径）
+        if _layer_want_web && ! wait_container_healthy "$PROD_STATIC_CONTAINER" "$STATIC_HEALTH_WAIT" true true; then
             log_error "static 容器健康检查失败 — 自动回滚"
             _rollback_prod_containers remote
             return 1

@@ -125,7 +125,7 @@ def check_set(label, line_no, actual, expected):
 CITY_GROUP_RE = re.compile(r"\(\?:auckland((?:\|[a-z0-9-]+)+)\)")
 # A1 分类组形态：places(?:/(?:attractions|...))? —— 仅 A1 城市树详情线有
 A1_CATEGORY_RE = re.compile(r"places\(\?:/\(\?:([a-z0-9-]+(?:\|[a-z0-9-]+)*)\)\)\?")
-# A1 城市线组形态：)?|events|news|deals|hidden-gems|markets)/ —— 紧跟分类组
+# A1 城市线组形态：)?|events|deals|hidden-gems|markets)/ —— 紧跟分类组
 # 之后的 alternation（#283 对账面：漏 markets = sitemap 在列市场页 404）
 A1_CITYLINE_RE = re.compile(r"\)\?\|([a-z][a-z-]*(?:\|[a-z][a-z-]*)*)\)/")
 
