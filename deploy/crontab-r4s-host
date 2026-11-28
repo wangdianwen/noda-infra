@@ -176,3 +176,22 @@
 # 一周（11-24 17:30）后自动翻 GEO_RULE_MODE=enforce；守卫=日志零漂移才翻
 # （geo-enforce-flip.sh 内建，marker 防年度重放；回滚=删 env 行）
 30 17 24 11 * /mnt/mmc1-4/System/Scripts/geo-enforce-flip.sh >> /var/log/noda-ip-ban.log 2>&1
+
+# ===== 2026-11-28 漂移对账收编（noda-infra#23）：以下 14 行此前只存在于线上 crontab，
+#       本日原样收编入册（线上为真源、逐字未改）。含 3 条一次性任务行（#18/#19 终验、
+#       #465 newyear 交接检查点、#479 三日验证）与 #496 category-fallback 周报行；
+#       已完成的一次性行是否删除见 issue #23 待拍板。=====
+45 9 26 11 * /mnt/mmc1-4/System/Scripts/geo-window-final-check.sh # 2026-11-26 #18/#19 观察窗终验（一次性，marker 防重放）
+0 10 10 1 * /mnt/mmc1-4/System/Scripts/telegram-alert.sh "noda-apps #465 检查点（明天 01-11 生效）：newyear 专题窗口交接复核——christmas 01-11 下线后 /collections/newyear 应仍在（8 城×3 locale 200），newyear 01-15 下线自然收尾 #423 口径" >/dev/null 2>&1 && echo sent # 2027-01-10 #465 newyear 窗口交接检查点（一次性检查后手动删）
+15 9 25-27 11 * /mnt/mmc1-4/System/Scripts/qtn-zombie-check.sh # noda-apps#479 修复后三日验证（满3次自停，之后可删此行）
+
+# ===== noda-apps#496 AC5 hidden-gems 兜底占比防护报表（每周日 07:00，2026-11-28 新增）=====
+#       只读 SQL（池=active place，白名单 SLUG_TO_PLACE_CAT 按序首命中，无命中→兜底；
+#       基线 65.31%=16747/25644，阈值 70% 临时水位待 #496 step2 拍板修订）。口径/复跑
+#       见 noda-infra deploy/category-fallback-report.md。三重守卫（load≥4/postgres 容器/
+#       psql）不过→TG+exit1（行尾 || hb fail 落心跳）。词表新 slug 首现也告警。
+#       07:00 取位：06:30 已被 container-update-check 占用（2026-10-27 emSign 新增），
+#       避开 05:00 镜像清理/05:10 快照/05:30 swap 清债/03:30 百度上传/06:00(每月1号)overture。
+#       脚本 r4s:/mnt/mmc1-4/System/Scripts/category-fallback-report.sh
+#       （存档 noda-infra deploy/category-fallback-report.sh）
+0 7 * * 0 /mnt/mmc1-4/System/Scripts/category-fallback-report.sh >> /var/log/noda-category-fallback.log 2>&1 && /mnt/mmc1-4/System/Scripts/hb ok r4s:category-fallback-report '0 7 * * 0' || /mnt/mmc1-4/System/Scripts/hb fail r4s:category-fallback-report '0 7 * * 0'
