@@ -13,8 +13,8 @@
 |---|---|---|---|
 | 1 | ip-range-blacklist auto（28 段） | block | ip-ban.py 自动 |
 | 2 | datacenter-asn-block auto（247 ASN 两分支：滥用 234 无 UA 豁免/大云 13 保留；10-26 扩容 + 11-19 HK 机房全禁批 216——AS218785 判例，RIPE+APNIC 全量筛查，剔除住宅 ISP/误报 7+112 个） | block | ip-ban.py 自动 |
-| 3 | block empty/fake/script user agent | block | 手工（本次加严，见下） |
-| 4 | geo-challenge merged 2026-11-07（www added 2026-11-17；Google ASN exempt 2026-11-23）：admin non-NZ + web non-NZ/AU（apex+www 两 host；静态三段+Google ASN 豁免） | managed_challenge | ip-ban.py 守护（#19 `apply_geo_rule`：默认 observe 漂移只告警零回写；`GEO_RULE_MODE=enforce` 后拉回/重建；canonical 表达式 2026-11-23 逐字符取自 live） |
+| 3 | block empty/fake/script user agent（11-28 起收编：AHREFS 段豁免） | block | ip-ban.py 托管（2026-11-28 `apply_ua_rule` 自愈，前同手工） |
+| 4 | geo-challenge merged 2026-11-07（www added 2026-11-17；Google ASN exempt 2026-11-23；AHREFS 段 exempt 2026-11-28）：admin non-NZ + web non-NZ/AU（apex+www 两 host；静态五段+Google ASN 豁免） | managed_challenge | ip-ban.py 守护（#19 `apply_geo_rule`：默认 observe 漂移只告警零回写；`GEO_RULE_MODE=enforce` 后拉回/重建；canonical 表达式 2026-11-28 更新） |
 | 5 | cdn-hotlink-block（Referer 反盗链，ip-ban.py 维护） | block | ip-ban.py 自动 |
 | RL | content-nav-burst-guard：150 req/10s（http_ratelimit 阶段，HTML 路径） | block | 手工（#37 放宽） |
 
@@ -49,7 +49,7 @@ geo-crawl 新基建扩张；15169=Google proper、396982=GCP。层级保护不�
 |---|---|---|---|
 | 1 | ip-range-blacklist auto | block | ip-ban.py 自动 |
 | 2 | datacenter-asn-block auto（两分支同 noda；10-25 升 block+拆分） | block | ip-ban.py 自动 |
-| 3 | block empty/fake/script user agent（ref=ua-block） | block | 手工（10-24 从 noda 同步） |
+| 3 | block empty/fake/script user agent（ref=ua-block；11-28 起收编：AHREFS 段豁免） | block | ip-ban.py 托管（2026-11-28 `apply_ua_rule` 自愈，前同手工） |
 
 ## UA 规则（block empty/fake/script user agent）
 
@@ -101,7 +101,52 @@ IPv6 2407:7000:b051:ed00::/64）在微信内打开 `/zh/recipes/…` 被 block�
 大云 ASN 分支仍 block（MicroMessenger 不在其 UA 豁免表）、滥用 ASN 无条件 block、
 ip-ban 行为闸照收——四层防线不减弱，符合 2026-10-25 三原则①「不误封正常用户」。
 
+### v4（2026-11-28，AHREFS 段豁免 + 手工规则收编托管，两 zone 同步）
+**判例**：11-26/27 misban-watch 报 9 条「Ahrefs 官方段被拦实锤」（202.8.40-43.x 打
+apex `/sw.js`，UA 截断显示 Chrome Linux）——拉完整 GraphQL userAgent 实为
+`HeadlessChrome/155.0.8059.84`（Ahrefs Site Audit JS 渲染器），撞本规则 HeadlessChrome
+分支。此前 11-17/11-22 判例只修了源站层（AHREFS_RANGES 入 SAFETY 豁免 + sweep），边缘
+这一层漏了——「官方清单=欢迎」教义必须在每层一致。修复两步：
+
+1. **AHREFS 段全局豁免**：表达式外层包 `not ip.src in {202.8.40.0/23 202.8.42.0/23}`
+   （静态注册段 2003 年起稳定，伪造面≈0：攻击者需真实 originate 在 Ahrefs 自有段内）。
+   v3 三分支/三豁免语义原样保留（13 自报豁免 + 24 脚本名单 + 双伪装分支 + 站主 +
+   cf.client.bot）。
+2. **收编 `apply_ua_rule` 托管**（hotlink 同款自愈：漂移拉回/缺失重建/收养保原 ref；
+   geo/hotlink/dc 同款模式，「改动走代码+测试」原则推广至此）。canonical=`ip-ban.py
+   UA_CLAUSE`（纯函数可单测），表达式 ~2.1k 字符 < 4095 上限。
+
+连带：**geo 规则静态豁免面镜像 AHREFS 段**（202.8.40.0/23 202.8.42.0/23 加入静态段集）
+——UA 豁免后非 NZ 出口的 Ahrefs 渲染器会落到 geo managed_challenge（爬虫不解挑战=变相
+拦），不镜像则边缘修复不完整（11-23 dc 死站豁免镜像 EXTRA 三段同型教训）。misban-watch
+D3 加两层政策归档（死站 + vendor-ASN 真值，见变更记录 2026-11-28 七）。
+
 ## 变更记录
+### 2026-11-28 七（Ahrefs HeadlessChrome 判例：UA 规则收编+AHREFS 段豁免、geo 豁免镜像、misban-watch D3 政策归档两层）
+一周误封复查（11-21~11-28，26 条告警）定案三件事。判例本体：misban-watch D1 报的
+9 条「Ahrefs 官方段实锤」全是 Ahrefs Site Audit JS 渲染器（HeadlessChrome/155 UA，
+GraphQL 完整 userAgent 拉取实锤）撞 UA 规则 HeadlessChrome 分支——D1 只看 IP 段不看
+UA 的分类缺口，非真误封。源站层 11-17/11-22 已豁免（trip-exempt 日志实证正常），边缘
+UA 规则是唯一还在拦的层。
+
+1. **UA 规则收编+AHREFS 段豁免**（见 UA 规则 v4 节）：`apply_ua_rule` 两 zone 托管
+   自愈，canonical 外层包 AHREFS 两个 /23。
+2. **geo canonical 静态段补 AHREFS**：GEO_CLAUSE 静态三段→五段（+202.8.40.0/23
+   202.8.42.0/23），GEO_DESC 同步；test_geo_clause 快照更新至 2026-11-28 版。enforce
+   单次拉回（同 11-23 部署流程；env GEO_RULE_MODE=enforce 常态下 cron 也会自动拉）。
+3. **misban-watch D3 政策归档两层**：①死站归档 `policy-deadhost`——DEAD_HOSTS
+   （liuyao/snagme）block 非官方段自报 UA = 11-19「死站只放 verified 爬虫」政策执行，
+   PerplexityBot/SERanking/CrolBot 换 IP 重报噪音归档（官方段被死站拦仍实锤告警，
+   ::f4/fa 判例同型不放松）；②vendor-ASN 真值 `policy-fakeua`——自报 UA 对照
+   VENDOR_ASN_TRUTH（OpenAI 全 Azure 8075、Amazonbot/Perplexity 全 AWS 16509/14618、
+   Meta 32934、Ahrefs 140577/16276、DDG 8075，10-25 审计实据），事件 ASN 对不上=
+   伪装假身份归档（11-23 GPTBot×2/Amazonbot/Meta 四假 UA 同分钟同页集群此后自动归档），
+   对得上或缺 ASN=fail-open 仍 ⚠️ 待人工复核。EVENTS_QUERY 补 `clientAsn` 字段
+   （Free 版实测可用，字符串型），D3 告警文案带 ASN。
+   部署：commit push → r4s git pull → cp 两脚本到 /mnt/mmc1-4/System/Scripts/ →
+   单次 enforce 拉回 + misban-watch 单跑验证。测试 187 绿（+12）。
+
+### 2026-11-23 六（11-22 复查后官方段告警三连的收口：geo ASN 豁免 + dc 死站豁免镜像 + misban-watch lt 翻页/冷却）
 ### 2026-11-23 六（11-22 复查后官方段告警三连的收口：geo ASN 豁免 + dc 死站豁免镜像 + misban-watch lt 翻页/冷却）
 11-22 复查部署（f5b09c3）之后 30h 内又收 6 条误封告警（4 独立事件），全查实为复查未覆盖的残留缺口，三处修复：
 

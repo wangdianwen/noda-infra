@@ -19,6 +19,15 @@ misban-watch.py — 误封哨兵 + admin 安全报表（2026-10-26 用户需求�
   （自报 UA）被 firewallCustom block = 疑似误封（ABUSE ASN 无 UA 豁免/hotlink
   规则/blacklist 残留），⚠️告警待人工复核 ASN 归属。challenge（geo 裁定面）与
   fake UA（伪装本该拦）不报。
+- D3 政策归档两层（2026-11-28 判例三修三）：①死站归档——DEAD_HOSTS（liuyao/
+  snagme）block 非官方段自报 UA = 死站只放 verified 爬虫的政策执行（11-19
+  判据），PerplexityBot/SERanking 换 IP 重报的噪音归档；②vendor-ASN 真值
+  核验——自报 UA 对照 VENDOR_ASN_TRUTH（10-25 审计实据：OpenAI 全 Azure
+  AS8075、Amazonbot/Perplexity 全 AWS、Meta 32934、Ahrefs 140577/16276、
+  DDG 8075），ASN 对不上=伪装假身份归档（11-23 GPTBot 四假 UA 同分钟同页
+  集群自动归档），ASN 对得上或缺 ASN=仍 ⚠️ 待人工复核（fail-open，证据足才
+  归档）。官方段被 block 照旧实锤告警（D1 不变；UA 规则 AHREFS 段豁免同步
+  上线，2026-11-28 Ahrefs HeadlessChrome 判例，ip-ban.py UA_CLAUSE/GEO_CLAUSE）。
 - 可靠性收口（2026-11-23 判例）：CF Free 虚增读数下原 datetime_geq 含头翻页
   会原地重复拉同一批行烧尽 EVENT_MAX 漏报（SERanking 4 事件只报 2，11-08 判例
   机制本轮实证）——fetch_events 改 datetime_lt 排他翻页 + 行级去重；D1/D3 告警
@@ -92,11 +101,26 @@ WATCH_ACTIONS = ("block", "managed_challenge", "challenge", "js_challenge")
 # 本豁口转兜底（表达式漂移回旧版时仍压告警不刷屏；block 类事件照常告警）。
 POLICY_CHALLENGE_UAS = ("duckassistbot",)
 
+# 自报 UA 的 vendor-ASN 真值表（小写 contains 匹配 UA；值=该 vendor 官方爬虫
+# 实际运行所在 ASN，10-25 cf-custom-rules.md 审计实据 + 11-23 DuckAssistBot
+# 判例）。事件 ASN 对不上=伪装假身份 → policy-fakeua 归档（「伪装本该拦」
+# 教义的可执行化）；对得上或事件缺 ASN → 维持 ⚠️ 待人工复核（fail-open）。
+VENDOR_ASN_TRUTH = {
+    "gptbot": (8075,),              # OpenAI 全家 Azure AS8075
+    "chatgpt-user": (8075,),
+    "oai-searchbot": (8075,),
+    "duckassistbot": (8075,),       # DuckAssistBot 486 个 Azure 出口（11-23 判例）
+    "amazonbot": (16509, 14618),    # Amazonbot 全 AWS
+    "perplexitybot": (16509, 14618),  # PerplexityBot 全 AWS（18.97.9.x 实据）
+    "meta-externalagent": (32934,),   # Meta 自有 AS32934
+    "ahrefsbot": (140577, 16276),   # Ahrefs 自有段 + OVH 主力
+}
+
 EVENTS_QUERY = """query($z: String!, $since: Time!, $lt: Time) {
   viewer { zones(filter: {zoneTag: $z}) {
     firewallEventsAdaptive(limit: %d, orderBy: [datetime_DESC],
       filter: {datetime_geq: $since, datetime_lt: $lt}) {
-      action source datetime clientIP clientCountryName
+      action source datetime clientIP clientAsn clientCountryName
       clientRequestHTTPHost clientRequestPath userAgent
     } } } }""" % EVENT_PAGE_LIMIT
 
@@ -180,7 +204,13 @@ def classify_event(ev, ipb):
     D3（2026-11-22 HubSpot 判例）：官方清单外的自报 UA 被 block = 疑似误封
     （ABUSE ASN 无 UA 豁免/hotlink 规则/blacklist 残留都可能拦到守规矩爬虫）
     → 告警待人工复核。challenge 不算（geo-challenge 用户裁定面）；fake UA
-    （伪装 googlebot/bingbot 字样）不算（本就该拦）。"""
+    （伪装 googlebot/bingbot 字样）不算（本就该拦）。
+    D3 政策归档（2026-11-28 判例三修三）：①死站——DEAD_HOSTS block 非官方段
+    自报 UA = 死站只放 verified 爬虫的政策执行（11-19 判据，PerplexityBot/
+    SERanking 换 IP 重报噪音归档；官方段被死站拦仍走上方 misban——豁免漂移
+    才拦得到官方段，11-22 ::f4/fa 判例同型）；②vendor-ASN 真值——自报 UA 对
+    照 VENDOR_ASN_TRUTH，ASN 对不上=伪装假身份归档（伪装本该拦），对得上或
+    缺 ASN=fail-open 仍告警待人工复核。"""
     if ev.get("_official_ip"):
         u = (ev.get("ua") or "").lower()
         if (any(marker in u for marker in POLICY_CHALLENGE_UAS)
@@ -190,6 +220,16 @@ def classify_event(ev, ipb):
     cls = ua_class(ev.get("ua") or "", ipb)
     if (cls == "selfid" and (ev.get("action") or "").lower() == "block"
             and (ev.get("source") or "").startswith("firewallCustom")):
+        if (ev.get("host") or "").lower() in getattr(ipb, "DEAD_HOSTS", ()):
+            return "policy-deadhost", False
+        asn = ev.get("asn") or 0
+        if asn:
+            u = (ev.get("ua") or "").lower()
+            for marker, truths in VENDOR_ASN_TRUTH.items():
+                if marker in u:
+                    if asn not in truths:
+                        return "policy-fakeua", False
+                    break
         return "selfid-block", True
     return cls, False
 
@@ -498,9 +538,14 @@ def collect_events(ipb, cf_token, since, now, state, alerts):
                 continue
             ip = ev.get("clientIP") or ""
             official = ipb.is_crawler_ip(ip) if ip else False
+            try:
+                asn = int(ev.get("clientAsn") or 0)
+            except (TypeError, ValueError):
+                asn = 0
             item = {"zone": zname, "action": ev.get("action"),
                     "source": ev.get("source"), "ts": ev.get("datetime"),
-                    "ip": ip, "country": ev.get("clientCountryName"),
+                    "ip": ip, "asn": asn,
+                    "country": ev.get("clientCountryName"),
                     "host": host, "path": (ev.get("clientRequestPath") or "")[:120],
                     "ua": (ev.get("userAgent") or "")[:120],
                     "_official_ip": official}
@@ -516,9 +561,9 @@ def collect_events(ipb, cf_token, since, now, state, alerts):
                 if cls == "selfid-block":
                     alert(ipb, state,
                           "misban:%s|%s|%s|%s" % (item["ts"], ip, item["action"], src),
-                          "⚠️疑似误封（D3 自报UA被block）：IP %s UA=%s 被 %s/%s 拦截"
-                          "（%s%s）——不在官方段，请人工复核 ASN 归属！%s"
-                          % (ip, item["ua"][:60], zname, src, host,
+                          "⚠️疑似误封（D3 自报UA被block）：IP %s (ASN %s) UA=%s "
+                          "被 %s/%s 拦截（%s%s）——不在官方段，请人工复核 ASN 归属！%s"
+                          % (ip, item["asn"], item["ua"][:60], zname, src, host,
                              item["path"], DASH_URL), alerts,
                           cool_key="misban-d3:%s|%s" % (ip, src),
                           cool_h=D3_COOL_H)

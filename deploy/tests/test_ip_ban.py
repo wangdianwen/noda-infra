@@ -445,6 +445,83 @@ def test_hotlink_clause_matches_cf_deployed_rule(ip_ban):
     assert ip_ban.HOTLINK_CLAUSE == deployed
 
 
+# ---- UA 规则收编 + AHREFS 段豁免（2026-11-28 Ahrefs HeadlessChrome 判例）----
+
+def test_ua_clause_semantics(ip_ban):
+    """v3 语义逐分支保留 + 外层 AHREFS 段豁免在位"""
+    c = ip_ban.build_ua_clause()
+    assert c == ip_ban.UA_CLAUSE                      # 常量=纯函数输出
+    # 外层 AHREFS 豁免包住全部分支（202.8.40.0/23 202.8.42.0/23）
+    assert c.startswith("(not ip.src in {202.8.40.0/23 202.8.42.0/23} and (")
+    # v3 三分支 + 三豁免原样
+    assert '(http.user_agent eq "")' in c
+    assert 'http.user_agent contains "HeadlessChrome"' in c
+    assert 'http.user_agent contains "Apache-HttpClient"' in c
+    assert 'not http.user_agent contains "MicroMessenger"' in c   # v3 微信修复
+    assert 'http.user_agent contains "ChatGPT-User"' in c         # 自报豁免
+    assert "not cf.client.bot" in c
+    assert "47.72.103.104" in c                                   # 站主豁免
+    # 括号配平（CF 4022 类解析错误预防）
+    assert c.count("(") == c.count(")")
+    # Ahrefs 渲染器指纹（HeadlessChrome UA）不再被任何分支以外的方式豁免——
+    # 豁免只按 IP 段，段外 HeadlessChrome 照拦
+    assert c.count("HeadlessChrome") == 1
+
+
+def test_ua_clause_covers_live_v3_marker_sets(ip_ban):
+    """v3 live（2026-11-28 GET 快照）的全量 marker 集在新 canonical 中逐个在位
+    ——收编不许静默缩水拦截面（13 自报豁免 + 24 脚本名单 + 双伪装分支）"""
+    c = ip_ban.UA_CLAUSE
+    for u in ip_ban.UA_SELFID_EXEMPT:
+        assert 'http.user_agent contains "%s"' % u in c, u
+    for u in ip_ban.UA_SCRIPT_UAS:
+        assert 'http.user_agent contains "%s"' % u in c, u
+    assert c.count('http.user_agent contains "AppleWebKit"') == 2   # 伪装A+伪装B
+    assert c.count("not ip.src in {47.72.103.104}") == 2            # 站主×两分支
+    assert len(c) < 4095 - 200   # Free 版表达式上限留余量
+
+
+def test_apply_ua_rule_creates_adopts_and_heals(ip_ban):
+    """创建/收养/自愈三形态（hotlink 同款）：无规则→创建；live 手工规则
+    （ref 各 zone 不同）按 description 前缀收养不覆写 ref；漂移拉回 canonical"""
+    # 创建
+    rules, ch = ip_ban.apply_ua_rule([])
+    assert ch and len(rules) == 1 and rules[0]["ref"] == ip_ban.UA_REF
+    assert rules[0]["action"] == "block"
+    assert rules[0]["expression"] == ip_ban.UA_CLAUSE
+    assert rules[0]["description"].startswith("block empty/fake")  # 前缀守护口径
+    # 幂等
+    rules, ch = ip_ban.apply_ua_rule(rules)
+    assert ch is False and len(rules) == 1
+    # 收养：live 手工规则（ref=cde18ca8…，desc v3 旧文）→ 原位更新保 ref
+    adopted = [{"ref": "cde18ca8a97d46509ac50029365cb7ca", "action": "block",
+                "expression": "((http.user_agent eq \"\") or (1))",
+                "enabled": True,
+                "description": "block empty/fake/script user agent (truncated "
+                               "browser impersonation + honest script clients; "
+                               "owner/verified-bot/self-id exempt)"}]
+    rules, ch = ip_ban.apply_ua_rule(adopted)
+    assert ch and len(adopted) == 1
+    assert adopted[0]["ref"] == "cde18ca8a97d46509ac50029365cb7ca"  # ref 不覆写
+    assert adopted[0]["expression"] == ip_ban.UA_CLAUSE
+    # 自愈后再跑幂等
+    rules, ch = ip_ban.apply_ua_rule(adopted)
+    assert ch is False
+
+
+def test_ua_rule_in_both_zone_expectations(ip_ban):
+    """前缀守护期望集：两 zone 都应含 UA 规则（收编后仍不缺位）"""
+    for zone in ip_ban.ZONES:
+        assert ip_ban.UA_MARKER in ip_ban.expected_rule_prefixes(zone)
+
+
+def test_geo_clause_contains_ahrefs_exempt(ip_ban):
+    """geo 豁免面镜像 AHREFS 段（UA 修好后非 NZ 出口渲染器落 geo 挑战=变相拦，
+    11-23 dc 死站豁免镜像同型教训）"""
+    assert "202.8.40.0/23" in ip_ban.GEO_CLAUSE
+    assert "202.8.42.0/23" in ip_ban.GEO_CLAUSE
+
+
 # ---- /24 枚举闸 OR→AND 修正（2026-10-25 复盘）----
 
 def test_enum24_google_case_not_banned(ip_ban):
@@ -1410,12 +1487,14 @@ GEO_LIVE_EXPR = ('(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ")
                  'or ((not cf.client.bot) and (ip.geoip.asnum ne 15169 '
                  'and ip.geoip.asnum ne 396982) and '
                  '(not ip.src in {66.249.64.0/19 '
-                 '209.85.128.0/17 2001:4860:7::/48}) and '
+                 '209.85.128.0/17 2001:4860:7::/48 '
+                 '202.8.40.0/23 202.8.42.0/23}) and '
                  '(http.host in {"noda.co.nz" "www.noda.co.nz"}) and '
                  '(not ip.geoip.country in {"NZ" "AU" "TW"}) and '
                  'not http.user_agent contains "DuckAssistBot")')
 GEO_LIVE_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17, "
-                 "Google ASN exempt 2026-11-23, DuckAssistBot exempt 2026-11-23): "
+                 "Google ASN exempt 2026-11-23, DuckAssistBot exempt 2026-11-23, "
+                 "AHREFS ranges exempt 2026-11-28): "
                  "admin non-NZ + web non-NZ/AU apex+www")
 
 
@@ -1426,12 +1505,12 @@ def _geo_live_rule():
             "expression": GEO_LIVE_EXPR}
 
 
-def test_geo_clause_matches_cf_live_2026_11_23(ip_ban):
+def test_geo_clause_matches_cf_live_2026_11_28(ip_ban):
     """canonical=CF live 逐字符一致（非手抄重构）——若本测试失败
     = 有人改了 canonical，需重新对 CF API 校准并同步重发。
-    快照版本：2026-11-23 晚 DuckAssistBot UA 豁免（用户拍板放行，enforce 部署
-    后 CF live 即此值；部署前 live 仍为 Google-ASN 版，observe 守护会报一次
-    漂移属预期）"""
+    快照版本：2026-11-28 AHREFS 段豁免（Ahrefs HeadlessChrome 判例三修之二，
+    enforce 部署后 CF live 即此值；部署前 live 仍为 11-23 版，observe/enforce
+    守护会报一次漂移属预期）"""
     assert ip_ban.GEO_CLAUSE == GEO_LIVE_EXPR
     assert ip_ban.GEO_DESC == GEO_LIVE_DESC
     assert ip_ban.GEO_REF == "geo-admin-challenge"

@@ -1658,6 +1658,87 @@ def apply_hotlink_rule(rules):
     return rules, True
 
 
+# ---- UA 规则收编（2026-11-28 Ahrefs HeadlessChrome 判例，手工规则转代码托管）----
+# 判例：11-26/27 misban-watch 9 条「Ahrefs 官方段被拦实锤」（202.8.40-43.x 打
+# apex /sw.js）——完整 UA=HeadlessChrome/155（Ahrefs Site Audit JS 渲染器），
+# 撞本规则 HeadlessChrome 分支。政策判定：官方段渲染器=合法流量（11-17/11-22
+# 源站层 SAFETY 豁免同款教义），UA 规则是边缘唯一还在拦的层——AHREFS 两个 /23
+# 全局豁免收口（静态注册段 2003 年起稳定，同 AHREFS_RANGES 判据；伪造面≈0：
+# 攻击者需真实 originate 在 Ahrefs 自有注册段内）。2026-11-17「未来改动走代码
+# +测试，不再面板手改」原则自 geo 规则起推广——本规则收编 apply_ua_rule 自愈
+# （hotlink 同款：漂移拉回/缺失重建），表达式 canonical=UA_CLAUSE。
+# 结构（v4）：外层 AHREFS 段豁免 × 内层 v3 语义（空 UA / 截断伪装 / 诚实脚本
+# 三分支，站主 IP + cf.client.bot + 自报家门 UA 豁免原样保留）。
+UA_REF = "block-empty-fake-ua"
+UA_SELFID_EXEMPT = ("bot", "Bot", "spider", "Spider", "slurp", "Slurp",
+                    "crawler", "Crawler", "ChatGPT-User", "Claude-User",
+                    "Perplexity-User", "MistralAI-User", "cohere-ai")
+UA_SCRIPT_UAS = ("Apache-HttpClient", "HttpClient", "httpclient",
+                 "python-requests", "python-urllib", "Python-urllib",
+                 "python-httpx", "curl/", "Wget/", "wget", "Go-http-client",
+                 "node-fetch", "axios/", "okhttp", "Java/", "java/",
+                 "Scrapy", "scrapy", "aiohttp", "libwww", "fasthttp",
+                 "HeadlessChrome", "headlesschrome", "PostmanRuntime")
+UA_DESC = ("block empty/fake/script user agent (truncated browser impersonation"
+           " + honest script clients; owner/verified-bot/self-id/ahrefs exempt;"
+           " managed by ip-ban.py)")
+
+
+def build_ua_clause():
+    """UA 规则 canonical 表达式（纯函数，单测直接打）。语义=v3 原文 + 外层
+    AHREFS 段豁免（2026-11-28 判例，见上）。分支结构与 live v3 逐段同构。"""
+    owner = " ".join(sorted(OWNER_IPS))
+    selfid = " or ".join('http.user_agent contains "%s"' % u
+                         for u in UA_SELFID_EXEMPT)
+    scripts = " or ".join('http.user_agent contains "%s"' % u
+                          for u in UA_SCRIPT_UAS)
+    impersonation = (
+        '(http.user_agent contains "AppleWebKit" and not '
+        'http.user_agent contains "Safari/" and not '
+        'http.user_agent contains "MicroMessenger") or '
+        '(http.user_agent contains "Mozilla/5.0" and not '
+        'http.user_agent contains "Chrome/" and not '
+        'http.user_agent contains "Safari/" and not '
+        'http.user_agent contains "Gecko" and not '
+        'http.user_agent contains "AppleWebKit" and not '
+        'http.user_agent contains "Trident")')
+    branch_empty = ('((http.user_agent eq "") and not cf.client.bot '
+                    'and not ip.src in {%s})' % owner)
+    branch_ua = ('(not ip.src in {%s} and not cf.client.bot and not (%s) '
+                 'and ((%s) or (%s)))'
+                 % (owner, selfid, impersonation, scripts))
+    return ('(not ip.src in {%s} and (%s or %s))'
+            % (" ".join(AHREFS_RANGES), branch_empty, branch_ua))
+
+
+UA_CLAUSE = build_ua_clause()
+
+
+def apply_ua_rule(rules):
+    """UA 规则原位维护（2026-11-28 收编，返回 (同一列表, 是否有变化)）。
+    两 zone 都调用（规则两 zone 都应在，期望集 expected_rule_prefixes）。
+    收养按 description 前缀 UA_MARKER 定位（live 手工规则 ref 各 zone 不同，
+    收养保留原 ref 不覆写），缺失按 UA_REF 重建，漂移拉回 canonical。"""
+    rule = next((r for r in rules
+                 if str(r.get("description", "")).startswith(UA_MARKER)
+                 or r.get("ref") == UA_REF), None)
+    if (rule and rule.get("expression") == UA_CLAUSE
+            and rule.get("action") == "block" and rule.get("enabled", True)):
+        return rules, False
+    created = rule is None
+    if rule:
+        rule["expression"] = UA_CLAUSE
+        rule["action"] = "block"
+        rule["description"] = UA_DESC
+        rule["enabled"] = True
+    else:
+        rules.append({"action": "block", "action_parameters": {},
+                      "expression": UA_CLAUSE, "description": UA_DESC,
+                      "enabled": True, "ref": UA_REF})
+    log("ua-rule: %s" % ("created" if created else "updated"))
+    return rules, True
+
+
 # ---- geo-challenge 规则守护（2026-11-17 #19：手工规则收编自愈，先 observe）----
 # geo-challenge 是 noda zone 唯一手工维护规则，已连产两次事故：①11-07 规则
 # 顺序缺口（first-match-wins 下排第 1 使 blacklist 失效，b773b3f 重排修复）；
@@ -1678,7 +1759,8 @@ def apply_hotlink_rule(rules):
 GEO_REF = "geo-admin-challenge"       # 2026-11-07 合并规则沿用 ref（live 同名）
 GEO_ACTION = "managed_challenge"
 GEO_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17, "
-            "Google ASN exempt 2026-11-23, DuckAssistBot exempt 2026-11-23): "
+            "Google ASN exempt 2026-11-23, DuckAssistBot exempt 2026-11-23, "
+            "AHREFS ranges exempt 2026-11-28): "
             "admin non-NZ + web non-NZ/AU apex+www")
 # 2026-11-23 Storebot geo-crawl 判例扩 Google ASN 豁免：34.155.98.39（Google
 # 新 geo-crawl 基建，AS396982 GCP，PTR geo-crawl-*.geo.googlebot.com 正反确认）
@@ -1695,12 +1777,17 @@ GEO_DESC = ("geo-challenge merged 2026-11-07 (www added 2026-11-17, "
 # 互动率 73% 全站最高，AI 引用渠道质量最优）。伪造面≈0：managed_challenge 本是
 # 软面，伪造 UA 仅获真人同等浏览能力，洪水/枚举有源站四闸+限速兜底。admin 分支
 # 不豁（后台挑战正确）；搜索爬虫 DuckDuckBot 是 CF verified bot 本就放行。
+# 2026-11-28 AHREFS 段豁免镜像（Ahrefs HeadlessChrome 判例三修之二）：UA 规则
+# 豁免 AHREFS 段后，非 NZ 出口的 Ahrefs 渲染器会落到本规则 managed_challenge
+#（爬虫不解挑战=变相拦）——静态豁免面必须与 UA 规则同步镜像 AHREFS 两个 /23，
+# 否则边缘修复不完整（与 11-23 dc 死站豁免镜像 EXTRA 三段同型教训）。
 GEO_CLAUSE = (
     '(http.host eq "admin.noda.co.nz" and ip.geoip.country ne "NZ") '
     'or ((not cf.client.bot) and (ip.geoip.asnum ne 15169 '
     'and ip.geoip.asnum ne 396982) and '
     '(not ip.src in {66.249.64.0/19 '
-    '209.85.128.0/17 2001:4860:7::/48}) and '
+    '209.85.128.0/17 2001:4860:7::/48 '
+    '202.8.40.0/23 202.8.42.0/23}) and '
     '(http.host in {"noda.co.nz" "www.noda.co.nz"}) and '
     '(not ip.geoip.country in {"NZ" "AU" "TW"}) and '
     'not http.user_agent contains "DuckAssistBot")')
@@ -2519,6 +2606,8 @@ def main():
                 guard_alerts.extend(r_alerts)
                 rules = apply_blacklist(rules, bans)
                 rules, dc_changed = apply_dc_rule(rules, dc_expr)
+                # 2026-11-28 收编：UA 规则两 zone 托管自愈（AHREFS 段豁免判例）
+                rules, ua_changed = apply_ua_rule(rules)
                 hl_changed = False
                 if zname in HOTLINK_ZONES:
                     rules, hl_changed = apply_hotlink_rule(rules)
@@ -2539,7 +2628,7 @@ def main():
                         % " → ".join(str(r.get("description", ""))[:24]
                                      for r in rules))
                 if need_put or dc_changed or hl_changed or geo_changed \
-                        or order_changed:
+                        or ua_changed or order_changed:
                     put_rules(cf, zid, rules)
                     if dc_changed and not DRY_RUN and not need_put:
                         tg("ip-ban: 机房 ASN 规则更新——%d 个 ASN 直接 %s"

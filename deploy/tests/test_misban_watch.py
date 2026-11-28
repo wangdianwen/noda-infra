@@ -173,6 +173,75 @@ def test_selfid_ua_non_custom_source_not_flagged(mw, ipb):
     assert misban is False and cls == "selfid"
 
 
+# ---- D3 政策归档两层（2026-11-28 判例三修三）----
+# ①死站归档：DEAD_HOSTS block 非官方段自报 UA = 死站只放 verified 爬虫的政策
+#   执行（11-19 判据）——PerplexityBot/SERanking 换 IP 重报噪音不再告警；
+# ②vendor-ASN 真值：自报 UA 对照 VENDOR_ASN_TRUTH，ASN 对不上=伪装假身份
+#   归档（11-23 GPTBot 四假 UA 同分钟同页集群）；对得上或缺 ASN=fail-open 仍告警。
+
+def test_selfid_block_on_deadhost_archived(mw, ipb):
+    # PerplexityBot 在 snagme（AWS 真出口 18.97.9.97 本周 4 连报判例）→ 政策归档
+    ev = {"ip": "18.97.9.97", "asn": 16509, "action": "block",
+          "source": "firewallCustom", "host": "snagme.noda.co.nz",
+          "ua": "Mozilla/5.0 (compatible; PerplexityBot/1.0; "
+                "+https://perplexity.ai/perplexitybot.htm)", "_official_ip": False}
+    assert mw.classify_event(ev, ipb) == ("policy-deadhost", False)
+
+
+def test_official_ip_block_on_deadhost_still_misban(mw, ipb):
+    # 官方段被死站拦 = 豁免漂移（11-22 ::f4/fa 判例同型），必须继续实锤告警
+    ev = {"ip": "66.249.72.6", "asn": 15169, "action": "block",
+          "source": "firewallCustom", "host": "snagme.noda.co.nz",
+          "ua": "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X)",
+          "_official_ip": True}
+    cls, misban = mw.classify_event(ev, ipb)
+    assert misban is True and cls == "misban"
+
+
+def test_selfid_vendor_asn_mismatch_is_fake_archived(mw, ipb):
+    # 11-23 四假 UA 集群判例：GPTBot 自报但 ASN 非 Azure → 伪装假身份归档
+    ev = {"ip": "89.34.79.193", "asn": 49447, "action": "block",
+          "source": "firewallCustom", "host": "noda.co.nz",
+          "ua": "Mozilla/5.0 (compatible; GPTBot/1.0)", "_official_ip": False}
+    assert mw.classify_event(ev, ipb) == ("policy-fakeua", False)
+
+
+def test_selfid_meta_asn_mismatch_is_fake_archived(mw, ipb):
+    ev = {"ip": "46.28.197.228", "asn": 204601, "action": "block",
+          "source": "firewallCustom", "host": "noda.co.nz",
+          "ua": "Meta-ExternalAgent/1.0", "_official_ip": False}
+    assert mw.classify_event(ev, ipb) == ("policy-fakeua", False)
+
+
+def test_selfid_vendor_asn_match_still_alerts(mw, ipb):
+    # ASN 对得上（Perplexity 在 AWS 16509）+ 官方段外的活站 = 仍疑似误封
+    ev = {"ip": "44.205.89.55", "asn": 16509, "action": "block",
+          "source": "firewallCustom", "host": "noda.co.nz",
+          "ua": "Mozilla/5.0 (compatible; PerplexityBot/1.0)",
+          "_official_ip": False}
+    cls, misban = mw.classify_event(ev, ipb)
+    assert misban is True and cls == "selfid-block"
+
+
+def test_selfid_asn_missing_fails_open(mw, ipb):
+    # 事件缺 ASN（GraphQL 字段异常等）→ fail-open 仍告警，不静默归档
+    ev = {"ip": "203.0.113.9", "asn": 0, "action": "block",
+          "source": "firewallCustom", "host": "noda.co.nz",
+          "ua": "GPTBot/1.0", "_official_ip": False}
+    cls, misban = mw.classify_event(ev, ipb)
+    assert misban is True and cls == "selfid-block"
+
+
+def test_selfid_unknown_vendor_no_truth_fails_open(mw, ipb):
+    # 真值表外 vendor（OusanBot 判例型）维持 ⚠️ 待人工复核
+    ev = {"ip": "203.0.113.9", "asn": 63949, "action": "block",
+          "source": "firewallCustom", "host": "shuotong.wang",
+          "ua": "Mozilla/5.0 (compatible; OusanBot/1.0; +https://ousan.io/bot)",
+          "_official_ip": False}
+    cls, misban = mw.classify_event(ev, ipb)
+    assert misban is True and cls == "selfid-block"
+
+
 # ---- decide_canary / canary_quiet_hours ----
 
 def test_canary_google_silence_threshold(mw):
